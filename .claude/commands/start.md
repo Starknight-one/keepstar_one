@@ -1,6 +1,6 @@
 # Start
 
-Start the project (backend + frontend).
+Start the project (backend + frontend + dev-inspector).
 
 ## Instructions
 
@@ -14,8 +14,14 @@ Start the project (backend + frontend).
    cd /Users/starknight/Keepstar_one_ultra/project/frontend && npm run dev &
    ```
 
-3. Report the URLs:
+3. Start dev-inspector (install deps if needed):
+   ```bash
+   cd /Users/starknight/Keepstar_one_ultra/ADW/dev-inspector && npm install --silent && npm start &
+   ```
+
+4. Report the URLs:
    - Frontend: http://localhost:5173
+   - Frontend + Inspector: http://localhost:3457
    - Backend: http://localhost:8080
 
 ## Output
@@ -24,6 +30,7 @@ Start the project (backend + frontend).
 Project started!
 
 Frontend: http://localhost:5173
+Frontend + Inspector: http://localhost:3457 (Ctrl+Shift+K to activate)
 Backend: http://localhost:8080
 
 Use /stop to shut down servers.

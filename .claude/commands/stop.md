@@ -14,6 +14,11 @@ Stop the project servers.
    pkill -f "vite" || true
    ```
 
+3. Kill the dev-inspector:
+   ```bash
+   pkill -f "dev-inspector/server.js" || true
+   ```
+
 ## Output
 
 ```
