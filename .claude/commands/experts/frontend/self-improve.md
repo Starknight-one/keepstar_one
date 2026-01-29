@@ -1,69 +1,130 @@
-# Frontend Self-Improve
+---
+allowed-tools: Read, Grep, Glob, Bash, Edit, Write
+description: Self-improve Frontend expertise by validating against codebase implementation
+argument-hint: [check_git_diff (true/false)] [focus_area (optional)]
+---
 
-Update frontend expertise from codebase.
+# Purpose
+
+Maintain the Frontend expert system's expertise accuracy by comparing the existing expertise file against the actual codebase implementation. The expertise file is your **mental model** — not documentation, the code is the source of truth.
 
 ## Variables
 
-USE_DIFF: $ARGUMENTS (true|false, default: false)
-EXPERTISE: .claude/commands/experts/frontend/expertise.yaml
-CONFIG: ADW/adw.yaml
+CHECK_GIT_DIFF: $1 default to false if not specified
+FOCUS_AREA: $2 default to empty string
+EXPERTISE_FILE: .claude/commands/experts/frontend/expertise.yaml
+MAX_LINES: 300
 
 ## Instructions
 
-- Scan codebase for frontend knowledge
-- Update expertise.yaml with findings
-- Keep within line limit from CONFIG
+- Validate expertise against real implementation, not assumptions
+- Focus on: React components, hooks, API integration, styling
+- If FOCUS_AREA is provided, prioritize validation for that area
+- Maintain YAML structure and formatting
+- Enforce strict line limit of MAX_LINES
+- Prioritize actionable, high-value expertise
 
 ## Workflow
 
-### Step 1: Load Current Expertise
-Read EXPERTISE to understand current state.
-
-### Step 2: Load Configuration
-Read CONFIG to get:
-- Paths for this domain
-- Line limit
-
-### Step 3: Scan Codebase
-If USE_DIFF = true:
+### 1. Check Git Diff (Conditional)
+If CHECK_GIT_DIFF is "true":
 ```bash
-git diff HEAD~5 --name-only
+git diff HEAD~5 --name-only -- project/frontend/
 ```
-Focus on changed files.
+Note changes for targeted validation.
 
-Otherwise, scan domain paths from CONFIG.
+### 2. Read Current Expertise
+Read EXPERTISE_FILE to understand current state:
+- overview, project_structure
+- layer_rules (feature-sliced)
+- core_implementation (active + feature_sliced)
+- patterns
+- migration_status
 
-### Step 4: Extract Knowledge
-For each relevant file:
-- File purpose
-- Key patterns
-- Important structures
-- Dependencies
+### 3. Validate Against Codebase
+Read key implementation files:
 
-### Step 5: Update Expertise
-Update expertise.yaml:
-- Keep format consistent
-- Stay within line limit
-- Focus on actionable knowledge
+**Active Code (working):**
+- `project/frontend/src/App.jsx`
+- `project/frontend/src/App.css`
+- `project/frontend/src/components/Chat.jsx`
+- `project/frontend/src/components/Chat.css`
+- `project/frontend/src/main.jsx`
 
-### Step 6: Report Changes
+**Feature-Sliced Structure (stubs):**
+- `project/frontend/src/shared/api/apiClient.js`
+- `project/frontend/src/entities/atom/*.js`
+- `project/frontend/src/entities/widget/*.js`
+- `project/frontend/src/entities/message/*.js`
+- `project/frontend/src/features/chat/*.js`
+- `project/frontend/src/features/overlay/*.js`
+- `project/frontend/src/app/App.jsx`
 
-## Constraints
+**Config:**
+- `project/frontend/package.json`
+- `project/frontend/vite.config.js`
 
-- DO NOT: exceed line limit
-- DO: focus on patterns, not docs
-- DO: include file paths
-- DO: keep it actionable
+### 4. Identify Discrepancies
+List all differences:
+- New or removed components
+- Changed hooks or state management
+- New API endpoints
+- Updated patterns
+- Removed features still documented
 
-## Output
+### 5. Update Expertise File
+- Remedy all identified discrepancies
+- Add missing information
+- Update outdated information
+- Remove obsolete information
+- Maintain YAML structure
+- Keep descriptions concise
+
+### 6. Enforce Line Limit
+```bash
+wc -l .claude/commands/experts/frontend/expertise.yaml
+```
+If > MAX_LINES:
+- Trim verbose descriptions
+- Remove redundant examples
+- Repeat until <= MAX_LINES
+
+### 7. Validation Check
+Verify YAML syntax:
+```bash
+python3 -c "import yaml; yaml.safe_load(open('.claude/commands/experts/frontend/expertise.yaml'))"
+```
+Fix any syntax errors.
+
+## Report
 
 ```
-Frontend Expertise Updated
+Frontend Expert Self-Improvement Complete
 
-Changes:
-- Added: <what>
-- Updated: <what>
-- Removed: <what>
+Summary:
+- Git diff checked: Yes/No
+- Focus area: <area or "none">
+- Discrepancies found: N
+- Discrepancies remedied: N
+- Final line count: N/300 lines
 
-Lines: N / {limit}
+Discrepancies Found:
+1. <description>
+   - Found in: <file path>
+   - Remedied: <action taken>
+
+Updates Made:
+- Added: <list>
+- Updated: <list>
+- Removed: <list>
+
+Line Limit Enforcement:
+- Initial: N lines
+- Final: N lines
+- Trimmed: <what was removed or "nothing">
+
+Validation:
+- YAML syntax valid: Yes/No
+- Active code documented: Yes/No
+- Feature-sliced stubs documented: Yes/No
 ```

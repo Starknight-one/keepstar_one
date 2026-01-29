@@ -1,69 +1,127 @@
-# Backend Self-Improve
+---
+allowed-tools: Read, Grep, Glob, Bash, Edit, Write
+description: Self-improve Backend expertise by validating against codebase implementation
+argument-hint: [check_git_diff (true/false)] [focus_area (optional)]
+---
 
-Update backend expertise from codebase.
+# Purpose
+
+Maintain the Backend expert system's expertise accuracy by comparing the existing expertise file against the actual codebase implementation. The expertise file is your **mental model** — not documentation, the code is the source of truth.
 
 ## Variables
 
-USE_DIFF: $ARGUMENTS (true|false, default: false)
-EXPERTISE: .claude/commands/experts/backend/expertise.yaml
-CONFIG: ADW/adw.yaml
+CHECK_GIT_DIFF: $1 default to false if not specified
+FOCUS_AREA: $2 default to empty string
+EXPERTISE_FILE: .claude/commands/experts/backend/expertise.yaml
+MAX_LINES: 300
 
 ## Instructions
 
-- Scan codebase for backend knowledge
-- Update expertise.yaml with findings
-- Keep within line limit from CONFIG
+- Validate expertise against real implementation, not assumptions
+- Focus on: Go files, handlers, adapters, usecases, domain entities
+- If FOCUS_AREA is provided, prioritize validation for that area
+- Maintain YAML structure and formatting
+- Enforce strict line limit of MAX_LINES
+- Prioritize actionable, high-value expertise
 
 ## Workflow
 
-### Step 1: Load Current Expertise
-Read EXPERTISE to understand current state.
-
-### Step 2: Load Configuration
-Read CONFIG to get:
-- Paths for this domain
-- Line limit
-
-### Step 3: Scan Codebase
-If USE_DIFF = true:
+### 1. Check Git Diff (Conditional)
+If CHECK_GIT_DIFF is "true":
 ```bash
-git diff HEAD~5 --name-only
+git diff HEAD~5 --name-only -- project/backend/
 ```
-Focus on changed files.
+Note changes for targeted validation.
 
-Otherwise, scan domain paths from CONFIG.
+### 2. Read Current Expertise
+Read EXPERTISE_FILE to understand current state:
+- overview, project_structure
+- layer_rules (hexagonal architecture)
+- core_implementation (active + hexagonal)
+- api_endpoints, patterns
+- migration_status
 
-### Step 4: Extract Knowledge
-For each relevant file:
-- File purpose
-- Key patterns
-- Important structures
-- Dependencies
+### 3. Validate Against Codebase
+Read key implementation files:
 
-### Step 5: Update Expertise
-Update expertise.yaml:
-- Keep format consistent
-- Stay within line limit
-- Focus on actionable knowledge
+**Active Code (working):**
+- `project/backend/main.go`
+- `project/backend/anthropic.go`
+- `project/backend/gigachat.go`
 
-### Step 6: Report Changes
+**Hexagonal Structure (stubs):**
+- `project/backend/cmd/server/main.go`
+- `project/backend/internal/domain/*.go`
+- `project/backend/internal/ports/*.go`
+- `project/backend/internal/adapters/*/*.go`
+- `project/backend/internal/usecases/*.go`
+- `project/backend/internal/handlers/*.go`
+- `project/backend/internal/prompts/*.go`
 
-## Constraints
+**Data:**
+- `project/backend/data/products.json`
 
-- DO NOT: exceed line limit
-- DO: focus on patterns, not docs
-- DO: include file paths
-- DO: keep it actionable
+### 4. Identify Discrepancies
+List all differences:
+- New or removed files
+- Changed struct fields or methods
+- New endpoints or handlers
+- Updated patterns
+- Removed features still documented
 
-## Output
+### 5. Update Expertise File
+- Remedy all identified discrepancies
+- Add missing information
+- Update outdated information
+- Remove obsolete information
+- Maintain YAML structure
+- Keep descriptions concise
+
+### 6. Enforce Line Limit
+```bash
+wc -l .claude/commands/experts/backend/expertise.yaml
+```
+If > MAX_LINES:
+- Trim verbose descriptions
+- Remove redundant examples
+- Repeat until <= MAX_LINES
+
+### 7. Validation Check
+Verify YAML syntax:
+```bash
+python3 -c "import yaml; yaml.safe_load(open('.claude/commands/experts/backend/expertise.yaml'))"
+```
+Fix any syntax errors.
+
+## Report
 
 ```
-Backend Expertise Updated
+Backend Expert Self-Improvement Complete
 
-Changes:
-- Added: <what>
-- Updated: <what>
-- Removed: <what>
+Summary:
+- Git diff checked: Yes/No
+- Focus area: <area or "none">
+- Discrepancies found: N
+- Discrepancies remedied: N
+- Final line count: N/300 lines
 
-Lines: N / {limit}
+Discrepancies Found:
+1. <description>
+   - Found in: <file path>
+   - Remedied: <action taken>
+
+Updates Made:
+- Added: <list>
+- Updated: <list>
+- Removed: <list>
+
+Line Limit Enforcement:
+- Initial: N lines
+- Final: N lines
+- Trimmed: <what was removed or "nothing">
+
+Validation:
+- YAML syntax valid: Yes/No
+- Active code documented: Yes/No
+- Hexagonal stubs documented: Yes/No
 ```
