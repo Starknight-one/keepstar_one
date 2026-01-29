@@ -1,0 +1,35 @@
+[
+  {
+    "id": "1",
+    "name": "iPhone 15 Pro",
+    "description": "Latest Apple smartphone with A17 Pro chip",
+    "price": 999.00,
+    "currency": "USD",
+    "images": ["https://example.com/iphone15.jpg"],
+    "rating": 4.8,
+    "category": "smartphones",
+    "tags": ["apple", "premium", "5g"]
+  },
+  {
+    "id": "2",
+    "name": "Samsung Galaxy S24",
+    "description": "Samsung flagship with Galaxy AI",
+    "price": 899.00,
+    "currency": "USD",
+    "images": ["https://example.com/s24.jpg"],
+    "rating": 4.7,
+    "category": "smartphones",
+    "tags": ["samsung", "android", "5g"]
+  },
+  {
+    "id": "3",
+    "name": "MacBook Pro 14",
+    "description": "Professional laptop with M3 Pro chip",
+    "price": 1999.00,
+    "currency": "USD",
+    "images": ["https://example.com/macbook.jpg"],
+    "rating": 4.9,
+    "category": "laptops",
+    "tags": ["apple", "professional", "m3"]
+  }
+]

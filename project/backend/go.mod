@@ -1,4 +1,4 @@
-module keepstar/backend
+module keepstar
 
 go 1.21
 
