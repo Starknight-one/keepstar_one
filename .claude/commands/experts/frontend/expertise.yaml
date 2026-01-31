@@ -9,165 +9,165 @@ overview:
   language: "JavaScript (JSX)"
   styling: "CSS"
   dev_port: 5173
-  api_proxy: "http://localhost:8080"
+  api_base: "http://localhost:8080/api/v1"
 
 project_structure:
   root: "project/frontend/"
   entry_point: "src/main.jsx"
 
-  # Текущий рабочий код (простая структура)
-  active_code:
-    app: "src/App.jsx"
-    styles: "src/App.css"
-    components: "src/components/"
-
-  # Новая архитектура (stubs)
-  feature_sliced:
+  layers:
     shared: "src/shared/"
     entities: "src/entities/"
     features: "src/features/"
     app: "src/app/"
 
 layer_rules:
-  description: "Направление: app → features → entities → shared"
+  description: "Direction: app → features → entities → shared"
   shared:
-    imports: "Только внешние библиотеки"
-    contains: "API client, hooks, UI компоненты, утилиты"
+    imports: "Only external libraries"
+    contains: "API client, hooks, UI components, utilities"
   entities:
     imports: "shared/"
-    contains: "Бизнес-сущности: atom, widget, message"
+    contains: "Business entities: atom, widget, message"
   features:
     imports: "shared/, entities/"
-    contains: "Фичи: chat, overlay, canvas"
+    contains: "Features: chat, overlay, canvas"
   app:
-    imports: "Всё"
-    contains: "Entry point, providers, глобальные стили"
+    imports: "Everything"
+    contains: "Entry point, providers, global styles"
 
 core_implementation:
-  # Активный код
-  active:
-    app:
-      file: "src/App.jsx"
-      purpose: "Root component с чатом"
-      state:
-        - "isOpen: boolean - открыт ли чат"
-      components_used:
-        - "Chat"
+  app:
+    file: "src/App.jsx"
+    purpose: "Root component with chat toggle"
+    state:
+      - "isChatOpen: boolean"
+    components_used:
+      - "ChatPanel from features/chat"
 
+  shared:
+    api:
+      file: "src/shared/api/apiClient.js"
+      purpose: "HTTP client for backend"
+      function: "sendChatMessage(message)"
+      endpoint: "POST /api/v1/chat"
+      status: "implemented"
+
+  entities:
+    atom:
+      directory: "src/entities/atom/"
+      atomModel:
+        file: "atomModel.js"
+        exports: ["AtomType"]
+      AtomRenderer:
+        file: "AtomRenderer.jsx"
+        purpose: "Renders atom by type"
+        status: "stub"
+
+    widget:
+      directory: "src/entities/widget/"
+      widgetModel:
+        file: "widgetModel.js"
+        exports: ["WidgetType", "FormationType"]
+      WidgetRenderer:
+        file: "WidgetRenderer.jsx"
+        purpose: "Renders widget from atoms"
+        status: "stub"
+
+    message:
+      directory: "src/entities/message/"
+      messageModel:
+        file: "messageModel.js"
+        exports: ["MessageRole"]
+        values: ["USER", "ASSISTANT"]
+      MessageBubble:
+        file: "MessageBubble.jsx"
+        purpose: "Renders message with optional widgets"
+        status: "implemented"
+
+  features:
     chat:
-      file: "src/components/Chat.jsx"
-      styles: "src/components/Chat.css"
-      purpose: "Чат с AI ассистентом"
-      state:
-        - "messages: array - история сообщений"
-        - "input: string - текущий ввод"
-        - "isLoading: boolean"
-      api_call: "POST /api/chat"
+      directory: "src/features/chat/"
+      status: "implemented"
 
-  # Feature-Sliced stubs
-  feature_sliced:
-    shared:
-      api:
-        directory: "src/shared/api/"
-        files:
-          apiClient:
-            file: "apiClient.js"
-            purpose: "HTTP client для backend"
-            function: "sendChatMessage(sessionId, message)"
+      chatModel:
+        file: "chatModel.js"
+        function: "createInitialChatState()"
+        state: ["sessionId", "messages", "isLoading", "error"]
 
-    entities:
-      atom:
-        directory: "src/entities/atom/"
-        atomModel:
-          file: "atomModel.js"
-          exports: ["AtomType"]
-          types: ["text", "number", "price", "image", "rating", "badge", "button"]
+      useChatMessages:
+        file: "useChatMessages.js"
+        returns: ["messages", "isLoading", "error", "addMessage", "setLoading", "setError", "setSessionId"]
+        status: "implemented"
 
-        AtomRenderer:
-          file: "AtomRenderer.jsx"
-          purpose: "Рендерит любой атом по типу"
-          pattern: "switch (atom.type) → component"
+      useChatSubmit:
+        file: "useChatSubmit.js"
+        returns: ["submit"]
+        status: "implemented"
 
-      widget:
-        directory: "src/entities/widget/"
-        widgetModel:
-          file: "widgetModel.js"
-          exports: ["WidgetType", "FormationType"]
+      ChatPanel:
+        file: "ChatPanel.jsx"
+        styles: "ChatPanel.css"
+        purpose: "Main chat component"
+        props: ["onClose"]
+        status: "implemented"
 
-        WidgetRenderer:
-          file: "WidgetRenderer.jsx"
-          purpose: "Рендерит виджет из атомов"
+      ChatHistory:
+        file: "ChatHistory.jsx"
+        purpose: "Renders message list"
+        props: ["messages", "isLoading"]
+        status: "implemented"
 
-      message:
-        directory: "src/entities/message/"
-        messageModel:
-          file: "messageModel.js"
-          exports: ["MessageRole"]
+      ChatInput:
+        file: "ChatInput.jsx"
+        purpose: "Input with send button"
+        props: ["onSubmit", "disabled"]
+        status: "implemented"
 
-        MessageBubble:
-          file: "MessageBubble.jsx"
-          purpose: "Рендерит сообщение с виджетами"
+    overlay:
+      directory: "src/features/overlay/"
+      useOverlayState:
+        file: "useOverlayState.js"
+        returns: ["isOpen", "open", "close", "toggle"]
+      FullscreenOverlay:
+        file: "FullscreenOverlay.jsx"
+      status: "stub"
 
-    features:
-      chat:
-        directory: "src/features/chat/"
-        chatModel:
-          file: "chatModel.js"
-          function: "createInitialChatState()"
-
-        useChatMessages:
-          file: "useChatMessages.js"
-          returns: ["messages", "addMessage", "setLoading", "setError"]
-
-        useChatSubmit:
-          file: "useChatSubmit.js"
-          returns: ["submit"]
-
-        ChatPanel:
-          file: "ChatPanel.jsx"
-          purpose: "Основной компонент чата"
-
-        ChatHistory:
-          file: "ChatHistory.jsx"
-
-        ChatInput:
-          file: "ChatInput.jsx"
-
-      overlay:
-        directory: "src/features/overlay/"
-        useOverlayState:
-          file: "useOverlayState.js"
-          returns: ["isOpen", "open", "close", "toggle"]
-
-        FullscreenOverlay:
-          file: "FullscreenOverlay.jsx"
-
-      canvas:
-        directory: "src/features/canvas/"
-        status: "placeholder for future"
+    canvas:
+      directory: "src/features/canvas/"
+      status: "placeholder for future"
 
 patterns:
   component_structure:
-    - "Functional components с hooks"
-    - "CSS файлы рядом с компонентами"
-    - "Props передаются напрямую"
+    - "Functional components with hooks"
+    - "CSS files next to components"
+    - "Props passed directly"
 
   hooks_pattern:
     - "use{Feature}{Action}.js"
-    - "Возвращают объект с state и actions"
+    - "Return object with state and actions"
 
   naming:
     components: "PascalCase.jsx"
     hooks: "use{Name}.js"
     models: "{feature}Model.js"
+    styles: "{Component}.css"
 
 run_commands:
   install: "cd project/frontend && npm install"
   dev: "cd project/frontend && npm run dev"
   build: "cd project/frontend && npm run build"
+  lint: "cd project/frontend && npm run lint"
 
 migration_status:
-  active: "src/App.jsx + src/components/Chat.jsx"
+  description: "Feature-sliced architecture active, chat implemented"
+  completed:
+    - "Migrate to features/chat/ChatPanel"
+    - "Implement useChatMessages hook"
+    - "Implement useChatSubmit hook"
+    - "Connect to /api/v1/chat endpoint"
+    - "Remove old components/Chat"
   next_steps:
-    - "Перевести на feature-sliced структуру"
-    - "Добавить рендеринг виджетов"
+    - "Implement widget rendering"
+    - "Add atom components"
+    - "Add canvas feature for widget display"

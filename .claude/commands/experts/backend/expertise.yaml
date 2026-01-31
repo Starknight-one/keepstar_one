@@ -7,202 +7,162 @@ overview:
   language: "Go 1.21+"
   port: 8080
   ai_provider: "Anthropic Claude"
+  model: "claude-haiku-4-5-20251001"
 
 project_structure:
   root: "project/backend/"
+  entry: "cmd/server/main.go"
 
-  # Текущий рабочий код (простая структура)
-  active_code:
-    entry: "main.go"
-    files:
-      - "main.go"        # HTTP server, routes, handlers
-      - "anthropic.go"   # Anthropic API client
-      - "gigachat.go"    # GigaChat API client (альтернатива)
+  layers:
+    domain: "internal/domain/"
+    ports: "internal/ports/"
+    adapters: "internal/adapters/"
+    usecases: "internal/usecases/"
+    handlers: "internal/handlers/"
+    prompts: "internal/prompts/"
+    logger: "internal/logger/"
+    config: "internal/config/"
 
-  # Новая архитектура (stubs, не активна)
-  hexagonal_structure:
-    entry: "cmd/server/main.go"
-    layers:
-      domain: "internal/domain/"
-      ports: "internal/ports/"
-      adapters: "internal/adapters/"
-      usecases: "internal/usecases/"
-      handlers: "internal/handlers/"
-      prompts: "internal/prompts/"
-      logger: "internal/logger/"
-      config: "internal/config/"
-    data: "data/products.json"
+  data: "data/products.json"
 
 layer_rules:
-  description: "Направление зависимостей: handlers → usecases → ports ← adapters, всё зависит от domain"
+  description: "Dependency direction: handlers → usecases → ports ← adapters, all depend on domain"
   domain:
-    imports: "Ничего из internal/"
-    contains: "Сущности, типы, доменные ошибки"
+    imports: "Nothing from internal/"
+    contains: "Entities, types, domain errors"
   ports:
-    imports: "Только domain/"
-    contains: "Интерфейсы (контракты)"
+    imports: "Only domain/"
+    contains: "Interfaces (contracts)"
   usecases:
     imports: "domain/, ports/"
-    contains: "Бизнес-логика, 1 файл = 1 use case"
+    contains: "Business logic, 1 file = 1 use case"
   adapters:
-    imports: "domain/, ports/, внешние библиотеки"
-    contains: "Реализации портов"
+    imports: "domain/, ports/, external libraries"
+    contains: "Port implementations"
   handlers:
-    imports: "Всё выше + http библиотеки"
-    contains: "HTTP слой, только parse/validate/respond"
+    imports: "Everything above + http libraries"
+    contains: "HTTP layer, only parse/validate/respond"
   prompts:
-    imports: "domain/ (для типов)"
-    contains: "LLM промпты, отдельно от логики"
+    imports: "domain/ (for types)"
+    contains: "LLM prompts, separate from logic"
 
 core_implementation:
-  # Активный код
-  active:
-    main:
-      file: "project/backend/main.go"
-      purpose: "HTTP server с chi router"
-      endpoints:
-        - "POST /api/chat - handleChat()"
-        - "GET /health - handleHealth()"
-      pattern: |
-        - Load .env
-        - Setup CORS
-        - Register handlers
-        - Start server
+  main:
+    file: "cmd/server/main.go"
+    purpose: "Application bootstrap"
+    pattern: |
+      - Load .env via godotenv
+      - Load config
+      - Initialize adapters (anthropic)
+      - Initialize usecases (sendMessage)
+      - Initialize handlers
+      - Setup routes
+      - Apply CORS middleware
+      - Start server
 
+  ports:
+    llm_port:
+      file: "internal/ports/llm_port.go"
+      interface: "LLMPort"
+      methods:
+        - "Chat(ctx context.Context, message string) (string, error)"
+
+    search_port:
+      file: "internal/ports/search_port.go"
+      interface: "SearchPort"
+      status: "stub"
+
+    cache_port:
+      file: "internal/ports/cache_port.go"
+      interface: "CachePort"
+      status: "stub"
+
+  adapters:
     anthropic:
-      file: "project/backend/anthropic.go"
-      purpose: "Anthropic API client"
-      function: "sendToAnthropic(message string) (string, error)"
-      env: "ANTHROPIC_API_KEY"
+      file: "internal/adapters/anthropic/anthropic_client.go"
+      implements: "LLMPort"
+      status: "implemented"
+      method: "Chat(ctx, message) (string, error)"
+      api: "POST https://api.anthropic.com/v1/messages"
 
-    gigachat:
-      file: "project/backend/gigachat.go"
-      purpose: "GigaChat API client (Сбер)"
-      functions:
-        - "sendToGigaChat(message string) (string, error)"
-        - "getGigaChatToken() (string, error)"
-      env: ["GIGACHAT_CLIENT_ID", "GIGACHAT_CLIENT_SECRET"]
+    json_store:
+      file: "internal/adapters/json_store/json_product_store.go"
+      implements: "SearchPort"
+      status: "stub"
 
-  # Hexagonal stubs (не активны)
-  hexagonal:
-    domain:
-      atom_entity:
-        file: "internal/domain/atom_entity.go"
-        types: ["AtomType", "Atom"]
-        atom_types: ["text", "number", "price", "image", "rating", "badge", "button", "icon", "divider", "progress"]
+    memory:
+      file: "internal/adapters/memory/memory_cache.go"
+      implements: "CachePort"
+      status: "stub"
 
-      widget_entity:
-        file: "internal/domain/widget_entity.go"
-        types: ["WidgetType", "Widget"]
-        widget_types: ["product_card", "product_list", "comparison_table", "image_carousel", "text_block", "quick_replies"]
+  usecases:
+    chat_send_message:
+      file: "internal/usecases/chat_send_message.go"
+      struct: "SendMessageUseCase"
+      purpose: "Send message to LLM and return response"
+      status: "implemented"
+      method: "Execute(ctx, message) (string, error)"
 
-      formation_entity:
-        file: "internal/domain/formation_entity.go"
-        types: ["FormationType", "Formation"]
-        formation_types: ["grid", "list", "carousel", "single"]
-
-      message_entity:
-        file: "internal/domain/message_entity.go"
-        types: ["MessageRole", "Message"]
-
-      session_entity:
-        file: "internal/domain/session_entity.go"
-        types: ["Session"]
-
-      product_entity:
-        file: "internal/domain/product_entity.go"
-        types: ["Product"]
-
-      domain_errors:
-        file: "internal/domain/domain_errors.go"
-        errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable"]
-
-    ports:
-      llm_port:
-        file: "internal/ports/llm_port.go"
-        interface: "LLMPort"
-        methods:
-          - "AnalyzeQuery(ctx, req) - Agent 1"
-          - "ComposeWidgets(ctx, req) - Agent 2"
-
-      search_port:
-        file: "internal/ports/search_port.go"
-        interface: "SearchPort"
-        methods:
-          - "Search(ctx, params)"
-          - "GetByID(ctx, id)"
-
-      cache_port:
-        file: "internal/ports/cache_port.go"
-        interface: "CachePort"
-        methods:
-          - "GetSession(ctx, id)"
-          - "SaveSession(ctx, session)"
-          - "CacheProducts(ctx, sessionID, products)"
-          - "GetCachedProducts(ctx, sessionID)"
-
-    adapters:
-      anthropic:
-        directory: "internal/adapters/anthropic/"
-        file: "anthropic_client.go"
-        implements: "LLMPort"
-        status: "stub"
-
-      json_store:
-        directory: "internal/adapters/json_store/"
-        file: "json_product_store.go"
-        implements: "SearchPort"
-        status: "stub"
-
-      memory:
-        directory: "internal/adapters/memory/"
-        file: "memory_cache.go"
-        implements: "CachePort"
-        status: "stub"
-
-    usecases:
-      chat_analyze_query:
-        file: "internal/usecases/chat_analyze_query.go"
-        struct: "AnalyzeQueryUseCase"
-        purpose: "Agent 1: запрос → intent + search params"
-        status: "stub"
-
-      chat_compose_widgets:
-        file: "internal/usecases/chat_compose_widgets.go"
-        struct: "ComposeWidgetsUseCase"
-        purpose: "Agent 2: данные → layout decision"
-        status: "stub"
-
-      chat_execute_search:
-        file: "internal/usecases/chat_execute_search.go"
-        struct: "ExecuteSearchUseCase"
-        purpose: "Поиск товаров по параметрам"
-        status: "stub"
-
-    prompts:
-      analyze_query:
-        file: "internal/prompts/prompt_analyze_query.go"
-        purpose: "Промпт для Agent 1"
-        output: "intent, search_params"
-
-      compose_widgets:
-        file: "internal/prompts/prompt_compose_widgets.go"
-        purpose: "Промпт для Agent 2"
-        output: "widget_type, formation, columns"
-
-api_endpoints:
-  active:
+  handlers:
     chat:
-      method: "POST"
-      path: "/api/chat"
-      body: "{ message: string }"
+      file: "internal/handlers/handler_chat.go"
+      struct: "ChatHandler"
+      endpoint: "POST /api/v1/chat"
+      request: "{ message: string }"
       response: "{ response: string }"
-      handler: "handleChat()"
+      status: "implemented"
 
     health:
-      method: "GET"
-      path: "/health"
-      response: "OK"
+      file: "internal/handlers/handler_health.go"
+      endpoints:
+        - "GET /health"
+        - "GET /ready"
+
+  domain:
+    atom_entity:
+      file: "internal/domain/atom_entity.go"
+      types: ["AtomType", "Atom"]
+
+    widget_entity:
+      file: "internal/domain/widget_entity.go"
+      types: ["WidgetType", "Widget"]
+
+    formation_entity:
+      file: "internal/domain/formation_entity.go"
+      types: ["FormationType", "Formation"]
+
+    message_entity:
+      file: "internal/domain/message_entity.go"
+      types: ["MessageRole", "Message"]
+
+    session_entity:
+      file: "internal/domain/session_entity.go"
+      types: ["Session"]
+
+    product_entity:
+      file: "internal/domain/product_entity.go"
+      types: ["Product"]
+
+    domain_errors:
+      file: "internal/domain/domain_errors.go"
+      errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable"]
+
+api_endpoints:
+  chat:
+    method: "POST"
+    path: "/api/v1/chat"
+    body: "{ message: string }"
+    response: "{ response: string }"
+
+  health:
+    method: "GET"
+    path: "/health"
+    response: "OK"
+
+  ready:
+    method: "GET"
+    path: "/ready"
+    response: "OK"
 
 patterns:
   naming:
@@ -225,9 +185,8 @@ patterns:
     - "Execute(ctx, req) method"
 
 run_commands:
-  start_active: "cd project/backend && go run main.go anthropic.go gigachat.go"
-  start_hexagonal: "cd project/backend && go run ./cmd/server/"
-  build: "cd project/backend && go build -o server ."
+  start: "cd project/backend && go run ./cmd/server/"
+  build: "cd project/backend && go build -o server ./cmd/server/"
   test: "cd project/backend && go test ./..."
 
 dependencies:
@@ -238,14 +197,20 @@ env_vars:
   required:
     - "ANTHROPIC_API_KEY"
   optional:
-    - "AI_PROVIDER (anthropic|gigachat)"
-    - "BACKEND_PORT (default: 8080)"
-    - "GIGACHAT_CLIENT_ID"
-    - "GIGACHAT_CLIENT_SECRET"
+    - "PORT (default: 8080)"
+    - "ENVIRONMENT (default: development)"
+    - "LLM_MODEL (default: claude-haiku-4-5-20251001)"
+    - "LOG_LEVEL (default: info)"
 
 migration_status:
-  description: "Старый код работает, новая архитектура в stubs"
+  description: "Hexagonal architecture active, simple chat implemented"
+  completed:
+    - "Migrate to cmd/server/main.go entry point"
+    - "Implement LLMPort with Chat method"
+    - "Implement Anthropic adapter"
+    - "Implement SendMessageUseCase"
+    - "Implement ChatHandler"
   next_steps:
-    - "Мигрировать anthropic.go → internal/adapters/anthropic/"
-    - "Реализовать two-agent pipeline в usecases/"
-    - "Обновить main.go для использования новой структуры"
+    - "Add two-agent pipeline (AnalyzeQuery + ComposeWidgets)"
+    - "Implement product search"
+    - "Add widget rendering"

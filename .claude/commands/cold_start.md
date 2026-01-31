@@ -1,11 +1,6 @@
 # Cold Start
 
-Initialize session: check config, sync expertise, load context.
-
-## Variables
-
-CONFIG: ADW/adw.yaml
-EXPERTS_DIR: .claude/commands/experts/
+Cold start: sync expertise and load project context.
 
 ## Instructions
 
@@ -13,42 +8,40 @@ Use at the beginning of a new session to load up-to-date context.
 
 ## Workflow
 
-### Step 1: Check Configuration
-Read `ADW/adw.yaml`:
-- If missing, suggest running `/init`
-- If empty paths, note that project structure needs setup
+### Step 1: Sync All Experts
+Update expertise for all domains:
 
-### Step 2: Sync Available Experts
-For each expert in CONFIG experts list:
-1. Check if `EXPERTS_DIR/{expert}/expertise.yaml` exists
-2. If exists and has content, verify against codebase
-3. If empty or outdated, note for user
+**Backend:**
+- Read `.claude/commands/experts/backend/expertise.yaml`
+- Compare with `project/backend/cmd/server/main.go`, `project/backend/internal/handlers/*.go`, `project/backend/internal/domain/*.go`
+- Update if discrepancies found
 
-### Step 3: Project Overview
+**Frontend:**
+- Read `.claude/commands/experts/frontend/expertise.yaml`
+- Compare with `project/frontend/src/App.jsx`, `project/frontend/src/shared/api/apiClient.js`, `project/frontend/src/features/chat/*.jsx`
+- Update if discrepancies found
+
+### Step 2: Prime
+After syncing expertise:
 ```bash
-git ls-files | head -50
+git ls-files
 ```
+Read README files if they exist:
+- `README.md`
 
-Read README.md if exists.
-
-### Step 4: Summary
-Output brief summary about the project and readiness.
+### Step 3: Summary
+Output brief summary about the project and readiness to work.
 
 ## Output
 
 ```
 Cold Start Complete
 
-Config: ADW/adw.yaml [found|missing]
+Expertise Sync:
+- backend: [updated|no changes]
+- frontend: [updated|no changes]
 
-Project: {name from config}
-Stack: {detected stack}
-Paths:
-  - Backend: {path} [exists|missing]
-  - Frontend: {path} [exists|missing]
-
-Expertise:
-- {expert}: [ready|empty|outdated]
-
-Status: Ready | Needs /init | Needs setup
+Project: Keepstar One Ultra
+Stack: Go/Hexagonal + React/Vite/FSD
+Status: Ready to work
 ```
