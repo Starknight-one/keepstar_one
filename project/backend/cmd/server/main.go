@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
+	"github.com/joho/godotenv"
 	"keepstar/internal/adapters/anthropic"
-	jsonstore "keepstar/internal/adapters/json_store"
-	"keepstar/internal/adapters/memory"
 	"keepstar/internal/config"
 	"keepstar/internal/handlers"
 	"keepstar/internal/logger"
@@ -14,6 +14,11 @@ import (
 )
 
 func main() {
+	// Load .env file
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Println("Warning: .env file not found, using environment variables")
+	}
+
 	// Load config
 	cfg := config.Load()
 
@@ -22,16 +27,12 @@ func main() {
 
 	// Initialize adapters
 	llmClient := anthropic.NewClient(cfg.AnthropicAPIKey, cfg.LLMModel)
-	productStore := jsonstore.NewProductStore("data/products.json")
-	cache := memory.NewCache()
 
 	// Initialize use cases
-	analyzeQuery := usecases.NewAnalyzeQueryUseCase(llmClient)
-	composeWidgets := usecases.NewComposeWidgetsUseCase(llmClient)
-	executeSearch := usecases.NewExecuteSearchUseCase(productStore, cache)
+	sendMessage := usecases.NewSendMessageUseCase(llmClient)
 
 	// Initialize handlers
-	chatHandler := handlers.NewChatHandler(analyzeQuery, composeWidgets, executeSearch)
+	chatHandler := handlers.NewChatHandler(sendMessage)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Setup routes

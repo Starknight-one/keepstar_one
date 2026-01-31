@@ -17,7 +17,7 @@ func Load() *Config {
 		Port:            getEnv("PORT", "8080"),
 		Environment:     getEnv("ENVIRONMENT", "development"),
 		AnthropicAPIKey: getEnv("ANTHROPIC_API_KEY", ""),
-		LLMModel:        getEnv("LLM_MODEL", "claude-3-haiku-20240307"),
+		LLMModel:        getEnv("LLM_MODEL", "claude-haiku-4-5-20251001"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 }

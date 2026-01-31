@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import Chat from './components/Chat'
+import { ChatPanel } from './features/chat/ChatPanel'
 import './App.css'
 
 function App() {
@@ -86,7 +86,7 @@ function App() {
         {isChatOpen ? '✕' : '💬'}
       </button>
 
-      {isChatOpen && <Chat onClose={() => setIsChatOpen(false)} />}
+      {isChatOpen && <ChatPanel onClose={() => setIsChatOpen(false)} />}
     </div>
   )
 }

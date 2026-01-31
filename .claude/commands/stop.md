@@ -4,19 +4,19 @@ Stop the project servers.
 
 ## Instructions
 
-1. Kill the backend server:
+1. Kill the backend server (port 8080):
    ```bash
-   pkill -f "project/backend/server" || true
+   lsof -ti:8080 | xargs kill -9 2>/dev/null || true
    ```
 
-2. Kill the frontend dev server:
+2. Kill the frontend dev server (port 5173):
    ```bash
-   pkill -f "vite" || true
+   lsof -ti:5173 | xargs kill -9 2>/dev/null || true
    ```
 
-3. Kill the dev-inspector:
+3. Kill the dev-inspector (port 3457):
    ```bash
-   pkill -f "dev-inspector/server.js" || true
+   lsof -ti:3457 | xargs kill -9 2>/dev/null || true
    ```
 
 ## Output

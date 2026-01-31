@@ -6,7 +6,7 @@ Start the project (backend + frontend + dev-inspector).
 
 1. Build and start the Go backend in background:
    ```bash
-   cd /Users/starknight/Keepstar_one_ultra/project/backend && go build -o server . && ./server &
+   cd /Users/starknight/Keepstar_one_ultra/project/backend && go build -o server ./cmd/server/ && ./server &
    ```
 
 2. Start the React frontend in background:
