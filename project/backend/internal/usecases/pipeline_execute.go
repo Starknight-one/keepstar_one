@@ -19,11 +19,27 @@ type PipelineExecuteRequest struct {
 
 // PipelineExecuteResponse is the output from the full pipeline
 type PipelineExecuteResponse struct {
-	Formation *domain.FormationWithData
-	Delta     *domain.Delta
-	Agent1Ms  int
-	Agent2Ms  int
-	TotalMs   int
+	Formation   *domain.FormationWithData
+	Delta       *domain.Delta
+	Agent1Ms    int
+	Agent2Ms    int
+	TotalMs     int
+	Agent1Usage domain.LLMUsage
+	Agent2Usage domain.LLMUsage
+	// Detailed breakdown from Agent 1
+	Agent1LLMMs      int64
+	Agent1ToolMs     int64
+	ToolCalled       string
+	ToolInput        string
+	ToolResult       string
+	ProductsFound    int
+	// Detailed breakdown from Agent 2
+	Agent2LLMMs      int64
+	Agent2Prompt     string
+	Agent2RawResp    string
+	TemplateJSON     string
+	MetaCount        int
+	MetaFields       []string
 }
 
 // PipelineExecuteUseCase orchestrates Agent 1 → Agent 2 → Formation
@@ -31,6 +47,7 @@ type PipelineExecuteUseCase struct {
 	agent1UC  *Agent1ExecuteUseCase
 	agent2UC  *Agent2ExecuteUseCase
 	statePort ports.StatePort
+	cachePort ports.CachePort
 	log       *logger.Logger
 }
 
@@ -39,6 +56,7 @@ type PipelineExecuteUseCase struct {
 func NewPipelineExecuteUseCase(
 	llm ports.LLMPort,
 	statePort ports.StatePort,
+	cachePort ports.CachePort,
 	toolRegistry *tools.Registry,
 	log *logger.Logger,
 ) *PipelineExecuteUseCase {
@@ -46,6 +64,7 @@ func NewPipelineExecuteUseCase(
 		agent1UC:  NewAgent1ExecuteUseCase(llm, statePort, toolRegistry, log),
 		agent2UC:  NewAgent2ExecuteUseCase(llm, statePort),
 		statePort: statePort,
+		cachePort: cachePort,
 		log:       log,
 	}
 }
@@ -53,6 +72,24 @@ func NewPipelineExecuteUseCase(
 // Execute runs the full pipeline: query → Agent 1 → Agent 2 → Formation
 func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecuteRequest) (*PipelineExecuteResponse, error) {
 	start := time.Now()
+
+	// Ensure session exists (required for FK constraint on state table)
+	if uc.cachePort != nil {
+		_, err := uc.cachePort.GetSession(ctx, req.SessionID)
+		if err == domain.ErrSessionNotFound {
+			// Create new session
+			session := &domain.Session{
+				ID:             req.SessionID,
+				Status:         domain.SessionStatusActive,
+				Messages:       []domain.Message{},
+				StartedAt:      time.Now(),
+				LastActivityAt: time.Now(),
+			}
+			if err := uc.cachePort.SaveSession(ctx, session); err != nil {
+				return nil, fmt.Errorf("create session: %w", err)
+			}
+		}
+	}
 
 	// Step 1: Agent 1 (Tool Caller)
 	agent1Resp, err := uc.agent1UC.Execute(ctx, Agent1ExecuteRequest{
@@ -92,10 +129,26 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	}
 
 	return &PipelineExecuteResponse{
-		Formation: formation,
-		Delta:     agent1Resp.Delta,
-		Agent1Ms:  agent1Resp.LatencyMs,
-		Agent2Ms:  agent2Resp.LatencyMs,
-		TotalMs:   int(time.Since(start).Milliseconds()),
+		Formation:     formation,
+		Delta:         agent1Resp.Delta,
+		Agent1Ms:      agent1Resp.LatencyMs,
+		Agent2Ms:      agent2Resp.LatencyMs,
+		TotalMs:       int(time.Since(start).Milliseconds()),
+		Agent1Usage:   agent1Resp.Usage,
+		Agent2Usage:   agent2Resp.Usage,
+		// Agent 1 details
+		Agent1LLMMs:   agent1Resp.LLMCallMs,
+		Agent1ToolMs:  agent1Resp.ToolExecuteMs,
+		ToolCalled:    agent1Resp.ToolName,
+		ToolInput:     agent1Resp.ToolInput,
+		ToolResult:    agent1Resp.ToolResult,
+		ProductsFound: agent1Resp.ProductsFound,
+		// Agent 2 details
+		Agent2LLMMs:   agent2Resp.LLMCallMs,
+		Agent2Prompt:  agent2Resp.PromptSent,
+		Agent2RawResp: agent2Resp.RawResponse,
+		TemplateJSON:  agent2Resp.TemplateJSON,
+		MetaCount:     agent2Resp.MetaCount,
+		MetaFields:    agent2Resp.MetaFields,
 	}, nil
 }

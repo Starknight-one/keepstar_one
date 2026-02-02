@@ -19,8 +19,19 @@ Stop the project servers.
    lsof -ti:3457 | xargs kill -9 2>/dev/null || true
    ```
 
+4. Also kill any lingering node/vite processes:
+   ```bash
+   pkill -f "node.*vite" 2>/dev/null || true
+   pkill -f "backend/server" 2>/dev/null || true
+   ```
+
 ## Output
 
 ```
 Project stopped.
+
+Killed:
+- Backend (port 8080)
+- Frontend (port 5173)
+- Dev Inspector (port 3457)
 ```

@@ -1,0 +1,62 @@
+/* Formation layouts */
+.formation {
+  display: flex;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+/* Grid mode */
+.formation-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.formation-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.formation-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.formation-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+/* Carousel mode */
+.formation-carousel {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  gap: 16px;
+  padding: 8px 4px;
+}
+
+.formation-carousel > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+
+.formation-carousel::-webkit-scrollbar {
+  height: 6px;
+}
+
+.formation-carousel::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+/* Single mode */
+.formation-single {
+  display: flex;
+  justify-content: center;
+}
+
+.formation-single .widget {
+  width: 100%;
+  max-width: 400px;
+}
+
+/* List mode */
+.formation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.formation-list .widget {
+  width: 100%;
+  max-width: 100%;
+}

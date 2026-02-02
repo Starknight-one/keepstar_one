@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { sendChatMessage } from '../../shared/api/apiClient';
+import { sendPipelineQuery } from '../../shared/api/apiClient';
 import { MessageRole } from '../../entities/message/messageModel';
 
 const SESSION_STORAGE_KEY = 'chatSessionId';
@@ -20,7 +20,7 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
     setError(null);
 
     try {
-      const response = await sendChatMessage(text, sessionId);
+      const response = await sendPipelineQuery(sessionId, text);
 
       // Save sessionId to localStorage if new
       if (response.sessionId && response.sessionId !== sessionId) {
@@ -28,11 +28,12 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
         setSessionId(response.sessionId);
       }
 
-      // Add assistant message
+      // Add assistant message with formation
       addMessage({
         id: (Date.now() + 1).toString(),
         role: MessageRole.ASSISTANT,
-        content: response.response,
+        content: '', // No text content, just formation
+        formation: response.formation,
         timestamp: new Date(),
       });
     } catch (err) {

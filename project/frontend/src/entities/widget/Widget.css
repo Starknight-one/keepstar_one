@@ -1,0 +1,60 @@
+/* Widget base */
+.widget {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  overflow: hidden;
+}
+
+/* Widget sizes */
+.widget.size-tiny {
+  width: 80px;
+  min-width: 80px;
+  max-width: 110px;
+  padding: 8px;
+}
+
+.widget.size-small {
+  width: 160px;
+  min-width: 160px;
+  max-width: 220px;
+  padding: 12px;
+}
+
+.widget.size-medium {
+  width: 280px;
+  min-width: 280px;
+  max-width: 350px;
+  padding: 16px;
+}
+
+.widget.size-large {
+  width: 384px;
+  min-width: 384px;
+  max-width: 460px;
+  padding: 20px;
+}
+
+/* Widget types - extend .widget base class */
+.widget-product-card {
+  /* Inherits from .widget via className="widget widget-product-card" */
+}
+
+.widget-product-card .atom-image {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.widget-text-block {
+  padding: 16px;
+}
+
+.widget-quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

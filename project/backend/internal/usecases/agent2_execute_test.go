@@ -226,7 +226,7 @@ func TestPipelineExecute_Integration(t *testing.T) {
 	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter)
 
 	// Initialize Pipeline
-	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
+	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, log)
 
 	// Helper to create session
 	createSession := func(sessionID string) error {
@@ -368,7 +368,7 @@ func TestPipelineExecute_CostReport(t *testing.T) {
 	// Create both use cases to get individual costs
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
 	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter)
-	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
+	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, log)
 
 	sessionID := uuid.New().String()
 

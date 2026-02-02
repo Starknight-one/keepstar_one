@@ -1,4 +1,5 @@
 import { MessageRole } from './messageModel';
+import { FormationRenderer } from '../formation/FormationRenderer';
 import { WidgetRenderer } from '../widget/WidgetRenderer';
 
 export function MessageBubble({ message }) {
@@ -10,12 +11,18 @@ export function MessageBubble({ message }) {
         <div className="message-content">{message.content}</div>
       )}
 
-      {message.widgets?.length > 0 && (
-        <div className={`message-widgets formation-${message.formation?.type || 'list'}`}>
+      {/* Legacy widgets support (without formation) */}
+      {message.widgets?.length > 0 && !message.formation && (
+        <div className={`message-widgets formation-${message.formationType || 'list'}`}>
           {message.widgets.map((widget) => (
             <WidgetRenderer key={widget.id} widget={widget} />
           ))}
         </div>
+      )}
+
+      {/* New formation support */}
+      {message.formation && (
+        <FormationRenderer formation={message.formation} />
       )}
     </div>
   );

@@ -121,8 +121,8 @@ func main() {
 
 	// Initialize Pipeline orchestrator (Agent 1 → Agent 2 → Formation)
 	var pipelineUC *usecases.PipelineExecuteUseCase
-	if toolRegistry != nil && stateAdapter != nil {
-		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog)
+	if toolRegistry != nil && stateAdapter != nil && cacheAdapter != nil {
+		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, appLog)
 		appLog.Info("pipeline_usecase_initialized", "status", "ok")
 	}
 	_ = pipelineUC // Pipeline is ready to be called from handlers
@@ -135,9 +135,32 @@ func main() {
 	sessionHandler := handlers.NewSessionHandler(cacheAdapter)
 	healthHandler := handlers.NewHealthHandler()
 
+	// Create metrics store for debug page
+	metricsStore := handlers.NewMetricsStore()
+
+	// Initialize Pipeline handler (if pipeline use case is available)
+	var pipelineHandler *handlers.PipelineHandler
+	if pipelineUC != nil {
+		pipelineHandler = handlers.NewPipelineHandler(pipelineUC, metricsStore)
+		appLog.Info("pipeline_handler_initialized", "status", "ok")
+	}
+
+	// Initialize Debug handler
+	var debugHandler *handlers.DebugHandler
+	if stateAdapter != nil {
+		debugHandler = handlers.NewDebugHandler(stateAdapter, cacheAdapter, metricsStore)
+	}
+
 	// Setup routes
 	mux := http.NewServeMux()
-	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler)
+	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler)
+
+	// Setup debug routes
+	if debugHandler != nil {
+		mux.HandleFunc("/debug/session/", debugHandler.HandleDebugPage)
+		mux.HandleFunc("/debug/api", debugHandler.HandleDebugAPI)
+		appLog.Info("debug_routes_enabled", "url", "/debug/session/")
+	}
 
 	// Setup catalog routes if database available
 	if catalogAdapter != nil {

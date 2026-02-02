@@ -87,3 +87,26 @@ export async function getProduct(tenantSlug, productId) {
 
   return response.json();
 }
+
+// Pipeline API - sends query through Agent 1 -> Agent 2 -> Formation
+export async function sendPipelineQuery(sessionId, query) {
+  const body = { query };
+  if (sessionId) {
+    body.sessionId = sessionId;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/pipeline`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  // Response: { sessionId, formation, agent1Ms, agent2Ms, totalMs }
+  return response.json();
+}

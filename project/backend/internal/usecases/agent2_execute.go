@@ -45,6 +45,13 @@ type Agent2ExecuteResponse struct {
 	Template  *domain.FormationTemplate
 	Usage     domain.LLMUsage
 	LatencyMs int
+	// Detailed timing and data
+	LLMCallMs    int64  `json:"llmCallMs"`
+	PromptSent   string `json:"promptSent"`
+	RawResponse  string `json:"rawResponse"`
+	TemplateJSON string `json:"templateJson"`
+	MetaCount    int    `json:"metaCount"`
+	MetaFields   []string `json:"metaFields"`
 }
 
 // Agent2ExecuteUseCase executes Agent 2 (Template Builder)
@@ -87,7 +94,9 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	userPrompt := prompts.BuildAgent2Prompt(state.Current.Meta, req.LayoutHint)
 
 	// Call LLM with usage tracking
+	llmStart := time.Now()
 	llmResp, err := uc.llm.ChatWithUsage(ctx, prompts.Agent2SystemPrompt, userPrompt)
+	llmDuration := time.Since(llmStart).Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("llm call: %w", err)
 	}
@@ -110,8 +119,14 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	}
 
 	return &Agent2ExecuteResponse{
-		Template:  &template,
-		Usage:     llmResp.Usage,
-		LatencyMs: int(time.Since(start).Milliseconds()),
+		Template:     &template,
+		Usage:        llmResp.Usage,
+		LatencyMs:    int(time.Since(start).Milliseconds()),
+		LLMCallMs:    llmDuration,
+		PromptSent:   userPrompt,
+		RawResponse:  llmResp.Text,
+		TemplateJSON: jsonStr,
+		MetaCount:    state.Current.Meta.Count,
+		MetaFields:   state.Current.Meta.Fields,
 	}, nil
 }

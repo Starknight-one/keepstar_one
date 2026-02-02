@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -23,6 +24,14 @@ type Agent1ExecuteResponse struct {
 	Delta     *domain.Delta
 	Usage     domain.LLMUsage
 	LatencyMs int
+	// Detailed timing breakdown
+	LLMCallMs      int64  `json:"llmCallMs"`
+	ToolExecuteMs  int64  `json:"toolExecuteMs"`
+	ToolName       string `json:"toolName"`
+	ToolInput      string `json:"toolInput"`
+	ToolResult     string `json:"toolResult"`
+	ProductsFound  int    `json:"productsFound"`
+	StopReason     string `json:"stopReason"`
 }
 
 // Agent1ExecuteUseCase executes Agent 1 (Tool Caller)
@@ -103,12 +112,19 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	// Process tool calls
 	var delta *domain.Delta
 	var toolName string
+	var toolInput string
+	var toolResult string
+	var toolDuration int64
 	var productsFound int
 
 	if len(llmResp.ToolCalls) > 0 {
 		// Execute first tool call (Agent 1 should only call one)
 		toolCall := llmResp.ToolCalls[0]
 		toolName = toolCall.Name
+		// Serialize tool input to JSON string for debug
+		if inputBytes, err := json.Marshal(toolCall.Input); err == nil {
+			toolInput = string(inputBytes)
+		}
 
 		uc.log.Debug("tool_call_received",
 			"tool", toolCall.Name,
@@ -118,7 +134,8 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 
 		toolStart := time.Now()
 		result, err := uc.toolRegistry.Execute(ctx, req.SessionID, toolCall)
-		toolDuration := time.Since(toolStart).Milliseconds()
+		toolDuration = time.Since(toolStart).Milliseconds()
+		toolResult = result.Content
 
 		if err != nil {
 			uc.log.Error("tool_execution_failed", "error", err, "tool", toolCall.Name)
@@ -172,8 +189,15 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	)
 
 	return &Agent1ExecuteResponse{
-		Delta:     delta,
-		Usage:     llmResp.Usage,
-		LatencyMs: int(totalDuration),
+		Delta:         delta,
+		Usage:         llmResp.Usage,
+		LatencyMs:     int(totalDuration),
+		LLMCallMs:     llmDuration,
+		ToolExecuteMs: toolDuration,
+		ToolName:      toolName,
+		ToolInput:     toolInput,
+		ToolResult:    toolResult,
+		ProductsFound: productsFound,
+		StopReason:    llmResp.StopReason,
 	}, nil
 }
