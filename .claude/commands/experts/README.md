@@ -19,10 +19,24 @@ The difference between a generic agent and an Agent Expert: **one executes and f
 
 ## Available Experts
 
-| Expert | Domain | Architecture |
-|--------|--------|--------------|
-| `backend` | Go API, hexagonal layers, handlers, usecases | Hexagonal (Ports & Adapters) |
-| `frontend` | React, components, hooks, widgets | Feature-Sliced Design |
+### Backend (Hexagonal Architecture)
+
+| Expert | Layer | Scope |
+|--------|-------|-------|
+| `backend-domain` | domain | Entities, types, errors |
+| `backend-ports` | ports | Interfaces (contracts) |
+| `backend-adapters` | adapters | PostgreSQL, Anthropic |
+| `backend-usecases` | usecases | Business logic |
+| `backend-handlers` | handlers | HTTP, middleware, routes |
+| `backend-pipeline` | tools/prompts | Agent tools, LLM prompts |
+
+### Frontend (Feature-Sliced Design)
+
+| Expert | Layer | Scope |
+|--------|-------|-------|
+| `frontend-shared` | shared | API client, hooks |
+| `frontend-entities` | entities | Atom, widget, formation |
+| `frontend-features` | features | Chat, catalog, overlay |
 
 ## File Structure
 
@@ -39,65 +53,20 @@ experts/<domain>/
 
 ### Ask Questions
 ```
-/experts:backend:question "How do I add a new use case?"
-/experts:frontend:question "Where are widgets rendered?"
+/experts:backend-domain:question "What entities exist?"
+/experts:backend-handlers:question "What endpoints are available?"
+/experts:frontend-features:question "How does chat work?"
 ```
 
 ### Sync with Code
 ```
-/experts:backend:self-improve true    # With git diff
-/experts:frontend:self-improve false  # Without git diff
-/sync-experts                         # All experts
+/experts:backend-usecases:self-improve
+/sync-experts   # All experts
 ```
 
-## Writing Expertise
+## Guidelines
 
-### expertise.yaml Format
-
-```yaml
-overview:
-  description: "Brief description"
-  architecture: "Hexagonal | Feature-Sliced"
-
-project_structure:
-  root: "path/"
-  active_code: {}      # Working code
-  new_structure: {}    # Stubs/future
-
-layer_rules:
-  layer_name:
-    imports: "What can import"
-    contains: "What goes here"
-
-core_implementation:
-  # Detailed file mapping
-
-patterns:
-  naming: {}
-  structure: {}
-
-run_commands:
-  start: "command"
-  build: "command"
-
-migration_status:
-  description: "Current state"
-  next_steps: []
-```
-
-### Guidelines
-
-- Keep it concise — mental model, not docs
+- Keep each expertise ~100 lines
 - Focus on: file locations, patterns, key structures
-- Respect line limits (300 lines max)
 - Update after significant code changes
-
-## ACT → LEARN → REUSE Cycle
-
-```
-/feature → /build    # ACT: Write code
-/sync-experts        # LEARN: Update expertise
-Next session         # REUSE: Start with knowledge
-```
-
-Each cycle adds knowledge. Sessions start smarter over time.
+- Expertise matches hexagonal/FSD layers

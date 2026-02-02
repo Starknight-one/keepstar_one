@@ -10,14 +10,14 @@ This command "sets in stone" the current state.
 ## Workflow
 
 ### Step 1: Sync Expertise
-Run `/sync-experts` or manually:
-- Read `.claude/commands/experts/backend/expertise.yaml`
-- Compare with `project/backend/` code
-- Update if discrepancies
+Run `/sync-experts` to update all expertise files:
 
-- Read `.claude/commands/experts/frontend/expertise.yaml`
-- Compare with `project/frontend/` code
-- Update if discrepancies
+Backend (hexagonal layers):
+- `backend-domain`, `backend-ports`, `backend-adapters`
+- `backend-usecases`, `backend-handlers`, `backend-pipeline`
+
+Frontend (FSD layers):
+- `frontend-shared`, `frontend-entities`, `frontend-features`
 
 ### Step 2: Sync README
 Run `/sync-readme`:

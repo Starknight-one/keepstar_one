@@ -20,33 +20,43 @@ Check and update README files using expertise as reference. Skip node_modules.
 - `ADW/dev-inspector/README.md` - dev-inspector usage
 
 ### Backend (Hexagonal Architecture)
-Use `.claude/commands/experts/backend/expertise.yaml` as reference.
+Use expertise files as reference:
+- `.claude/commands/experts/backend-domain/expertise.yaml`
+- `.claude/commands/experts/backend-handlers/expertise.yaml`
+- `.claude/commands/experts/backend-usecases/expertise.yaml`
 
+READMEs to check:
 - `project/backend/README.md` - backend overview
 - `project/backend/internal/domain/README.md` - entities
 - `project/backend/internal/ports/README.md` - interfaces
 - `project/backend/internal/adapters/README.md` - adapters index
 - `project/backend/internal/adapters/anthropic/README.md` - LLM adapter
-- `project/backend/internal/adapters/json_store/README.md` - product store
-- `project/backend/internal/adapters/memory/README.md` - cache
+- `project/backend/internal/adapters/postgres/README.md` - PostgreSQL
 - `project/backend/internal/usecases/README.md` - business logic
 - `project/backend/internal/handlers/README.md` - HTTP handlers
 - `project/backend/internal/prompts/README.md` - LLM prompts
+- `project/backend/internal/tools/README.md` - Tool executors
 - `project/backend/internal/config/README.md` - configuration
 - `project/backend/internal/logger/README.md` - logging
 
 ### Frontend (Feature-Sliced Design)
-Use `.claude/commands/experts/frontend/expertise.yaml` as reference.
+Use expertise files as reference:
+- `.claude/commands/experts/frontend-shared/expertise.yaml`
+- `.claude/commands/experts/frontend-entities/expertise.yaml`
+- `.claude/commands/experts/frontend-features/expertise.yaml`
 
+READMEs to check:
 - `project/frontend/README.md` - frontend overview
 - `project/frontend/src/shared/README.md` - shared layer
 - `project/frontend/src/shared/api/README.md` - API client
 - `project/frontend/src/entities/README.md` - entities layer
 - `project/frontend/src/entities/atom/README.md` - atom entity
 - `project/frontend/src/entities/widget/README.md` - widget entity
+- `project/frontend/src/entities/formation/README.md` - formation entity
 - `project/frontend/src/entities/message/README.md` - message entity
 - `project/frontend/src/features/README.md` - features layer
 - `project/frontend/src/features/chat/README.md` - chat feature
+- `project/frontend/src/features/catalog/README.md` - catalog feature
 - `project/frontend/src/features/overlay/README.md` - overlay feature
 - `project/frontend/src/features/canvas/README.md` - canvas feature
 

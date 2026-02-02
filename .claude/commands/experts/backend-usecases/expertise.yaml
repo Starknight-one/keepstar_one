@@ -1,0 +1,94 @@
+# Backend Usecases Expertise
+# Business logic - 1 file = 1 use case
+
+overview:
+  layer: "usecases"
+  path: "project/backend/internal/usecases/"
+  imports: "domain/, ports/"
+  contains: "Business logic orchestration"
+
+pattern:
+  - "Struct with port dependencies"
+  - "NewXxxUseCase() constructor"
+  - "Execute(ctx, req) method"
+  - "Graceful degradation if DB not configured"
+
+usecases:
+  chat:
+    send_message:
+      file: "chat_send_message.go"
+      struct: "SendMessageUseCase"
+      purpose: "Send message to LLM, save to DB, track events"
+      methods:
+        - "Execute(ctx, req) (*SendMessageResponse, error)"
+        - "WithSessionTTL(duration) *SendMessageUseCase"
+      features:
+        - "Session management with sliding TTL (10 min)"
+        - "Message persistence to PostgreSQL"
+        - "Event tracking (chat_opened, message_sent, message_received)"
+
+  catalog:
+    list_products:
+      file: "catalog_list_products.go"
+      struct: "ListProductsUseCase"
+      purpose: "List products for tenant with filtering"
+      methods: ["Execute(ctx, req) (*ListProductsResponse, error)"]
+
+    get_product:
+      file: "catalog_get_product.go"
+      struct: "GetProductUseCase"
+      purpose: "Get single product with master data merging"
+      methods: ["Execute(ctx, req) (*Product, error)"]
+
+  pipeline:
+    agent1_execute:
+      file: "agent1_execute.go"
+      struct: "Agent1ExecuteUseCase"
+      purpose: "Agent 1 Tool Caller - query → tool call → state"
+      request: "{ SessionID, Query }"
+      response: "{ Delta, Usage, LatencyMs, ToolCalled, ToolInput, ToolResult }"
+      flow:
+        - "Get or create session state"
+        - "Call LLM with tools (ChatWithTools)"
+        - "Execute tool call via Registry"
+        - "Create and save delta"
+
+    agent2_execute:
+      file: "agent2_execute.go"
+      struct: "Agent2ExecuteUseCase"
+      purpose: "Agent 2 Template Builder - meta → template"
+      request: "{ SessionID, LayoutHint }"
+      response: "{ Template, Usage, LatencyMs, Prompt, RawResp }"
+      flow:
+        - "Get current state (must exist after Agent 1)"
+        - "Build prompt with meta only (NOT raw data)"
+        - "Call LLM with ChatWithUsage"
+        - "Parse JSON template, save to state"
+
+    pipeline_execute:
+      file: "pipeline_execute.go"
+      struct: "PipelineExecuteUseCase"
+      purpose: "Orchestrator: Agent 1 → Agent 2 → Formation"
+      request: "{ SessionID, Query }"
+      response: "{ Formation, Delta, Agent1Ms, Agent2Ms, TotalMs, ... }"
+      flow:
+        - "Step 1: Agent 1 (Tool Caller)"
+        - "Step 2: Agent 2 (Template Builder)"
+        - "Step 3: ApplyTemplate → FormationWithData"
+
+    template_apply:
+      file: "template_apply.go"
+      purpose: "Apply FormationTemplate to products"
+      functions:
+        - "ApplyTemplate(template, products) (*FormationWithData, error)"
+      field_mapping: ["id→ID", "name→Name", "price→Price", "images→Images[0]", "rating→Rating", "brand→Brand"]
+
+gotchas:
+  - "Create session (CachePort) before creating state (StatePort)"
+  - "Tools return 'ok'/'empty', not raw data"
+  - "Agent1 stops after first tool call, doesn't see result"
+  - "Agent2 receives meta only, never raw product data"
+  - "Agent2 expects state to exist (run Agent1 first)"
+  - "LLM may wrap JSON in markdown code blocks, use extractJSON()"
+
+naming: "{domain}_{action}.go"

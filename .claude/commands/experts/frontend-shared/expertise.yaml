@@ -1,0 +1,54 @@
+# Frontend Shared Expertise
+# API client, hooks, utilities - zero project imports
+
+overview:
+  layer: "shared"
+  path: "project/frontend/src/shared/"
+  imports: "Only external libraries"
+  contains: "API client, hooks, UI components, utilities"
+
+api:
+  path: "src/shared/api/"
+  file: "apiClient.js"
+  base_url: "http://localhost:8080/api/v1"
+
+  functions:
+    sendChatMessage:
+      signature: "sendChatMessage(message, sessionId = null)"
+      endpoint: "POST /api/v1/chat"
+      body: "{ message, sessionId? }"
+      response: "{ sessionId, response, latencyMs }"
+
+    getSession:
+      signature: "getSession(sessionId)"
+      endpoint: "GET /api/v1/session/{id}"
+      response: "{ id, status, messages[], startedAt, lastActivityAt }"
+      returns_null: "on 404"
+
+    getProducts:
+      signature: "getProducts(tenantSlug, filters = {})"
+      endpoint: "GET /api/v1/tenants/{slug}/products"
+      filters: ["category", "brand", "search", "minPrice", "maxPrice", "limit", "offset"]
+      response: "{ products: Product[], total: int }"
+
+    getProduct:
+      signature: "getProduct(tenantSlug, productId)"
+      endpoint: "GET /api/v1/tenants/{slug}/products/{id}"
+      response: "Product"
+      returns_null: "on 404"
+
+    sendPipelineQuery:
+      signature: "sendPipelineQuery(sessionId, query)"
+      endpoint: "POST /api/v1/pipeline"
+      body: "{ query, sessionId? }"
+      response: "{ sessionId, formation, agent1Ms, agent2Ms, totalMs }"
+
+patterns:
+  - "All functions are async"
+  - "Return null on 404, throw on other errors"
+  - "JSON content type for all requests"
+
+future_folders:
+  - "hooks/ - Shared hooks"
+  - "ui/ - UI components (buttons, inputs)"
+  - "lib/ - Utilities"

@@ -1,0 +1,78 @@
+# Backend Domain Expertise
+# Entities, types, errors - zero dependencies
+
+overview:
+  layer: "domain"
+  path: "project/backend/internal/domain/"
+  imports: "Nothing from internal/ - only stdlib"
+  contains: "Entities, types, domain errors"
+
+entities:
+  ui_primitives:
+    atom_entity:
+      file: "atom_entity.go"
+      types: ["AtomType", "Atom"]
+    widget_entity:
+      file: "widget_entity.go"
+      types: ["WidgetType", "Widget"]
+    formation_entity:
+      file: "formation_entity.go"
+      types: ["FormationType", "Formation"]
+
+  chat:
+    message_entity:
+      file: "message_entity.go"
+      types: ["MessageRole", "Message"]
+      fields: ["ID", "SessionID", "Role", "Content", "Widgets", "Formation", "TokensUsed", "ModelUsed", "LatencyMs"]
+    session_entity:
+      file: "session_entity.go"
+      types: ["SessionStatus", "Session"]
+      fields: ["ID", "UserID", "TenantID", "Status", "Messages", "Metadata", "StartedAt", "EndedAt", "LastActivityAt"]
+    user_entity:
+      file: "user_entity.go"
+      types: ["ChatUser"]
+    event_entity:
+      file: "event_entity.go"
+      types: ["EventType", "ChatEvent"]
+      event_types: ["chat_opened", "message_sent", "message_received", "chat_closed", "widget_clicked"]
+
+  catalog:
+    product_entity:
+      file: "product_entity.go"
+      types: ["Product"]
+      fields: ["ID", "TenantID", "MasterProductID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Images", "Rating", "Brand", "Category"]
+    tenant_entity:
+      file: "tenant_entity.go"
+      types: ["TenantType", "Tenant"]
+      tenant_types: ["brand", "retailer", "reseller"]
+    category_entity:
+      file: "category_entity.go"
+      types: ["Category"]
+    master_product_entity:
+      file: "master_product_entity.go"
+      types: ["MasterProduct"]
+
+  pipeline:
+    tool_entity:
+      file: "tool_entity.go"
+      types: ["ToolDefinition", "ToolCall", "ToolResult", "LLMMessage", "LLMResponse", "LLMUsage"]
+      helpers: ["LLMUsage.CalculateCost()", "LLMPricing"]
+    template_entity:
+      file: "template_entity.go"
+      types: ["AtomTemplate", "WidgetTemplate", "GridConfig", "FormationTemplate", "FormationWithData"]
+    state_entity:
+      file: "state_entity.go"
+      types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "StateMeta", "StateData", "StateCurrent", "SessionState"]
+      trigger_types: ["USER_QUERY", "WIDGET_ACTION", "SYSTEM"]
+      action_types: ["SEARCH", "FILTER", "SORT", "LAYOUT", "ROLLBACK"]
+
+  errors:
+    file: "domain_errors.go"
+    errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound"]
+
+gotchas:
+  - "Price stored in kopecks (int), not rubles (float)"
+  - "sessionID and tenantID must be valid UUID format"
+  - "ErrSessionNotFound returned when state doesn't exist"
+
+naming: "{entity}_entity.go"

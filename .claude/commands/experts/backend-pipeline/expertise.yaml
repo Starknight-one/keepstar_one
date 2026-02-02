@@ -1,0 +1,87 @@
+# Backend Pipeline Expertise
+# Tools, prompts, agents for two-agent pipeline
+
+overview:
+  layer: "pipeline"
+  paths:
+    tools: "project/backend/internal/tools/"
+    prompts: "project/backend/internal/prompts/"
+  purpose: "LLM tool calling and prompt management"
+
+tools:
+  path: "internal/tools/"
+  imports: "domain/, ports/"
+
+  registry:
+    file: "tool_registry.go"
+    struct: "Registry"
+    purpose: "Central registry for all tool executors"
+    methods:
+      - "NewRegistry(statePort, catalogPort)"
+      - "Register(tool)"
+      - "GetDefinitions() []ToolDefinition"
+      - "Execute(ctx, sessionID, toolCall) (string, error)"
+
+  search_products:
+    file: "tool_search_products.go"
+    struct: "SearchProductsTool"
+    implements: "ToolExecutor"
+    purpose: "Search products and write to state"
+    input_schema:
+      query: "required - search query"
+      category: "optional - category filter"
+      brand: "optional - brand filter"
+      min_price: "optional - minimum price"
+      max_price: "optional - maximum price"
+      limit: "optional - max results (default 10)"
+    returns: "'ok: found N products' or 'empty'"
+
+  interface:
+    name: "ToolExecutor"
+    methods:
+      - "Definition() ToolDefinition"
+      - "Execute(ctx, sessionID, input) (*ToolResult, error)"
+
+prompts:
+  path: "internal/prompts/"
+  imports: "domain/ (for types only)"
+
+  agent1:
+    file: "prompt_analyze_query.go"
+    const: "Agent1SystemPrompt"
+    purpose: "System prompt for Agent 1 (Tool Caller)"
+    rules:
+      - "ALWAYS call a tool, never just text"
+      - "No explanations or clarifying questions"
+      - "Tool results are 'ok' or 'empty' only"
+      - "Stop after getting tool result"
+
+  agent2:
+    file: "prompt_compose_widgets.go"
+    const: "Agent2SystemPrompt"
+    function: "BuildAgent2Prompt(meta StateMeta, layoutHint string) string"
+    purpose: "System prompt for Agent 2 (Template Builder)"
+    rules:
+      - "ONLY output valid JSON, no explanations"
+      - "Use fields that exist in input"
+      - "Choose widget size based on atom count"
+      - "Choose mode based on count (1→single, 2-6→grid, 7+→carousel)"
+
+pipeline_flow:
+  description: "User Query → Agent 1 → Agent 2 → Formation"
+  steps:
+    1: "Agent 1 receives query, calls search_products tool"
+    2: "Tool writes products to state.data, returns 'ok'"
+    3: "Agent 2 receives meta (count, fields), generates template JSON"
+    4: "ApplyTemplate merges template + data → FormationWithData"
+    5: "Frontend renders FormationWithData"
+
+gotchas:
+  - "If brand specified, don't use query as search (AND conflict)"
+  - "Tool writes to state, returns only status string"
+  - "Must resolve tenant slug → UUID before search"
+  - "Agent2 never sees raw data, only meta"
+
+naming:
+  tools: "tool_{name}.go"
+  prompts: "prompt_{name}.go"

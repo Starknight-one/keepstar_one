@@ -1,0 +1,66 @@
+# Backend Adapters Expertise
+# Port implementations - external integrations
+
+overview:
+  layer: "adapters"
+  path: "project/backend/internal/adapters/"
+  imports: "domain/, ports/, external libraries"
+  contains: "Port implementations"
+
+adapters:
+  anthropic:
+    directory: "anthropic/"
+    file: "anthropic_client.go"
+    implements: "LLMPort"
+    status: "implemented"
+    api: "POST https://api.anthropic.com/v1/messages"
+    env:
+      - "ANTHROPIC_API_KEY"
+      - "LLM_MODEL (default: claude-haiku-4-5-20251001)"
+    pricing:
+      haiku: "$1/$5 per 1M tokens (input/output)"
+      sonnet: "$3/$15 per 1M tokens"
+
+  postgres:
+    directory: "postgres/"
+    status: "implemented"
+    implements: ["CachePort", "EventPort", "CatalogPort", "StatePort"]
+    files:
+      - "postgres_client.go - Connection pool (pgxpool)"
+      - "postgres_cache.go - CachePort"
+      - "postgres_events.go - EventPort"
+      - "postgres_catalog.go - CatalogPort with product merging"
+      - "postgres_state.go - StatePort with JSONB"
+      - "migrations.go - Chat tables"
+      - "catalog_migrations.go - Catalog schema"
+      - "state_migrations.go - State tables"
+      - "catalog_seed.go - Seed data"
+    schemas:
+      public: ["chat_users", "chat_sessions", "chat_messages", "chat_events", "chat_session_state", "chat_session_deltas"]
+      catalog: ["tenants", "categories", "master_products", "products"]
+    env: "DATABASE_URL=postgresql://user:pass@host/db?sslmode=require"
+
+  json_store:
+    directory: "json_store/"
+    file: "json_product_store.go"
+    implements: "SearchPort"
+    status: "stub"
+
+  memory:
+    directory: "memory/"
+    file: "memory_cache.go"
+    implements: "CachePort"
+    status: "deprecated (replaced by postgres)"
+
+gotchas:
+  postgres:
+    - "FK: chat_session_state.session_id → chat_sessions.id"
+    - "FK: chat_session_deltas.session_id → chat_sessions.id"
+    - "FK: catalog.products.tenant_id → catalog.tenants.id"
+    - "ProductFilter conditions are AND-combined"
+    - "Search uses ILIKE with % wildcards"
+  anthropic:
+    - "API version: 2023-06-01"
+    - "Response includes usage.input_tokens, usage.output_tokens"
+
+naming: "{tech}_{purpose}.go"

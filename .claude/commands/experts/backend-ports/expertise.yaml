@@ -1,0 +1,70 @@
+# Backend Ports Expertise
+# Interfaces (contracts) - imports only domain/
+
+overview:
+  layer: "ports"
+  path: "project/backend/internal/ports/"
+  imports: "Only domain/"
+  contains: "Interfaces for external dependencies"
+
+interfaces:
+  llm_port:
+    file: "llm_port.go"
+    interface: "LLMPort"
+    methods:
+      - "Chat(ctx, message) (string, error)"
+      - "ChatWithTools(ctx, systemPrompt, messages []LLMMessage, tools []ToolDefinition) (*LLMResponse, error)"
+      - "ChatWithUsage(ctx, systemPrompt, userMessage) (*ChatResponse, error)"
+    types:
+      - "ChatResponse: { Text string, Usage LLMUsage }"
+
+  cache_port:
+    file: "cache_port.go"
+    interface: "CachePort"
+    methods:
+      - "GetSession(ctx, id) (*Session, error)"
+      - "SaveSession(ctx, session) error"
+      - "CacheProducts(ctx, sessionID, products) error"
+      - "GetCachedProducts(ctx, sessionID) ([]Product, error)"
+
+  event_port:
+    file: "event_port.go"
+    interface: "EventPort"
+    methods:
+      - "TrackEvent(ctx, event) error"
+      - "GetSessionEvents(ctx, sessionID) ([]ChatEvent, error)"
+
+  catalog_port:
+    file: "catalog_port.go"
+    interface: "CatalogPort"
+    methods:
+      - "GetTenantBySlug(ctx, slug) (*Tenant, error)"
+      - "GetCategories(ctx) ([]Category, error)"
+      - "GetMasterProduct(ctx, id) (*MasterProduct, error)"
+      - "ListProducts(ctx, tenantID, filter) ([]Product, int, error)"
+      - "GetProduct(ctx, tenantID, productID) (*Product, error)"
+    types:
+      - "ProductFilter: CategoryID, Brand, MinPrice, MaxPrice, Search, Limit, Offset"
+
+  state_port:
+    file: "state_port.go"
+    interface: "StatePort"
+    methods:
+      - "CreateState(ctx, sessionID) (*SessionState, error)"
+      - "GetState(ctx, sessionID) (*SessionState, error)"
+      - "UpdateState(ctx, state) error"
+      - "AddDelta(ctx, sessionID, delta) error"
+      - "GetDeltas(ctx, sessionID) ([]Delta, error)"
+      - "GetDeltasSince(ctx, sessionID, fromStep) ([]Delta, error)"
+
+  search_port:
+    file: "search_port.go"
+    interface: "SearchPort"
+    status: "stub"
+
+gotchas:
+  - "CatalogPort.ListProducts(tenantID) requires UUID, not slug"
+  - "Use GetTenantBySlug(slug) first to get tenant UUID"
+  - "StatePort.GetState returns ErrSessionNotFound if no state"
+
+naming: "{name}_port.go"

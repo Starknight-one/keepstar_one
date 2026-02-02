@@ -1,0 +1,82 @@
+# Frontend Features Expertise
+# Feature modules - chat, catalog, overlay, canvas
+
+overview:
+  layer: "features"
+  path: "project/frontend/src/features/"
+  imports: "shared/, entities/"
+  contains: "Feature modules with model + hooks + components"
+
+features:
+  chat:
+    path: "src/features/chat/"
+    status: "implemented"
+    files:
+      - "chatModel.js - createInitialChatState()"
+      - "useChatMessages.js - State management"
+      - "useChatSubmit.js - API submission"
+      - "ChatPanel.jsx - Main component"
+      - "ChatHistory.jsx - Message list"
+      - "ChatInput.jsx - Input field"
+      - "ChatPanel.css - Styles"
+    hooks:
+      useChatMessages:
+        returns: ["sessionId", "messages", "isLoading", "error", "addMessage", "setMessages", "setLoading", "setError", "setSessionId"]
+      useChatSubmit:
+        params: ["sessionId", "addMessage", "setLoading", "setError", "setSessionId"]
+        returns: ["submit"]
+    session_persistence:
+      storage: "localStorage"
+      key: "chatSessionId"
+      flow:
+        - "On mount: check localStorage, call getSession()"
+        - "If active: restore messages"
+        - "If expired: clear localStorage"
+        - "On message: save sessionId to localStorage"
+
+  catalog:
+    path: "src/features/catalog/"
+    status: "implemented"
+    files:
+      - "catalogModel.js - createInitialCatalogState()"
+      - "useCatalogProducts.js - Catalog state"
+      - "ProductGrid.jsx - Product grid"
+      - "ProductGrid.css - Styles"
+    hooks:
+      useCatalogProducts:
+        params: ["tenantSlug"]
+        returns: ["products", "total", "isLoading", "error", "filters", "loadProducts", "setFilters", "resetFilters"]
+
+  overlay:
+    path: "src/features/overlay/"
+    status: "stub"
+    files:
+      - "useOverlayState.js - { isOpen, open, close, toggle }"
+      - "FullscreenOverlay.jsx"
+
+  canvas:
+    path: "src/features/canvas/"
+    status: "placeholder"
+    purpose: "Future: zoom, pan, widget navigation"
+
+app:
+  path: "src/App.jsx"
+  state: ["isChatOpen: boolean"]
+  components: ["ChatPanel"]
+
+pattern:
+  - "Each feature: model.js + hooks + components"
+  - "Hooks return object with state and actions"
+  - "Components use hooks internally"
+
+naming:
+  models: "{feature}Model.js"
+  hooks: "use{Feature}{Action}.js"
+  components: "PascalCase.jsx"
+  styles: "{Component}.css"
+
+run_commands:
+  install: "cd project/frontend && npm install"
+  dev: "cd project/frontend && npm run dev"
+  build: "cd project/frontend && npm run build"
+  lint: "cd project/frontend && npm run lint"

@@ -1,0 +1,73 @@
+# Frontend Entities Expertise
+# Business entities - atom, widget, formation, message
+
+overview:
+  layer: "entities"
+  path: "project/frontend/src/entities/"
+  imports: "shared/"
+  contains: "Business entities with model + renderer pattern"
+
+entities:
+  atom:
+    path: "src/entities/atom/"
+    files:
+      - "atomModel.js - AtomType enum"
+      - "AtomRenderer.jsx - Renders by type"
+      - "Atom.css - Styles"
+    types: ["TEXT", "NUMBER", "PRICE", "IMAGE", "RATING", "BADGE", "BUTTON", "ICON", "DIVIDER", "PROGRESS"]
+    status: "implemented"
+    features:
+      - "TEXT: renders with optional style class"
+      - "NUMBER: formats as currency/percent/compact"
+      - "PRICE: displays with currency symbol"
+      - "IMAGE: renders with size class"
+      - "RATING: renders star rating (★/☆)"
+      - "BADGE: renders with variant class"
+      - "BUTTON: clickable with action handler"
+
+  widget:
+    path: "src/entities/widget/"
+    files:
+      - "widgetModel.js - WidgetType enum"
+      - "WidgetRenderer.jsx - Renders by type"
+      - "Widget.css - Styles"
+    types: ["PRODUCT_CARD", "TEXT_BLOCK", "QUICK_REPLIES"]
+    status: "implemented"
+    components:
+      - "ProductCard: atoms in card layout"
+      - "TextBlock: atoms in text block"
+      - "QuickReplies: atoms as buttons"
+      - "DefaultWidget: fallback"
+
+  formation:
+    path: "src/entities/formation/"
+    files:
+      - "formationModel.js - FormationMode enum"
+      - "FormationRenderer.jsx - Renders layout"
+      - "Formation.css - Styles"
+      - "index.js - Exports"
+    modes: ["GRID", "CAROUSEL", "SINGLE", "LIST"]
+    status: "implemented"
+    features:
+      - "GRID: configurable cols (cols-2, cols-3)"
+      - "CAROUSEL: horizontal scroll"
+      - "SINGLE: one widget centered"
+      - "LIST: vertical stack (default)"
+
+  message:
+    path: "src/entities/message/"
+    files:
+      - "messageModel.js - MessageRole enum"
+      - "MessageBubble.jsx - Renders message"
+    roles: ["USER", "ASSISTANT"]
+    status: "implemented"
+
+pattern:
+  - "Each entity: model.js + Renderer.jsx + .css"
+  - "Renderers accept entity object as prop"
+  - "Switch on type to render appropriate component"
+
+naming:
+  models: "{entity}Model.js"
+  renderers: "{Entity}Renderer.jsx"
+  styles: "{Entity}.css"

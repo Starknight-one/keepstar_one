@@ -1,0 +1,86 @@
+# Backend Handlers Expertise
+# HTTP layer - parse/validate/respond only
+
+overview:
+  layer: "handlers"
+  path: "project/backend/internal/handlers/"
+  imports: "Everything above + net/http"
+  contains: "HTTP handlers, middleware, routes"
+
+pattern:
+  - "Parse request body"
+  - "Validate input"
+  - "Call use case"
+  - "Return JSON response"
+
+handlers:
+  chat:
+    file: "handler_chat.go"
+    struct: "ChatHandler"
+    endpoint: "POST /api/v1/chat"
+    request: "{ sessionId?, tenantId?, message }"
+    response: "{ sessionId, response, latencyMs }"
+
+  session:
+    file: "handler_session.go"
+    struct: "SessionHandler"
+    endpoint: "GET /api/v1/session/{id}"
+    response: "{ id, status, messages[], startedAt, lastActivityAt }"
+
+  catalog:
+    file: "handler_catalog.go"
+    struct: "CatalogHandler"
+    endpoints:
+      - "GET /api/v1/tenants/{slug}/products"
+      - "GET /api/v1/tenants/{slug}/products/{id}"
+    query_params: ["category", "brand", "minPrice", "maxPrice", "search", "limit", "offset"]
+
+  pipeline:
+    file: "handler_pipeline.go"
+    struct: "PipelineHandler"
+    endpoint: "POST /api/v1/pipeline"
+    request: "{ sessionId?, query }"
+    response: "{ sessionId, formation: { mode, grid, widgets }, agent1Ms, agent2Ms, totalMs }"
+
+  debug:
+    file: "handler_debug.go"
+    struct: "DebugHandler"
+    endpoints:
+      - "GET /debug/session/ - list all sessions (HTML)"
+      - "GET /debug/session/{id} - session detail (HTML or JSON with ?format=json)"
+      - "GET /debug/api - all sessions JSON"
+      - "GET /debug/api?session={id} - specific session JSON"
+    types: ["MetricsStore", "PipelineMetrics", "AgentMetrics", "FormationInfo"]
+
+  health:
+    file: "handler_health.go"
+    endpoints: ["GET /health", "GET /ready"]
+
+middleware:
+  cors:
+    file: "middleware_cors.go"
+    function: "CORSMiddleware(handler)"
+  tenant:
+    file: "middleware_tenant.go"
+    struct: "TenantMiddleware"
+    purpose: "Resolve tenant slug → UUID"
+
+helpers:
+  response:
+    file: "response.go"
+    functions: ["writeJSON(w, status, data)"]
+  routes:
+    file: "routes.go"
+    functions: ["SetupRoutes()", "SetupCatalogRoutes()"]
+
+api_summary:
+  - "POST /api/v1/chat"
+  - "GET /api/v1/session/{id}"
+  - "GET /api/v1/tenants/{slug}/products"
+  - "GET /api/v1/tenants/{slug}/products/{id}"
+  - "POST /api/v1/pipeline"
+  - "GET /debug/session/"
+  - "GET /health"
+  - "GET /ready"
+
+naming: "handler_{name}.go"
