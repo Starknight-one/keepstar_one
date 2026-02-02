@@ -1,0 +1,71 @@
+.chat-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 998;
+  animation: backdrop-fade-in 0.2s ease-out;
+}
+
+.chat-overlay-layout {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  z-index: 999;
+  pointer-events: none;
+}
+
+.widget-display-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  padding-right: 0;
+  pointer-events: auto;
+  overflow: auto;
+}
+
+.widget-display-area > * {
+  max-width: 600px;
+  max-height: 80vh;
+  animation: widget-fade-in 0.3s ease-out 0.1s both;
+}
+
+.chat-area {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  pointer-events: auto;
+  animation: chat-slide-in 0.25s ease-out;
+}
+
+@keyframes backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes chat-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes widget-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

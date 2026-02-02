@@ -1,8 +1,15 @@
 import { WidgetType } from './widgetModel';
 import { AtomRenderer } from '../atom/AtomRenderer';
+import { ProductCardTemplate } from './templates';
 import './Widget.css';
 
 export function WidgetRenderer({ widget }) {
+  // Template-based rendering (new system)
+  if (widget.template) {
+    return renderTemplate(widget);
+  }
+
+  // Legacy type-based rendering (backward compatibility)
   const sizeClass = widget.size ? `size-${widget.size}` : 'size-medium';
 
   switch (widget.type) {
@@ -17,6 +24,15 @@ export function WidgetRenderer({ widget }) {
 
     default:
       return <DefaultWidget widget={widget} sizeClass={sizeClass} />;
+  }
+}
+
+function renderTemplate(widget) {
+  switch (widget.template) {
+    case 'ProductCard':
+      return <ProductCardTemplate atoms={widget.atoms} size={widget.size} />;
+    default:
+      return <DefaultWidget widget={widget} sizeClass="size-medium" />;
   }
 }
 

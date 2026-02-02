@@ -1,4 +1,4 @@
-// Widget types
+// Widget types (legacy, for backward compatibility)
 export const WidgetType = {
   PRODUCT_CARD: 'product_card',
   PRODUCT_LIST: 'product_list',
@@ -6,6 +6,11 @@ export const WidgetType = {
   IMAGE_CAROUSEL: 'image_carousel',
   TEXT_BLOCK: 'text_block',
   QUICK_REPLIES: 'quick_replies',
+};
+
+// Widget templates (new system)
+export const WidgetTemplate = {
+  PRODUCT_CARD: 'ProductCard',
 };
 
 // Formation types (layout)

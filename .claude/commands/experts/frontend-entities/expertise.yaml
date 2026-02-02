@@ -28,16 +28,27 @@ entities:
   widget:
     path: "src/entities/widget/"
     files:
-      - "widgetModel.js - WidgetType enum"
-      - "WidgetRenderer.jsx - Renders by type"
+      - "widgetModel.js - WidgetType, WidgetTemplate enums"
+      - "WidgetRenderer.jsx - Template-based or legacy rendering"
       - "Widget.css - Styles"
-    types: ["PRODUCT_CARD", "TEXT_BLOCK", "QUICK_REPLIES"]
+      - "templates/index.js - Template exports"
+      - "templates/ProductCardTemplate.jsx - Slot-based card"
+      - "templates/ProductCardTemplate.css - Card styles"
+    types_legacy: ["PRODUCT_CARD", "TEXT_BLOCK", "QUICK_REPLIES"]
+    templates: ["ProductCard"]
     status: "implemented"
     components:
-      - "ProductCard: atoms in card layout"
-      - "TextBlock: atoms in text block"
-      - "QuickReplies: atoms as buttons"
+      - "ProductCardTemplate: renders atoms by slot (hero, badge, title, primary, price, secondary)"
+      - "TextBlock: atoms in text block (legacy)"
+      - "QuickReplies: atoms as buttons (legacy)"
       - "DefaultWidget: fallback"
+    slots:
+      - "hero: main image/carousel"
+      - "badge: overlay badge"
+      - "title: product title"
+      - "primary: main attributes (chips)"
+      - "price: price block"
+      - "secondary: expandable details"
 
   formation:
     path: "src/entities/formation/"

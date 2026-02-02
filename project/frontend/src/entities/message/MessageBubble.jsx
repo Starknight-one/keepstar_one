@@ -2,7 +2,7 @@ import { MessageRole } from './messageModel';
 import { FormationRenderer } from '../formation/FormationRenderer';
 import { WidgetRenderer } from '../widget/WidgetRenderer';
 
-export function MessageBubble({ message }) {
+export function MessageBubble({ message, hideFormation }) {
   const isUser = message.role === MessageRole.USER;
 
   return (
@@ -12,7 +12,7 @@ export function MessageBubble({ message }) {
       )}
 
       {/* Legacy widgets support (without formation) */}
-      {message.widgets?.length > 0 && !message.formation && (
+      {!hideFormation && message.widgets?.length > 0 && !message.formation && (
         <div className={`message-widgets formation-${message.formationType || 'list'}`}>
           {message.widgets.map((widget) => (
             <WidgetRenderer key={widget.id} widget={widget} />
@@ -21,7 +21,7 @@ export function MessageBubble({ message }) {
       )}
 
       {/* New formation support */}
-      {message.formation && (
+      {!hideFormation && message.formation && (
         <FormationRenderer formation={message.formation} />
       )}
     </div>

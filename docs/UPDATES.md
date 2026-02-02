@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-02-03
+
+### Chat Overlay with External Widget Rendering
+- Backdrop overlay dims screen when chat open
+- Chat positioned on the right side
+- Widgets (Formation) render externally on the left
+- Animations: backdrop-fade-in, chat-slide-in, widget-fade-in
+- onFormationReceived callback from useChatSubmit to App
+- hideFormation prop to prevent duplicate rendering in chat
+
+### Universal ProductCardTemplate with Slot-based Atoms
+- Template-based widget rendering (template field instead of type)
+- Atom.Slot field for layout hints (hero, badge, title, primary, price, secondary)
+- ProductCardTemplate.jsx groups atoms by slot
+- ImageCarousel with navigation dots
+- AtomChip renders text/rating/selector displays
+- Expandable secondary attributes
+- Auto-fill responsive grid layout
+
+### Backend Template System
+- AtomSlot enum: hero, badge, title, primary, price, secondary
+- Widget.Template field for template name (ProductCard)
+- applyWidgetTemplate generates atoms with slot hints
+- Agent2 prompt prefers grid layout for 2-6 items
+
+---
+
 ## 2026-02-02
 
 ### Two-Agent Pipeline - Frontend Rendering (Phase 4)

@@ -44,8 +44,8 @@ Rules:
    - large: max 10 atoms
 5. Choose mode based on count:
    - 1 item → "single"
-   - 2-6 items → "grid" (2 cols)
-   - 7+ items → "carousel" or "grid" (3 cols)
+   - 2-6 items → "grid" (2 cols) - ALWAYS use grid for this range, NOT carousel
+   - 7+ items → "grid" (3 cols) preferred, carousel only if specifically asked
 
 Atom types (lowercase):
 - text: for strings (style: heading/body/caption)

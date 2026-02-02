@@ -11,10 +11,14 @@ entities:
   ui_primitives:
     atom_entity:
       file: "atom_entity.go"
-      types: ["AtomType", "Atom"]
+      types: ["AtomType", "AtomSlot", "Atom"]
+      atom_types: ["text", "number", "price", "image", "rating", "badge", "button", "icon", "divider", "progress", "selector"]
+      atom_slots: ["hero", "badge", "title", "primary", "price", "secondary"]
     widget_entity:
       file: "widget_entity.go"
-      types: ["WidgetType", "Widget"]
+      types: ["WidgetType", "WidgetSize", "Widget"]
+      templates: ["ProductCard"]
+      widget_fields: ["ID", "Type", "Template", "Size", "Priority", "Atoms", "Children", "Meta"]
     formation_entity:
       file: "formation_entity.go"
       types: ["FormationType", "Formation"]

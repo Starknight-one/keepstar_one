@@ -5,12 +5,15 @@
   padding: 8px 0;
 }
 
-/* Grid mode */
+/* Grid mode - auto-fill responsive */
 .formation-grid {
   display: grid;
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+  justify-items: center;
 }
 
+/* Fixed column overrides */
 .formation-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
 .formation-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .formation-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }

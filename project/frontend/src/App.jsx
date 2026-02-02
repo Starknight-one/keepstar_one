@@ -1,9 +1,17 @@
 import { useState } from 'react'
 import { ChatPanel } from './features/chat/ChatPanel'
+import { FormationRenderer } from './entities/formation/FormationRenderer'
 import './App.css'
+import './features/overlay/Overlay.css'
 
 function App() {
   const [isChatOpen, setIsChatOpen] = useState(false)
+  const [activeFormation, setActiveFormation] = useState(null)
+
+  const handleChatClose = () => {
+    setIsChatOpen(false)
+    setActiveFormation(null)
+  }
 
   return (
     <div className="app">
@@ -86,7 +94,23 @@ function App() {
         {isChatOpen ? '✕' : '💬'}
       </button>
 
-      {isChatOpen && <ChatPanel onClose={() => setIsChatOpen(false)} />}
+      {isChatOpen && (
+        <>
+          <div className="chat-backdrop" onClick={handleChatClose} />
+          <div className="chat-overlay-layout">
+            <div className="widget-display-area">
+              {activeFormation && <FormationRenderer formation={activeFormation} />}
+            </div>
+            <div className="chat-area">
+              <ChatPanel
+                onClose={handleChatClose}
+                onFormationReceived={setActiveFormation}
+                hideFormation={true}
+              />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

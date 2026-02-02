@@ -296,16 +296,16 @@ func TestPipelineExecute_Integration(t *testing.T) {
 				}
 				t.Logf("Widgets count: %d", len(resp.Formation.Widgets))
 
-				// Show first widget
+				// Show first widget (template + atoms with slots)
 				if len(resp.Formation.Widgets) > 0 {
 					w := resp.Formation.Widgets[0]
 					t.Logf("\nFirst widget:")
 					t.Logf("  ID: %s", w.ID)
-					t.Logf("  Type: %s", w.Type)
+					t.Logf("  Template: %s", w.Template)
 					t.Logf("  Size: %s", w.Size)
 					t.Logf("  Atoms: %d", len(w.Atoms))
 					for i, atom := range w.Atoms {
-						t.Logf("    Atom %d: type=%s, value=%v", i, atom.Type, atom.Value)
+						t.Logf("    Atom %d: type=%s, slot=%s, value=%v", i, atom.Type, atom.Slot, atom.Value)
 					}
 				}
 			} else {
@@ -493,18 +493,24 @@ func TestApplyTemplate_Unit(t *testing.T) {
 	// Create test products
 	products := []domain.Product{
 		{
-			ID:     "prod-1",
-			Name:   "Nike Air Max 90",
-			Price:  12990,
-			Images: []string{"https://example.com/nike1.jpg"},
-			Rating: 4.5,
+			ID:       "prod-1",
+			Name:     "Nike Air Max 90",
+			Price:    12990,
+			Currency: "$",
+			Images:   []string{"https://example.com/nike1.jpg"},
+			Rating:   4.5,
+			Brand:    "Nike",
+			Category: "Sneakers",
 		},
 		{
-			ID:     "prod-2",
-			Name:   "Nike Air Force 1",
-			Price:  9990,
-			Images: []string{"https://example.com/nike2.jpg"},
-			Rating: 4.8,
+			ID:       "prod-2",
+			Name:     "Nike Air Force 1",
+			Price:    9990,
+			Currency: "$",
+			Images:   []string{"https://example.com/nike2.jpg"},
+			Rating:   4.8,
+			Brand:    "Nike",
+			Category: "Sneakers",
 		},
 	}
 
@@ -527,30 +533,53 @@ func TestApplyTemplate_Unit(t *testing.T) {
 		t.Errorf("Expected 2 widgets, got %d", len(formation.Widgets))
 	}
 
-	// Check first widget
+	// Check first widget (template + atoms with slots)
 	w := formation.Widgets[0]
 	t.Logf("\nWidget 0:")
 	t.Logf("  ID: %s", w.ID)
-	t.Logf("  Type: %s", w.Type)
+	t.Logf("  Template: %s", w.Template)
 	t.Logf("  Size: %s", w.Size)
+	t.Logf("  Atoms: %d", len(w.Atoms))
 
+	if w.Template != domain.WidgetTemplateProductCard {
+		t.Errorf("Expected template=ProductCard, got %s", w.Template)
+	}
 	if w.Size != domain.WidgetSizeMedium {
 		t.Errorf("Expected size=medium, got %s", w.Size)
 	}
-	if len(w.Atoms) != 4 {
-		t.Errorf("Expected 4 atoms, got %d", len(w.Atoms))
+	if len(w.Atoms) == 0 {
+		t.Fatalf("Expected atoms to be present")
 	}
 
-	// Check atoms have correct values
+	// Log atoms with slots
 	for i, atom := range w.Atoms {
-		t.Logf("  Atom %d: type=%s, value=%v, meta=%v", i, atom.Type, atom.Value, atom.Meta)
+		t.Logf("  Atom %d: type=%s, slot=%s, value=%v", i, atom.Type, atom.Slot, atom.Value)
 	}
 
-	// Verify first product's data is in first widget
-	if w.Atoms[1].Value != "Nike Air Max 90" {
-		t.Errorf("Expected name='Nike Air Max 90', got %v", w.Atoms[1].Value)
+	// Find title atom
+	var titleAtom *domain.Atom
+	var priceAtom *domain.Atom
+	var heroAtom *domain.Atom
+	for i := range w.Atoms {
+		if w.Atoms[i].Slot == domain.AtomSlotTitle {
+			titleAtom = &w.Atoms[i]
+		}
+		if w.Atoms[i].Slot == domain.AtomSlotPrice {
+			priceAtom = &w.Atoms[i]
+		}
+		if w.Atoms[i].Slot == domain.AtomSlotHero {
+			heroAtom = &w.Atoms[i]
+		}
 	}
-	if w.Atoms[2].Value != 12990 {
-		t.Errorf("Expected price=12990, got %v", w.Atoms[2].Value)
+
+	// Verify first product's data
+	if titleAtom == nil || titleAtom.Value != "Nike Air Max 90" {
+		t.Errorf("Expected title='Nike Air Max 90', got %v", titleAtom)
+	}
+	if priceAtom == nil || priceAtom.Value != 12990 {
+		t.Errorf("Expected price=12990, got %v", priceAtom)
+	}
+	if heroAtom == nil {
+		t.Errorf("Expected hero image atom")
 	}
 }

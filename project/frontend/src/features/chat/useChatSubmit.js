@@ -4,7 +4,7 @@ import { MessageRole } from '../../entities/message/messageModel';
 
 const SESSION_STORAGE_KEY = 'chatSessionId';
 
-export function useChatSubmit({ sessionId, addMessage, setLoading, setError, setSessionId }) {
+export function useChatSubmit({ sessionId, addMessage, setLoading, setError, setSessionId, onFormationReceived }) {
   const submit = useCallback(async (text) => {
     if (!text.trim()) return;
 
@@ -28,6 +28,11 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
         setSessionId(response.sessionId);
       }
 
+      // Notify parent about formation (for external rendering)
+      if (response.formation && onFormationReceived) {
+        onFormationReceived(response.formation);
+      }
+
       // Add assistant message with formation
       addMessage({
         id: (Date.now() + 1).toString(),
@@ -48,7 +53,7 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
     } finally {
       setLoading(false);
     }
-  }, [sessionId, addMessage, setLoading, setError, setSessionId]);
+  }, [sessionId, addMessage, setLoading, setError, setSessionId, onFormationReceived]);
 
   return { submit };
 }

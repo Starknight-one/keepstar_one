@@ -23,8 +23,12 @@ features:
       useChatMessages:
         returns: ["sessionId", "messages", "isLoading", "error", "addMessage", "setMessages", "setLoading", "setError", "setSessionId"]
       useChatSubmit:
-        params: ["sessionId", "addMessage", "setLoading", "setError", "setSessionId"]
+        params: ["sessionId", "addMessage", "setLoading", "setError", "setSessionId", "onFormationReceived"]
         returns: ["submit"]
+    props:
+      ChatPanel: ["onClose", "onFormationReceived", "hideFormation"]
+      ChatHistory: ["messages", "isLoading", "hideFormation"]
+      MessageBubble: ["message", "hideFormation"]
     session_persistence:
       storage: "localStorage"
       key: "chatSessionId"
@@ -49,10 +53,16 @@ features:
 
   overlay:
     path: "src/features/overlay/"
-    status: "stub"
+    status: "implemented"
     files:
       - "useOverlayState.js - { isOpen, open, close, toggle }"
       - "FullscreenOverlay.jsx"
+      - "Overlay.css - Backdrop, layout, animations"
+    features:
+      - "Chat backdrop (dimmed overlay)"
+      - "Widget display area (left side)"
+      - "Chat area (right side)"
+      - "Animations: backdrop-fade-in, chat-slide-in, widget-fade-in"
 
   canvas:
     path: "src/features/canvas/"
@@ -61,8 +71,12 @@ features:
 
 app:
   path: "src/App.jsx"
-  state: ["isChatOpen: boolean"]
-  components: ["ChatPanel"]
+  state: ["isChatOpen: boolean", "activeFormation: Formation|null"]
+  components: ["ChatPanel", "FormationRenderer"]
+  overlay_layout:
+    - "Backdrop dims screen when chat open"
+    - "Widget display area: left, shows activeFormation"
+    - "Chat area: right, ChatPanel with hideFormation=true"
 
 pattern:
   - "Each feature: model.js + hooks + components"

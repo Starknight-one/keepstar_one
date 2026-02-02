@@ -9,7 +9,7 @@ import './ChatPanel.css';
 
 const SESSION_STORAGE_KEY = 'chatSessionId';
 
-export function ChatPanel({ onClose }) {
+export function ChatPanel({ onClose, onFormationReceived, hideFormation }) {
   const {
     sessionId,
     messages,
@@ -27,7 +27,8 @@ export function ChatPanel({ onClose }) {
     addMessage,
     setLoading,
     setError,
-    setSessionId
+    setSessionId,
+    onFormationReceived
   });
 
   // Load session history on mount
@@ -74,7 +75,7 @@ export function ChatPanel({ onClose }) {
         <button className="close-btn" onClick={onClose}>✕</button>
       </div>
 
-      <ChatHistory messages={messages} isLoading={isLoading} />
+      <ChatHistory messages={messages} isLoading={isLoading} hideFormation={hideFormation} />
       <ChatInput onSubmit={submit} disabled={isLoading} />
       {error && <div className="chat-error">{error}</div>}
     </div>

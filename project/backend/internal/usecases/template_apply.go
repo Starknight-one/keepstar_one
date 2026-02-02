@@ -32,40 +32,86 @@ func ApplyTemplate(template *domain.FormationTemplate, products []domain.Product
 }
 
 // applyWidgetTemplate creates a Widget from template and product data
+// Generates atoms with slot hints for template-based rendering
 func applyWidgetTemplate(wt domain.WidgetTemplate, product domain.Product, index int) (*domain.Widget, error) {
 	widget := &domain.Widget{
 		ID:       uuid.New().String(),
-		Type:     domain.WidgetTypeProductCard,
+		Template: domain.WidgetTemplateProductCard,
 		Size:     wt.Size,
 		Priority: index,
-		Atoms:    make([]domain.Atom, 0, len(wt.Atoms)),
+		Atoms:    make([]domain.Atom, 0),
 	}
 
-	// Apply each atom template
-	for _, atomTpl := range wt.Atoms {
-		value := getFieldValue(product, atomTpl.Field)
-		if value == nil {
-			continue // Skip if field not found
-		}
+	// Hero slot: images
+	if len(product.Images) > 0 {
+		widget.Atoms = append(widget.Atoms, domain.Atom{
+			Type:  domain.AtomTypeImage,
+			Value: product.Images, // Array of URLs for carousel
+			Slot:  domain.AtomSlotHero,
+			Meta:  map[string]interface{}{"size": "large"},
+		})
+	}
 
-		atom := domain.Atom{
-			Type:  atomTpl.Type,
-			Value: value,
-			Meta:  make(map[string]interface{}),
-		}
+	// Title slot
+	if product.Name != "" {
+		widget.Atoms = append(widget.Atoms, domain.Atom{
+			Type:  domain.AtomTypeText,
+			Value: product.Name,
+			Slot:  domain.AtomSlotTitle,
+			Meta:  map[string]interface{}{"style": "heading"},
+		})
+	}
 
-		// Add style/format metadata
-		if atomTpl.Style != "" {
-			atom.Meta["style"] = atomTpl.Style
-		}
-		if atomTpl.Format != "" {
-			atom.Meta["format"] = atomTpl.Format
-		}
-		if atomTpl.Size != "" {
-			atom.Meta["size"] = atomTpl.Size
-		}
+	// Primary slot: brand as chip
+	if product.Brand != "" {
+		widget.Atoms = append(widget.Atoms, domain.Atom{
+			Type:  domain.AtomTypeText,
+			Value: product.Brand,
+			Slot:  domain.AtomSlotPrimary,
+			Meta:  map[string]interface{}{"display": "chip"},
+		})
+	}
 
-		widget.Atoms = append(widget.Atoms, atom)
+	// Primary slot: rating as chip
+	if product.Rating > 0 {
+		widget.Atoms = append(widget.Atoms, domain.Atom{
+			Type:  domain.AtomTypeRating,
+			Value: product.Rating,
+			Slot:  domain.AtomSlotPrimary,
+			Meta:  map[string]interface{}{"display": "chip"},
+		})
+	}
+
+	// Price slot
+	currency := product.Currency
+	if currency == "" {
+		currency = "$"
+	}
+	widget.Atoms = append(widget.Atoms, domain.Atom{
+		Type:  domain.AtomTypePrice,
+		Value: product.Price,
+		Slot:  domain.AtomSlotPrice,
+		Meta:  map[string]interface{}{"currency": currency},
+	})
+
+	// Secondary slot: category
+	if product.Category != "" {
+		widget.Atoms = append(widget.Atoms, domain.Atom{
+			Type:  domain.AtomTypeText,
+			Value: product.Category,
+			Slot:  domain.AtomSlotSecondary,
+			Meta:  map[string]interface{}{"label": "Category"},
+		})
+	}
+
+	// Secondary slot: description
+	if product.Description != "" {
+		widget.Atoms = append(widget.Atoms, domain.Atom{
+			Type:  domain.AtomTypeText,
+			Value: product.Description,
+			Slot:  domain.AtomSlotSecondary,
+			Meta:  map[string]interface{}{"label": "Description"},
+		})
 	}
 
 	return widget, nil
