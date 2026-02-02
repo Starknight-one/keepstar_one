@@ -34,12 +34,12 @@
 | master_products | Канонические товары |
 | products | Листинги товаров по тенантам |
 
-### state
+### state (public schema)
 
 | Таблица | Назначение |
 |---------|------------|
-| session_states | Текущее состояние сессии (JSONB) |
-| session_deltas | История дельт для replay |
+| chat_session_state | Текущее состояние сессии (JSONB) |
+| chat_session_deltas | История дельт для replay |
 
 ## Использование
 

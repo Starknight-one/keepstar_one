@@ -74,6 +74,9 @@ core_implementation:
       methods:
         - "Chat(ctx context.Context, message string) (string, error)"
         - "ChatWithTools(ctx, systemPrompt, messages []LLMMessage, tools []ToolDefinition) (*LLMResponse, error)"
+        - "ChatWithUsage(ctx, systemPrompt, userMessage string) (*ChatResponse, error)"
+      types:
+        - "ChatResponse: { Text string, Usage LLMUsage }"
 
     search_port:
       file: "internal/ports/search_port.go"
@@ -230,6 +233,59 @@ core_implementation:
         - "Create and save delta"
         - "Return delta with usage stats"
 
+    agent2_execute:
+      file: "internal/usecases/agent2_execute.go"
+      struct: "Agent2ExecuteUseCase"
+      purpose: "Agent 2 Template Builder - meta → LLM → template → state"
+      status: "implemented"
+      request: "{ SessionID string, LayoutHint string }"
+      response: "{ Template *FormationTemplate, Usage LLMUsage, LatencyMs int }"
+      methods:
+        - "Execute(ctx, req) (*Agent2ExecuteResponse, error)"
+      flow:
+        - "Get current state (must exist after Agent 1)"
+        - "Check if data exists (count > 0)"
+        - "Build prompt with meta only (NOT raw data)"
+        - "Call LLM with ChatWithUsage"
+        - "Parse JSON template from response"
+        - "Save template to state.Current.Template"
+        - "Return template with usage stats"
+
+    pipeline_execute:
+      file: "internal/usecases/pipeline_execute.go"
+      struct: "PipelineExecuteUseCase"
+      purpose: "Full pipeline orchestrator: Agent 1 → Agent 2 → Formation"
+      status: "implemented"
+      request: "{ SessionID string, Query string }"
+      response: "{ Formation *FormationWithData, Delta *Delta, Agent1Ms, Agent2Ms, TotalMs int }"
+      methods:
+        - "Execute(ctx, req) (*PipelineExecuteResponse, error)"
+      flow:
+        - "Step 1: Execute Agent 1 (Tool Caller)"
+        - "Step 2: Execute Agent 2 (Template Builder)"
+        - "Step 3: Apply template to data (ApplyTemplate)"
+        - "Return FormationWithData with timing stats"
+
+    template_apply:
+      file: "internal/usecases/template_apply.go"
+      purpose: "Apply FormationTemplate to products, produce FormationWithData"
+      status: "implemented"
+      functions:
+        - "ApplyTemplate(template, products) (*FormationWithData, error)"
+        - "applyWidgetTemplate(wt, product, index) (*Widget, error)"
+        - "getFieldValue(product, fieldName) interface{}"
+      field_mapping:
+        - "id → ID"
+        - "name → Name"
+        - "description → Description"
+        - "price → Price"
+        - "currency → Currency"
+        - "images/image_url → Images[0]"
+        - "rating → Rating"
+        - "brand → Brand"
+        - "category → Category"
+        - "stock → StockQuantity"
+
   handlers:
     chat:
       file: "internal/handlers/handler_chat.go"
@@ -338,6 +394,16 @@ core_implementation:
         - "LLMUsage.CalculateCost() - calculates USD cost from token usage"
         - "LLMPricing - map of model pricing per million tokens"
 
+    template_entity:
+      file: "internal/domain/template_entity.go"
+      types:
+        - "AtomTemplate: { Type, Field, Style, Format, Size }"
+        - "WidgetTemplate: { Size, Priority, Atoms []AtomTemplate }"
+        - "GridConfig: { Rows, Cols }"
+        - "FormationTemplate: { Mode, Grid, WidgetTemplate }"
+        - "FormationWithData: { Mode, Grid, Widgets []Widget }"
+      purpose: "Templates for Agent 2 and final formation output"
+
     state_entity:
       file: "internal/domain/state_entity.go"
       types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "StateMeta", "StateData", "StateCurrent", "SessionState"]
@@ -412,6 +478,17 @@ prompts:
       - "Tool results are 'ok' or 'empty' only"
       - "Stop after getting tool result"
 
+  agent2_system:
+    file: "internal/prompts/prompt_compose_widgets.go"
+    const: "Agent2SystemPrompt"
+    purpose: "System prompt for Agent 2 (Template Builder)"
+    rules:
+      - "ONLY output valid JSON, no explanations"
+      - "Use fields that exist in input"
+      - "Choose widget size based on atom count"
+      - "Choose mode based on count (1→single, 2-6→grid, 7+→carousel)"
+    function: "BuildAgent2Prompt(meta StateMeta, layoutHint string) string"
+
 patterns:
   naming:
     handlers: "handler_{name}.go"
@@ -482,10 +559,16 @@ migration_status:
     - "Add ChatWithTools method to LLMPort"
     - "Implement Agent1ExecuteUseCase (Tool Caller)"
     - "Add Agent1SystemPrompt"
+    - "Implement Agent2ExecuteUseCase (Template Builder)"
+    - "Add Agent2SystemPrompt and BuildAgent2Prompt"
+    - "Add template_entity with FormationTemplate, FormationWithData"
+    - "Implement PipelineExecuteUseCase (orchestrator)"
+    - "Add ApplyTemplate function for template → widgets"
+    - "Add ChatWithUsage method to LLMPort"
   next_steps:
-    - "Wire Agent1 to HTTP handler"
-    - "Implement Agent2 (Template Builder)"
-    - "Add widget rendering for products"
+    - "Wire Pipeline to HTTP handler"
+    - "Add Formation rendering endpoint"
+    - "Add widget click event handling"
 
 # CRITICAL: Gotchas by hexagonal layer
 gotchas:
@@ -519,6 +602,10 @@ gotchas:
     - "Create session (CachePort) before creating state (StatePort)"
     - "Tools return 'ok'/'empty', not raw data"
     - "Agent1 stops after first tool call, doesn't see result"
+    - "Agent2 receives meta only, never raw product data"
+    - "Agent2 expects state to exist (run Agent1 first)"
+    - "Pipeline orchestrates Agent1 → Agent2 → ApplyTemplate"
+    - "LLM may wrap JSON in markdown code blocks, use extractJSON()"
 
   # Tools layer - tool execution specifics
   tools:

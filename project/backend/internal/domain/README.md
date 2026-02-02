@@ -17,6 +17,7 @@
 - `master_product_entity.go` — MasterProduct (канонический товар)
 - `state_entity.go` — SessionState, Delta (state для two-agent pipeline)
 - `tool_entity.go` — ToolDefinition, ToolCall, LLMMessage, LLMResponse (LLM tool calling)
+- `template_entity.go` — FormationTemplate, FormationWithData (шаблоны Agent 2)
 - `domain_errors.go` — Доменные ошибки
 
 ## Правила

@@ -69,8 +69,32 @@ go build -o server ./cmd/server/ && ./server
 
 | Port | Interface | Adapter |
 |------|-----------|---------|
-| LLMPort | Chat, ChatWithTools | anthropic |
+| LLMPort | Chat, ChatWithTools, ChatWithUsage | anthropic |
 | CachePort | Session/message persistence | postgres |
 | EventPort | Analytics tracking | postgres |
 | CatalogPort | Product catalog | postgres |
 | StatePort | Session state for agents | postgres |
+
+## Two-Agent Pipeline
+
+```
+User Query
+    │
+    ▼
+┌─────────────────────────┐
+│  Agent 1: Tool Caller   │  query → tool call → state.data
+└─────────────────────────┘
+    │
+    ▼
+┌─────────────────────────┐
+│  Agent 2: Template      │  meta → template → state.template
+└─────────────────────────┘
+    │
+    ▼
+┌─────────────────────────┐
+│  ApplyTemplate          │  template + data → FormationWithData
+└─────────────────────────┘
+    │
+    ▼
+Response JSON
+```

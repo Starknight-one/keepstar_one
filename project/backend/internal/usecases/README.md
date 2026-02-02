@@ -8,6 +8,11 @@
 - `catalog_list_products.go` — Список товаров тенанта с фильтрацией
 - `catalog_get_product.go` — Получение товара с merging master данных
 - `agent1_execute.go` — Agent 1 (Tool Caller) для two-agent pipeline
+- `agent1_execute_test.go` — Тесты Agent 1
+- `agent2_execute.go` — Agent 2 (Template Builder) для two-agent pipeline
+- `agent2_execute_test.go` — Тесты Agent 2
+- `pipeline_execute.go` — Оркестратор: Agent 1 → Agent 2 → Formation
+- `template_apply.go` — Применение шаблона к данным
 
 ## SendMessageUseCase
 
@@ -77,9 +82,56 @@ type Agent1ExecuteUseCase struct {
 func (uc *Agent1ExecuteUseCase) Execute(ctx, req) (*Agent1ExecuteResponse, error)
 ```
 
+## Agent2ExecuteUseCase
+
+Agent 2 (Template Builder) для two-agent pipeline:
+- Получает состояние сессии (после Agent 1)
+- Проверяет наличие данных (count > 0)
+- Вызывает LLM с meta данными (не сырыми данными!)
+- Парсит JSON шаблон из ответа
+- Сохраняет шаблон в state
+
+```go
+type Agent2ExecuteUseCase struct {
+    llm       ports.LLMPort
+    statePort ports.StatePort
+}
+
+func (uc *Agent2ExecuteUseCase) Execute(ctx, req) (*Agent2ExecuteResponse, error)
+```
+
+## PipelineExecuteUseCase
+
+Оркестратор полного pipeline:
+- Step 1: Agent 1 (Tool Caller) — query → tool call → state
+- Step 2: Agent 2 (Template Builder) — meta → template → state
+- Step 3: ApplyTemplate — template + data → FormationWithData
+
+```go
+type PipelineExecuteUseCase struct {
+    agent1UC  *Agent1ExecuteUseCase
+    agent2UC  *Agent2ExecuteUseCase
+    statePort ports.StatePort
+    log       *logger.Logger
+}
+
+func (uc *PipelineExecuteUseCase) Execute(ctx, req) (*PipelineExecuteResponse, error)
+```
+
+## ApplyTemplate
+
+Функция применения шаблона к данным:
+- FormationTemplate + []Product → FormationWithData
+- Маппинг полей: name→Name, price→Price, images→Images[0]
+
+```go
+func ApplyTemplate(template *FormationTemplate, products []Product) (*FormationWithData, error)
+```
+
 ## Правила
 
 - Импорты только из `domain/` и `ports/`
 - Нельзя импортировать `adapters/` напрямую (только через порты)
 - Каждый use case — структура с методом Execute()
 - Graceful degradation если БД не настроена
+- Agent2 работает только с meta, никогда не видит сырые данные

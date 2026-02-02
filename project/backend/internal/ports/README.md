@@ -17,6 +17,15 @@
 ```go
 Chat(ctx, message) (string, error)
 ChatWithTools(ctx, systemPrompt, messages, tools) (*LLMResponse, error)
+ChatWithUsage(ctx, systemPrompt, userMessage) (*ChatResponse, error)
+```
+
+ChatResponse:
+```go
+type ChatResponse struct {
+    Text  string
+    Usage domain.LLMUsage
+}
 ```
 
 ### CachePort

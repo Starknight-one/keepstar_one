@@ -9,6 +9,24 @@ User Query
     │
     ▼
 ┌─────────────────┐
+│  Router         │  Intent Classifier (~200 tokens)
+│  (Agent 0)      │  Быстрая маршрутизация
+└────────┬────────┘
+         │
+         ├──→ {intent, needs_history, needs_state}
+         │
+         ▼
+    ┌────┴────┐
+    │ Switch  │
+    └────┬────┘
+         │
+    ┌────┼────────────────┬─────────────────┐
+    ▼    ▼                ▼                 ▼
+ SEARCH  CLARIFY       COMPARE          SUPPORT
+    │    (+ history)   (+ selected)     (FAQ/RAG)
+    │
+    ▼
+┌─────────────────┐
 │  Agent 1        │  Tool Caller
 │  (Query→Tools)  │  Чистый оркестратор
 └────────┬────────┘
@@ -38,6 +56,156 @@ User Query
 2. **Агенты не смотрят в State напрямую**. Получают данные через tool calls или принудительные триггеры.
 3. **Дельты, не снапшоты**. Каждое действие = дельта. Можно откатить на любой шаг.
 4. **Agent 2 не видит сырые данные**. Получает meta: count, fields, aliases. Экономия токенов.
+5. **Router первый**. Классификация перед тяжёлыми агентами. Selective context.
+6. **Агенты stateless**. Контекст собирается под запрос, не накапливается.
+
+## Router (Agent 0): Intent Classifier
+
+**Задача**: быстро классифицировать запрос и определить какой pipeline нужен.
+
+### Зачем нужен
+
+Без Router каждый агент должен понимать всё:
+- 5000+ токенов в system prompt
+- Вся история диалога в контексте
+- = дорого и медленно
+
+С Router:
+- Router: ~200 tokens → intent
+- Agent получает только релевантный контекст
+- = дёшево и быстро
+
+### Intent Types
+
+| Intent | Описание | Pipeline | Context needed |
+|--------|----------|----------|----------------|
+| `search` | Новый поиск товаров/услуг | Agent1 → Agent2 | — |
+| `clarify` | Уточнение по показанным | ClarifyAgent | history, products |
+| `compare` | Сравнение товаров | CompareAgent | selected products |
+| `filter` | Фильтрация текущих | FilterTool | current products |
+| `support` | Не про товары (FAQ, пароль) | SupportRAG | — |
+| `viz` | Изменить отображение | Agent2 only | current template |
+
+### Input/Output
+
+**Input**: user query (raw)
+
+**Output**:
+```json
+{
+  "intent": "search|clarify|compare|filter|support|viz",
+  "confidence": 0.95,
+  "needs_history": false,
+  "needs_products": false,
+  "slots": {
+    "product_refs": ["первый", "второй"],  // если clarify/compare
+    "viz_type": "carousel"                   // если viz
+  }
+}
+```
+
+### System Prompt (минимальный)
+
+```
+Classify user intent for e-commerce chat.
+
+Intents:
+- search: looking for new products ("покажи ноутбуки", "найди кроссовки Nike")
+- clarify: question about shown products ("а второй?", "расскажи подробнее про первый")
+- compare: compare products ("сравни первый и третий", "чем отличаются?")
+- filter: narrow current results ("дешевле 50000", "только Samsung")
+- support: non-product question ("забыл пароль", "где мой заказ", "позвать оператора")
+- viz: change display ("покажи таблицей", "сделай карусель", "только картинки")
+
+Output JSON only: {"intent": "...", "confidence": 0.0-1.0, "needs_history": bool, "needs_products": bool, "slots": {...}}
+```
+
+### Примеры классификации
+
+| Query | Intent | Slots |
+|-------|--------|-------|
+| "покажи ноутбуки" | search | — |
+| "а что по второму?" | clarify | product_refs: ["второй"] |
+| "сравни первый и третий" | compare | product_refs: ["первый", "третий"] |
+| "только до 50000" | filter | — |
+| "забыл пароль" | support | — |
+| "покажи в виде таблицы" | viz | viz_type: "table" |
+| "ещё покажи мышки" | search | — |
+
+### Стоимость и время
+
+- **Tokens**: ~200 input + ~50 output = ~250 total
+- **Cost**: ~$0.0003 (Haiku)
+- **Latency**: ~500ms
+
+### Context Builder (после Router)
+
+На основе intent собираем контекст для следующего агента:
+
+```go
+func buildContext(intent RouterResult, state SessionState) AgentContext {
+    ctx := AgentContext{}
+
+    if intent.NeedsHistory {
+        ctx.Messages = state.GetRecentMessages(3)  // последние 3, не все 50
+    }
+
+    if intent.NeedsProducts {
+        if len(intent.Slots.ProductRefs) > 0 {
+            // "первый", "второй" → конкретные продукты
+            ctx.Products = state.ResolveRefs(intent.Slots.ProductRefs)
+        } else {
+            ctx.Products = state.Current.Data.Products
+        }
+    }
+
+    return ctx
+}
+```
+
+## Pipelines (после Router)
+
+Router определяет intent → запускается соответствующий pipeline.
+
+### Search Pipeline (intent: search)
+```
+Router → Agent1 → Tool(search_products) → Agent2 → Formation
+```
+Стандартный путь. Новый поиск товаров.
+
+### Clarify Pipeline (intent: clarify)
+```
+Router → ContextBuilder(history + product_refs) → ClarifyAgent → Response
+```
+Уточнение по показанным товарам. ClarifyAgent получает:
+- Последние 3 сообщения
+- Конкретные продукты по ссылкам ("первый", "второй")
+
+### Compare Pipeline (intent: compare)
+```
+Router → ContextBuilder(selected_products) → CompareAgent → CompareTemplate → Formation
+```
+Сравнение выбранных товаров. CompareTemplate — специальный layout (таблица).
+
+### Filter Pipeline (intent: filter)
+```
+Router → FilterTool(current_products) → Agent2 → Formation
+```
+Фильтрация без LLM. Только tool + перестроение шаблона.
+
+### Support Pipeline (intent: support)
+```
+Router → SupportRAG(FAQ) → TextResponse
+```
+Без продуктов. FAQ/RAG или передача оператору.
+
+### Viz Pipeline (intent: viz)
+```
+Router → Agent2(viz_hint) → Formation
+```
+Только перестроение шаблона. Agent1 не нужен.
+
+---
 
 ## Agent 1: Tool Caller
 
@@ -300,32 +468,52 @@ products = [{name, price, rating, image}, {name, price, rating, image}, ...]
 
 ## Roadmap: Инкрементальная разработка
 
-### Фаза 1: State + Storage (фундамент)
+### Фаза 1: State + Storage (фундамент) ✅
 **Цель**: данные сохраняются и читаются
 
-- [ ] PostgreSQL миграция: `chat_session_state`, `chat_session_deltas`
-- [ ] Go структуры: State, Delta
-- [ ] CRUD операции: CreateState, GetState, AddDelta
-- [ ] **Проверка**: тест записи/чтения state
+- [x] PostgreSQL миграция: `chat_session_state`, `chat_session_deltas`
+- [x] Go структуры: State, Delta
+- [x] CRUD операции: CreateState, GetState, AddDelta
+- [x] **Проверка**: тест записи/чтения state ✅
 
-### Фаза 2: Agent 1 + 1 Tool (минимальный пайплайн)
+### Фаза 2: Agent 1 + 1 Tool (минимальный пайплайн) ✅
 **Цель**: запрос → tool call → данные в state
 
-- [ ] Tool: `search_products` (mock данные пока)
-- [ ] Промпт Agent 1 (минимальный)
-- [ ] Вызов Anthropic API
-- [ ] Tool executor: вызов → запись в state → "ok"
-- [ ] **Проверка**: "покажи ноутбуки" → state.data.products заполнен
+- [x] Tool: `search_products`
+- [x] Промпт Agent 1 (минимальный)
+- [x] Вызов Anthropic API с tools
+- [x] Tool executor: вызов → запись в state → "ok"
+- [x] **Проверка**: "покажи ноутбуки" → state.data.products заполнен ✅
 
 ### Фаза 3: Agent 2 + Template (визуализация)
 **Цель**: state → template → JSON для фронта
 
-- [ ] Триггер после Agent 1
-- [ ] Промпт Agent 2
-- [ ] Agent 2 получает meta (count, fields)
-- [ ] Agent 2 возвращает template
-- [ ] Backend применяет template к data
-- [ ] **Проверка**: получаем Formation JSON
+- [x] Триггер после Agent 1
+- [x] Промпт Agent 2
+- [x] Agent 2 получает meta (count, fields)
+- [x] Agent 2 возвращает template
+- [x] Backend применяет template к data
+- [x] **Проверка**: получаем Formation JSON ✅
+
+### Фаза 3.5: Router (Agent 0) — маршрутизация
+**Цель**: классификация intent перед тяжёлыми агентами
+
+- [ ] RouterPrompt (минимальный, ~200 tokens)
+- [ ] RouterExecuteUseCase
+- [ ] Intent types: search, clarify, compare, filter, support, viz
+- [ ] Output: intent + confidence + needs_history + needs_products + slots
+- [ ] Context Builder: собирает контекст на основе intent
+- [ ] Интеграция в Pipeline: Router → Switch → Agent1/Agent2/Support
+- [ ] **Проверка**: разные запросы → разные intents
+
+**Тестовые сценарии:**
+```
+"покажи ноутбуки"           → search
+"а что по второму?"         → clarify (needs_history=true)
+"сравни первый и третий"    → compare (needs_products=true)
+"забыл пароль"              → support
+"покажи таблицей"           → viz
+```
 
 ### Фаза 4: Frontend рендеринг
 **Цель**: JSON → UI
