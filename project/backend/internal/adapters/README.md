@@ -4,9 +4,19 @@
 
 ## Папки
 
-- `anthropic/` — Клиент для Anthropic API (Claude)
-- `json_store/` — Хранение товаров в JSON (MVP)
-- `memory/` — In-memory кэш
+- `anthropic/` — Клиент для Anthropic API (Claude) → LLMPort
+- `postgres/` — PostgreSQL адаптер → CachePort, EventPort
+- `json_store/` — Хранение товаров в JSON (MVP) → SearchPort
+- `memory/` — In-memory кэш (устарел, заменён postgres)
+
+## Статус
+
+| Адаптер | Порт | Статус |
+|---------|------|--------|
+| anthropic | LLMPort | ✅ implemented |
+| postgres | CachePort, EventPort | ✅ implemented |
+| json_store | SearchPort | stub |
+| memory | CachePort | stub (deprecated) |
 
 ## Правила
 

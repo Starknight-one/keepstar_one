@@ -49,9 +49,18 @@ core_implementation:
     api:
       file: "src/shared/api/apiClient.js"
       purpose: "HTTP client for backend"
-      function: "sendChatMessage(message)"
-      endpoint: "POST /api/v1/chat"
       status: "implemented"
+      functions:
+        sendChatMessage:
+          signature: "sendChatMessage(message, sessionId = null)"
+          endpoint: "POST /api/v1/chat"
+          body: "{ message, sessionId? }"
+          response: "{ sessionId, response, latencyMs }"
+        getSession:
+          signature: "getSession(sessionId)"
+          endpoint: "GET /api/v1/session/{id}"
+          response: "{ id, status, messages[], startedAt, lastActivityAt }"
+          returns_null: "on 404 (session not found/expired)"
 
   entities:
     atom:
@@ -97,12 +106,16 @@ core_implementation:
 
       useChatMessages:
         file: "useChatMessages.js"
-        returns: ["messages", "isLoading", "error", "addMessage", "setLoading", "setError", "setSessionId"]
+        returns: ["sessionId", "messages", "isLoading", "error", "addMessage", "setMessages", "setLoading", "setError", "setSessionId"]
         status: "implemented"
 
       useChatSubmit:
         file: "useChatSubmit.js"
+        params: ["sessionId", "addMessage", "setLoading", "setError", "setSessionId"]
         returns: ["submit"]
+        features:
+          - "Saves sessionId to localStorage on first message"
+          - "Passes sessionId to API for session continuity"
         status: "implemented"
 
       ChatPanel:
@@ -110,6 +123,10 @@ core_implementation:
         styles: "ChatPanel.css"
         purpose: "Main chat component"
         props: ["onClose"]
+        features:
+          - "Loads session history from localStorage on mount"
+          - "Calls getSession() API to restore messages"
+          - "Clears localStorage if session expired"
         status: "implemented"
 
       ChatHistory:
@@ -137,6 +154,20 @@ core_implementation:
       directory: "src/features/canvas/"
       status: "placeholder for future"
 
+session_persistence:
+  storage: "localStorage"
+  key: "chatSessionId"
+  flow:
+    on_mount:
+      - "Check localStorage for chatSessionId"
+      - "If found, call getSession(sessionId)"
+      - "If session active, restore messages to state"
+      - "If session expired/not found, clear localStorage"
+    on_message:
+      - "Send message with sessionId (if exists)"
+      - "Save returned sessionId to localStorage"
+      - "Update sessionId in state"
+
 patterns:
   component_structure:
     - "Functional components with hooks"
@@ -160,13 +191,17 @@ run_commands:
   lint: "cd project/frontend && npm run lint"
 
 migration_status:
-  description: "Feature-sliced architecture active, chat implemented"
+  description: "Feature-sliced architecture with session persistence"
   completed:
     - "Migrate to features/chat/ChatPanel"
     - "Implement useChatMessages hook"
     - "Implement useChatSubmit hook"
     - "Connect to /api/v1/chat endpoint"
     - "Remove old components/Chat"
+    - "Add getSession() API function"
+    - "Add setMessages() to useChatMessages"
+    - "Save sessionId to localStorage"
+    - "Load chat history on mount"
   next_steps:
     - "Implement widget rendering"
     - "Add atom components"

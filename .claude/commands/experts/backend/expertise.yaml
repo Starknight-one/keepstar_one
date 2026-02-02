@@ -8,6 +8,7 @@ overview:
   port: 8080
   ai_provider: "Anthropic Claude"
   model: "claude-haiku-4-5-20251001"
+  database: "Neon PostgreSQL"
 
 project_structure:
   root: "project/backend/"
@@ -53,12 +54,14 @@ core_implementation:
     pattern: |
       - Load .env via godotenv
       - Load config
-      - Initialize adapters (anthropic)
+      - Initialize PostgreSQL client (if DATABASE_URL set)
+      - Run migrations
+      - Initialize adapters (anthropic, postgres)
       - Initialize usecases (sendMessage)
       - Initialize handlers
       - Setup routes
       - Apply CORS middleware
-      - Start server
+      - Start server with graceful shutdown
 
   ports:
     llm_port:
@@ -75,7 +78,20 @@ core_implementation:
     cache_port:
       file: "internal/ports/cache_port.go"
       interface: "CachePort"
-      status: "stub"
+      status: "implemented"
+      methods:
+        - "GetSession(ctx, id) (*Session, error)"
+        - "SaveSession(ctx, session) error"
+        - "CacheProducts(ctx, sessionID, products) error"
+        - "GetCachedProducts(ctx, sessionID) ([]Product, error)"
+
+    event_port:
+      file: "internal/ports/event_port.go"
+      interface: "EventPort"
+      status: "implemented"
+      methods:
+        - "TrackEvent(ctx, event) error"
+        - "GetSessionEvents(ctx, sessionID) ([]ChatEvent, error)"
 
   adapters:
     anthropic:
@@ -85,6 +101,15 @@ core_implementation:
       method: "Chat(ctx, message) (string, error)"
       api: "POST https://api.anthropic.com/v1/messages"
 
+    postgres:
+      directory: "internal/adapters/postgres/"
+      status: "implemented"
+      files:
+        - "postgres_client.go - Connection pool (pgxpool)"
+        - "postgres_cache.go - CachePort implementation"
+        - "postgres_events.go - EventPort implementation"
+        - "migrations.go - Auto-migrations for chat tables"
+
     json_store:
       file: "internal/adapters/json_store/json_product_store.go"
       implements: "SearchPort"
@@ -93,23 +118,37 @@ core_implementation:
     memory:
       file: "internal/adapters/memory/memory_cache.go"
       implements: "CachePort"
-      status: "stub"
+      status: "stub (replaced by postgres)"
 
   usecases:
     chat_send_message:
       file: "internal/usecases/chat_send_message.go"
       struct: "SendMessageUseCase"
-      purpose: "Send message to LLM and return response"
+      purpose: "Send message to LLM, save to DB, track events"
       status: "implemented"
-      method: "Execute(ctx, message) (string, error)"
+      methods:
+        - "Execute(ctx, req) (*SendMessageResponse, error)"
+        - "WithSessionTTL(duration) *SendMessageUseCase"
+      features:
+        - "Session management with sliding TTL (10 min default)"
+        - "Message persistence to PostgreSQL"
+        - "Event tracking (chat_opened, message_sent, message_received)"
+        - "Graceful handling when DB not configured"
 
   handlers:
     chat:
       file: "internal/handlers/handler_chat.go"
       struct: "ChatHandler"
       endpoint: "POST /api/v1/chat"
-      request: "{ message: string }"
-      response: "{ response: string }"
+      request: "{ sessionId?: string, tenantId?: string, message: string }"
+      response: "{ sessionId: string, response: string, latencyMs: int }"
+      status: "implemented"
+
+    session:
+      file: "internal/handlers/handler_session.go"
+      struct: "SessionHandler"
+      endpoint: "GET /api/v1/session/{id}"
+      response: "{ id, status, messages[], startedAt, lastActivityAt }"
       status: "implemented"
 
     health:
@@ -134,10 +173,22 @@ core_implementation:
     message_entity:
       file: "internal/domain/message_entity.go"
       types: ["MessageRole", "Message"]
+      fields: ["ID", "SessionID", "Role", "Content", "Widgets", "Formation", "TokensUsed", "ModelUsed", "LatencyMs", "SentAt", "ReceivedAt", "Timestamp"]
 
     session_entity:
       file: "internal/domain/session_entity.go"
-      types: ["Session"]
+      types: ["SessionStatus", "Session"]
+      fields: ["ID", "UserID", "TenantID", "Status", "Messages", "Metadata", "StartedAt", "EndedAt", "LastActivityAt", "CreatedAt", "UpdatedAt"]
+
+    user_entity:
+      file: "internal/domain/user_entity.go"
+      types: ["ChatUser"]
+      fields: ["ID", "ExternalID", "TenantID", "Fingerprint", "IPAddress", "UserAgent", "Metadata", "FirstSeenAt", "LastSeenAt", "CreatedAt"]
+
+    event_entity:
+      file: "internal/domain/event_entity.go"
+      types: ["EventType", "ChatEvent"]
+      event_types: ["chat_opened", "message_sent", "message_received", "chat_closed", "widget_clicked", "session_timeout"]
 
     product_entity:
       file: "internal/domain/product_entity.go"
@@ -151,8 +202,13 @@ api_endpoints:
   chat:
     method: "POST"
     path: "/api/v1/chat"
-    body: "{ message: string }"
-    response: "{ response: string }"
+    body: "{ sessionId?: string, tenantId?: string, message: string }"
+    response: "{ sessionId: string, response: string, latencyMs: int }"
+
+  session:
+    method: "GET"
+    path: "/api/v1/session/{id}"
+    response: "{ id, status, messages[], startedAt, lastActivityAt }"
 
   health:
     method: "GET"
@@ -163,6 +219,19 @@ api_endpoints:
     method: "GET"
     path: "/ready"
     response: "OK"
+
+database:
+  provider: "Neon PostgreSQL"
+  tables:
+    - "chat_users - User/visitor tracking"
+    - "chat_sessions - Chat sessions with status and TTL"
+    - "chat_messages - Message history with metadata"
+    - "chat_events - Analytics events"
+  features:
+    - "Auto-migrations on startup"
+    - "Connection pooling (pgxpool)"
+    - "SSL required for Neon"
+    - "Graceful shutdown"
 
 patterns:
   naming:
@@ -192,6 +261,8 @@ run_commands:
 dependencies:
   - "github.com/joho/godotenv"
   - "github.com/rs/cors"
+  - "github.com/jackc/pgx/v5"
+  - "github.com/google/uuid"
 
 env_vars:
   required:
@@ -201,15 +272,21 @@ env_vars:
     - "ENVIRONMENT (default: development)"
     - "LLM_MODEL (default: claude-haiku-4-5-20251001)"
     - "LOG_LEVEL (default: info)"
+    - "DATABASE_URL (PostgreSQL connection string)"
 
 migration_status:
-  description: "Hexagonal architecture active, simple chat implemented"
+  description: "Hexagonal architecture with PostgreSQL persistence"
   completed:
     - "Migrate to cmd/server/main.go entry point"
     - "Implement LLMPort with Chat method"
     - "Implement Anthropic adapter"
     - "Implement SendMessageUseCase"
     - "Implement ChatHandler"
+    - "Add PostgreSQL adapter with connection pooling"
+    - "Implement CachePort for session/message persistence"
+    - "Implement EventPort for analytics"
+    - "Add session TTL (10 min sliding)"
+    - "Add GET /api/v1/session/{id} endpoint"
   next_steps:
     - "Add two-agent pipeline (AnalyzeQuery + ComposeWidgets)"
     - "Implement product search"
