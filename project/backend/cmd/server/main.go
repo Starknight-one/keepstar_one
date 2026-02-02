@@ -109,8 +109,23 @@ func main() {
 		agent1UC = usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog)
 		appLog.Info("agent1_usecase_initialized", "status", "ok")
 	}
-	// agent1UC is ready to be called from handlers
-	_ = agent1UC // TODO: wire to handler in Phase 3
+	_ = agent1UC // Available for direct Agent 1 calls
+
+	// Initialize Agent 2 use case (Template Builder)
+	var agent2UC *usecases.Agent2ExecuteUseCase
+	if stateAdapter != nil {
+		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter)
+		appLog.Info("agent2_usecase_initialized", "status", "ok")
+	}
+	_ = agent2UC // Available for direct Agent 2 calls
+
+	// Initialize Pipeline orchestrator (Agent 1 → Agent 2 → Formation)
+	var pipelineUC *usecases.PipelineExecuteUseCase
+	if toolRegistry != nil && stateAdapter != nil {
+		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog)
+		appLog.Info("pipeline_usecase_initialized", "status", "ok")
+	}
+	_ = pipelineUC // Pipeline is ready to be called from handlers
 
 	// Initialize use cases
 	sendMessage := usecases.NewSendMessageUseCase(llmClient, cacheAdapter, eventAdapter)

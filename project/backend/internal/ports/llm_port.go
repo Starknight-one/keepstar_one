@@ -18,4 +18,13 @@ type LLMPort interface {
 		messages []domain.LLMMessage,
 		tools []domain.ToolDefinition,
 	) (*domain.LLMResponse, error)
+
+	// ChatWithUsage sends a message with system prompt and returns response with usage stats
+	ChatWithUsage(ctx context.Context, systemPrompt, userMessage string) (*ChatResponse, error)
+}
+
+// ChatResponse contains both text and usage info
+type ChatResponse struct {
+	Text  string
+	Usage domain.LLMUsage
 }

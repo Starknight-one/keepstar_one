@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"keepstar/internal/domain"
+	"keepstar/internal/ports"
 )
 
 const apiURL = "https://api.anthropic.com/v1/messages"
@@ -44,6 +45,10 @@ type anthropicResponse struct {
 	Content []struct {
 		Text string `json:"text"`
 	} `json:"content"`
+	Usage struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -102,6 +107,75 @@ func (c *Client) Chat(ctx context.Context, message string) (string, error) {
 	}
 
 	return anthropicResp.Content[0].Text, nil
+}
+
+// ChatWithUsage sends a message and returns response with usage stats
+func (c *Client) ChatWithUsage(ctx context.Context, systemPrompt, userMessage string) (*ports.ChatResponse, error) {
+	if c.apiKey == "" {
+		return nil, fmt.Errorf("anthropic API key not configured")
+	}
+
+	// Use the tool request format which supports system prompt
+	reqBody := anthropicToolRequest{
+		Model:     c.model,
+		MaxTokens: 1024,
+		System:    systemPrompt,
+		Messages: []anthropicToolMsg{
+			{Role: "user", Content: userMessage},
+		},
+		// No tools - just text response
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", c.apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var anthroResp anthropicToolResponse
+	if err := json.NewDecoder(resp.Body).Decode(&anthroResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	if anthroResp.Error != nil {
+		return nil, fmt.Errorf("anthropic error: %s", anthroResp.Error.Message)
+	}
+
+	// Extract text from content
+	var text string
+	for _, block := range anthroResp.Content {
+		if block.Type == "text" {
+			text = block.Text
+			break
+		}
+	}
+
+	usage := domain.LLMUsage{
+		InputTokens:  anthroResp.Usage.InputTokens,
+		OutputTokens: anthroResp.Usage.OutputTokens,
+		TotalTokens:  anthroResp.Usage.InputTokens + anthroResp.Usage.OutputTokens,
+		Model:        c.model,
+	}
+	usage.CostUSD = usage.CalculateCost()
+
+	return &ports.ChatResponse{
+		Text:  text,
+		Usage: usage,
+	}, nil
 }
 
 // Tool calling types

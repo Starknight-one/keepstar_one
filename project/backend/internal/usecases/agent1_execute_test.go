@@ -23,8 +23,12 @@ import (
 // - ANTHROPIC_API_KEY set
 // Run with: go test -v -run TestAgent1Execute_Integration ./internal/usecases/
 func TestAgent1Execute_Integration(t *testing.T) {
-	// Load .env from project root
-	_ = godotenv.Load("../.env")
+	// Load .env - go test runs with cwd = package directory
+	// From internal/usecases/ need ../../../.env to reach project/.env
+	if err := godotenv.Load("../../../.env"); err != nil {
+		_ = godotenv.Load("../../.env")
+		_ = godotenv.Load("../.env")
+	}
 
 	// Check required env vars
 	dbURL := os.Getenv("DATABASE_URL")
@@ -172,8 +176,12 @@ func TestAgent1Execute_Integration(t *testing.T) {
 
 // TestAgent1Execute_CostEstimate runs a single query and prints detailed cost info
 func TestAgent1Execute_CostEstimate(t *testing.T) {
-	// Load .env from project root
-	_ = godotenv.Load("../.env")
+	// Load .env - go test runs with cwd = package directory
+	// From internal/usecases/ need ../../../.env to reach project/.env
+	if err := godotenv.Load("../../../.env"); err != nil {
+		_ = godotenv.Load("../../.env")
+		_ = godotenv.Load("../.env")
+	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")

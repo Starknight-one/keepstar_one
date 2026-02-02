@@ -12,10 +12,22 @@ const (
 	WidgetTypeQuickReplies    WidgetType = "quick_replies"
 )
 
+// WidgetSize defines widget size constraints
+type WidgetSize string
+
+const (
+	WidgetSizeTiny   WidgetSize = "tiny"   // 80-110px, max 2 atoms
+	WidgetSizeSmall  WidgetSize = "small"  // 160-220px, max 3 atoms
+	WidgetSizeMedium WidgetSize = "medium" // 280-350px, max 5 atoms
+	WidgetSizeLarge  WidgetSize = "large"  // 384-460px, max 10 atoms
+)
+
 // Widget is a composed UI element made of atoms
 type Widget struct {
 	ID       string                 `json:"id"`
 	Type     WidgetType             `json:"type"`
+	Size     WidgetSize             `json:"size,omitempty"`
+	Priority int                    `json:"priority,omitempty"`
 	Atoms    []Atom                 `json:"atoms"`
 	Children []Widget               `json:"children,omitempty"`
 	Meta     map[string]interface{} `json:"meta,omitempty"`
