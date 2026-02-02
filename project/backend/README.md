@@ -33,6 +33,9 @@ internal/
 | `/api/v1/session/{id}` | GET | Get session with messages |
 | `/api/v1/tenants/{slug}/products` | GET | List products for tenant |
 | `/api/v1/tenants/{slug}/products/{id}` | GET | Get product details |
+| `/api/v1/pipeline` | POST | Two-agent pipeline → Formation |
+| `/debug/session/` | GET | Debug console (all sessions) |
+| `/debug/session/{id}` | GET | Session detail (HTML/JSON) |
 | `/health` | GET | Health check |
 | `/ready` | GET | Readiness check |
 

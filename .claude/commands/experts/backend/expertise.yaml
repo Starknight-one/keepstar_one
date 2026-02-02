@@ -317,6 +317,34 @@ core_implementation:
         - "GET /api/v1/tenants/{slug}/products/{id}"
       query_params: ["category", "brand", "minPrice", "maxPrice", "search", "limit", "offset"]
 
+    pipeline:
+      file: "internal/handlers/handler_pipeline.go"
+      struct: "PipelineHandler"
+      status: "implemented"
+      endpoint: "POST /api/v1/pipeline"
+      request: "{ sessionId?: string, query: string }"
+      response: "{ sessionId, formation, agent1Ms, agent2Ms, totalMs }"
+      types:
+        - "PipelineRequest: { SessionID, Query }"
+        - "PipelineResponse: { SessionID, Formation, Agent1Ms, Agent2Ms, TotalMs }"
+        - "FormationResponse: { Mode, Grid, Widgets }"
+
+    debug:
+      file: "internal/handlers/handler_debug.go"
+      struct: "DebugHandler"
+      status: "implemented"
+      endpoints:
+        - "GET /debug/session/ - list all sessions"
+        - "GET /debug/session/{id} - session detail (HTML)"
+        - "GET /debug/session/{id}?format=json - session detail (JSON)"
+        - "GET /debug/api - all sessions JSON"
+        - "GET /debug/api?session={id} - specific session JSON"
+      types:
+        - "MetricsStore: in-memory store for pipeline metrics"
+        - "PipelineMetrics: { SessionID, Query, Timestamp, Agent1Metrics, Agent2Metrics, TotalMs, Formation }"
+        - "AgentMetrics: { DurationMs, LLMCallMs, ToolMs, InputTokens, OutputTokens, TotalTokens, CostUSD, Model }"
+        - "FormationInfo: { Mode, WidgetCount, Cols }"
+
     middleware_tenant:
       file: "internal/handlers/middleware_tenant.go"
       struct: "TenantMiddleware"
@@ -434,6 +462,28 @@ api_endpoints:
     path: "/api/v1/tenants/{slug}/products/{id}"
     response: "Product (merged with master)"
 
+  pipeline:
+    method: "POST"
+    path: "/api/v1/pipeline"
+    body: "{ sessionId?: string, query: string }"
+    response: "{ sessionId, formation: { mode, grid, widgets }, agent1Ms, agent2Ms, totalMs }"
+
+  debug_list:
+    method: "GET"
+    path: "/debug/session/"
+    response: "HTML page with all sessions"
+
+  debug_detail:
+    method: "GET"
+    path: "/debug/session/{id}"
+    response: "HTML page with session details (or JSON with ?format=json)"
+
+  debug_api:
+    method: "GET"
+    path: "/debug/api"
+    query: "?session={id}"
+    response: "{ sessions: [] } or { sessionId, state, deltas, metrics }"
+
   health:
     method: "GET"
     path: "/health"
@@ -532,7 +582,7 @@ env_vars:
     - "DATABASE_URL (PostgreSQL connection string)"
 
 migration_status:
-  description: "Hexagonal architecture with PostgreSQL persistence and multi-tenant catalog"
+  description: "Hexagonal architecture with PostgreSQL persistence, multi-tenant catalog, and two-agent pipeline"
   completed:
     - "Migrate to cmd/server/main.go entry point"
     - "Implement LLMPort with Chat method"
@@ -565,10 +615,12 @@ migration_status:
     - "Implement PipelineExecuteUseCase (orchestrator)"
     - "Add ApplyTemplate function for template → widgets"
     - "Add ChatWithUsage method to LLMPort"
+    - "Wire Pipeline to HTTP handler (POST /api/v1/pipeline)"
+    - "Add debug console with HTML/JSON endpoints"
+    - "Add MetricsStore for pipeline performance tracking"
   next_steps:
-    - "Wire Pipeline to HTTP handler"
-    - "Add Formation rendering endpoint"
     - "Add widget click event handling"
+    - "Add streaming response support"
 
 # CRITICAL: Gotchas by hexagonal layer
 gotchas:

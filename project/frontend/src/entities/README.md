@@ -5,7 +5,8 @@
 ## Папки
 
 - `atom/` — Атомарные UI элементы (Text, Image, Price, Rating...)
-- `widget/` — Составные виджеты (ProductCard, ComparisonTable...)
+- `widget/` — Составные виджеты (ProductCard, TextBlock, QuickReplies)
+- `formation/` — Layout виджетов (grid, carousel, single, list)
 - `message/` — Сообщения чата
 
 ## Правила

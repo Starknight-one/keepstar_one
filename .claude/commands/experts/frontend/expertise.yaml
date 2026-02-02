@@ -71,6 +71,12 @@ core_implementation:
           endpoint: "GET /api/v1/tenants/{slug}/products/{id}"
           response: "Product"
           returns_null: "on 404"
+        sendPipelineQuery:
+          signature: "sendPipelineQuery(sessionId, query)"
+          endpoint: "POST /api/v1/pipeline"
+          body: "{ query, sessionId? }"
+          response: "{ sessionId, formation, agent1Ms, agent2Ms, totalMs }"
+          purpose: "Sends query through Agent 1 → Agent 2 → Formation pipeline"
 
   entities:
     atom:
@@ -78,20 +84,58 @@ core_implementation:
       atomModel:
         file: "atomModel.js"
         exports: ["AtomType"]
+        types: ["TEXT", "NUMBER", "PRICE", "IMAGE", "RATING", "BADGE", "BUTTON", "ICON", "DIVIDER", "PROGRESS"]
       AtomRenderer:
         file: "AtomRenderer.jsx"
-        purpose: "Renders atom by type"
-        status: "stub"
+        styles: "Atom.css"
+        purpose: "Renders atom by type with style/format/size support"
+        status: "implemented"
+        features:
+          - "TEXT: renders with optional style class"
+          - "NUMBER: formats as currency/percent/compact"
+          - "PRICE: displays with currency symbol"
+          - "IMAGE: renders with size class"
+          - "RATING: renders star rating (★/☆)"
+          - "BADGE: renders with variant class"
+          - "BUTTON: clickable with action handler"
+          - "ICON/DIVIDER/PROGRESS: visual elements"
 
     widget:
       directory: "src/entities/widget/"
       widgetModel:
         file: "widgetModel.js"
         exports: ["WidgetType", "FormationType"]
+        widget_types: ["PRODUCT_CARD", "TEXT_BLOCK", "QUICK_REPLIES"]
       WidgetRenderer:
         file: "WidgetRenderer.jsx"
-        purpose: "Renders widget from atoms"
-        status: "stub"
+        styles: "Widget.css"
+        purpose: "Renders widget by type using AtomRenderer"
+        status: "implemented"
+        components:
+          - "ProductCard: renders atoms in product card layout"
+          - "TextBlock: renders atoms in text block layout"
+          - "QuickReplies: renders atoms as quick reply buttons"
+          - "DefaultWidget: fallback for unknown types"
+
+    formation:
+      directory: "src/entities/formation/"
+      formationModel:
+        file: "formationModel.js"
+        exports: ["FormationMode"]
+        modes: ["GRID", "CAROUSEL", "SINGLE", "LIST"]
+      FormationRenderer:
+        file: "FormationRenderer.jsx"
+        styles: "Formation.css"
+        purpose: "Renders formation layout with widgets"
+        status: "implemented"
+        features:
+          - "GRID: renders in grid layout with configurable cols"
+          - "CAROUSEL: renders horizontal scrolling layout"
+          - "SINGLE: renders single widget"
+          - "LIST: renders vertical list (default)"
+      index:
+        file: "index.js"
+        exports: ["FormationRenderer", "FormationMode"]
 
     message:
       directory: "src/entities/message/"
@@ -227,7 +271,7 @@ run_commands:
   lint: "cd project/frontend && npm run lint"
 
 migration_status:
-  description: "Feature-sliced architecture with session persistence and catalog"
+  description: "Feature-sliced architecture with session persistence, catalog, and formation rendering"
   completed:
     - "Migrate to features/chat/ChatPanel"
     - "Implement useChatMessages hook"
@@ -241,7 +285,12 @@ migration_status:
     - "Add catalog API functions (getProducts, getProduct)"
     - "Implement catalog feature with ProductGrid"
     - "Add useCatalogProducts hook"
+    - "Add sendPipelineQuery API function"
+    - "Implement AtomRenderer with all atom types"
+    - "Implement WidgetRenderer with ProductCard, TextBlock, QuickReplies"
+    - "Implement FormationRenderer with grid/carousel/single/list modes"
+    - "Add Formation.css, Widget.css, Atom.css styles"
   next_steps:
-    - "Connect ProductGrid to App"
-    - "Add product detail view"
-    - "Add canvas feature for widget display"
+    - "Connect FormationRenderer to ChatPanel"
+    - "Add widget click event handling"
+    - "Add canvas feature for full-screen widget display"

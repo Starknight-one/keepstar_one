@@ -44,6 +44,14 @@ const product = await getProduct("nike", "uuid");
 // Returns null if not found (404)
 ```
 
+### sendPipelineQuery(sessionId, query)
+Отправка запроса через two-agent pipeline.
+
+```js
+const result = await sendPipelineQuery(sessionId, "Покажи кроссовки Nike");
+// { sessionId, formation: { mode, grid, widgets }, agent1Ms, agent2Ms, totalMs }
+```
+
 ## API Base
 
 ```

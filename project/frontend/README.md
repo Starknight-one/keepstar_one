@@ -21,6 +21,7 @@ src/
 ├── entities/          # Business entities
 │   ├── atom/          # Atomic UI elements
 │   ├── widget/        # Widget compositions
+│   ├── formation/     # Formation layouts
 │   └── message/       # Chat messages
 └── shared/            # Shared utilities
     └── api/           # API client
@@ -61,6 +62,7 @@ Located at `src/shared/api/apiClient.js`:
 | `getSession(sessionId)` | GET /api/v1/session/{id} | Get session history |
 | `getProducts(tenantSlug, filters)` | GET /api/v1/tenants/{slug}/products | List products |
 | `getProduct(tenantSlug, productId)` | GET /api/v1/tenants/{slug}/products/{id} | Get product |
+| `sendPipelineQuery(sessionId, query)` | POST /api/v1/pipeline | Two-agent pipeline |
 
 ## Features
 
