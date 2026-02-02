@@ -60,6 +60,13 @@ func main() {
 		}
 		appLog.Info("catalog_migrations_completed", "status", "ok")
 
+		// Run state migrations
+		if err := dbClient.RunStateMigrations(ctx); err != nil {
+			appLog.Error("state_migrations_failed", "error", err)
+			os.Exit(1)
+		}
+		appLog.Info("state_migrations_completed", "status", "ok")
+
 		// Seed catalog data (with extended timeout)
 		seedCtx, seedCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		if err := postgres.SeedCatalogData(seedCtx, dbClient); err != nil {
