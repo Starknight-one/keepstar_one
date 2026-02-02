@@ -10,13 +10,20 @@ User Query
     ▼
 ┌─────────────────┐
 │  Agent 1        │  Tool Router
-│  (Query→Tools)  │  Вызывает нужные tools
+│  (Query→Tools)  │
 └────────┬────────┘
-         │ "Я ок" + данные
+         │
+         ├──→ tool_call ──→ [Tool] ──→ Session State
+         │                     │
+         │←── "ok" / "empty" ──┘
+         │
+         ▼
+   "Я ок" + флаг для Agent 2
+         │
          ▼
 ┌─────────────────┐
 │  Agent 2        │  Compose Router
-│  (Data→Widgets) │  Собирает ответ
+│  (State→Widget) │  Читает из Session State
 └────────┬────────┘
          │
          ▼
@@ -25,26 +32,60 @@ User Query
 
 ## Agent 1: Tool Router
 
-**Задача**: понять intent, вызвать tools, вернуть данные.
+**Задача**: из свободного текста понять какие tools вызвать и с какими параметрами. Супер быстро.
+
+**Ключевое**: агент НЕ видит данные из tools. Tools сами пишут в Session State. Агент получает только сигнал "ok" или "empty".
+
+### Логика принятия решений
+
+Агент помнит историю вызовов → знает что лежит в Session State:
+
+1. **Нужны новые данные?** → tool_call(search_products, {...})
+2. **Данные уже есть, нужна модификация?** → флаг Agent 2:
+   - изменить layout (grid → carousel)
+   - изменить стиль (шрифты, размеры)
+   - убрать часть данных
+   - отсортировать по-другому
+
+### Input/Output
 
 - Input: user query (свободная форма)
-- Output: "Я ок" + результат tools
+- Output: "Я ок" + флаг/инструкция для Agent 2
 - Tools: search_products, get_product, filter, compare...
-- Retry: до 3 попыток при фейле
-- Память: session state (что искали, что показали)
+- Retry: до 3 попыток при фейле (validation hooks)
 
-**Экономия токенов**:
+### Память
+
+- История tool calls за сессию
+- Знает что в кэше/state прямо сейчас
+- Не хранит сами данные, только метаинфу
+
+### Экономия токенов
+
 - Минимальный system prompt
 - Никаких рассуждений, только tool calls
-- Anthropic cache для повторяющихся промптов
+- Не читает результаты tools
+- Anthropic prompt caching
 
 ## Agent 2: Compose Router
 
-**Задача**: собрать виджеты из данных.
+**Задача**: собрать виджеты из Session State.
 
-- Input: данные от Agent 1
+- Input: флаг/инструкция от Agent 1
+- Читает: Session State (данные)
 - Output: Widget JSON для frontend
 - Роутит сборку: grid, carousel, comparison table...
+
+## Session State
+
+```
+{
+  products: [...],        // данные от tools
+  filters_applied: {...}, // что применено
+  layout_hint: "grid",    // текущий layout
+  history: [...]          // история tool calls
+}
+```
 
 ## Кэширование
 
@@ -56,7 +97,7 @@ Anthropic prompt caching:
 ## TODO
 
 - [ ] Определить tools для Agent 1
-- [ ] Формат "Я ок" + данные
+- [ ] Формат флагов Agent 1 → Agent 2
 - [ ] Validation hooks
 - [ ] Widget schema для Agent 2
-- [ ] Session state структура
+- [ ] Session State структура в БД
