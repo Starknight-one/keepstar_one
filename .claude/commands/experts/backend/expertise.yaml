@@ -106,6 +106,18 @@ core_implementation:
       types:
         - "ProductFilter: CategoryID, Brand, MinPrice, MaxPrice, Search, Limit, Offset"
 
+    state_port:
+      file: "internal/ports/state_port.go"
+      interface: "StatePort"
+      status: "implemented"
+      methods:
+        - "CreateState(ctx, sessionID) (*SessionState, error)"
+        - "GetState(ctx, sessionID) (*SessionState, error)"
+        - "UpdateState(ctx, state) error"
+        - "AddDelta(ctx, sessionID, delta) error"
+        - "GetDeltas(ctx, sessionID) ([]Delta, error)"
+        - "GetDeltasSince(ctx, sessionID, fromStep) ([]Delta, error)"
+
   adapters:
     anthropic:
       file: "internal/adapters/anthropic/anthropic_client.go"
@@ -125,6 +137,9 @@ core_implementation:
         - "postgres_catalog.go - CatalogPort implementation with product merging"
         - "catalog_migrations.go - Catalog schema migrations"
         - "catalog_seed.go - Seed data (tenants, categories, products)"
+        - "postgres_state.go - StatePort implementation with JSONB storage"
+        - "state_migrations.go - State table migrations"
+        - "postgres_state_test.go - State repository tests"
 
     json_store:
       file: "internal/adapters/json_store/json_product_store.go"
@@ -267,6 +282,13 @@ core_implementation:
       file: "internal/domain/domain_errors.go"
       errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound"]
 
+    state_entity:
+      file: "internal/domain/state_entity.go"
+      types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "StateMeta", "StateData", "StateCurrent", "SessionState"]
+      trigger_types: ["USER_QUERY", "WIDGET_ACTION", "SYSTEM"]
+      action_types: ["SEARCH", "FILTER", "SORT", "LAYOUT", "ROLLBACK"]
+      purpose: "Delta-based state for two-agent pipeline"
+
 api_endpoints:
   chat:
     method: "POST"
@@ -383,7 +405,10 @@ migration_status:
     - "Implement ListProducts and GetProduct use cases"
     - "Add TenantMiddleware for slug resolution"
     - "Add catalog API endpoints"
+    - "Add StatePort interface for session state"
+    - "Implement PostgreSQL state adapter with JSONB"
+    - "Add state migrations and tests"
   next_steps:
-    - "Add two-agent pipeline (AnalyzeQuery + ComposeWidgets)"
-    - "Connect chat to product search"
+    - "Add two-agent pipeline (Agent1 Tool Caller + Agent2 Template Builder)"
+    - "Connect chat to product search via state"
     - "Add widget rendering for products"

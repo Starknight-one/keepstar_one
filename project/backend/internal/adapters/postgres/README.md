@@ -1,6 +1,6 @@
 # PostgreSQL Adapter
 
-Адаптер для Neon PostgreSQL. Реализует CachePort, EventPort и CatalogPort.
+Адаптер для Neon PostgreSQL. Реализует CachePort, EventPort, CatalogPort и StatePort.
 
 ## Файлы
 
@@ -8,8 +8,10 @@
 - `postgres_cache.go` — Реализация CachePort
 - `postgres_events.go` — Реализация EventPort
 - `postgres_catalog.go` — Реализация CatalogPort с product merging
+- `postgres_state.go` — Реализация StatePort для two-agent pipeline
 - `migrations.go` — Миграции для chat таблиц
 - `catalog_migrations.go` — Миграции для catalog схемы
+- `state_migrations.go` — Миграции для state таблиц
 - `catalog_seed.go` — Seed данные (tenants, categories, products)
 
 ## Схемы и таблицы
@@ -32,6 +34,13 @@
 | master_products | Канонические товары |
 | products | Листинги товаров по тенантам |
 
+### state
+
+| Таблица | Назначение |
+|---------|------------|
+| session_states | Текущее состояние сессии (JSONB) |
+| session_deltas | История дельт для replay |
+
 ## Использование
 
 ```go
@@ -41,6 +50,7 @@ client, err := postgres.NewClient(ctx, databaseURL)
 // Запуск миграций
 client.RunMigrations(ctx)
 client.RunCatalogMigrations(ctx)
+client.RunStateMigrations(ctx)
 
 // Seed данных
 postgres.SeedCatalogData(ctx, client)
@@ -49,6 +59,7 @@ postgres.SeedCatalogData(ctx, client)
 cacheAdapter := postgres.NewCacheAdapter(client)
 eventAdapter := postgres.NewEventAdapter(client)
 catalogAdapter := postgres.NewCatalogAdapter(client)
+stateAdapter := postgres.NewStateAdapter(client)
 ```
 
 ## Требования
