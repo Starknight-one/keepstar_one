@@ -11,6 +11,13 @@ export function useChatMessages() {
     }));
   }, []);
 
+  const setMessages = useCallback((messages) => {
+    setState((prev) => ({
+      ...prev,
+      messages,
+    }));
+  }, []);
+
   const setLoading = useCallback((isLoading) => {
     setState((prev) => ({ ...prev, isLoading }));
   }, []);
@@ -26,6 +33,7 @@ export function useChatMessages() {
   return {
     ...state,
     addMessage,
+    setMessages,
     setLoading,
     setError,
     setSessionId,

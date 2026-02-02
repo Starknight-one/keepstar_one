@@ -2,7 +2,9 @@ import { useCallback } from 'react';
 import { sendChatMessage } from '../../shared/api/apiClient';
 import { MessageRole } from '../../entities/message/messageModel';
 
-export function useChatSubmit({ addMessage, setLoading, setError }) {
+const SESSION_STORAGE_KEY = 'chatSessionId';
+
+export function useChatSubmit({ sessionId, addMessage, setLoading, setError, setSessionId }) {
   const submit = useCallback(async (text) => {
     if (!text.trim()) return;
 
@@ -18,7 +20,13 @@ export function useChatSubmit({ addMessage, setLoading, setError }) {
     setError(null);
 
     try {
-      const response = await sendChatMessage(text);
+      const response = await sendChatMessage(text, sessionId);
+
+      // Save sessionId to localStorage if new
+      if (response.sessionId && response.sessionId !== sessionId) {
+        localStorage.setItem(SESSION_STORAGE_KEY, response.sessionId);
+        setSessionId(response.sessionId);
+      }
 
       // Add assistant message
       addMessage({
@@ -39,7 +47,7 @@ export function useChatSubmit({ addMessage, setLoading, setError }) {
     } finally {
       setLoading(false);
     }
-  }, [addMessage, setLoading, setError]);
+  }, [sessionId, addMessage, setLoading, setError, setSessionId]);
 
   return { submit };
 }
