@@ -17,4 +17,6 @@ var (
 	ErrInvalidQuery      = &Error{Code: "INVALID_QUERY", Message: "Invalid query"}
 	ErrLLMUnavailable    = &Error{Code: "LLM_UNAVAILABLE", Message: "AI service unavailable"}
 	ErrRateLimitExceeded = &Error{Code: "RATE_LIMIT", Message: "Rate limit exceeded"}
+	ErrTenantNotFound    = &Error{Code: "TENANT_NOT_FOUND", Message: "tenant not found"}
+	ErrCategoryNotFound  = &Error{Code: "CATEGORY_NOT_FOUND", Message: "category not found"}
 )

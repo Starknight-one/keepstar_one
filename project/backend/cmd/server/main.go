@@ -35,7 +35,7 @@ func main() {
 	// Initialize PostgreSQL if configured
 	var dbClient *postgres.Client
 	if cfg.HasDatabase() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		var err error
@@ -46,12 +46,29 @@ func main() {
 		}
 		appLog.Info("database_connected", "status", "ok")
 
-		// Run migrations
+		// Run chat migrations
 		if err := dbClient.RunMigrations(ctx); err != nil {
 			appLog.Error("migrations_failed", "error", err)
 			os.Exit(1)
 		}
 		appLog.Info("migrations_completed", "status", "ok")
+
+		// Run catalog migrations
+		if err := dbClient.RunCatalogMigrations(ctx); err != nil {
+			appLog.Error("catalog_migrations_failed", "error", err)
+			os.Exit(1)
+		}
+		appLog.Info("catalog_migrations_completed", "status", "ok")
+
+		// Seed catalog data (with extended timeout)
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		if err := postgres.SeedCatalogData(seedCtx, dbClient); err != nil {
+			appLog.Error("catalog_seed_failed", "error", err)
+			// Non-fatal: continue even if seed fails
+		} else {
+			appLog.Info("catalog_seed_completed", "status", "ok")
+		}
+		seedCancel()
 	} else {
 		appLog.Info("database_skipped", "reason", "DATABASE_URL not configured")
 	}
@@ -62,9 +79,11 @@ func main() {
 	// Initialize database adapters (nil interface if no database)
 	var cacheAdapter ports.CachePort
 	var eventAdapter ports.EventPort
+	var catalogAdapter ports.CatalogPort
 	if dbClient != nil {
 		cacheAdapter = postgres.NewCacheAdapter(dbClient)
 		eventAdapter = postgres.NewEventAdapter(dbClient)
+		catalogAdapter = postgres.NewCatalogAdapter(dbClient)
 	}
 
 	// Initialize use cases
@@ -78,6 +97,16 @@ func main() {
 	// Setup routes
 	mux := http.NewServeMux()
 	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler)
+
+	// Setup catalog routes if database available
+	if catalogAdapter != nil {
+		listProductsUC := usecases.NewListProductsUseCase(catalogAdapter)
+		getProductUC := usecases.NewGetProductUseCase(catalogAdapter)
+		catalogHandler := handlers.NewCatalogHandler(listProductsUC, getProductUC)
+		tenantMiddleware := handlers.NewTenantMiddleware(catalogAdapter)
+		handlers.SetupCatalogRoutes(mux, catalogHandler, tenantMiddleware)
+		appLog.Info("catalog_routes_enabled", "status", "ok")
+	}
 
 	// Apply middleware
 	handler := handlers.CORSMiddleware(mux)
