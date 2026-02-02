@@ -42,6 +42,21 @@ For each relevant file:
 
 ### Step 5: Update Expertise
 Update expertise.yaml:
+
+**PRESERVE (never modify):**
+- `overview.architecture` — architectural pattern name
+- `overview.description` — high-level description
+- `layer_rules` — dependency rules between layers
+- `patterns` — naming conventions and patterns
+
+**UPDATE (from codebase scan):**
+- `project_structure` — actual files and directories
+- `core_implementation` — current implementation details
+- `api_endpoints` — actual endpoints
+- `run_commands` — verified commands
+- `migration_status` — current state
+
+Rules:
 - Keep format consistent
 - Stay within line limit
 - Focus on actionable knowledge
