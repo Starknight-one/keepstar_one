@@ -93,6 +93,19 @@ core_implementation:
         - "TrackEvent(ctx, event) error"
         - "GetSessionEvents(ctx, sessionID) ([]ChatEvent, error)"
 
+    catalog_port:
+      file: "internal/ports/catalog_port.go"
+      interface: "CatalogPort"
+      status: "implemented"
+      methods:
+        - "GetTenantBySlug(ctx, slug) (*Tenant, error)"
+        - "GetCategories(ctx) ([]Category, error)"
+        - "GetMasterProduct(ctx, id) (*MasterProduct, error)"
+        - "ListProducts(ctx, tenantID, filter) ([]Product, int, error)"
+        - "GetProduct(ctx, tenantID, productID) (*Product, error)"
+      types:
+        - "ProductFilter: CategoryID, Brand, MinPrice, MaxPrice, Search, Limit, Offset"
+
   adapters:
     anthropic:
       file: "internal/adapters/anthropic/anthropic_client.go"
@@ -109,6 +122,9 @@ core_implementation:
         - "postgres_cache.go - CachePort implementation"
         - "postgres_events.go - EventPort implementation"
         - "migrations.go - Auto-migrations for chat tables"
+        - "postgres_catalog.go - CatalogPort implementation with product merging"
+        - "catalog_migrations.go - Catalog schema migrations"
+        - "catalog_seed.go - Seed data (tenants, categories, products)"
 
     json_store:
       file: "internal/adapters/json_store/json_product_store.go"
@@ -135,6 +151,22 @@ core_implementation:
         - "Event tracking (chat_opened, message_sent, message_received)"
         - "Graceful handling when DB not configured"
 
+    catalog_list_products:
+      file: "internal/usecases/catalog_list_products.go"
+      struct: "ListProductsUseCase"
+      purpose: "List products for tenant with filtering"
+      status: "implemented"
+      methods:
+        - "Execute(ctx, req) (*ListProductsResponse, error)"
+
+    catalog_get_product:
+      file: "internal/usecases/catalog_get_product.go"
+      struct: "GetProductUseCase"
+      purpose: "Get single product with master data merging"
+      status: "implemented"
+      methods:
+        - "Execute(ctx, req) (*Product, error)"
+
   handlers:
     chat:
       file: "internal/handlers/handler_chat.go"
@@ -156,6 +188,26 @@ core_implementation:
       endpoints:
         - "GET /health"
         - "GET /ready"
+
+    catalog:
+      file: "internal/handlers/handler_catalog.go"
+      struct: "CatalogHandler"
+      status: "implemented"
+      endpoints:
+        - "GET /api/v1/tenants/{slug}/products"
+        - "GET /api/v1/tenants/{slug}/products/{id}"
+      query_params: ["category", "brand", "minPrice", "maxPrice", "search", "limit", "offset"]
+
+    middleware_tenant:
+      file: "internal/handlers/middleware_tenant.go"
+      struct: "TenantMiddleware"
+      purpose: "Resolve tenant slug from URL, validate tenant exists"
+      status: "implemented"
+
+    response:
+      file: "internal/handlers/response.go"
+      purpose: "JSON response helper"
+      functions: ["writeJSON(w, status, data)"]
 
   domain:
     atom_entity:
@@ -193,10 +245,27 @@ core_implementation:
     product_entity:
       file: "internal/domain/product_entity.go"
       types: ["Product"]
+      fields: ["ID", "TenantID", "MasterProductID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Images", "Rating", "StockQuantity", "Brand", "Category", "Tags", "Attributes"]
+
+    tenant_entity:
+      file: "internal/domain/tenant_entity.go"
+      types: ["TenantType", "Tenant"]
+      tenant_types: ["brand", "retailer", "reseller"]
+      fields: ["ID", "Slug", "Name", "Type", "Settings", "CreatedAt", "UpdatedAt"]
+
+    category_entity:
+      file: "internal/domain/category_entity.go"
+      types: ["Category"]
+      fields: ["ID", "Name", "Slug", "ParentID"]
+
+    master_product_entity:
+      file: "internal/domain/master_product_entity.go"
+      types: ["MasterProduct"]
+      fields: ["ID", "SKU", "Name", "Description", "Brand", "CategoryID", "Images", "Attributes", "OwnerTenantID", "CreatedAt", "UpdatedAt"]
 
     domain_errors:
       file: "internal/domain/domain_errors.go"
-      errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable"]
+      errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound"]
 
 api_endpoints:
   chat:
@@ -210,6 +279,17 @@ api_endpoints:
     path: "/api/v1/session/{id}"
     response: "{ id, status, messages[], startedAt, lastActivityAt }"
 
+  catalog_list:
+    method: "GET"
+    path: "/api/v1/tenants/{slug}/products"
+    query: "?category=&brand=&minPrice=&maxPrice=&search=&limit=&offset="
+    response: "{ products: Product[], total: int }"
+
+  catalog_get:
+    method: "GET"
+    path: "/api/v1/tenants/{slug}/products/{id}"
+    response: "Product (merged with master)"
+
   health:
     method: "GET"
     path: "/health"
@@ -222,16 +302,26 @@ api_endpoints:
 
 database:
   provider: "Neon PostgreSQL"
-  tables:
-    - "chat_users - User/visitor tracking"
-    - "chat_sessions - Chat sessions with status and TTL"
-    - "chat_messages - Message history with metadata"
-    - "chat_events - Analytics events"
+  schemas:
+    public:
+      tables:
+        - "chat_users - User/visitor tracking"
+        - "chat_sessions - Chat sessions with status and TTL"
+        - "chat_messages - Message history with metadata"
+        - "chat_events - Analytics events"
+    catalog:
+      tables:
+        - "tenants - Multi-tenant support (brand, retailer, reseller)"
+        - "categories - Product categories with tree structure"
+        - "master_products - Canonical product definitions"
+        - "products - Tenant-specific listings linked to masters"
   features:
     - "Auto-migrations on startup"
     - "Connection pooling (pgxpool)"
     - "SSL required for Neon"
     - "Graceful shutdown"
+    - "Product merging (tenant + master data)"
+    - "Seed data on first run"
 
 patterns:
   naming:
@@ -275,7 +365,7 @@ env_vars:
     - "DATABASE_URL (PostgreSQL connection string)"
 
 migration_status:
-  description: "Hexagonal architecture with PostgreSQL persistence"
+  description: "Hexagonal architecture with PostgreSQL persistence and multi-tenant catalog"
   completed:
     - "Migrate to cmd/server/main.go entry point"
     - "Implement LLMPort with Chat method"
@@ -287,7 +377,13 @@ migration_status:
     - "Implement EventPort for analytics"
     - "Add session TTL (10 min sliding)"
     - "Add GET /api/v1/session/{id} endpoint"
+    - "Implement multi-tenant product catalog"
+    - "Add CatalogPort with product merging"
+    - "Add catalog migrations and seed data"
+    - "Implement ListProducts and GetProduct use cases"
+    - "Add TenantMiddleware for slug resolution"
+    - "Add catalog API endpoints"
   next_steps:
     - "Add two-agent pipeline (AnalyzeQuery + ComposeWidgets)"
-    - "Implement product search"
-    - "Add widget rendering"
+    - "Connect chat to product search"
+    - "Add widget rendering for products"

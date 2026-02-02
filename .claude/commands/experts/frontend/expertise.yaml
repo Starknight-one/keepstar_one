@@ -61,6 +61,16 @@ core_implementation:
           endpoint: "GET /api/v1/session/{id}"
           response: "{ id, status, messages[], startedAt, lastActivityAt }"
           returns_null: "on 404 (session not found/expired)"
+        getProducts:
+          signature: "getProducts(tenantSlug, filters = {})"
+          endpoint: "GET /api/v1/tenants/{slug}/products"
+          filters: ["category", "brand", "search", "minPrice", "maxPrice", "limit", "offset"]
+          response: "{ products: Product[], total: int }"
+        getProduct:
+          signature: "getProduct(tenantSlug, productId)"
+          endpoint: "GET /api/v1/tenants/{slug}/products/{id}"
+          response: "Product"
+          returns_null: "on 404"
 
   entities:
     atom:
@@ -154,6 +164,32 @@ core_implementation:
       directory: "src/features/canvas/"
       status: "placeholder for future"
 
+    catalog:
+      directory: "src/features/catalog/"
+      status: "implemented"
+
+      catalogModel:
+        file: "catalogModel.js"
+        function: "createInitialCatalogState()"
+        state: ["products", "total", "isLoading", "error", "filters"]
+
+      useCatalogProducts:
+        file: "useCatalogProducts.js"
+        params: ["tenantSlug"]
+        returns: ["products", "total", "isLoading", "error", "filters", "loadProducts", "setFilters", "resetFilters"]
+        status: "implemented"
+
+      ProductGrid:
+        file: "ProductGrid.jsx"
+        styles: "ProductGrid.css"
+        purpose: "Renders product grid using WidgetRenderer"
+        props: ["products", "isLoading", "error"]
+        features:
+          - "Converts products to widget format"
+          - "Uses WidgetRenderer for ProductCard"
+          - "Loading and error states"
+        status: "implemented"
+
 session_persistence:
   storage: "localStorage"
   key: "chatSessionId"
@@ -191,7 +227,7 @@ run_commands:
   lint: "cd project/frontend && npm run lint"
 
 migration_status:
-  description: "Feature-sliced architecture with session persistence"
+  description: "Feature-sliced architecture with session persistence and catalog"
   completed:
     - "Migrate to features/chat/ChatPanel"
     - "Implement useChatMessages hook"
@@ -202,7 +238,10 @@ migration_status:
     - "Add setMessages() to useChatMessages"
     - "Save sessionId to localStorage"
     - "Load chat history on mount"
+    - "Add catalog API functions (getProducts, getProduct)"
+    - "Implement catalog feature with ProductGrid"
+    - "Add useCatalogProducts hook"
   next_steps:
-    - "Implement widget rendering"
-    - "Add atom components"
+    - "Connect ProductGrid to App"
+    - "Add product detail view"
     - "Add canvas feature for widget display"

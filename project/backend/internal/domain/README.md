@@ -9,7 +9,12 @@
 - `formation_entity.go` — Formation (layout виджетов)
 - `message_entity.go` — Message (сообщение в чате)
 - `session_entity.go` — Session (сессия пользователя)
-- `product_entity.go` — Product (товар/услуга)
+- `user_entity.go` — ChatUser (пользователь чата)
+- `event_entity.go` — ChatEvent (события аналитики)
+- `product_entity.go` — Product (товар с tenant context)
+- `tenant_entity.go` — Tenant (бренд/ритейлер/реселлер)
+- `category_entity.go` — Category (категория товаров)
+- `master_product_entity.go` — MasterProduct (канонический товар)
 - `domain_errors.go` — Доменные ошибки
 
 ## Правила

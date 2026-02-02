@@ -5,6 +5,7 @@
 ## Папки
 
 - `chat/` — Чат панель, ввод, история
+- `catalog/` — Каталог товаров, ProductGrid
 - `canvas/` — Канвас виджетов (будущее)
 - `overlay/` — Fullscreen overlay
 

@@ -8,6 +8,7 @@
 - `search_port.go` — SearchPort interface (для поиска товаров)
 - `cache_port.go` — CachePort interface (для сессий и кэширования)
 - `event_port.go` — EventPort interface (для аналитики событий)
+- `catalog_port.go` — CatalogPort interface (для каталога товаров)
 
 ## Интерфейсы
 
@@ -28,6 +29,15 @@ GetCachedProducts(ctx, sessionID) ([]Product, error)
 ```go
 TrackEvent(ctx, event) error
 GetSessionEvents(ctx, sessionID) ([]ChatEvent, error)
+```
+
+### CatalogPort
+```go
+GetTenantBySlug(ctx, slug) (*Tenant, error)
+GetCategories(ctx) ([]Category, error)
+GetMasterProduct(ctx, id) (*MasterProduct, error)
+ListProducts(ctx, tenantID, filter) ([]Product, int, error)
+GetProduct(ctx, tenantID, productID) (*Product, error)
 ```
 
 ## Правила

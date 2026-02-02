@@ -5,6 +5,8 @@
 ## Файлы
 
 - `chat_send_message.go` — Отправка сообщения с сохранением в БД
+- `catalog_list_products.go` — Список товаров тенанта с фильтрацией
+- `catalog_get_product.go` — Получение товара с merging master данных
 
 ## SendMessageUseCase
 
@@ -24,7 +26,35 @@ type SendMessageUseCase struct {
 }
 
 func (uc *SendMessageUseCase) Execute(ctx, req) (*SendMessageResponse, error)
-func (uc *SendMessageUseCase) WithSessionTTL(ttl) *SendMessageUseCase
+```
+
+## ListProductsUseCase
+
+Список товаров для тенанта:
+- Резолвит тенант по slug
+- Применяет фильтры (категория, бренд, цена, поиск)
+- Возвращает merged данные (tenant + master)
+
+```go
+type ListProductsUseCase struct {
+    catalog ports.CatalogPort
+}
+
+func (uc *ListProductsUseCase) Execute(ctx, req) (*ListProductsResponse, error)
+```
+
+## GetProductUseCase
+
+Получение одного товара:
+- Резолвит тенант по slug
+- Получает товар с merging master данных
+
+```go
+type GetProductUseCase struct {
+    catalog ports.CatalogPort
+}
+
+func (uc *GetProductUseCase) Execute(ctx, req) (*Product, error)
 ```
 
 ## Правила
