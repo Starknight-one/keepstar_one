@@ -6,6 +6,36 @@
 
 ## 2026-02-02
 
+### Two-Agent Pipeline - Frontend Rendering (Phase 4)
+- FormationRenderer с режимами grid/carousel/single/list
+- AtomRenderer со стилями для всех типов (text, number, price, image, rating, badge, button, icon, divider, progress)
+- WidgetRenderer с размерами (tiny/small/medium/large)
+- MessageBubble с поддержкой Formation (backward compatible)
+- Pipeline API: `POST /api/v1/pipeline`
+- Debug Console: `/debug/session/` с детальными метриками
+- Метрики: время LLM/tool, токены in/out, стоимость USD, промпты, responses
+
+### Two-Agent Pipeline - Template Builder (Phase 3)
+- Agent2ExecuteUseCase: meta → LLM → FormationTemplate
+- Agent2SystemPrompt с правилами выбора mode/size
+- BuildAgent2Prompt() для генерации промпта из StateMeta
+- PipelineExecuteUseCase: Agent 1 → Agent 2 → ApplyTemplate
+- ApplyTemplate: шаблон + products → FormationWithData с widgets
+
+### Two-Agent Pipeline - Tool Caller (Phase 2)
+- Agent1ExecuteUseCase: query → LLM → tool call → state update
+- Agent1SystemPrompt с правилами tool calling
+- Tool Registry с search_products tool
+- ChatWithTools в LLMPort для tool calling
+- Delta creation и сохранение в state
+
+### Two-Agent Pipeline - State Storage (Phase 1)
+- StatePort interface для session state
+- PostgreSQL adapter с JSONB storage
+- Domain entities: SessionState, Delta, StateMeta, StateData
+- Миграции для chat_session_state, chat_session_deltas
+- Delta-based state management
+
 ### Multi-tenant Product Catalog
 - Добавлены domain entities: Tenant, Category, MasterProduct
 - Расширен Product с tenantId, masterProductId, priceFormatted
