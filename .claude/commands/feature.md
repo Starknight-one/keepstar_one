@@ -48,6 +48,28 @@ Using expertise context:
 - Understand existing patterns
 - Identify extension points
 
+### Step 5.5: Verify Integration Points (CRITICAL)
+This step prevents implementation bugs. For each integration:
+
+**Data Types:**
+- Read actual port interfaces to verify parameter types
+- Check: is it UUID, slug, or plain string?
+- Check: is price int (kopecks) or float?
+
+**Database Constraints:**
+- Read migration files for foreign keys
+- Question: does creating X require Y to exist first?
+
+**External APIs:**
+- Read adapter code for API versions and headers
+- Don't assume versions - verify them
+
+**Filter Logic:**
+- Read adapter implementations to understand how filters combine
+- Are conditions AND or OR?
+
+Document any gotchas found in the spec's "Notes" section.
+
 ### Step 6: Design Solution
 - Think through architectural approach
 - Identify dependencies between steps

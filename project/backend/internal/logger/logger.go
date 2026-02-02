@@ -49,3 +49,38 @@ func (l *Logger) LLMResponseReceived(stage string, tokens int, durationMs int64)
 		"duration_ms", durationMs,
 	)
 }
+
+// LLMUsage logs detailed token usage and cost
+func (l *Logger) LLMUsage(stage, model string, inputTokens, outputTokens int, costUSD float64, durationMs int64) {
+	l.Info("llm_usage",
+		"stage", stage,
+		"model", model,
+		"input_tokens", inputTokens,
+		"output_tokens", outputTokens,
+		"total_tokens", inputTokens+outputTokens,
+		"cost_usd", costUSD,
+		"duration_ms", durationMs,
+	)
+}
+
+// ToolExecuted logs tool execution
+func (l *Logger) ToolExecuted(toolName, sessionID, result string, durationMs int64) {
+	l.Info("tool_executed",
+		"tool", toolName,
+		"session_id", sessionID,
+		"result", result,
+		"duration_ms", durationMs,
+	)
+}
+
+// Agent1Completed logs Agent 1 completion with full metrics
+func (l *Logger) Agent1Completed(sessionID string, toolCalled string, productsFound int, totalTokens int, costUSD float64, durationMs int64) {
+	l.Info("agent1_completed",
+		"session_id", sessionID,
+		"tool_called", toolCalled,
+		"products_found", productsFound,
+		"total_tokens", totalTokens,
+		"cost_usd", costUSD,
+		"duration_ms", durationMs,
+	)
+}

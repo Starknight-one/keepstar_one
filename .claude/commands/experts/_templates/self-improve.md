@@ -40,6 +40,27 @@ For each relevant file:
 - Important structures
 - Dependencies
 
+### Step 4.5: Extract Integration Gotchas (CRITICAL)
+This prevents spec-to-implementation bugs:
+
+**Data Types:**
+- Check interface parameter types (UUID vs string vs slug)
+- Check numeric types (int cents vs float dollars)
+
+**Database Constraints:**
+- Read migration files for REFERENCES (foreign keys)
+- Document: "creating X requires Y to exist first"
+
+**External APIs:**
+- Extract API versions from adapter code
+- Document auth headers, base URLs
+
+**SQL/Filter Logic:**
+- Check how WHERE conditions combine (AND vs OR)
+- Document edge cases
+
+Add findings to `gotchas`, `external_apis`, `integration_patterns` sections.
+
 ### Step 5: Update Expertise
 Update expertise.yaml:
 

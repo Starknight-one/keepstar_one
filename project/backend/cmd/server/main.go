@@ -17,6 +17,7 @@ import (
 	"keepstar/internal/handlers"
 	"keepstar/internal/logger"
 	"keepstar/internal/ports"
+	"keepstar/internal/tools"
 	"keepstar/internal/usecases"
 )
 
@@ -87,11 +88,29 @@ func main() {
 	var cacheAdapter ports.CachePort
 	var eventAdapter ports.EventPort
 	var catalogAdapter ports.CatalogPort
+	var stateAdapter ports.StatePort
 	if dbClient != nil {
 		cacheAdapter = postgres.NewCacheAdapter(dbClient)
 		eventAdapter = postgres.NewEventAdapter(dbClient)
 		catalogAdapter = postgres.NewCatalogAdapter(dbClient)
+		stateAdapter = postgres.NewStateAdapter(dbClient)
 	}
+
+	// Initialize tool registry (requires state and catalog adapters)
+	var toolRegistry *tools.Registry
+	if stateAdapter != nil && catalogAdapter != nil {
+		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter)
+		appLog.Info("tool_registry_initialized", "tools", "search_products")
+	}
+
+	// Initialize Agent 1 use case (Two-Agent Pipeline)
+	var agent1UC *usecases.Agent1ExecuteUseCase
+	if toolRegistry != nil {
+		agent1UC = usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog)
+		appLog.Info("agent1_usecase_initialized", "status", "ok")
+	}
+	// agent1UC is ready to be called from handlers
+	_ = agent1UC // TODO: wire to handler in Phase 3
 
 	// Initialize use cases
 	sendMessage := usecases.NewSendMessageUseCase(llmClient, cacheAdapter, eventAdapter)

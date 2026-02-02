@@ -412,3 +412,42 @@ migration_status:
     - "Add two-agent pipeline (Agent1 Tool Caller + Agent2 Template Builder)"
     - "Connect chat to product search via state"
     - "Add widget rendering for products"
+
+# CRITICAL: Gotchas by hexagonal layer
+gotchas:
+  # Domain layer - entities, types, errors
+  domain:
+    - "Price stored in kopecks (int), not rubles (float)"
+    - "sessionID and tenantID must be valid UUID format"
+    - "ErrSessionNotFound returned when state doesn't exist"
+
+  # Ports layer - interface contracts
+  ports:
+    - "CatalogPort.ListProducts(tenantID) requires UUID, not slug"
+    - "Use GetTenantBySlug(slug) first to get tenant UUID"
+    - "StatePort.GetState returns ErrSessionNotFound if no state"
+
+  # Adapters layer - external system specifics
+  adapters:
+    postgres:
+      - "FK: chat_session_state.session_id → chat_sessions.id"
+      - "FK: chat_session_deltas.session_id → chat_sessions.id"
+      - "FK: catalog.products.tenant_id → catalog.tenants.id"
+      - "ProductFilter conditions are AND-combined"
+      - "Search uses ILIKE with % wildcards"
+    anthropic:
+      - "API version: 2023-06-01 (not 2024)"
+      - "Pricing: Haiku $1/$5, Sonnet $3/$15 per 1M tokens"
+      - "Response includes usage.input_tokens, usage.output_tokens"
+
+  # Usecases layer - orchestration rules
+  usecases:
+    - "Create session (CachePort) before creating state (StatePort)"
+    - "Tools return 'ok'/'empty', not raw data"
+    - "Agent1 stops after first tool call, doesn't see result"
+
+  # Tools layer - tool execution specifics
+  tools:
+    - "If brand specified, don't use query as search (AND conflict)"
+    - "Tool writes to state, returns only status string"
+    - "Must resolve tenant slug → UUID before search"

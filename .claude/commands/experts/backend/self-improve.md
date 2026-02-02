@@ -44,22 +44,44 @@ Read EXPERTISE_FILE to understand current state:
 ### 3. Validate Against Codebase
 Read key implementation files:
 
-**Active Code (working):**
-- `project/backend/main.go`
-- `project/backend/anthropic.go`
-- `project/backend/gigachat.go`
-
-**Hexagonal Structure (stubs):**
+**Entry & Config:**
 - `project/backend/cmd/server/main.go`
+- `project/backend/internal/config/config.go`
+
+**Hexagonal Layers:**
 - `project/backend/internal/domain/*.go`
 - `project/backend/internal/ports/*.go`
 - `project/backend/internal/adapters/*/*.go`
 - `project/backend/internal/usecases/*.go`
 - `project/backend/internal/handlers/*.go`
 - `project/backend/internal/prompts/*.go`
+- `project/backend/internal/tools/*.go`
 
 **Data:**
 - `project/backend/data/products.json`
+
+### 3.5. Extract Integration Gotchas (CRITICAL)
+This step prevents spec-to-implementation bugs.
+
+**Data Types:**
+- Check port interfaces for parameter types (UUID vs string vs slug)
+- Look for `uuid.UUID` or string format validation
+- Check price fields (int kopecks vs float rubles)
+
+**Foreign Keys:**
+- Read migration files: `project/backend/internal/adapters/postgres/*_migrations.go`
+- Look for `REFERENCES` in CREATE TABLE statements
+- Document which tables depend on which
+
+**SQL Logic:**
+- Read adapter implementations for WHERE clause construction
+- Check if filters use AND or OR
+- Document ILIKE patterns
+
+**External APIs:**
+- Read adapter files for API versions, headers
+- Check `anthropic-version` header value
+- Extract pricing info from domain/tool_entity.go if present
 
 ### 4. Identify Discrepancies
 List all differences:
