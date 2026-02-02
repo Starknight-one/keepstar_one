@@ -15,6 +15,8 @@
 - `tenant_entity.go` — Tenant (бренд/ритейлер/реселлер)
 - `category_entity.go` — Category (категория товаров)
 - `master_product_entity.go` — MasterProduct (канонический товар)
+- `state_entity.go` — SessionState, Delta (state для two-agent pipeline)
+- `tool_entity.go` — ToolDefinition, ToolCall, LLMMessage, LLMResponse (LLM tool calling)
 - `domain_errors.go` — Доменные ошибки
 
 ## Правила

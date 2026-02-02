@@ -20,6 +20,7 @@ internal/
 ├── usecases/          # Business logic
 ├── handlers/          # HTTP layer
 ├── prompts/           # LLM prompts
+├── tools/             # Tool executors for LLM
 ├── config/            # Configuration
 └── logger/            # Logging
 ```
@@ -68,7 +69,7 @@ go build -o server ./cmd/server/ && ./server
 
 | Port | Interface | Adapter |
 |------|-----------|---------|
-| LLMPort | Chat(ctx, message) | anthropic |
+| LLMPort | Chat, ChatWithTools | anthropic |
 | CachePort | Session/message persistence | postgres |
 | EventPort | Analytics tracking | postgres |
 | CatalogPort | Product catalog | postgres |

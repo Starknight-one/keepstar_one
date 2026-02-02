@@ -7,6 +7,7 @@
 - `chat_send_message.go` — Отправка сообщения с сохранением в БД
 - `catalog_list_products.go` — Список товаров тенанта с фильтрацией
 - `catalog_get_product.go` — Получение товара с merging master данных
+- `agent1_execute.go` — Agent 1 (Tool Caller) для two-agent pipeline
 
 ## SendMessageUseCase
 
@@ -55,6 +56,25 @@ type GetProductUseCase struct {
 }
 
 func (uc *GetProductUseCase) Execute(ctx, req) (*Product, error)
+```
+
+## Agent1ExecuteUseCase
+
+Agent 1 (Tool Caller) для two-agent pipeline:
+- Получает/создаёт state сессии
+- Вызывает LLM с tools (ChatWithTools)
+- Выполняет tool call через Registry
+- Создаёт и сохраняет delta
+
+```go
+type Agent1ExecuteUseCase struct {
+    llm          ports.LLMPort
+    statePort    ports.StatePort
+    toolRegistry *tools.Registry
+    log          *logger.Logger
+}
+
+func (uc *Agent1ExecuteUseCase) Execute(ctx, req) (*Agent1ExecuteResponse, error)
 ```
 
 ## Правила

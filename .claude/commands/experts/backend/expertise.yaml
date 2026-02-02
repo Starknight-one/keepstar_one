@@ -21,6 +21,7 @@ project_structure:
     usecases: "internal/usecases/"
     handlers: "internal/handlers/"
     prompts: "internal/prompts/"
+    tools: "internal/tools/"
     logger: "internal/logger/"
     config: "internal/config/"
 
@@ -46,6 +47,9 @@ layer_rules:
   prompts:
     imports: "domain/ (for types)"
     contains: "LLM prompts, separate from logic"
+  tools:
+    imports: "domain/, ports/"
+    contains: "Tool executors for LLM tool calls"
 
 core_implementation:
   main:
@@ -69,6 +73,7 @@ core_implementation:
       interface: "LLMPort"
       methods:
         - "Chat(ctx context.Context, message string) (string, error)"
+        - "ChatWithTools(ctx, systemPrompt, messages []LLMMessage, tools []ToolDefinition) (*LLMResponse, error)"
 
     search_port:
       file: "internal/ports/search_port.go"
@@ -151,6 +156,33 @@ core_implementation:
       implements: "CachePort"
       status: "stub (replaced by postgres)"
 
+  tools:
+    registry:
+      file: "internal/tools/tool_registry.go"
+      struct: "Registry"
+      purpose: "Central registry for all tool executors"
+      methods:
+        - "NewRegistry(statePort, catalogPort) - creates registry with dependencies"
+        - "Register(tool) - adds tool to registry"
+        - "GetDefinitions() - returns all tool definitions for LLM"
+        - "Execute(ctx, sessionID, toolCall) - runs tool by name"
+
+    search_products:
+      file: "internal/tools/tool_search_products.go"
+      struct: "SearchProductsTool"
+      implements: "ToolExecutor"
+      purpose: "Search products and write to state"
+      methods:
+        - "Definition() - returns tool schema for LLM"
+        - "Execute(ctx, sessionID, input) - searches products, updates state, returns 'ok'/'empty'"
+      input_schema:
+        query: "required - search query"
+        category: "optional - category filter"
+        brand: "optional - brand filter"
+        min_price: "optional - minimum price"
+        max_price: "optional - maximum price"
+        limit: "optional - max results (default 10)"
+
   usecases:
     chat_send_message:
       file: "internal/usecases/chat_send_message.go"
@@ -181,6 +213,22 @@ core_implementation:
       status: "implemented"
       methods:
         - "Execute(ctx, req) (*Product, error)"
+
+    agent1_execute:
+      file: "internal/usecases/agent1_execute.go"
+      struct: "Agent1ExecuteUseCase"
+      purpose: "Agent 1 Tool Caller - query → tool call → state update"
+      status: "implemented"
+      request: "{ SessionID string, Query string }"
+      response: "{ Delta *Delta, Usage LLMUsage, LatencyMs int }"
+      methods:
+        - "Execute(ctx, req) (*Agent1ExecuteResponse, error)"
+      flow:
+        - "Get or create session state"
+        - "Call LLM with tools (ChatWithTools)"
+        - "Execute tool call via Registry"
+        - "Create and save delta"
+        - "Return delta with usage stats"
 
   handlers:
     chat:
@@ -282,6 +330,14 @@ core_implementation:
       file: "internal/domain/domain_errors.go"
       errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound"]
 
+    tool_entity:
+      file: "internal/domain/tool_entity.go"
+      types: ["ToolDefinition", "ToolCall", "ToolResult", "LLMMessage", "LLMResponse", "LLMUsage"]
+      purpose: "Types for LLM tool calling support"
+      helpers:
+        - "LLMUsage.CalculateCost() - calculates USD cost from token usage"
+        - "LLMPricing - map of model pricing per million tokens"
+
     state_entity:
       file: "internal/domain/state_entity.go"
       types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "StateMeta", "StateData", "StateCurrent", "SessionState"]
@@ -345,6 +401,17 @@ database:
     - "Product merging (tenant + master data)"
     - "Seed data on first run"
 
+prompts:
+  agent1_system:
+    file: "internal/prompts/prompt_analyze_query.go"
+    const: "Agent1SystemPrompt"
+    purpose: "System prompt for Agent 1 (Tool Caller)"
+    rules:
+      - "ALWAYS call a tool, never just text"
+      - "No explanations or clarifying questions"
+      - "Tool results are 'ok' or 'empty' only"
+      - "Stop after getting tool result"
+
 patterns:
   naming:
     handlers: "handler_{name}.go"
@@ -353,6 +420,7 @@ patterns:
     domain: "{entity}_entity.go"
     ports: "{name}_port.go"
     prompts: "prompt_{name}.go"
+    tools: "tool_{name}.go"
 
   handler_pattern:
     - "Parse request body"
@@ -408,9 +476,15 @@ migration_status:
     - "Add StatePort interface for session state"
     - "Implement PostgreSQL state adapter with JSONB"
     - "Add state migrations and tests"
+    - "Add tool_entity with LLM tool calling types"
+    - "Add tools layer with Registry and ToolExecutor interface"
+    - "Implement search_products tool"
+    - "Add ChatWithTools method to LLMPort"
+    - "Implement Agent1ExecuteUseCase (Tool Caller)"
+    - "Add Agent1SystemPrompt"
   next_steps:
-    - "Add two-agent pipeline (Agent1 Tool Caller + Agent2 Template Builder)"
-    - "Connect chat to product search via state"
+    - "Wire Agent1 to HTTP handler"
+    - "Implement Agent2 (Template Builder)"
     - "Add widget rendering for products"
 
 # CRITICAL: Gotchas by hexagonal layer
