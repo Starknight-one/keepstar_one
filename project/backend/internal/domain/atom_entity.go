@@ -21,12 +21,17 @@ const (
 type AtomSlot string
 
 const (
-	AtomSlotHero      AtomSlot = "hero"      // Main image/carousel
-	AtomSlotBadge     AtomSlot = "badge"     // Badge overlay
-	AtomSlotTitle     AtomSlot = "title"     // Product title
-	AtomSlotPrimary   AtomSlot = "primary"   // Primary attributes (shown immediately)
-	AtomSlotPrice     AtomSlot = "price"     // Price block
-	AtomSlotSecondary AtomSlot = "secondary" // Secondary attributes (expandable)
+	AtomSlotHero        AtomSlot = "hero"        // Main image/carousel
+	AtomSlotBadge       AtomSlot = "badge"       // Badge overlay
+	AtomSlotTitle       AtomSlot = "title"       // Product title
+	AtomSlotPrimary     AtomSlot = "primary"     // Primary attributes (shown immediately)
+	AtomSlotPrice       AtomSlot = "price"       // Price block
+	AtomSlotSecondary   AtomSlot = "secondary"   // Secondary attributes (expandable)
+	AtomSlotGallery     AtomSlot = "gallery"     // Full gallery (not just hero)
+	AtomSlotStock       AtomSlot = "stock"       // Availability indicator
+	AtomSlotDescription AtomSlot = "description" // Full description block
+	AtomSlotTags        AtomSlot = "tags"        // Tags chips
+	AtomSlotSpecs       AtomSlot = "specs"       // Specifications table
 )
 
 // Atom is the smallest UI building block

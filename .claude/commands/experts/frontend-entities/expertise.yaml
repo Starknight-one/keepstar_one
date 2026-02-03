@@ -34,14 +34,20 @@ entities:
       - "templates/index.js - Template exports"
       - "templates/ProductCardTemplate.jsx - Slot-based product card"
       - "templates/ProductCardTemplate.css - Product card styles"
+      - "templates/ProductDetailTemplate.jsx - Full product detail view"
+      - "templates/ProductDetailTemplate.css - Product detail styles"
       - "templates/ServiceCardTemplate.jsx - Slot-based service card"
       - "templates/ServiceCardTemplate.css - Service card styles"
+      - "templates/ServiceDetailTemplate.jsx - Full service detail view"
+      - "templates/ServiceDetailTemplate.css - Service detail styles"
     types_legacy: ["PRODUCT_CARD", "TEXT_BLOCK", "QUICK_REPLIES"]
-    templates: ["ProductCard", "ServiceCard"]
+    templates: ["ProductCard", "ProductDetail", "ServiceCard", "ServiceDetail"]
     status: "implemented"
     components:
       - "ProductCardTemplate: renders atoms by slot (hero, badge, title, primary, price, secondary)"
+      - "ProductDetailTemplate: full product view with all details, expandable sections"
       - "ServiceCardTemplate: renders service atoms (duration, provider, rating chips)"
+      - "ServiceDetailTemplate: full service view with availability, attributes"
       - "TextBlock: atoms in text block (legacy)"
       - "QuickReplies: atoms as buttons (legacy)"
       - "DefaultWidget: fallback"
@@ -52,6 +58,8 @@ entities:
       - "primary: main attributes (chips) - brand/category for products, duration/provider for services"
       - "price: price block"
       - "secondary: expandable details"
+      - "description: full description (detail templates)"
+      - "attributes: key-value attributes (detail templates)"
 
   formation:
     path: "src/entities/formation/"

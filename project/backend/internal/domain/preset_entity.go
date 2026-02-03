@@ -33,6 +33,8 @@ const (
 	PresetProductGrid    PresetName = "product_grid"
 	PresetProductCard    PresetName = "product_card"
 	PresetProductCompact PresetName = "product_compact"
+	PresetProductDetail  PresetName = "product_detail"
 	PresetServiceCard    PresetName = "service_card"
 	PresetServiceList    PresetName = "service_list"
+	PresetServiceDetail  PresetName = "service_detail"
 )

@@ -7,8 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
+	"keepstar/internal/presets"
+	"keepstar/internal/tools"
 )
 
 // PipelineMetrics stores metrics from last pipeline execution
@@ -92,17 +95,19 @@ func (s *MetricsStore) GetAll() []*PipelineMetrics {
 
 // DebugHandler handles debug/monitoring requests
 type DebugHandler struct {
-	statePort    ports.StatePort
-	cachePort    ports.CachePort
-	metricsStore *MetricsStore
+	statePort      ports.StatePort
+	cachePort      ports.CachePort
+	metricsStore   *MetricsStore
+	presetRegistry *presets.PresetRegistry
 }
 
 // NewDebugHandler creates a debug handler
 func NewDebugHandler(statePort ports.StatePort, cachePort ports.CachePort, metricsStore *MetricsStore) *DebugHandler {
 	return &DebugHandler{
-		statePort:    statePort,
-		cachePort:    cachePort,
-		metricsStore: metricsStore,
+		statePort:      statePort,
+		cachePort:      cachePort,
+		metricsStore:   metricsStore,
+		presetRegistry: presets.NewPresetRegistry(),
 	}
 }
 
@@ -214,6 +219,223 @@ func (h *DebugHandler) HandleDebugAPI(w http.ResponseWriter, r *http.Request) {
 		"deltas":    deltas,
 		"metrics":   metrics,
 	})
+}
+
+// SeedStateResponse is the response for seed state endpoint
+type SeedStateResponse struct {
+	SessionID string                      `json:"sessionId"`
+	Formation *FormationResponse          `json:"formation"`
+	Products  int                         `json:"products"`
+	Message   string                      `json:"message"`
+}
+
+// HandleSeedState creates a session with mock products for testing without LLM
+// POST /debug/seed - creates new session with products and returns formation
+// Use this to test navigation (expand/back) without making LLM calls
+func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed. Use POST.", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := r.Context()
+	sessionID := uuid.New().String()
+
+	// Create session in cache (required by FK constraint)
+	session := &domain.Session{
+		ID:             sessionID,
+		Status:         domain.SessionStatus("active"),
+		StartedAt:      time.Now(),
+		LastActivityAt: time.Now(),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if err := h.cachePort.SaveSession(ctx, session); err != nil {
+		http.Error(w, "Failed to create session: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create state with mock products
+	state, err := h.statePort.CreateState(ctx, sessionID)
+	if err != nil {
+		http.Error(w, "Failed to create state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Add mock products (Nike-like data)
+	state.Current.Data.Products = []domain.Product{
+		{
+			ID:            "prod-1",
+			Name:          "Nike Air Max 90",
+			Description:   "The Nike Air Max 90 stays true to its OG roots with the iconic Waffle sole.",
+			Price:         12990,
+			Currency:      "$",
+			Images:        []string{"https://static.nike.com/a/images/t_PDP_1728_v1/f_auto,q_auto:eco/b7d9211c-26e7-431a-ac24-b0540fb3c00f/air-max-90-shoes.png"},
+			Rating:        4.5,
+			StockQuantity: 15,
+			Brand:         "Nike",
+			Category:      "Sneakers",
+			Tags:          []string{"running", "classic", "air max"},
+			Attributes:    map[string]interface{}{"color": "White/Black", "material": "Leather/Mesh"},
+		},
+		{
+			ID:            "prod-2",
+			Name:          "Nike Air Force 1 '07",
+			Description:   "The radiance lives on in the Nike Air Force 1 '07.",
+			Price:         9990,
+			Currency:      "$",
+			Images:        []string{"https://static.nike.com/a/images/t_PDP_1728_v1/f_auto,q_auto:eco/b7d9211c-26e7-431a-ac24-b0540fb3c00f/air-force-1-07-shoes.png"},
+			Rating:        4.8,
+			StockQuantity: 23,
+			Brand:         "Nike",
+			Category:      "Sneakers",
+			Tags:          []string{"basketball", "classic", "white"},
+			Attributes:    map[string]interface{}{"color": "White", "material": "Leather"},
+		},
+		{
+			ID:            "prod-3",
+			Name:          "Nike Dunk Low",
+			Description:   "Created for the hardwood but taken to the streets.",
+			Price:         10990,
+			Currency:      "$",
+			Images:        []string{"https://static.nike.com/a/images/t_PDP_1728_v1/f_auto,q_auto:eco/af407807-59eb-4a4b-b3c6-0a5f7d85f8b6/dunk-low-shoes.png"},
+			Rating:        4.7,
+			StockQuantity: 8,
+			Brand:         "Nike",
+			Category:      "Sneakers",
+			Tags:          []string{"skateboard", "retro"},
+			Attributes:    map[string]interface{}{"color": "Panda", "material": "Leather"},
+		},
+		{
+			ID:            "prod-4",
+			Name:          "Nike Air Jordan 1 Retro High OG",
+			Description:   "The Air Jordan 1 Retro High remakes the classic sneaker.",
+			Price:         17990,
+			Currency:      "$",
+			Images:        []string{"https://static.nike.com/a/images/t_PDP_1728_v1/f_auto,q_auto:eco/u_126ab356-44d8-4a06-89b4-fcdcc8df0245,c_scale,fl_relative,w_1.0,h_1.0,fl_layer_apply/air-jordan-1-retro-high-og-shoes.png"},
+			Rating:        4.9,
+			StockQuantity: 5,
+			Brand:         "Jordan",
+			Category:      "Sneakers",
+			Tags:          []string{"basketball", "jordan", "retro", "high-top"},
+			Attributes:    map[string]interface{}{"color": "Chicago", "material": "Leather"},
+		},
+	}
+
+	// Update meta
+	state.Current.Meta = domain.StateMeta{
+		Count:        len(state.Current.Data.Products),
+		ProductCount: len(state.Current.Data.Products),
+		Fields:       []string{"id", "name", "price", "images", "rating", "brand", "category", "description", "tags", "attributes", "stockQuantity"},
+	}
+
+	// Build formation using product_grid preset
+	preset, _ := h.presetRegistry.Get(domain.PresetProductGrid)
+	products := state.Current.Data.Products
+	formation := tools.BuildFormation(preset, len(products), func(i int) (tools.FieldGetter, tools.CurrencyGetter, tools.IDGetter) {
+		p := products[i]
+		return productFieldGetterDebug(p), func() string { return p.Currency }, func() string { return p.ID }
+	})
+
+	// Save formation to state
+	state.Current.Template = map[string]interface{}{
+		"formation": formation,
+	}
+	state.View.Mode = domain.ViewModeGrid
+
+	if err := h.statePort.UpdateState(ctx, state); err != nil {
+		http.Error(w, "Failed to update state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create initial delta
+	delta := &domain.Delta{
+		Step:      1,
+		Trigger:   domain.TriggerSystem,
+		Source:    domain.SourceSystem,
+		ActorID:   "debug_seed",
+		DeltaType: domain.DeltaTypeAdd,
+		Path:      "data.products",
+		Action:    domain.Action{Type: domain.ActionSearch, Tool: "debug_seed"},
+		Result:    domain.ResultMeta{Count: len(products), Fields: state.Current.Meta.Fields},
+		CreatedAt: time.Now(),
+	}
+	h.statePort.AddDelta(ctx, sessionID, delta)
+	state.Step = 1
+	h.statePort.UpdateState(ctx, state)
+
+	// Return response
+	resp := SeedStateResponse{
+		SessionID: sessionID,
+		Formation: &FormationResponse{
+			Mode:    string(formation.Mode),
+			Grid:    formation.Grid,
+			Widgets: formation.Widgets,
+		},
+		Products: len(products),
+		Message:  "Session created with mock products. Use this sessionId for navigation testing.",
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// productFieldGetterDebug is a simple field getter for debug seeding
+func productFieldGetterDebug(p domain.Product) tools.FieldGetter {
+	return func(fieldName string) interface{} {
+		switch fieldName {
+		case "id":
+			return p.ID
+		case "name":
+			if p.Name == "" {
+				return nil
+			}
+			return p.Name
+		case "description":
+			if p.Description == "" {
+				return nil
+			}
+			return p.Description
+		case "price":
+			return p.Price
+		case "images":
+			if len(p.Images) == 0 {
+				return nil
+			}
+			return p.Images
+		case "rating":
+			if p.Rating == 0 {
+				return nil
+			}
+			return p.Rating
+		case "brand":
+			if p.Brand == "" {
+				return nil
+			}
+			return p.Brand
+		case "category":
+			if p.Category == "" {
+				return nil
+			}
+			return p.Category
+		case "stockQuantity":
+			if p.StockQuantity == 0 {
+				return nil
+			}
+			return p.StockQuantity
+		case "tags":
+			if len(p.Tags) == 0 {
+				return nil
+			}
+			return p.Tags
+		case "attributes":
+			if len(p.Attributes) == 0 {
+				return nil
+			}
+			return p.Attributes
+		default:
+			return nil
+		}
+	}
 }
 
 var templateFuncs = template.FuncMap{

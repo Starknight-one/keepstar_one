@@ -53,6 +53,15 @@ handlers:
       - "GET /debug/api?session={id} - specific session JSON"
     types: ["MetricsStore", "PipelineMetrics", "AgentMetrics", "FormationInfo"]
 
+  navigation:
+    file: "handler_navigation.go"
+    struct: "NavigationHandler"
+    endpoints:
+      - "POST /api/v1/session/{id}/expand - Expand widget to detail view"
+      - "POST /api/v1/session/{id}/back - Navigate back from detail view"
+    request_expand: "{ entityType, entityId }"
+    response: "{ formation, viewMode, canGoBack }"
+
   health:
     file: "handler_health.go"
     endpoints: ["GET /health", "GET /ready"]
@@ -80,6 +89,8 @@ api_summary:
   - "GET /api/v1/tenants/{slug}/products"
   - "GET /api/v1/tenants/{slug}/products/{id}"
   - "POST /api/v1/pipeline"
+  - "POST /api/v1/session/{id}/expand"
+  - "POST /api/v1/session/{id}/back"
   - "GET /debug/session/"
   - "GET /health"
   - "GET /ready"

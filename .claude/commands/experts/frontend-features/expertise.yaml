@@ -64,6 +64,17 @@ features:
       - "Chat area (right side)"
       - "Animations: backdrop-fade-in, chat-slide-in, widget-fade-in"
 
+  navigation:
+    path: "src/features/navigation/"
+    status: "implemented"
+    files:
+      - "BackButton.jsx - Back navigation button"
+      - "BackButton.css - Back button styles"
+    components:
+      BackButton:
+        props: ["onClick", "disabled"]
+        purpose: "Navigate back from detail view to previous view"
+
   canvas:
     path: "src/features/canvas/"
     status: "placeholder"

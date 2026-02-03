@@ -109,6 +109,31 @@ usecases:
         - "Create rollback delta (preserves history)"
         - "Update current state"
 
+  navigation:
+    navigation_expand:
+      file: "navigation_expand.go"
+      struct: "ExpandUseCase"
+      purpose: "Expand widget to detail view (drill-down)"
+      request: "{ SessionID, EntityType, EntityID }"
+      response: "{ State, Formation, Expanded }"
+      flow:
+        - "Get current state"
+        - "Push current view to ViewStack"
+        - "Set view to detail mode"
+        - "Render detail preset for entity"
+
+    navigation_back:
+      file: "navigation_back.go"
+      struct: "BackUseCase"
+      purpose: "Navigate back from detail to previous view"
+      request: "{ SessionID }"
+      response: "{ State, Formation, PoppedFrom }"
+      flow:
+        - "Get current state"
+        - "Pop view from ViewStack"
+        - "Restore previous view state"
+        - "Re-render previous formation"
+
 gotchas:
   - "Create session (CachePort) before creating state (StatePort)"
   - "Tools return 'ok'/'empty', not raw data"

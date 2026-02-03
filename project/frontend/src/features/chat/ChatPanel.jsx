@@ -1,15 +1,15 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useChatMessages } from './useChatMessages';
 import { useChatSubmit } from './useChatSubmit';
 import { ChatHistory } from './ChatHistory';
 import { ChatInput } from './ChatInput';
-import { getSession } from '../../shared/api/apiClient';
+import { getSession, expandView, goBack } from '../../shared/api/apiClient';
 import { MessageRole } from '../../entities/message/messageModel';
 import './ChatPanel.css';
 
 const SESSION_STORAGE_KEY = 'chatSessionId';
 
-export function ChatPanel({ onClose, onFormationReceived, hideFormation }) {
+export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChange, hideFormation }) {
   const {
     sessionId,
     messages,
@@ -22,6 +22,8 @@ export function ChatPanel({ onClose, onFormationReceived, hideFormation }) {
     setSessionId
   } = useChatMessages();
 
+  const [canGoBack, setCanGoBack] = useState(false);
+
   const { submit } = useChatSubmit({
     sessionId,
     addMessage,
@@ -30,6 +32,42 @@ export function ChatPanel({ onClose, onFormationReceived, hideFormation }) {
     setSessionId,
     onFormationReceived
   });
+
+  // Navigation handlers
+  const handleExpand = useCallback(async (entityType, entityId) => {
+    if (!sessionId) return;
+    try {
+      const result = await expandView(sessionId, entityType, entityId);
+      if (result.formation) {
+        onFormationReceived?.(result.formation);
+      }
+      setCanGoBack(result.stackSize > 0);
+    } catch (err) {
+      console.error('Expand failed:', err);
+    }
+  }, [sessionId, onFormationReceived]);
+
+  const handleBack = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const result = await goBack(sessionId);
+      if (result.formation) {
+        onFormationReceived?.(result.formation);
+      }
+      setCanGoBack(result.canGoBack);
+    } catch (err) {
+      console.error('Back navigation failed:', err);
+    }
+  }, [sessionId, onFormationReceived]);
+
+  // Expose navigation functions to parent
+  useEffect(() => {
+    onNavigationStateChange?.({
+      canGoBack,
+      onExpand: handleExpand,
+      onBack: handleBack,
+    });
+  }, [canGoBack, handleExpand, handleBack, onNavigationStateChange]);
 
   // Load session history on mount
   useEffect(() => {

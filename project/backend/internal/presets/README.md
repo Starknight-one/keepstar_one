@@ -26,10 +26,12 @@ preset, ok := registry.Get(domain.PresetProductGrid)
 
 // Available presets
 // - product_grid: multiple products in grid
-// - product_card: single product detail
+// - product_card: single product card
 // - product_compact: compact list
+// - product_detail: full product detail view (drill-down)
 // - service_card: service in grid
 // - service_list: services in list
+// - service_detail: full service detail view (drill-down)
 ```
 
 ## Preset Structure

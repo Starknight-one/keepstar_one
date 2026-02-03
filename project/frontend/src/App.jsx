@@ -1,12 +1,18 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { ChatPanel } from './features/chat/ChatPanel'
 import { FormationRenderer } from './entities/formation/FormationRenderer'
+import { BackButton } from './features/navigation/BackButton'
 import './App.css'
 import './features/overlay/Overlay.css'
 
 function App() {
   const [isChatOpen, setIsChatOpen] = useState(false)
   const [activeFormation, setActiveFormation] = useState(null)
+  const [navState, setNavState] = useState({ canGoBack: false, onExpand: null, onBack: null })
+
+  const handleNavigationStateChange = useCallback((state) => {
+    setNavState(prev => ({ ...prev, ...state }))
+  }, [])
 
   const handleChatClose = () => {
     setIsChatOpen(false)
@@ -99,12 +105,22 @@ function App() {
           <div className="chat-backdrop" onClick={handleChatClose} />
           <div className="chat-overlay-layout">
             <div className="widget-display-area">
-              {activeFormation && <FormationRenderer formation={activeFormation} />}
+              <BackButton
+                visible={navState.canGoBack}
+                onClick={navState.onBack}
+              />
+              {activeFormation && (
+                <FormationRenderer
+                  formation={activeFormation}
+                  onWidgetClick={navState.onExpand}
+                />
+              )}
             </div>
             <div className="chat-area">
               <ChatPanel
                 onClose={handleChatClose}
                 onFormationReceived={setActiveFormation}
+                onNavigationStateChange={handleNavigationStateChange}
                 hideFormation={true}
               />
             </div>

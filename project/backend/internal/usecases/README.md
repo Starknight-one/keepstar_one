@@ -16,6 +16,9 @@
 - `state_reconstruct.go` — Реконструкция state на любой шаг
 - `state_rollback.go` — Откат state на предыдущий шаг
 - `state_rollback_test.go` — Интеграционные тесты rollback/reconstruct
+- `navigation_expand.go` — Drill-down: expand widget to detail view
+- `navigation_back.go` — Navigate back from detail view
+- `navigation_test.go` — Navigation tests
 
 ## SendMessageUseCase
 
@@ -163,6 +166,38 @@ type RollbackUseCase struct {
 }
 
 func (uc *RollbackUseCase) Execute(ctx, req) (*RollbackResponse, error)
+```
+
+## ExpandUseCase
+
+Drill-down: расширение виджета до детального просмотра:
+- Сохраняет текущий view в ViewStack
+- Устанавливает view в detail mode
+- Рендерит detail preset для entity
+
+```go
+type ExpandUseCase struct {
+    statePort      ports.StatePort
+    presetRegistry *presets.PresetRegistry
+}
+
+func (uc *ExpandUseCase) Execute(ctx, req) (*ExpandResponse, error)
+```
+
+## BackUseCase
+
+Навигация назад из детального просмотра:
+- Pop view из ViewStack
+- Восстанавливает предыдущее состояние view
+- Перерендеривает предыдущую formation
+
+```go
+type BackUseCase struct {
+    statePort      ports.StatePort
+    presetRegistry *presets.PresetRegistry
+}
+
+func (uc *BackUseCase) Execute(ctx, req) (*BackResponse, error)
 ```
 
 ## Правила

@@ -1,12 +1,26 @@
 import { WidgetType } from './widgetModel';
 import { AtomRenderer } from '../atom/AtomRenderer';
-import { ProductCardTemplate, ServiceCardTemplate } from './templates';
+import { ProductCardTemplate, ServiceCardTemplate, ProductDetailTemplate, ServiceDetailTemplate } from './templates';
 import './Widget.css';
 
-export function WidgetRenderer({ widget }) {
+export function WidgetRenderer({ widget, onClick }) {
   // Template-based rendering (new system)
   if (widget.template) {
-    return renderTemplate(widget);
+    const content = renderTemplate(widget);
+
+    // Make widget clickable if it has entityRef and onClick handler
+    if (onClick && widget.entityRef) {
+      const handleClick = () => {
+        onClick(widget.entityRef.type, widget.entityRef.id);
+      };
+      return (
+        <div className="widget-clickable" onClick={handleClick}>
+          {content}
+        </div>
+      );
+    }
+
+    return content;
   }
 
   // Legacy type-based rendering (backward compatibility)
@@ -33,6 +47,10 @@ function renderTemplate(widget) {
       return <ProductCardTemplate atoms={widget.atoms} size={widget.size} />;
     case 'ServiceCard':
       return <ServiceCardTemplate atoms={widget.atoms} size={widget.size} />;
+    case 'ProductDetail':
+      return <ProductDetailTemplate atoms={widget.atoms} />;
+    case 'ServiceDetail':
+      return <ServiceDetailTemplate atoms={widget.atoms} />;
     default:
       return <DefaultWidget widget={widget} sizeClass="size-medium" />;
   }

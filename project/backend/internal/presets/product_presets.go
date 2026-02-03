@@ -48,3 +48,27 @@ var ProductCompactPreset = domain.Preset{
 		{Name: "price", Slot: domain.AtomSlotPrice, AtomType: domain.AtomTypePrice, Priority: 2, Required: true},
 	},
 }
+
+// WidgetTemplateProductDetail is the template name for product detail view
+const WidgetTemplateProductDetail = "ProductDetail"
+
+// ProductDetailPreset for displaying a single product in full detail view
+var ProductDetailPreset = domain.Preset{
+	Name:        string(domain.PresetProductDetail),
+	EntityType:  domain.EntityTypeProduct,
+	Template:    WidgetTemplateProductDetail,
+	DefaultMode: domain.FormationTypeSingle,
+	DefaultSize: domain.WidgetSizeLarge,
+	Fields: []domain.FieldConfig{
+		{Name: "images", Slot: domain.AtomSlotGallery, AtomType: domain.AtomTypeImage, Priority: 1, Required: true},
+		{Name: "name", Slot: domain.AtomSlotTitle, AtomType: domain.AtomTypeText, Priority: 2, Required: true},
+		{Name: "brand", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeText, Priority: 3, Required: false},
+		{Name: "category", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeText, Priority: 4, Required: false},
+		{Name: "rating", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeRating, Priority: 5, Required: false},
+		{Name: "price", Slot: domain.AtomSlotPrice, AtomType: domain.AtomTypePrice, Priority: 6, Required: true},
+		{Name: "stockQuantity", Slot: domain.AtomSlotStock, AtomType: domain.AtomTypeNumber, Priority: 7, Required: false},
+		{Name: "description", Slot: domain.AtomSlotDescription, AtomType: domain.AtomTypeText, Priority: 8, Required: false},
+		{Name: "tags", Slot: domain.AtomSlotTags, AtomType: domain.AtomTypeText, Priority: 9, Required: false},
+		{Name: "attributes", Slot: domain.AtomSlotSpecs, AtomType: domain.AtomTypeText, Priority: 10, Required: false},
+	},
+}

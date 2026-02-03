@@ -150,6 +150,15 @@ func main() {
 		appLog.Info("pipeline_handler_initialized", "status", "ok")
 	}
 
+	// Initialize Navigation handler (expand/back)
+	var navigationHandler *handlers.NavigationHandler
+	if stateAdapter != nil && presetRegistry != nil {
+		expandUC := usecases.NewExpandUseCase(stateAdapter, presetRegistry)
+		backUC := usecases.NewBackUseCase(stateAdapter, presetRegistry)
+		navigationHandler = handlers.NewNavigationHandler(expandUC, backUC)
+		appLog.Info("navigation_handler_initialized", "status", "ok")
+	}
+
 	// Initialize Debug handler
 	var debugHandler *handlers.DebugHandler
 	if stateAdapter != nil {
@@ -167,11 +176,18 @@ func main() {
 
 	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler, tenantMiddleware)
 
+	// Setup navigation routes (expand/back)
+	if navigationHandler != nil {
+		handlers.SetupNavigationRoutes(mux, navigationHandler)
+		appLog.Info("navigation_routes_enabled", "status", "ok")
+	}
+
 	// Setup debug routes
 	if debugHandler != nil {
 		mux.HandleFunc("/debug/session/", debugHandler.HandleDebugPage)
 		mux.HandleFunc("/debug/api", debugHandler.HandleDebugAPI)
-		appLog.Info("debug_routes_enabled", "url", "/debug/session/")
+		mux.HandleFunc("/debug/seed", debugHandler.HandleSeedState)
+		appLog.Info("debug_routes_enabled", "url", "/debug/session/", "seed", "/debug/seed")
 	}
 
 	// Setup catalog routes if database available

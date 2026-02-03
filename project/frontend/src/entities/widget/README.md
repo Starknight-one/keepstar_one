@@ -10,15 +10,21 @@
 - `templates/index.js` — Экспорт шаблонов
 - `templates/ProductCardTemplate.jsx` — Slot-based карточка товара
 - `templates/ProductCardTemplate.css` — Стили ProductCard
+- `templates/ProductDetailTemplate.jsx` — Полный детальный вид товара
+- `templates/ProductDetailTemplate.css` — Стили ProductDetail
 - `templates/ServiceCardTemplate.jsx` — Slot-based карточка услуги
 - `templates/ServiceCardTemplate.css` — Стили ServiceCard
+- `templates/ServiceDetailTemplate.jsx` — Полный детальный вид услуги
+- `templates/ServiceDetailTemplate.css` — Стили ServiceDetail
 
 ## Шаблоны (Templates)
 
 | Template | Описание |
 |----------|----------|
 | ProductCard | Карточка товара со слотами |
+| ProductDetail | Полный детальный вид товара (drill-down) |
 | ServiceCard | Карточка услуги (duration, provider) |
+| ServiceDetail | Полный детальный вид услуги (drill-down) |
 
 ## Слоты
 

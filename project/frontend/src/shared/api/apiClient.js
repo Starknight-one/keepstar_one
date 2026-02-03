@@ -110,3 +110,39 @@ export async function sendPipelineQuery(sessionId, query) {
   // Response: { sessionId, formation, agent1Ms, agent2Ms, totalMs }
   return response.json();
 }
+
+// Navigation API - expand widget to detail view
+export async function expandView(sessionId, entityType, entityId) {
+  const response = await fetch(`${API_BASE_URL}/navigation/expand`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId, entityType, entityId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  // Response: { success, formation, viewMode, focused, stackSize, canGoBack }
+  return response.json();
+}
+
+// Navigation API - go back to previous view
+export async function goBack(sessionId) {
+  const response = await fetch(`${API_BASE_URL}/navigation/back`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  // Response: { success, formation, viewMode, focused, stackSize, canGoBack }
+  return response.json();
+}

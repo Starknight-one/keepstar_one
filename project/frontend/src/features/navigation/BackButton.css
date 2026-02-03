@@ -1,0 +1,32 @@
+.back-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #7ba3d4;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+  margin-bottom: 16px;
+}
+
+.back-button:hover {
+  background: #5a8bc4;
+  transform: translateX(-2px);
+}
+
+.back-button:active {
+  transform: translateX(0);
+}
+
+.back-arrow {
+  font-size: 18px;
+}
+
+.back-text {
+  font-size: 14px;
+}

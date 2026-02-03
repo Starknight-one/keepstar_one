@@ -43,8 +43,8 @@ tools:
       - "RenderServicePresetTool"
     implements: "ToolExecutor"
     purpose: "Render products/services using preset templates"
-    product_presets: ["product_grid", "product_card", "product_compact"]
-    service_presets: ["service_card", "service_list"]
+    product_presets: ["product_grid", "product_card", "product_compact", "product_detail"]
+    service_presets: ["service_card", "service_list", "service_detail"]
     flow:
       - "Get preset from registry"
       - "Get state (products/services)"
@@ -72,11 +72,11 @@ presets:
 
   product_presets:
     file: "product_presets.go"
-    presets: ["product_grid", "product_card", "product_compact"]
+    presets: ["product_grid", "product_card", "product_compact", "product_detail"]
 
   service_presets:
     file: "service_presets.go"
-    presets: ["service_card", "service_list"]
+    presets: ["service_card", "service_list", "service_detail"]
 
 prompts:
   path: "internal/prompts/"

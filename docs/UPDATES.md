@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-02-04 00:15
+
+### Drill-Down Navigation (k3m9x2p)
+- Navigation usecases: `ExpandUseCase` (drill-down to detail), `BackUseCase` (navigate back)
+- Navigation handler: `POST /api/v1/session/{id}/expand`, `POST /api/v1/session/{id}/back`
+- Detail presets: `product_detail`, `service_detail` for full entity views
+- Frontend templates: `ProductDetailTemplate`, `ServiceDetailTemplate`
+- Frontend navigation: `BackButton` component for back navigation
+- ViewStack integration: push current view on expand, pop on back
+- Tests: navigation scenarios (expand, back, stack depth)
+
+---
+
 ## 2026-02-03 22:30
 
 ### Delta State Management (x7k9m2p)

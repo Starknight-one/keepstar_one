@@ -23,6 +23,12 @@ func SetupRoutes(mux *http.ServeMux, chat *ChatHandler, session *SessionHandler,
 	}
 }
 
+// SetupNavigationRoutes configures navigation routes (expand/back)
+func SetupNavigationRoutes(mux *http.ServeMux, nav *NavigationHandler) {
+	mux.HandleFunc("/api/v1/navigation/expand", nav.HandleExpand)
+	mux.HandleFunc("/api/v1/navigation/back", nav.HandleBack)
+}
+
 // SetupCatalogRoutes configures catalog routes with tenant middleware
 func SetupCatalogRoutes(mux *http.ServeMux, catalog *CatalogHandler, tenantMw *TenantMiddleware) {
 	// Catalog API - products

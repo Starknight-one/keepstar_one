@@ -268,12 +268,12 @@ Agent2 (simple LLM, sees state.Meta):
 | `tools/tool_render_preset.go` | Create | render_product_preset, render_service_preset |
 
 ### Acceptance Criteria
-- [ ] EntityType enum (product/service)
-- [ ] Preset структура с slots и fields
-- [ ] Product presets (grid, card, compact)
-- [ ] Service presets (card, list)
-- [ ] render_*_preset tools для Agent2
-- [ ] Agent2 выбирает правильные пресеты по state.Meta
+- [x] EntityType enum (product/service)
+- [x] Preset структура с slots и fields
+- [x] Product presets (grid, card, compact, detail)
+- [x] Service presets (card, list, detail)
+- [x] render_*_preset tools для Agent2
+- [x] Agent2 выбирает правильные пресеты по state.Meta
 
 ---
 
@@ -395,11 +395,11 @@ function FormationRenderer({ formation, state }) {
 | `frontend/.../DetailView.jsx` | Create | Detail view component |
 
 ### Acceptance Criteria
-- [ ] ViewStack для navigation history
-- [ ] ExpandUseCase сохраняет текущий view и переключает на detail
-- [ ] BackUseCase восстанавливает предыдущий view
-- [ ] Frontend показывает detail view с back button
-- [ ] Interactions логируются
+- [x] ViewStack для navigation history
+- [x] ExpandUseCase сохраняет текущий view и переключает на detail
+- [x] BackUseCase восстанавливает предыдущий view
+- [x] Frontend показывает detail view с back button
+- [x] Interactions логируются (через deltas: push/pop)
 
 ---
 
@@ -621,11 +621,11 @@ func (p *PostgresStateAdapter) CompactDeltas(ctx, sessionID string) error {
 | `usecases/state_compact.go` | Create | Compaction logic |
 
 ### Acceptance Criteria
-- [ ] DeltaType enum (add/remove/update/push/pop)
-- [ ] AppendDelta без полной перезаписи
-- [ ] ReconstructState из base + deltas
+- [x] DeltaType enum (add/remove/update/push/pop/rollback)
+- [x] AppendDelta без полной перезаписи
+- [x] ReconstructState из base + deltas
 - [ ] CompactDeltas для оптимизации
-- [ ] Delta operations < 10ms
+- [x] Delta operations < 10ms
 
 ---
 

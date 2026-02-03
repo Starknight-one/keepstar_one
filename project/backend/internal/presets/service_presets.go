@@ -35,3 +35,26 @@ var ServiceListPreset = domain.Preset{
 		{Name: "price", Slot: domain.AtomSlotPrice, AtomType: domain.AtomTypePrice, Priority: 3, Required: true},
 	},
 }
+
+// WidgetTemplateServiceDetail is the template name for service detail view
+const WidgetTemplateServiceDetail = "ServiceDetail"
+
+// ServiceDetailPreset for displaying a single service in full detail view
+var ServiceDetailPreset = domain.Preset{
+	Name:        string(domain.PresetServiceDetail),
+	EntityType:  domain.EntityTypeService,
+	Template:    WidgetTemplateServiceDetail,
+	DefaultMode: domain.FormationTypeSingle,
+	DefaultSize: domain.WidgetSizeLarge,
+	Fields: []domain.FieldConfig{
+		{Name: "images", Slot: domain.AtomSlotGallery, AtomType: domain.AtomTypeImage, Priority: 1, Required: false},
+		{Name: "name", Slot: domain.AtomSlotTitle, AtomType: domain.AtomTypeText, Priority: 2, Required: true},
+		{Name: "provider", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeText, Priority: 3, Required: false},
+		{Name: "duration", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeText, Priority: 4, Required: false},
+		{Name: "rating", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeRating, Priority: 5, Required: false},
+		{Name: "price", Slot: domain.AtomSlotPrice, AtomType: domain.AtomTypePrice, Priority: 6, Required: true},
+		{Name: "availability", Slot: domain.AtomSlotStock, AtomType: domain.AtomTypeText, Priority: 7, Required: false},
+		{Name: "description", Slot: domain.AtomSlotDescription, AtomType: domain.AtomTypeText, Priority: 8, Required: false},
+		{Name: "attributes", Slot: domain.AtomSlotSpecs, AtomType: domain.AtomTypeText, Priority: 9, Required: false},
+	},
+}

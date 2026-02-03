@@ -17,6 +17,9 @@ type FieldGetter func(fieldName string) interface{}
 // CurrencyGetter extracts currency from an entity
 type CurrencyGetter func() string
 
+// IDGetter extracts entity ID
+type IDGetter func() string
+
 // RenderProductPresetTool renders products using a preset
 type RenderProductPresetTool struct {
 	statePort      ports.StatePort
@@ -41,8 +44,8 @@ func (t *RenderProductPresetTool) Definition() domain.ToolDefinition {
 			"properties": map[string]interface{}{
 				"preset": map[string]interface{}{
 					"type":        "string",
-					"enum":        []string{"product_grid", "product_card", "product_compact"},
-					"description": "Preset to use: product_grid (for multiple items), product_card (for single detail), product_compact (for list)",
+					"enum":        []string{"product_grid", "product_card", "product_compact", "product_detail"},
+					"description": "Preset to use: product_grid (for multiple items), product_card (for single detail), product_compact (for list), product_detail (for full detail view)",
 				},
 			},
 			"required": []string{"preset"},
@@ -70,9 +73,9 @@ func (t *RenderProductPresetTool) Execute(ctx context.Context, sessionID string,
 	}
 
 	// Build formation using generic builder
-	formation := buildFormation(preset, len(products), func(i int) (FieldGetter, CurrencyGetter) {
+	formation := BuildFormation(preset, len(products), func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 		p := products[i]
-		return productFieldGetter(p), func() string { return p.Currency }
+		return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 	})
 
 	// Store formation in state template
@@ -113,8 +116,8 @@ func (t *RenderServicePresetTool) Definition() domain.ToolDefinition {
 			"properties": map[string]interface{}{
 				"preset": map[string]interface{}{
 					"type":        "string",
-					"enum":        []string{"service_card", "service_list"},
-					"description": "Preset to use: service_card (for grid), service_list (for compact list)",
+					"enum":        []string{"service_card", "service_list", "service_detail"},
+					"description": "Preset to use: service_card (for grid), service_list (for compact list), service_detail (for full detail view)",
 				},
 			},
 			"required": []string{"preset"},
@@ -142,9 +145,9 @@ func (t *RenderServicePresetTool) Execute(ctx context.Context, sessionID string,
 	}
 
 	// Build formation using generic builder
-	formation := buildFormation(preset, len(services), func(i int) (FieldGetter, CurrencyGetter) {
+	formation := BuildFormation(preset, len(services), func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 		s := services[i]
-		return serviceFieldGetter(s), func() string { return s.Currency }
+		return serviceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
 	})
 
 	// Merge with existing formation if products already rendered
@@ -169,11 +172,11 @@ func (t *RenderServicePresetTool) Execute(ctx context.Context, sessionID string,
 // Generic Formation Builder
 // =============================================================================
 
-// EntityGetterFunc returns field getter and currency getter for entity at index i
-type EntityGetterFunc func(i int) (FieldGetter, CurrencyGetter)
+// EntityGetterFunc returns field getter, currency getter, and ID getter for entity at index i
+type EntityGetterFunc func(i int) (FieldGetter, CurrencyGetter, IDGetter)
 
-// buildFormation creates formation from preset and entities
-func buildFormation(preset domain.Preset, count int, getEntity EntityGetterFunc) *domain.FormationWithData {
+// BuildFormation creates formation from preset and entities (exported for use by navigation usecases)
+func BuildFormation(preset domain.Preset, count int, getEntity EntityGetterFunc) *domain.FormationWithData {
 	widgets := make([]domain.Widget, 0, count)
 
 	// Sort fields by priority
@@ -184,7 +187,7 @@ func buildFormation(preset domain.Preset, count int, getEntity EntityGetterFunc)
 	})
 
 	for i := 0; i < count; i++ {
-		fieldGetter, currencyGetter := getEntity(i)
+		fieldGetter, currencyGetter, idGetter := getEntity(i)
 		atoms := buildAtoms(fields, fieldGetter, currencyGetter)
 		widget := domain.Widget{
 			ID:       uuid.New().String(),
@@ -192,6 +195,10 @@ func buildFormation(preset domain.Preset, count int, getEntity EntityGetterFunc)
 			Size:     preset.DefaultSize,
 			Priority: i,
 			Atoms:    atoms,
+			EntityRef: &domain.EntityRef{
+				Type: preset.EntityType,
+				ID:   idGetter(),
+			},
 		}
 		widgets = append(widgets, widget)
 	}
@@ -277,6 +284,21 @@ func productFieldGetter(p domain.Product) FieldGetter {
 			return nonEmpty(p.Brand)
 		case "category":
 			return nonEmpty(p.Category)
+		case "stockQuantity":
+			if p.StockQuantity == 0 {
+				return nil
+			}
+			return p.StockQuantity
+		case "tags":
+			if len(p.Tags) == 0 {
+				return nil
+			}
+			return p.Tags
+		case "attributes":
+			if len(p.Attributes) == 0 {
+				return nil
+			}
+			return p.Attributes
 		default:
 			return nil
 		}
@@ -309,6 +331,13 @@ func serviceFieldGetter(s domain.Service) FieldGetter {
 			return nonEmpty(s.Duration)
 		case "provider":
 			return nonEmpty(s.Provider)
+		case "availability":
+			return nonEmpty(s.Availability)
+		case "attributes":
+			if len(s.Attributes) == 0 {
+				return nil
+			}
+			return s.Attributes
 		default:
 			return nil
 		}

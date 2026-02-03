@@ -2,7 +2,7 @@ import { FormationMode } from './formationModel';
 import { WidgetRenderer } from '../widget/WidgetRenderer';
 import './Formation.css';
 
-export function FormationRenderer({ formation }) {
+export function FormationRenderer({ formation, onWidgetClick }) {
   if (!formation || !formation.widgets?.length) {
     return null;
   }
@@ -15,7 +15,11 @@ export function FormationRenderer({ formation }) {
   return (
     <div className={layoutClass}>
       {widgets.map((widget) => (
-        <WidgetRenderer key={widget.id} widget={widget} />
+        <WidgetRenderer
+          key={widget.id}
+          widget={widget}
+          onClick={onWidgetClick}
+        />
       ))}
     </div>
   );

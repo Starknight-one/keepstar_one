@@ -17,10 +17,12 @@ func NewPresetRegistry() *PresetRegistry {
 	r.Register(ProductGridPreset)
 	r.Register(ProductCardPreset)
 	r.Register(ProductCompactPreset)
+	r.Register(ProductDetailPreset)
 
 	// Register service presets
 	r.Register(ServiceCardPreset)
 	r.Register(ServiceListPreset)
+	r.Register(ServiceDetailPreset)
 
 	return r
 }

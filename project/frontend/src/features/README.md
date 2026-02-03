@@ -6,6 +6,7 @@
 
 - `chat/` — Чат панель, ввод, история
 - `catalog/` — Каталог товаров, ProductGrid
+- `navigation/` — Навигация: BackButton для drill-down
 - `canvas/` — Канвас виджетов (будущее)
 - `overlay/` — Fullscreen overlay
 
