@@ -70,9 +70,16 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 		sessionID = generateSessionID()
 	}
 
+	// Get tenant from context (set by middleware)
+	var tenantSlug string
+	if tenant := GetTenantFromContext(r.Context()); tenant != nil {
+		tenantSlug = tenant.Slug
+	}
+
 	result, err := h.pipelineUC.Execute(r.Context(), usecases.PipelineExecuteRequest{
-		SessionID: sessionID,
-		Query:     req.Query,
+		SessionID:  sessionID,
+		Query:      req.Query,
+		TenantSlug: tenantSlug,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

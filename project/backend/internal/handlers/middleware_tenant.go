@@ -75,3 +75,31 @@ func GetTenantFromContext(ctx context.Context) *domain.Tenant {
 	}
 	return tenant
 }
+
+// ResolveFromHeader extracts tenant from X-Tenant-Slug header (with default fallback)
+func (m *TenantMiddleware) ResolveFromHeader(defaultSlug string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			slug := r.Header.Get("X-Tenant-Slug")
+			if slug == "" {
+				slug = defaultSlug
+			}
+
+			if slug == "" {
+				// No tenant, continue without context
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			tenant, err := m.catalog.GetTenantBySlug(r.Context(), slug)
+			if err != nil {
+				// Tenant not found, continue without context (tool will fail gracefully)
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), tenantContextKey, tenant)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}

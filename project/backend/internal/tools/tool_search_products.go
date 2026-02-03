@@ -107,8 +107,8 @@ func (t *SearchProductsTool) Execute(ctx context.Context, sessionID string, inpu
 		return nil, fmt.Errorf("get/create state: %w", err)
 	}
 
-	// Get tenant ID - use default "nike" tenant for now
-	// TODO: get tenant from session context properly
+	// Get tenant from state (set by Agent1 from request header X-Tenant-Slug)
+	// Falls back to "nike" if not set
 	tenantSlug := "nike"
 	if state.Current.Meta.Aliases != nil {
 		if slug, ok := state.Current.Meta.Aliases["tenant_slug"]; ok && slug != "" {

@@ -15,8 +15,9 @@ import (
 
 // Agent1ExecuteRequest is the input for Agent 1
 type Agent1ExecuteRequest struct {
-	SessionID string
-	Query     string
+	SessionID  string
+	Query      string
+	TenantSlug string // Tenant context for search
 }
 
 // Agent1ExecuteResponse is the output from Agent 1
@@ -74,6 +75,14 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
+	}
+
+	// Set tenant context in state
+	if req.TenantSlug != "" {
+		if state.Current.Meta.Aliases == nil {
+			state.Current.Meta.Aliases = make(map[string]string)
+		}
+		state.Current.Meta.Aliases["tenant_slug"] = req.TenantSlug
 	}
 
 	// Build messages

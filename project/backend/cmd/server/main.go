@@ -158,7 +158,14 @@ func main() {
 
 	// Setup routes
 	mux := http.NewServeMux()
-	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler)
+
+	// Create tenant middleware if catalog available
+	var tenantMiddleware *handlers.TenantMiddleware
+	if catalogAdapter != nil {
+		tenantMiddleware = handlers.NewTenantMiddleware(catalogAdapter)
+	}
+
+	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler, tenantMiddleware)
 
 	// Setup debug routes
 	if debugHandler != nil {
@@ -172,7 +179,6 @@ func main() {
 		listProductsUC := usecases.NewListProductsUseCase(catalogAdapter)
 		getProductUC := usecases.NewGetProductUseCase(catalogAdapter)
 		catalogHandler := handlers.NewCatalogHandler(listProductsUC, getProductUC)
-		tenantMiddleware := handlers.NewTenantMiddleware(catalogAdapter)
 		handlers.SetupCatalogRoutes(mux, catalogHandler, tenantMiddleware)
 		appLog.Info("catalog_routes_enabled", "status", "ok")
 	}

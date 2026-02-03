@@ -11,6 +11,12 @@ import (
 	"keepstar/internal/presets"
 )
 
+// FieldGetter extracts field value from an entity
+type FieldGetter func(fieldName string) interface{}
+
+// CurrencyGetter extracts currency from an entity
+type CurrencyGetter func() string
+
 // RenderProductPresetTool renders products using a preset
 type RenderProductPresetTool struct {
 	statePort      ports.StatePort
@@ -63,8 +69,11 @@ func (t *RenderProductPresetTool) Execute(ctx context.Context, sessionID string,
 		return &domain.ToolResult{Content: "error: no products in state"}, nil
 	}
 
-	// Build formation from preset
-	formation := buildFormationFromPreset(preset, products)
+	// Build formation using generic builder
+	formation := buildFormation(preset, len(products), func(i int) (FieldGetter, CurrencyGetter) {
+		p := products[i]
+		return productFieldGetter(p), func() string { return p.Currency }
+	})
 
 	// Store formation in state template
 	state.Current.Template = map[string]interface{}{
@@ -132,8 +141,11 @@ func (t *RenderServicePresetTool) Execute(ctx context.Context, sessionID string,
 		return &domain.ToolResult{Content: "error: no services in state"}, nil
 	}
 
-	// Build formation from preset
-	formation := buildServiceFormationFromPreset(preset, services)
+	// Build formation using generic builder
+	formation := buildFormation(preset, len(services), func(i int) (FieldGetter, CurrencyGetter) {
+		s := services[i]
+		return serviceFieldGetter(s), func() string { return s.Currency }
+	})
 
 	// Merge with existing formation if products already rendered
 	if existing, ok := state.Current.Template["formation"].(*domain.FormationWithData); ok && existing != nil {
@@ -153,9 +165,16 @@ func (t *RenderServicePresetTool) Execute(ctx context.Context, sessionID string,
 	}, nil
 }
 
-// buildFormationFromPreset creates formation from preset and products
-func buildFormationFromPreset(preset domain.Preset, products []domain.Product) *domain.FormationWithData {
-	widgets := make([]domain.Widget, 0, len(products))
+// =============================================================================
+// Generic Formation Builder
+// =============================================================================
+
+// EntityGetterFunc returns field getter and currency getter for entity at index i
+type EntityGetterFunc func(i int) (FieldGetter, CurrencyGetter)
+
+// buildFormation creates formation from preset and entities
+func buildFormation(preset domain.Preset, count int, getEntity EntityGetterFunc) *domain.FormationWithData {
+	widgets := make([]domain.Widget, 0, count)
 
 	// Sort fields by priority
 	fields := make([]domain.FieldConfig, len(preset.Fields))
@@ -164,8 +183,9 @@ func buildFormationFromPreset(preset domain.Preset, products []domain.Product) *
 		return fields[i].Priority < fields[j].Priority
 	})
 
-	for i, product := range products {
-		atoms := buildAtomsFromProduct(fields, product)
+	for i := 0; i < count; i++ {
+		fieldGetter, currencyGetter := getEntity(i)
+		atoms := buildAtoms(fields, fieldGetter, currencyGetter)
 		widget := domain.Widget{
 			ID:       uuid.New().String(),
 			Template: preset.Template,
@@ -182,16 +202,14 @@ func buildFormationFromPreset(preset domain.Preset, products []domain.Product) *
 	}
 }
 
-func buildAtomsFromProduct(fields []domain.FieldConfig, product domain.Product) []domain.Atom {
+// buildAtoms creates atoms from fields using generic field getter
+func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency CurrencyGetter) []domain.Atom {
 	atoms := make([]domain.Atom, 0)
 
 	for _, field := range fields {
-		value := getProductFieldValue(product, field.Name)
-		if value == nil && !field.Required {
-			continue
-		}
+		value := getField(field.Name)
 		if value == nil {
-			continue // Skip required fields that are nil
+			continue
 		}
 
 		atom := domain.Atom{
@@ -205,15 +223,16 @@ func buildAtomsFromProduct(fields []domain.FieldConfig, product domain.Product) 
 		case domain.AtomTypeImage:
 			atom.Meta = map[string]interface{}{"size": "large"}
 		case domain.AtomTypeText:
-			if field.Slot == domain.AtomSlotTitle {
+			switch field.Slot {
+			case domain.AtomSlotTitle:
 				atom.Meta = map[string]interface{}{"style": "heading"}
-			} else if field.Slot == domain.AtomSlotPrimary {
+			case domain.AtomSlotPrimary:
 				atom.Meta = map[string]interface{}{"display": "chip"}
-			} else if field.Slot == domain.AtomSlotSecondary {
+			case domain.AtomSlotSecondary:
 				atom.Meta = map[string]interface{}{"label": field.Name}
 			}
 		case domain.AtomTypePrice:
-			currency := product.Currency
+			currency := getCurrency()
 			if currency == "" {
 				currency = "$"
 			}
@@ -228,158 +247,78 @@ func buildAtomsFromProduct(fields []domain.FieldConfig, product domain.Product) 
 	return atoms
 }
 
-func getProductFieldValue(p domain.Product, fieldName string) interface{} {
-	switch fieldName {
-	case "id":
-		return p.ID
-	case "name":
-		if p.Name == "" {
+// =============================================================================
+// Field Getters for Entity Types
+// =============================================================================
+
+// productFieldGetter returns a FieldGetter for Product
+func productFieldGetter(p domain.Product) FieldGetter {
+	return func(fieldName string) interface{} {
+		switch fieldName {
+		case "id":
+			return p.ID
+		case "name":
+			return nonEmpty(p.Name)
+		case "description":
+			return nonEmpty(p.Description)
+		case "price":
+			return p.Price
+		case "images":
+			if len(p.Images) == 0 {
+				return nil
+			}
+			return p.Images
+		case "rating":
+			if p.Rating == 0 {
+				return nil
+			}
+			return p.Rating
+		case "brand":
+			return nonEmpty(p.Brand)
+		case "category":
+			return nonEmpty(p.Category)
+		default:
 			return nil
 		}
-		return p.Name
-	case "description":
-		if p.Description == "" {
+	}
+}
+
+// serviceFieldGetter returns a FieldGetter for Service
+func serviceFieldGetter(s domain.Service) FieldGetter {
+	return func(fieldName string) interface{} {
+		switch fieldName {
+		case "id":
+			return s.ID
+		case "name":
+			return nonEmpty(s.Name)
+		case "description":
+			return nonEmpty(s.Description)
+		case "price":
+			return s.Price
+		case "images":
+			if len(s.Images) == 0 {
+				return nil
+			}
+			return s.Images
+		case "rating":
+			if s.Rating == 0 {
+				return nil
+			}
+			return s.Rating
+		case "duration":
+			return nonEmpty(s.Duration)
+		case "provider":
+			return nonEmpty(s.Provider)
+		default:
 			return nil
 		}
-		return p.Description
-	case "price":
-		return p.Price
-	case "images":
-		if len(p.Images) == 0 {
-			return nil
-		}
-		return p.Images
-	case "rating":
-		if p.Rating == 0 {
-			return nil
-		}
-		return p.Rating
-	case "brand":
-		if p.Brand == "" {
-			return nil
-		}
-		return p.Brand
-	case "category":
-		if p.Category == "" {
-			return nil
-		}
-		return p.Category
-	default:
+	}
+}
+
+// nonEmpty returns nil if string is empty, otherwise returns the string
+func nonEmpty(s string) interface{} {
+	if s == "" {
 		return nil
 	}
-}
-
-// buildServiceFormationFromPreset creates formation from preset and services
-func buildServiceFormationFromPreset(preset domain.Preset, services []domain.Service) *domain.FormationWithData {
-	widgets := make([]domain.Widget, 0, len(services))
-
-	fields := make([]domain.FieldConfig, len(preset.Fields))
-	copy(fields, preset.Fields)
-	sort.Slice(fields, func(i, j int) bool {
-		return fields[i].Priority < fields[j].Priority
-	})
-
-	for i, service := range services {
-		atoms := buildAtomsFromService(fields, service)
-		widget := domain.Widget{
-			ID:       uuid.New().String(),
-			Template: preset.Template,
-			Size:     preset.DefaultSize,
-			Priority: i,
-			Atoms:    atoms,
-		}
-		widgets = append(widgets, widget)
-	}
-
-	return &domain.FormationWithData{
-		Mode:    preset.DefaultMode,
-		Widgets: widgets,
-	}
-}
-
-func buildAtomsFromService(fields []domain.FieldConfig, service domain.Service) []domain.Atom {
-	atoms := make([]domain.Atom, 0)
-
-	for _, field := range fields {
-		value := getServiceFieldValue(service, field.Name)
-		if value == nil && !field.Required {
-			continue
-		}
-		if value == nil {
-			continue // Skip required fields that are nil
-		}
-
-		atom := domain.Atom{
-			Type:  field.AtomType,
-			Value: value,
-			Slot:  field.Slot,
-		}
-
-		// Add meta based on atom type
-		switch field.AtomType {
-		case domain.AtomTypeImage:
-			atom.Meta = map[string]interface{}{"size": "large"}
-		case domain.AtomTypeText:
-			if field.Slot == domain.AtomSlotTitle {
-				atom.Meta = map[string]interface{}{"style": "heading"}
-			} else if field.Slot == domain.AtomSlotPrimary {
-				atom.Meta = map[string]interface{}{"display": "chip"}
-			} else if field.Slot == domain.AtomSlotSecondary {
-				atom.Meta = map[string]interface{}{"label": field.Name}
-			}
-		case domain.AtomTypePrice:
-			currency := service.Currency
-			if currency == "" {
-				currency = "$"
-			}
-			atom.Meta = map[string]interface{}{"currency": currency}
-		case domain.AtomTypeRating:
-			atom.Meta = map[string]interface{}{"display": "chip"}
-		}
-
-		atoms = append(atoms, atom)
-	}
-
-	return atoms
-}
-
-func getServiceFieldValue(s domain.Service, fieldName string) interface{} {
-	switch fieldName {
-	case "id":
-		return s.ID
-	case "name":
-		if s.Name == "" {
-			return nil
-		}
-		return s.Name
-	case "description":
-		if s.Description == "" {
-			return nil
-		}
-		return s.Description
-	case "price":
-		return s.Price
-	case "images":
-		if len(s.Images) == 0 {
-			return nil
-		}
-		return s.Images
-	case "rating":
-		if s.Rating == 0 {
-			return nil
-		}
-		return s.Rating
-	case "duration":
-		if s.Duration == "" {
-			return nil
-		}
-		return s.Duration
-	case "provider":
-		if s.Provider == "" {
-			return nil
-		}
-		return s.Provider
-	default:
-		return nil
-	}
+	return s
 }

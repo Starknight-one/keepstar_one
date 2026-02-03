@@ -14,8 +14,9 @@ import (
 
 // PipelineExecuteRequest is the input for the full pipeline
 type PipelineExecuteRequest struct {
-	SessionID string
-	Query     string
+	SessionID  string
+	Query      string
+	TenantSlug string // Tenant context (default: "nike")
 }
 
 // PipelineExecuteResponse is the output from the full pipeline
@@ -94,8 +95,9 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 
 	// Step 1: Agent 1 (Tool Caller)
 	agent1Resp, err := uc.agent1UC.Execute(ctx, Agent1ExecuteRequest{
-		SessionID: req.SessionID,
-		Query:     req.Query,
+		SessionID:  req.SessionID,
+		Query:      req.Query,
+		TenantSlug: req.TenantSlug,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent 1: %w", err)

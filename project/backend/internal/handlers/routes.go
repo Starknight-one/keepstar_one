@@ -3,7 +3,7 @@ package handlers
 import "net/http"
 
 // SetupRoutes configures all HTTP routes
-func SetupRoutes(mux *http.ServeMux, chat *ChatHandler, session *SessionHandler, health *HealthHandler, pipeline *PipelineHandler) {
+func SetupRoutes(mux *http.ServeMux, chat *ChatHandler, session *SessionHandler, health *HealthHandler, pipeline *PipelineHandler, tenantMw *TenantMiddleware) {
 	// Health checks
 	mux.HandleFunc("/health", health.HandleHealth)
 	mux.HandleFunc("/ready", health.HandleReady)
@@ -12,9 +12,14 @@ func SetupRoutes(mux *http.ServeMux, chat *ChatHandler, session *SessionHandler,
 	mux.HandleFunc("/api/v1/chat", chat.HandleChat)
 	mux.HandleFunc("/api/v1/session/", session.HandleGetSession)
 
-	// Pipeline API (Two-Agent system)
+	// Pipeline API (Two-Agent system) with tenant from header
 	if pipeline != nil {
-		mux.HandleFunc("/api/v1/pipeline", pipeline.HandlePipeline)
+		handler := http.HandlerFunc(pipeline.HandlePipeline)
+		if tenantMw != nil {
+			mux.Handle("/api/v1/pipeline", tenantMw.ResolveFromHeader("nike")(handler))
+		} else {
+			mux.HandleFunc("/api/v1/pipeline", pipeline.HandlePipeline)
+		}
 	}
 }
 
