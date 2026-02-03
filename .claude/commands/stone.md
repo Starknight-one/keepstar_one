@@ -58,23 +58,24 @@ EOF
 )"
 ```
 
-### Step 5: Push
-Check current branch:
-```bash
-git branch --show-current
-```
+### Step 5: Merge to Main and Push
+Always merge to main and push:
 
-If on `main`:
 ```bash
-git push origin main
-```
+# Get current branch
+BRANCH=$(git branch --show-current)
 
-If on feature branch:
-```bash
-git push origin <branch-name>
-git checkout main
-git merge <branch-name>
+# If on feature branch, merge to main
+if [ "$BRANCH" != "main" ]; then
+  git checkout main
+  git merge $BRANCH --no-edit
+fi
+
+# Push main
 git push origin main
+
+# Optionally delete feature branch after merge
+# git branch -d $BRANCH
 ```
 
 ## Output
@@ -89,5 +90,6 @@ Changelog: Updated (docs/UPDATES.md)
 Commit: <commit-hash>
 Message: <commit-message>
 
+Merged: <branch-name> → main
 Pushed to: main
 ```
