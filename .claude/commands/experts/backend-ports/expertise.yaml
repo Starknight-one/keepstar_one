@@ -57,11 +57,6 @@ interfaces:
       - "GetDeltas(ctx, sessionID) ([]Delta, error)"
       - "GetDeltasSince(ctx, sessionID, fromStep) ([]Delta, error)"
 
-  search_port:
-    file: "search_port.go"
-    interface: "SearchPort"
-    status: "stub"
-
 gotchas:
   - "CatalogPort.ListProducts(tenantID) requires UUID, not slug"
   - "Use GetTenantBySlug(slug) first to get tenant UUID"

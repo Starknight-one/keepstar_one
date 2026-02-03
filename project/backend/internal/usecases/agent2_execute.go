@@ -158,7 +158,7 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 			response.Formation = formation
 		} else {
 			// After DB read, it's map[string]interface{} - convert via JSON
-			response.Formation = convertMapToFormation(formationData)
+			response.Formation = convertToFormation(formationData)
 		}
 	}
 
@@ -238,24 +238,4 @@ func (uc *Agent2ExecuteUseCase) ExecuteLegacy(ctx context.Context, req Agent2Exe
 	}, nil
 }
 
-// convertMapToFormation converts map[string]interface{} to FormationWithData
-// This is needed because after JSON serialization/deserialization from DB,
-// the formation becomes a map instead of a typed struct
-func convertMapToFormation(data interface{}) *domain.FormationWithData {
-	if data == nil {
-		return nil
-	}
-
-	// Re-serialize to JSON and back to struct
-	jsonBytes, err := json.Marshal(data)
-	if err != nil {
-		return nil
-	}
-
-	var formation domain.FormationWithData
-	if err := json.Unmarshal(jsonBytes, &formation); err != nil {
-		return nil
-	}
-
-	return &formation
-}
+// Note: convertToFormation is defined in pipeline_execute.go and reused here

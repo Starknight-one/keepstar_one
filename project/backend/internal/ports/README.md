@@ -5,7 +5,6 @@
 ## Файлы
 
 - `llm_port.go` — LLMPort interface (для AI провайдеров)
-- `search_port.go` — SearchPort interface (для поиска товаров)
 - `cache_port.go` — CachePort interface (для сессий и кэширования)
 - `event_port.go` — EventPort interface (для аналитики событий)
 - `catalog_port.go` — CatalogPort interface (для каталога товаров)
