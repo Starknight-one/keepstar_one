@@ -15,6 +15,7 @@ import (
 	"keepstar/internal/adapters/postgres"
 	"keepstar/internal/domain"
 	"keepstar/internal/logger"
+	"keepstar/internal/presets"
 	"keepstar/internal/tools"
 	"keepstar/internal/usecases"
 )
@@ -80,11 +81,12 @@ func TestAgent2Execute_Integration(t *testing.T) {
 	cacheAdapter := postgres.NewCacheAdapter(dbClient)
 
 	// Initialize tool registry and Agent 1 (to populate state)
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter)
+	presetRegistry := presets.NewPresetRegistry()
+	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
 
-	// Initialize Agent 2
-	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter)
+	// Initialize Agent 2 (with tool registry for preset tools)
+	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry)
 
 	// Helper to create session
 	createSession := func(sessionID string) error {
@@ -223,7 +225,8 @@ func TestPipelineExecute_Integration(t *testing.T) {
 	stateAdapter := postgres.NewStateAdapter(dbClient)
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
 	cacheAdapter := postgres.NewCacheAdapter(dbClient)
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter)
+	presetRegistry := presets.NewPresetRegistry()
+	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
 
 	// Initialize Pipeline
 	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, log)
@@ -363,11 +366,12 @@ func TestPipelineExecute_CostReport(t *testing.T) {
 	stateAdapter := postgres.NewStateAdapter(dbClient)
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
 	cacheAdapter := postgres.NewCacheAdapter(dbClient)
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter)
+	presetRegistry := presets.NewPresetRegistry()
+	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
 
 	// Create both use cases to get individual costs
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
-	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter)
+	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry)
 	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, log)
 
 	sessionID := uuid.New().String()

@@ -1,6 +1,6 @@
 import { WidgetType } from './widgetModel';
 import { AtomRenderer } from '../atom/AtomRenderer';
-import { ProductCardTemplate } from './templates';
+import { ProductCardTemplate, ServiceCardTemplate } from './templates';
 import './Widget.css';
 
 export function WidgetRenderer({ widget }) {
@@ -31,6 +31,8 @@ function renderTemplate(widget) {
   switch (widget.template) {
     case 'ProductCard':
       return <ProductCardTemplate atoms={widget.atoms} size={widget.size} />;
+    case 'ServiceCard':
+      return <ServiceCardTemplate atoms={widget.atoms} size={widget.size} />;
     default:
       return <DefaultWidget widget={widget} sizeClass="size-medium" />;
   }

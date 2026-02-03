@@ -4,28 +4,44 @@
 
 ## Файлы
 
-- `widgetModel.js` — Типы виджетов (WidgetType)
-- `WidgetRenderer.jsx` — Рендерер любого виджета по типу
+- `widgetModel.js` — WidgetType, WidgetTemplate, WidgetSize
+- `WidgetRenderer.jsx` — Рендерер (template-based или legacy)
 - `Widget.css` — Стили виджетов
+- `templates/index.js` — Экспорт шаблонов
+- `templates/ProductCardTemplate.jsx` — Slot-based карточка товара
+- `templates/ProductCardTemplate.css` — Стили ProductCard
+- `templates/ServiceCardTemplate.jsx` — Slot-based карточка услуги
+- `templates/ServiceCardTemplate.css` — Стили ServiceCard
 
-## Типы виджетов
+## Шаблоны (Templates)
 
-| Type | Описание |
-|------|----------|
-| PRODUCT_CARD | Карточка товара |
-| TEXT_BLOCK | Текстовый блок |
-| QUICK_REPLIES | Быстрые ответы (кнопки) |
+| Template | Описание |
+|----------|----------|
+| ProductCard | Карточка товара со слотами |
+| ServiceCard | Карточка услуги (duration, provider) |
+
+## Слоты
+
+| Slot | Назначение |
+|------|------------|
+| hero | Изображение/карусель |
+| badge | Overlay badge |
+| title | Заголовок |
+| primary | Основные атрибуты (chips) |
+| price | Цена |
+| secondary | Раскрываемые детали |
 
 ## Использование
 
 ```jsx
 <WidgetRenderer widget={{
-  type: 'PRODUCT_CARD',
+  template: 'ProductCard',
   size: 'medium',
   atoms: [
-    { type: 'IMAGE', value: 'url', meta: { size: 'large' } },
-    { type: 'TEXT', value: 'Product Name', meta: { style: 'bold' } },
-    { type: 'PRICE', value: 1299, meta: { currency: '₽' } },
+    { type: 'image', value: ['url1', 'url2'], slot: 'hero' },
+    { type: 'text', value: 'Product Name', slot: 'title' },
+    { type: 'text', value: 'Brand', slot: 'primary' },
+    { type: 'price', value: 1299, slot: 'price', meta: { currency: '₽' } },
   ]
 }} />
 ```

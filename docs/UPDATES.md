@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-02-03 15:30
+
+### Entity Types and Preset System
+- EntityType enum (product, service) for multi-entity support
+- Service entity parallel to Product (duration, provider, availability)
+- Preset system: FieldConfig → Slot → AtomType mapping
+- PresetRegistry with 5 presets: product_grid, product_card, product_compact, service_card, service_list
+- RenderProductPresetTool and RenderServicePresetTool for LLM
+- ServiceCardTemplate.jsx with duration/provider chip display
+- StateData extended with Services field
+- StateMeta extended with ProductCount, ServiceCount
+
+---
+
 ## 2026-02-03
 
 ### Chat Overlay with External Widget Rendering

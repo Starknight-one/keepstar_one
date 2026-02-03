@@ -36,11 +36,47 @@ tools:
       limit: "optional - max results (default 10)"
     returns: "'ok: found N products' or 'empty'"
 
+  render_preset:
+    file: "tool_render_preset.go"
+    structs:
+      - "RenderProductPresetTool"
+      - "RenderServicePresetTool"
+    implements: "ToolExecutor"
+    purpose: "Render products/services using preset templates"
+    product_presets: ["product_grid", "product_card", "product_compact"]
+    service_presets: ["service_card", "service_list"]
+    flow:
+      - "Get preset from registry"
+      - "Get state (products/services)"
+      - "Build formation from preset + data"
+      - "Write formation to state.Template"
+    returns: "'ok: rendered N items with preset_name'"
+
   interface:
     name: "ToolExecutor"
     methods:
       - "Definition() ToolDefinition"
       - "Execute(ctx, sessionID, input) (*ToolResult, error)"
+
+presets:
+  path: "internal/presets/"
+  imports: "domain/"
+
+  registry:
+    file: "preset_registry.go"
+    struct: "PresetRegistry"
+    methods:
+      - "NewPresetRegistry()"
+      - "Register(preset)"
+      - "Get(name) (Preset, bool)"
+
+  product_presets:
+    file: "product_presets.go"
+    presets: ["product_grid", "product_card", "product_compact"]
+
+  service_presets:
+    file: "service_presets.go"
+    presets: ["service_card", "service_list"]
 
 prompts:
   path: "internal/prompts/"

@@ -41,10 +41,18 @@ entities:
       event_types: ["chat_opened", "message_sent", "message_received", "chat_closed", "widget_clicked"]
 
   catalog:
+    entity_type:
+      file: "entity_type.go"
+      types: ["EntityType"]
+      entity_types: ["product", "service"]
     product_entity:
       file: "product_entity.go"
       types: ["Product"]
       fields: ["ID", "TenantID", "MasterProductID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Images", "Rating", "Brand", "Category"]
+    service_entity:
+      file: "service_entity.go"
+      types: ["Service"]
+      fields: ["ID", "TenantID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Duration", "Images", "Rating", "Category", "Provider", "Availability", "Attributes"]
     tenant_entity:
       file: "tenant_entity.go"
       types: ["TenantType", "Tenant"]
@@ -69,6 +77,13 @@ entities:
       types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "StateMeta", "StateData", "StateCurrent", "SessionState"]
       trigger_types: ["USER_QUERY", "WIDGET_ACTION", "SYSTEM"]
       action_types: ["SEARCH", "FILTER", "SORT", "LAYOUT", "ROLLBACK"]
+      state_data_fields: ["Products", "Services"]
+      state_meta_fields: ["Count", "ProductCount", "ServiceCount", "Fields", "Aliases"]
+    preset_entity:
+      file: "preset_entity.go"
+      types: ["FieldConfig", "SlotConfig", "Preset", "PresetName"]
+      preset_names: ["product_grid", "product_card", "product_compact", "service_card", "service_list"]
+      field_config: ["Name", "Slot", "AtomType", "Priority", "Required"]
 
   errors:
     file: "domain_errors.go"
@@ -78,5 +93,7 @@ gotchas:
   - "Price stored in kopecks (int), not rubles (float)"
   - "sessionID and tenantID must be valid UUID format"
   - "ErrSessionNotFound returned when state doesn't exist"
+  - "Service is parallel to Product for service-based businesses"
+  - "Preset defines field→slot→atomType mappings for rendering"
 
 naming: "{entity}_entity.go"

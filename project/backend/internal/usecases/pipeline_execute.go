@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -62,7 +63,7 @@ func NewPipelineExecuteUseCase(
 ) *PipelineExecuteUseCase {
 	return &PipelineExecuteUseCase{
 		agent1UC:  NewAgent1ExecuteUseCase(llm, statePort, toolRegistry, log),
-		agent2UC:  NewAgent2ExecuteUseCase(llm, statePort),
+		agent2UC:  NewAgent2ExecuteUseCase(llm, statePort, toolRegistry),
 		statePort: statePort,
 		cachePort: cachePort,
 		log:       log,
@@ -108,14 +109,29 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		return nil, fmt.Errorf("agent 2: %w", err)
 	}
 
-	// Step 3: Apply template to data
+	// Step 3: Get formation from state (built by Agent 2 tool call)
+	// Formation is now built by render_*_preset tool, not ApplyTemplate
 	state, err := uc.statePort.GetState(ctx, req.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
+	// Get formation from Agent 2 response (built by tool) or state
 	var formation *domain.FormationWithData
-	if agent2Resp.Template != nil && len(state.Current.Data.Products) > 0 {
+	if agent2Resp.Formation != nil {
+		formation = agent2Resp.Formation
+	} else if formationData, ok := state.Current.Template["formation"]; ok {
+		// Try direct type assertion first (in-memory)
+		if f, ok := formationData.(*domain.FormationWithData); ok {
+			formation = f
+		} else {
+			// After DB read, it's map[string]interface{} - convert via JSON
+			formation = convertToFormation(formationData)
+		}
+	}
+
+	// Fallback to legacy ApplyTemplate if tool didn't run (backward compatibility)
+	if formation == nil && agent2Resp.Template != nil && len(state.Current.Data.Products) > 0 {
 		formation, err = ApplyTemplate(agent2Resp.Template, state.Current.Data.Products)
 		if err != nil {
 			return nil, fmt.Errorf("apply template: %w", err)
@@ -123,7 +139,7 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	}
 
 	// Update delta with template (if Agent 2 produced one)
-	if agent1Resp.Delta != nil && agent2Resp.Template != nil {
+	if agent1Resp.Delta != nil && (agent2Resp.Template != nil || agent2Resp.Formation != nil) {
 		agent1Resp.Delta.Template = state.Current.Template
 		// Note: delta already saved in Agent 1, template added to state in Agent 2
 	}
@@ -151,4 +167,26 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		MetaCount:     agent2Resp.MetaCount,
 		MetaFields:    agent2Resp.MetaFields,
 	}, nil
+}
+
+// convertToFormation converts map[string]interface{} to FormationWithData
+// This is needed because after JSON serialization/deserialization from DB,
+// the formation becomes a map instead of a typed struct
+func convertToFormation(data interface{}) *domain.FormationWithData {
+	if data == nil {
+		return nil
+	}
+
+	// Re-serialize to JSON and back to struct
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil
+	}
+
+	var formation domain.FormationWithData
+	if err := json.Unmarshal(jsonBytes, &formation); err != nil {
+		return nil
+	}
+
+	return &formation
 }

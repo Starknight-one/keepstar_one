@@ -5,7 +5,8 @@ Tool executors for LLM tool calling.
 ## Файлы
 
 - `tool_registry.go` — Registry для всех tools
-- `tool_search_products.go` — Поиск товаров
+- `tool_search_products.go` — Поиск товаров (Agent1)
+- `tool_render_preset.go` — Рендеринг с пресетами (Agent2)
 
 ## Registry
 
@@ -13,13 +14,15 @@ Tool executors for LLM tool calling.
 
 ```go
 type Registry struct {
-    tools       map[string]ToolExecutor
-    statePort   ports.StatePort
-    catalogPort ports.CatalogPort
+    tools          map[string]ToolExecutor
+    statePort      ports.StatePort
+    catalogPort    ports.CatalogPort
+    presetRegistry *presets.PresetRegistry
 }
 
 // Создание с зависимостями
-registry := tools.NewRegistry(statePort, catalogPort)
+presetRegistry := presets.NewPresetRegistry()
+registry := tools.NewRegistry(statePort, catalogPort, presetRegistry)
 
 // Получение definitions для LLM
 defs := registry.GetDefinitions()

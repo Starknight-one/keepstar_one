@@ -6,6 +6,7 @@ import (
 
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
+	"keepstar/internal/presets"
 )
 
 // ToolExecutor executes a tool and writes results to state
@@ -19,21 +20,27 @@ type ToolExecutor interface {
 
 // Registry holds all available tools
 type Registry struct {
-	tools       map[string]ToolExecutor
-	statePort   ports.StatePort
-	catalogPort ports.CatalogPort
+	tools          map[string]ToolExecutor
+	statePort      ports.StatePort
+	catalogPort    ports.CatalogPort
+	presetRegistry *presets.PresetRegistry
 }
 
 // NewRegistry creates a tool registry with dependencies
-func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort) *Registry {
+func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry) *Registry {
 	r := &Registry{
-		tools:       make(map[string]ToolExecutor),
-		statePort:   statePort,
-		catalogPort: catalogPort,
+		tools:          make(map[string]ToolExecutor),
+		statePort:      statePort,
+		catalogPort:    catalogPort,
+		presetRegistry: presetRegistry,
 	}
 
-	// Register available tools
+	// Data tools (Agent1)
 	r.Register(NewSearchProductsTool(statePort, catalogPort))
+
+	// Render tools (Agent2)
+	r.Register(NewRenderProductPresetTool(statePort, presetRegistry))
+	r.Register(NewRenderServicePresetTool(statePort, presetRegistry))
 
 	return r
 }

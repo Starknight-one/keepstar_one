@@ -32,21 +32,24 @@ entities:
       - "WidgetRenderer.jsx - Template-based or legacy rendering"
       - "Widget.css - Styles"
       - "templates/index.js - Template exports"
-      - "templates/ProductCardTemplate.jsx - Slot-based card"
-      - "templates/ProductCardTemplate.css - Card styles"
+      - "templates/ProductCardTemplate.jsx - Slot-based product card"
+      - "templates/ProductCardTemplate.css - Product card styles"
+      - "templates/ServiceCardTemplate.jsx - Slot-based service card"
+      - "templates/ServiceCardTemplate.css - Service card styles"
     types_legacy: ["PRODUCT_CARD", "TEXT_BLOCK", "QUICK_REPLIES"]
-    templates: ["ProductCard"]
+    templates: ["ProductCard", "ServiceCard"]
     status: "implemented"
     components:
       - "ProductCardTemplate: renders atoms by slot (hero, badge, title, primary, price, secondary)"
+      - "ServiceCardTemplate: renders service atoms (duration, provider, rating chips)"
       - "TextBlock: atoms in text block (legacy)"
       - "QuickReplies: atoms as buttons (legacy)"
       - "DefaultWidget: fallback"
     slots:
       - "hero: main image/carousel"
       - "badge: overlay badge"
-      - "title: product title"
-      - "primary: main attributes (chips)"
+      - "title: product/service title"
+      - "primary: main attributes (chips) - brand/category for products, duration/provider for services"
       - "price: price block"
       - "secondary: expandable details"
 

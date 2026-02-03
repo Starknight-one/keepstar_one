@@ -1,0 +1,222 @@
+/* Service Card Template */
+.service-card-template {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: white;
+  border-radius: 16px;
+  border: 3px solid #5c9e7a;
+  overflow: hidden;
+}
+
+/* Size variants */
+.service-card-template.size-small {
+  width: 200px;
+  padding: 12px;
+}
+
+.service-card-template.size-medium {
+  width: 280px;
+  padding: 16px;
+}
+
+.service-card-template.size-large {
+  width: 360px;
+  padding: 20px;
+}
+
+/* Service Icon (when no image) */
+.service-card-icon {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 80px;
+  background: linear-gradient(135deg, #5c9e7a 0%, #4a8568 100%);
+  border-radius: 12px;
+}
+
+.service-icon {
+  font-size: 40px;
+}
+
+/* Image Carousel */
+.service-card-images {
+  position: relative;
+  border-radius: 12px;
+  border: 3px solid #5c9e7a;
+  overflow: hidden;
+  background: white;
+}
+
+.service-card-template .image-carousel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.service-card-template .carousel-image {
+  width: 100%;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+  cursor: pointer;
+  background: white;
+}
+
+.service-card-template .carousel-dots {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  justify-content: center;
+}
+
+.service-card-template .carousel-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  background: #e53935;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.service-card-template .carousel-dot.active {
+  background: #43a047;
+  transform: scale(1.2);
+}
+
+.service-card-template .carousel-dot:hover {
+  transform: scale(1.1);
+}
+
+/* Badge Overlay */
+.service-card-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  padding: 6px 16px;
+  font-weight: bold;
+  font-size: 14px;
+  color: white;
+  background: #5c9e7a;
+  border-radius: 4px;
+  transform: rotate(15deg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+.service-card-badge.variant-available {
+  background: #43a047;
+}
+
+.service-card-badge.variant-busy {
+  background: #e53935;
+}
+
+.service-card-badge.variant-popular {
+  background: #1976d2;
+}
+
+/* Title */
+.service-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  text-align: center;
+}
+
+/* Primary Attributes */
+.service-card-primary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+/* Chip */
+.service-card-chip {
+  padding: 8px 16px;
+  background: #5c9e7a;
+  color: white;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Duration chip */
+.service-card-duration {
+  background: #6b8e7a;
+}
+
+/* Provider chip */
+.service-card-provider {
+  background: #7a9e8a;
+}
+
+/* Rating */
+.service-card-rating {
+  background: #f5a623;
+  color: white;
+}
+
+/* Price */
+.service-card-price {
+  padding: 12px;
+  background: #5c9e7a;
+  color: white;
+  border-radius: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* Expand Button */
+.service-card-expand {
+  padding: 8px;
+  background: transparent;
+  color: #5c9e7a;
+  border: 1px solid #5c9e7a;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.service-card-expand:hover {
+  background: #f0f8f4;
+}
+
+/* Secondary Attributes */
+.service-card-secondary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e0e0e0;
+  animation: expand-in 0.2s ease-out;
+}
+
+@keyframes expand-in {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 200px;
+  }
+}
+
+.service-card-secondary-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.service-card-template .secondary-label {
+  color: #666;
+}
+
+.service-card-template .secondary-value {
+  color: #333;
+  font-weight: 500;
+}

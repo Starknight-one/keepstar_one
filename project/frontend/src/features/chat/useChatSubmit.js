@@ -4,6 +4,16 @@ import { MessageRole } from '../../entities/message/messageModel';
 
 const SESSION_STORAGE_KEY = 'chatSessionId';
 
+// Helper for Russian word declension
+function getProductWord(count) {
+  const lastTwo = count % 100;
+  const lastOne = count % 10;
+  if (lastTwo >= 11 && lastTwo <= 19) return 'товаров';
+  if (lastOne === 1) return 'товар';
+  if (lastOne >= 2 && lastOne <= 4) return 'товара';
+  return 'товаров';
+}
+
 export function useChatSubmit({ sessionId, addMessage, setLoading, setError, setSessionId, onFormationReceived }) {
   const submit = useCallback(async (text) => {
     if (!text.trim()) return;
@@ -34,10 +44,11 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
       }
 
       // Add assistant message with formation
+      const widgetCount = response.formation?.widgets?.length || 0;
       addMessage({
         id: (Date.now() + 1).toString(),
         role: MessageRole.ASSISTANT,
-        content: '', // No text content, just formation
+        content: widgetCount > 0 ? `Нашёл ${widgetCount} ${getProductWord(widgetCount)}` : '',
         formation: response.formation,
         timestamp: new Date(),
       });

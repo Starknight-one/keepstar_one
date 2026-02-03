@@ -14,6 +14,7 @@ import (
 	"keepstar/internal/adapters/postgres"
 	"keepstar/internal/domain"
 	"keepstar/internal/logger"
+	"keepstar/internal/presets"
 	"keepstar/internal/tools"
 	"keepstar/internal/usecases"
 )
@@ -78,8 +79,9 @@ func TestAgent1Execute_Integration(t *testing.T) {
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
 	cacheAdapter := postgres.NewCacheAdapter(dbClient)
 
-	// Initialize tool registry
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter)
+	// Initialize preset and tool registries
+	presetRegistry := presets.NewPresetRegistry()
+	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
 
 	// Initialize Agent 1
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
@@ -213,7 +215,8 @@ func TestAgent1Execute_CostEstimate(t *testing.T) {
 	stateAdapter := postgres.NewStateAdapter(dbClient)
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
 	cacheAdapter := postgres.NewCacheAdapter(dbClient)
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter)
+	presetRegistry := presets.NewPresetRegistry()
+	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
 
 	sessionID := uuid.New().String()

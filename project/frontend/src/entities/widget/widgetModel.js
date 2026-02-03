@@ -11,6 +11,7 @@ export const WidgetType = {
 // Widget templates (new system)
 export const WidgetTemplate = {
   PRODUCT_CARD: 'ProductCard',
+  SERVICE_CARD: 'ServiceCard',
 };
 
 // Formation types (layout)

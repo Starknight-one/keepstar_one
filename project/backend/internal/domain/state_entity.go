@@ -48,14 +48,17 @@ type Delta struct {
 
 // StateMeta contains metadata for Agent 2
 type StateMeta struct {
-	Count   int               `json:"count"`
-	Fields  []string          `json:"fields"`
-	Aliases map[string]string `json:"aliases,omitempty"`
+	Count        int               `json:"count"`
+	ProductCount int               `json:"productCount,omitempty"`
+	ServiceCount int               `json:"serviceCount,omitempty"`
+	Fields       []string          `json:"fields"`
+	Aliases      map[string]string `json:"aliases,omitempty"`
 }
 
-// StateData contains raw data (products, etc.)
+// StateData contains raw data (products, services, etc.)
 type StateData struct {
 	Products []Product `json:"products,omitempty"`
+	Services []Service `json:"services,omitempty"`
 }
 
 // StateCurrent represents the materialized current state

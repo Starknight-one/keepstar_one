@@ -17,6 +17,7 @@ import (
 	"keepstar/internal/handlers"
 	"keepstar/internal/logger"
 	"keepstar/internal/ports"
+	"keepstar/internal/presets"
 	"keepstar/internal/tools"
 	"keepstar/internal/usecases"
 )
@@ -96,11 +97,15 @@ func main() {
 		stateAdapter = postgres.NewStateAdapter(dbClient)
 	}
 
+	// Initialize preset registry
+	presetRegistry := presets.NewPresetRegistry()
+	appLog.Info("preset_registry_initialized", "presets", presetRegistry.List())
+
 	// Initialize tool registry (requires state and catalog adapters)
 	var toolRegistry *tools.Registry
 	if stateAdapter != nil && catalogAdapter != nil {
-		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter)
-		appLog.Info("tool_registry_initialized", "tools", "search_products")
+		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
+		appLog.Info("tool_registry_initialized", "tools", "search_products, render_product_preset, render_service_preset")
 	}
 
 	// Initialize Agent 1 use case (Two-Agent Pipeline)
@@ -111,10 +116,10 @@ func main() {
 	}
 	_ = agent1UC // Available for direct Agent 1 calls
 
-	// Initialize Agent 2 use case (Template Builder)
+	// Initialize Agent 2 use case (Preset Selector)
 	var agent2UC *usecases.Agent2ExecuteUseCase
-	if stateAdapter != nil {
-		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter)
+	if stateAdapter != nil && toolRegistry != nil {
+		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry)
 		appLog.Info("agent2_usecase_initialized", "status", "ok")
 	}
 	_ = agent2UC // Available for direct Agent 2 calls
