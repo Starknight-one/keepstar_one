@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-02-03 17:00
+
+### Architecture Refactoring
+- Remove unused SearchPort (search via CatalogPort.ListProducts)
+- Deduplicate convertToFormation (agent2 uses shared function from pipeline)
+- Deduplicate tool_render_preset.go: 386→320 lines
+  - Generic buildFormation() with FieldGetter/CurrencyGetter
+  - Shared buildAtoms() for Product and Service
+- Remove ExecuteLegacy from Agent2 (unused code path)
+- Add tenant middleware for pipeline (X-Tenant-Slug header)
+- Proper tenant context flow: Handler → Pipeline → Agent1 → State → Tool
+
+---
+
 ## 2026-02-03 15:30
 
 ### Entity Types and Preset System
