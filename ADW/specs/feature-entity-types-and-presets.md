@@ -1141,4 +1141,5 @@ cd project/frontend && npm run lint
 - Formation строится из preset + data, не генерируется LLM напрямую
 
 ## Known Issues (TODO)
-- **Chat input blocked during history load**: В `ChatPanel.jsx` при открытии чата вызывается `setLoading(true)` во время загрузки истории сессии из БД (`getSession`). Это блокирует ввод пока история не загрузится. Решение: убрать `setLoading` при загрузке истории или использовать отдельный state `isLoadingHistory`.
+- ~~**Chat input blocked during history load**: В `ChatPanel.jsx` при открытии чата вызывается `setLoading(true)` во время загрузки истории сессии из БД (`getSession`). Это блокирует ввод пока история не загрузится. Решение: убрать `setLoading` при загрузке истории или использовать отдельный state `isLoadingHistory`.~~ - Не критично, загрузка быстрая.
+- ~~**Session TTL not checked on read**: При GET /api/v1/session/{id} не проверялся TTL сессии, сессии казались "вечными".~~ - **FIXED**: Добавлена проверка `domain.SessionTTL` (5 минут) в `handler_session.go`. Сессия автоматически закрывается при чтении если неактивна более 5 минут.

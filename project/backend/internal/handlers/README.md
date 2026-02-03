@@ -5,7 +5,7 @@ HTTP слой. Только parse/validate/respond.
 ## Файлы
 
 - `handler_chat.go` — POST /api/v1/chat
-- `handler_session.go` — GET /api/v1/session/{id}
+- `handler_session.go` — GET /api/v1/session/{id} (checks SessionTTL on read)
 - `handler_catalog.go` — GET /api/v1/tenants/{slug}/products
 - `handler_pipeline.go` — POST /api/v1/pipeline (two-agent pipeline)
 - `handler_debug.go` — Debug console for pipeline metrics

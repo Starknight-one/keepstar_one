@@ -11,7 +11,7 @@
 
 ### Chat
 - `message_entity.go` — Message (сообщение в чате)
-- `session_entity.go` — Session (сессия пользователя)
+- `session_entity.go` — Session (сессия пользователя), SessionTTL (5 min sliding expiration)
 - `user_entity.go` — ChatUser (пользователь чата)
 - `event_entity.go` — ChatEvent (события аналитики)
 

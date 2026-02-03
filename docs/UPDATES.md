@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-02-03 19:30
+
+### Session TTL Fix
+- Fixed "eternal sessions" bug: sessions now properly expire after 5 min inactivity
+- Added `domain.SessionTTL` constant (5 minutes) as single source of truth
+- `handler_session.go` now checks TTL on read and marks expired sessions as closed
+- Synced TTL in `chat_send_message.go` (was 10 min, now 5 min)
+- Frontend sees `status: "closed"` → clears localStorage → shows fresh welcome
+
+---
+
 ## 2026-02-03 17:00
 
 ### Architecture Refactoring

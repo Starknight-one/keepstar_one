@@ -31,6 +31,7 @@ entities:
     session_entity:
       file: "session_entity.go"
       types: ["SessionStatus", "Session"]
+      constants: ["SessionTTL = 5 minutes"]
       fields: ["ID", "UserID", "TenantID", "Status", "Messages", "Metadata", "StartedAt", "EndedAt", "LastActivityAt"]
     user_entity:
       file: "user_entity.go"
@@ -95,5 +96,6 @@ gotchas:
   - "ErrSessionNotFound returned when state doesn't exist"
   - "Service is parallel to Product for service-based businesses"
   - "Preset defines field→slot→atomType mappings for rendering"
+  - "SessionTTL (5 min) used for sliding expiration - session becomes closed after inactivity"
 
 naming: "{entity}_entity.go"

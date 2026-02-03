@@ -11,7 +11,8 @@ import (
 )
 
 // DefaultSessionTTL is the default session timeout
-const DefaultSessionTTL = 10 * time.Minute
+// Deprecated: use domain.SessionTTL instead
+const DefaultSessionTTL = 5 * time.Minute
 
 // SendMessageUseCase handles simple chat message sending
 type SendMessageUseCase struct {
@@ -27,7 +28,7 @@ func NewSendMessageUseCase(llm ports.LLMPort, cache ports.CachePort, events port
 		llm:        llm,
 		cache:      cache,
 		events:     events,
-		sessionTTL: DefaultSessionTTL,
+		sessionTTL: domain.SessionTTL,
 	}
 }
 

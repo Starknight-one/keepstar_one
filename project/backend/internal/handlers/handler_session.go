@@ -69,6 +69,16 @@ func (h *SessionHandler) HandleGetSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Check TTL - if session expired, mark as closed
+	if session.Status == domain.SessionStatusActive && time.Since(session.LastActivityAt) > domain.SessionTTL {
+		session.Status = domain.SessionStatusClosed
+		now := time.Now()
+		session.EndedAt = &now
+		session.UpdatedAt = now
+		// Save updated status (best effort, don't fail the request)
+		_ = h.cache.SaveSession(r.Context(), session)
+	}
+
 	// Convert to response
 	messages := make([]MessageResponse, len(session.Messages))
 	for i, msg := range session.Messages {

@@ -26,6 +26,7 @@ handlers:
     struct: "SessionHandler"
     endpoint: "GET /api/v1/session/{id}"
     response: "{ id, status, messages[], startedAt, lastActivityAt }"
+    behavior: "Checks SessionTTL on read - marks session as closed if expired"
 
   catalog:
     file: "handler_catalog.go"
