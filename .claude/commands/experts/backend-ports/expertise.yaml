@@ -56,6 +56,10 @@ interfaces:
       - "AddDelta(ctx, sessionID, delta) error"
       - "GetDeltas(ctx, sessionID) ([]Delta, error)"
       - "GetDeltasSince(ctx, sessionID, fromStep) ([]Delta, error)"
+      - "GetDeltasUntil(ctx, sessionID, toStep) ([]Delta, error)"
+      - "PushView(ctx, sessionID, snapshot) error"
+      - "PopView(ctx, sessionID) (*ViewSnapshot, error)"
+      - "GetViewStack(ctx, sessionID) ([]ViewSnapshot, error)"
 
 gotchas:
   - "CatalogPort.ListProducts(tenantID) requires UUID, not slug"

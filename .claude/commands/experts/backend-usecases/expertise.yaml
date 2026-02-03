@@ -83,6 +83,32 @@ usecases:
         - "ApplyTemplate(template, products) (*FormationWithData, error)"
       field_mapping: ["id→ID", "name→Name", "price→Price", "images→Images[0]", "rating→Rating", "brand→Brand"]
 
+  state:
+    state_reconstruct:
+      file: "state_reconstruct.go"
+      struct: "ReconstructStateUseCase"
+      purpose: "Reconstruct session state at any given step by replaying deltas"
+      request: "{ SessionID, ToStep }"
+      response: "{ State, Deltas, StepNow, DeltaCount }"
+      flow:
+        - "Get deltas until target step"
+        - "Build base state (step 0)"
+        - "Apply deltas sequentially"
+        - "Return reconstructed state"
+
+    state_rollback:
+      file: "state_rollback.go"
+      struct: "RollbackUseCase"
+      purpose: "Roll back state to a previous step"
+      request: "{ SessionID, ToStep, Source, ActorID }"
+      response: "{ State, RolledBack, FromStep, ToStep, RollbackDelta }"
+      flow:
+        - "Get current state"
+        - "Validate rollback target"
+        - "Reconstruct state at target step"
+        - "Create rollback delta (preserves history)"
+        - "Update current state"
+
 gotchas:
   - "Create session (CachePort) before creating state (StatePort)"
   - "Tools return 'ok'/'empty', not raw data"

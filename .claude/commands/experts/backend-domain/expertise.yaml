@@ -75,11 +75,16 @@ entities:
       types: ["AtomTemplate", "WidgetTemplate", "GridConfig", "FormationTemplate", "FormationWithData"]
     state_entity:
       file: "state_entity.go"
-      types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "StateMeta", "StateData", "StateCurrent", "SessionState"]
+      types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "StateMeta", "StateData", "StateCurrent", "SessionState", "DeltaSource", "DeltaType", "ViewMode", "EntityRef", "ViewSnapshot", "ViewState"]
       trigger_types: ["USER_QUERY", "WIDGET_ACTION", "SYSTEM"]
       action_types: ["SEARCH", "FILTER", "SORT", "LAYOUT", "ROLLBACK"]
+      delta_sources: ["user", "llm", "system"]
+      delta_types: ["add", "remove", "update", "push", "pop", "rollback"]
+      view_modes: ["grid", "detail", "list", "carousel"]
+      delta_fields: ["Step", "Trigger", "Source", "ActorID", "DeltaType", "Path", "Action", "Result", "Template", "CreatedAt"]
       state_data_fields: ["Products", "Services"]
       state_meta_fields: ["Count", "ProductCount", "ServiceCount", "Fields", "Aliases"]
+      session_state_fields: ["ID", "SessionID", "Current", "View", "ViewStack", "Step", "CreatedAt", "UpdatedAt"]
     preset_entity:
       file: "preset_entity.go"
       types: ["FieldConfig", "SlotConfig", "Preset", "PresetName"]

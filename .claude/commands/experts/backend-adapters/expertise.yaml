@@ -38,6 +38,9 @@ adapters:
     schemas:
       public: ["chat_users", "chat_sessions", "chat_messages", "chat_events", "chat_session_state", "chat_session_deltas"]
       catalog: ["tenants", "categories", "master_products", "products"]
+    state_columns:
+      chat_session_state: ["id", "session_id", "current_data", "current_meta", "current_template", "view_mode", "view_focused", "view_stack", "step", "created_at", "updated_at"]
+      chat_session_deltas: ["id", "session_id", "step", "trigger", "source", "actor_id", "delta_type", "path", "action", "result", "template", "created_at"]
     env: "DATABASE_URL=postgresql://user:pass@host/db?sslmode=require"
 
   json_store:

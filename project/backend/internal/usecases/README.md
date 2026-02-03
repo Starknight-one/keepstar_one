@@ -13,6 +13,9 @@
 - `agent2_execute_test.go` — Тесты Agent 2
 - `pipeline_execute.go` — Оркестратор: Agent 1 → Agent 2 → Formation
 - `template_apply.go` — Применение шаблона к данным
+- `state_reconstruct.go` — Реконструкция state на любой шаг
+- `state_rollback.go` — Откат state на предыдущий шаг
+- `state_rollback_test.go` — Интеграционные тесты rollback/reconstruct
 
 ## SendMessageUseCase
 
@@ -126,6 +129,40 @@ func (uc *PipelineExecuteUseCase) Execute(ctx, req) (*PipelineExecuteResponse, e
 
 ```go
 func ApplyTemplate(template *FormationTemplate, products []Product) (*FormationWithData, error)
+```
+
+## ReconstructStateUseCase
+
+Реконструкция состояния сессии на любой шаг:
+- Получает дельты до целевого шага (GetDeltasUntil)
+- Строит базовое состояние (step 0)
+- Последовательно применяет дельты
+- Возвращает реконструированное состояние
+
+```go
+type ReconstructStateUseCase struct {
+    statePort ports.StatePort
+}
+
+func (uc *ReconstructStateUseCase) Execute(ctx, req) (*ReconstructResponse, error)
+```
+
+## RollbackUseCase
+
+Откат состояния на предыдущий шаг:
+- Получает текущее состояние
+- Валидирует целевой шаг (нельзя вперёд, нельзя < 0)
+- Реконструирует состояние на целевой шаг
+- Создаёт rollback delta (сохраняет историю)
+- Обновляет текущее состояние
+
+```go
+type RollbackUseCase struct {
+    statePort     ports.StatePort
+    reconstructUC *ReconstructStateUseCase
+}
+
+func (uc *RollbackUseCase) Execute(ctx, req) (*RollbackResponse, error)
 ```
 
 ## Правила

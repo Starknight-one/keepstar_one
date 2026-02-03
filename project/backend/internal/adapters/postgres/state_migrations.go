@@ -42,12 +42,33 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_deltas_session_step
     ON chat_session_deltas(session_id, step);
 `
 
+// Delta state management extension (x7k9m2p)
+const migrationDeltaStateExtension = `
+-- Add new columns to chat_session_deltas for source tracking
+ALTER TABLE chat_session_deltas
+    ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'llm',
+    ADD COLUMN IF NOT EXISTS actor_id VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS delta_type VARCHAR(20) DEFAULT 'add',
+    ADD COLUMN IF NOT EXISTS path VARCHAR(100);
+
+-- Add view state columns to chat_session_state
+ALTER TABLE chat_session_state
+    ADD COLUMN IF NOT EXISTS view_mode VARCHAR(20) DEFAULT 'grid',
+    ADD COLUMN IF NOT EXISTS view_focused JSONB,
+    ADD COLUMN IF NOT EXISTS view_stack JSONB DEFAULT '[]';
+
+-- Index for filtering by source
+CREATE INDEX IF NOT EXISTS idx_chat_session_deltas_source
+    ON chat_session_deltas(session_id, source);
+`
+
 // RunStateMigrations executes state-related migrations
 func (c *Client) RunStateMigrations(ctx context.Context) error {
 	migrations := []string{
 		migrationChatSessionState,
 		migrationChatSessionDeltas,
 		migrationStateIndexes,
+		migrationDeltaStateExtension,
 	}
 
 	for i, migration := range migrations {

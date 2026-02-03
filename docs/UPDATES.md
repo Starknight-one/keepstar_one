@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-02-03 22:30
+
+### Delta State Management (x7k9m2p)
+- Extended Delta with source tracking: `Source` (user/llm/system), `ActorID`, `DeltaType`, `Path`
+- Added ViewStack for back/forward navigation: `ViewMode`, `EntityRef`, `ViewSnapshot`, `ViewState`
+- Extended SessionState with `View` and `ViewStack` fields
+- Extended StatePort with `GetDeltasUntil`, `PushView`, `PopView`, `GetViewStack`
+- Database migration: new columns in `chat_session_state` (view_mode, view_focused, view_stack) and `chat_session_deltas` (source, actor_id, delta_type, path)
+- New usecases: `ReconstructStateUseCase` (rebuild state at any step), `RollbackUseCase` (revert to previous step)
+- Agent1 now populates new delta fields (Source=llm, ActorID=agent1, etc.)
+- Integration tests: 10 tests covering delta tracking, ViewStack, reconstruct, rollback scenarios
+
+---
+
 ## 2026-02-03 19:30
 
 ### Session TTL Fix

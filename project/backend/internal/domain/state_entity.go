@@ -11,6 +11,27 @@ const (
 	TriggerSystem       TriggerType = "SYSTEM"
 )
 
+// DeltaSource identifies who initiated the change
+type DeltaSource string
+
+const (
+	SourceUser   DeltaSource = "user"   // User actions (clicks, back, expand)
+	SourceLLM    DeltaSource = "llm"    // LLM/Agent actions (search, render)
+	SourceSystem DeltaSource = "system" // System actions (cleanup, TTL)
+)
+
+// DeltaType identifies the type of state change
+type DeltaType string
+
+const (
+	DeltaTypeAdd      DeltaType = "add"      // Add data to state
+	DeltaTypeRemove   DeltaType = "remove"   // Remove data from state
+	DeltaTypeUpdate   DeltaType = "update"   // Update existing data
+	DeltaTypePush     DeltaType = "push"     // Push to ViewStack
+	DeltaTypePop      DeltaType = "pop"      // Pop from ViewStack
+	DeltaTypeRollback DeltaType = "rollback" // Rollback to previous step
+)
+
 // ActionType represents the type of action performed
 type ActionType string
 
@@ -40,6 +61,10 @@ type ResultMeta struct {
 type Delta struct {
 	Step      int                    `json:"step"`
 	Trigger   TriggerType            `json:"trigger"`
+	Source    DeltaSource            `json:"source"`     // Who initiated: user/llm/system
+	ActorID   string                 `json:"actor_id"`   // Which actor: "agent1", "agent2", "user_click", "user_back"
+	DeltaType DeltaType              `json:"delta_type"` // Type of change: add/remove/update/push/pop
+	Path      string                 `json:"path"`       // What changed: "data.products", "view.mode", "viewStack"
 	Action    Action                 `json:"action"`
 	Result    ResultMeta             `json:"result"`
 	Template  map[string]interface{} `json:"template,omitempty"`
@@ -68,12 +93,45 @@ type StateCurrent struct {
 	Template map[string]interface{} `json:"template,omitempty"`
 }
 
+// ViewMode represents how items are displayed
+type ViewMode string
+
+const (
+	ViewModeGrid     ViewMode = "grid"
+	ViewModeDetail   ViewMode = "detail"
+	ViewModeList     ViewMode = "list"
+	ViewModeCarousel ViewMode = "carousel"
+)
+
+// EntityRef is a reference to a product or service
+type EntityRef struct {
+	Type EntityType `json:"type"` // product, service
+	ID   string     `json:"id"`
+}
+
+// ViewSnapshot captures a view state for back navigation
+type ViewSnapshot struct {
+	Mode      ViewMode    `json:"mode"`
+	Focused   *EntityRef  `json:"focused,omitempty"` // Expanded item (if detail mode)
+	Refs      []EntityRef `json:"refs"`              // What was shown
+	Step      int         `json:"step"`              // Delta step when captured
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+// ViewState represents current view configuration
+type ViewState struct {
+	Mode    ViewMode   `json:"mode"`
+	Focused *EntityRef `json:"focused,omitempty"`
+}
+
 // SessionState represents the full state for a chat session
 type SessionState struct {
-	ID        string       `json:"id"`
-	SessionID string       `json:"session_id"`
-	Current   StateCurrent `json:"current"`
-	Step      int          `json:"step"` // Current step number
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
+	ID        string         `json:"id"`
+	SessionID string         `json:"session_id"`
+	Current   StateCurrent   `json:"current"`
+	View      ViewState      `json:"view"`       // Current view configuration
+	ViewStack []ViewSnapshot `json:"view_stack"` // Navigation history for back/forward
+	Step      int            `json:"step"`       // Current step number
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }

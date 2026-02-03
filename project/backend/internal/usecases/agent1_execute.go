@@ -157,10 +157,14 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		state, _ = uc.statePort.GetState(ctx, req.SessionID)
 		productsFound = state.Current.Meta.Count
 
-		// Create delta
+		// Create delta with source tracking
 		delta = &domain.Delta{
-			Step:    state.Step,
-			Trigger: domain.TriggerUserQuery,
+			Step:      state.Step,
+			Trigger:   domain.TriggerUserQuery,
+			Source:    domain.SourceLLM,
+			ActorID:   "agent1",
+			DeltaType: domain.DeltaTypeAdd,
+			Path:      "data.products",
 			Action: domain.Action{
 				Type:   domain.ActionSearch,
 				Tool:   toolCall.Name,
