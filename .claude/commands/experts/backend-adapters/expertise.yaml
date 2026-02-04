@@ -10,7 +10,9 @@ overview:
 adapters:
   anthropic:
     directory: "anthropic/"
-    file: "anthropic_client.go"
+    files:
+      - "anthropic_client.go - LLMPort implementation: Chat, ChatWithTools, ChatWithToolsCached, ChatWithUsage"
+      - "cache_types.go - Prompt caching types: cacheControl, contentBlockWithCache, anthropicToolWithCache, anthropicCachedRequest, anthropicCachedResponse"
     implements: "LLMPort"
     status: "implemented"
     api: "POST https://api.anthropic.com/v1/messages"
@@ -20,6 +22,11 @@ adapters:
     pricing:
       haiku: "$1/$5 per 1M tokens (input/output)"
       sonnet: "$3/$15 per 1M tokens"
+    prompt_caching:
+      method: "ChatWithToolsCached"
+      cache_points: ["last tool (cache_control)", "system prompt block (cache_control)", "second-to-last message (cache_control)"]
+      types_file: "cache_types.go"
+      helpers: ["markMessageCacheControl(msg)", "convertToAnthropicMessage(msg)"]
 
   postgres:
     directory: "postgres/"
@@ -41,6 +48,7 @@ adapters:
     state_columns:
       chat_session_state: ["id", "session_id", "current_data", "current_meta", "current_template", "view_mode", "view_focused", "view_stack", "step", "created_at", "updated_at"]
       chat_session_deltas: ["id", "session_id", "step", "trigger", "source", "actor_id", "delta_type", "path", "action", "result", "template", "created_at"]
+    add_delta_auto_increment: "Step assigned via COALESCE(MAX(step),0)+1 — no manual step management needed"
     env: "DATABASE_URL=postgresql://user:pass@host/db?sslmode=require"
 
   json_store:
@@ -65,5 +73,8 @@ gotchas:
   anthropic:
     - "API version: 2023-06-01"
     - "Response includes usage.input_tokens, usage.output_tokens"
+    - "ChatWithToolsCached requires anthropic-beta header for cache activation (TODO: not yet added)"
+    - "Prompt caching needs minimum 4096 tokens for Haiku (TODO: current padding ~3200 tokens)"
+    - "ConversationHistory not yet persisted in postgres (in-memory only via UpdateState blob)"
 
 naming: "{tech}_{purpose}.go"

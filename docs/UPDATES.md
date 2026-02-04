@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-02-04 15:00
+
+### Anthropic Prompt Caching — Phase 1 (ADW-k7x9m2p)
+- `ChatWithToolsCached` method in Anthropic adapter with cache_control on tools, system, conversation
+- Cache types: `cache_types.go` (request/response with cache metrics)
+- `CacheConfig` struct in LLMPort (CacheTools, CacheSystem, CacheConversation)
+- `LLMUsage` extended with `CacheCreationInputTokens`, `CacheReadInputTokens`
+- `CalculateCost()` accounts for cache pricing (write x1.25, read x0.1)
+- Agent1 builds messages from `ConversationHistory` for multi-turn cache hits
+- Agent2 refactored: tool-based preset selection with `ChatWithToolsCached`
+- `AddDelta` auto-increment step via `MAX(step)+1` (no manual step management)
+- Logger: `LLMUsageWithCache` method with cache hit rate
+- Debug page: cache metrics (CacheCreationInputTokens, CacheReadInputTokens, CacheHitRate)
+- Padding tools (8 dummy `_internal_*` tools, ~3200 tokens) for cache threshold
+- Integration test: `cache_test.go` (10 queries, 1 session)
+
+---
+
 ## 2026-02-04 00:15
 
 ### Drill-Down Navigation (k3m9x2p)

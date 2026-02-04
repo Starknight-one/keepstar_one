@@ -16,14 +16,21 @@
 ```go
 Chat(ctx, message) (string, error)
 ChatWithTools(ctx, systemPrompt, messages, tools) (*LLMResponse, error)
+ChatWithToolsCached(ctx, systemPrompt, messages, tools, cacheConfig) (*LLMResponse, error)
 ChatWithUsage(ctx, systemPrompt, userMessage) (*ChatResponse, error)
 ```
 
-ChatResponse:
+Types:
 ```go
 type ChatResponse struct {
     Text  string
     Usage domain.LLMUsage
+}
+
+type CacheConfig struct {
+    CacheTools        bool // cache tool definitions
+    CacheSystem       bool // cache system prompt
+    CacheConversation bool // cache conversation history
 }
 ```
 
@@ -55,9 +62,13 @@ GetProduct(ctx, tenantID, productID) (*Product, error)
 CreateState(ctx, sessionID) (*SessionState, error)
 GetState(ctx, sessionID) (*SessionState, error)
 UpdateState(ctx, state) error
-AddDelta(ctx, sessionID, delta) error
+AddDelta(ctx, sessionID, delta) (int, error) // step auto-assigned
 GetDeltas(ctx, sessionID) ([]Delta, error)
 GetDeltasSince(ctx, sessionID, fromStep) ([]Delta, error)
+GetDeltasUntil(ctx, sessionID, toStep) ([]Delta, error)
+PushView(ctx, sessionID, snapshot) error
+PopView(ctx, sessionID) (*ViewSnapshot, error)
+GetViewStack(ctx, sessionID) ([]ViewSnapshot, error)
 ```
 
 ## Правила

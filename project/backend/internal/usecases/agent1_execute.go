@@ -85,21 +85,28 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		state.Current.Meta.Aliases["tenant_slug"] = req.TenantSlug
 	}
 
-	// Build messages
-	messages := []domain.LLMMessage{
-		{Role: "user", Content: req.Query},
-	}
+	// Build messages with conversation history
+	messages := state.ConversationHistory
+	messages = append(messages, domain.LLMMessage{
+		Role:    "user",
+		Content: req.Query,
+	})
 
 	// Get tool definitions
 	toolDefs := uc.toolRegistry.GetDefinitions()
 
-	// Call LLM with tools
+	// Call LLM with caching
 	llmStart := time.Now()
-	llmResp, err := uc.llm.ChatWithTools(
+	llmResp, err := uc.llm.ChatWithToolsCached(
 		ctx,
 		prompts.Agent1SystemPrompt,
 		messages,
 		toolDefs,
+		&ports.CacheConfig{
+			CacheTools:        true,
+			CacheSystem:       true,
+			CacheConversation: len(messages) > 1, // cache if history exists
+		},
 	)
 	llmDuration := time.Since(llmStart).Milliseconds()
 
@@ -108,12 +115,14 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		return nil, fmt.Errorf("llm call: %w", err)
 	}
 
-	// Log LLM usage
-	uc.log.LLMUsage(
+	// Log LLM usage with cache metrics
+	uc.log.LLMUsageWithCache(
 		"agent1",
 		llmResp.Usage.Model,
 		llmResp.Usage.InputTokens,
 		llmResp.Usage.OutputTokens,
+		llmResp.Usage.CacheCreationInputTokens,
+		llmResp.Usage.CacheReadInputTokens,
 		llmResp.Usage.CostUSD,
 		llmDuration,
 	)
@@ -157,9 +166,8 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		state, _ = uc.statePort.GetState(ctx, req.SessionID)
 		productsFound = state.Current.Meta.Count
 
-		// Create delta with source tracking
+		// Create delta with source tracking (step auto-assigned by AddDelta)
 		delta = &domain.Delta{
-			Step:      state.Step,
 			Trigger:   domain.TriggerUserQuery,
 			Source:    domain.SourceLLM,
 			ActorID:   "agent1",
@@ -177,8 +185,8 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 			CreatedAt: time.Now(),
 		}
 
-		// Save delta
-		if err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
+		// Save delta (step auto-assigned)
+		if _, err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
 			return nil, fmt.Errorf("add delta: %w", err)
 		}
 	} else {
@@ -187,6 +195,19 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 			"stop_reason", llmResp.StopReason,
 			"text", llmResp.Text,
 		)
+	}
+
+	// Update conversation history in state for future cache hits
+	state.ConversationHistory = append(state.ConversationHistory,
+		domain.LLMMessage{Role: "user", Content: req.Query},
+	)
+	if len(llmResp.ToolCalls) > 0 {
+		state.ConversationHistory = append(state.ConversationHistory,
+			domain.LLMMessage{Role: "assistant", ToolCalls: llmResp.ToolCalls},
+		)
+	}
+	if err := uc.statePort.UpdateState(ctx, state); err != nil {
+		uc.log.Error("update_conversation_history_failed", "error", err, "session_id", req.SessionID)
 	}
 
 	totalDuration := time.Since(start).Milliseconds()

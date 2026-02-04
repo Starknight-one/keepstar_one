@@ -51,12 +51,16 @@ func (r *Registry) Register(tool ToolExecutor) {
 	r.tools[def.Name] = tool
 }
 
-// GetDefinitions returns all tool definitions for LLM
+// GetDefinitions returns all tool definitions for LLM including padding if enabled
 func (r *Registry) GetDefinitions() []domain.ToolDefinition {
 	defs := make([]domain.ToolDefinition, 0, len(r.tools))
 	for _, tool := range r.tools {
 		defs = append(defs, tool.Definition())
 	}
+
+	// Add padding tools for cache threshold (temporary)
+	defs = append(defs, GetCachePaddingTools()...)
+
 	return defs
 }
 

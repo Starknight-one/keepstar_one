@@ -316,6 +316,162 @@ func (c *Client) ChatWithTools(
 	return result, nil
 }
 
+// ChatWithToolsCached sends messages with prompt caching enabled
+func (c *Client) ChatWithToolsCached(
+	ctx context.Context,
+	systemPrompt string,
+	messages []domain.LLMMessage,
+	tools []domain.ToolDefinition,
+	cacheConfig *ports.CacheConfig,
+) (*domain.LLMResponse, error) {
+	if c.apiKey == "" {
+		return nil, fmt.Errorf("anthropic API key not configured")
+	}
+
+	// If no cache config, fall back to non-cached version
+	if cacheConfig == nil {
+		return c.ChatWithTools(ctx, systemPrompt, messages, tools)
+	}
+
+	// Convert tools with cache_control on last element
+	anthroTools := make([]anthropicToolWithCache, 0, len(tools))
+	for i, t := range tools {
+		tool := anthropicToolWithCache{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		}
+		// Add cache_control to the last tool
+		if cacheConfig.CacheTools && i == len(tools)-1 {
+			tool.CacheControl = &cacheControl{Type: "ephemeral"}
+		}
+		anthroTools = append(anthroTools, tool)
+	}
+
+	// Build system as array with cache_control
+	systemBlocks := []contentBlockWithCache{
+		{
+			Type: "text",
+			Text: systemPrompt,
+		},
+	}
+	if cacheConfig.CacheSystem {
+		systemBlocks[0].CacheControl = &cacheControl{Type: "ephemeral"}
+	}
+
+	// Convert domain messages to Anthropic format
+	anthroMsgs := make([]anthropicToolMsg, 0, len(messages))
+	for _, msg := range messages {
+		anthroMsgs = append(anthroMsgs, convertToAnthropicMessage(msg))
+	}
+
+	// Add cache_control to the last message in conversation history (second-to-last overall)
+	// so that new user messages don't invalidate the cache
+	if cacheConfig.CacheConversation && len(anthroMsgs) > 1 {
+		lastHistoryIdx := len(anthroMsgs) - 2 // second-to-last = end of history
+		markMessageCacheControl(&anthroMsgs[lastHistoryIdx])
+	}
+
+	reqBody := anthropicCachedRequest{
+		Model:     c.model,
+		MaxTokens: 4096,
+		System:    systemBlocks,
+		Messages:  anthroMsgs,
+		Tools:     anthroTools,
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", c.apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var anthroResp anthropicCachedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&anthroResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	if anthroResp.Error != nil {
+		return nil, fmt.Errorf("anthropic error: %s", anthroResp.Error.Message)
+	}
+
+	// Convert response with cache metrics
+	result := &domain.LLMResponse{
+		StopReason: anthroResp.StopReason,
+	}
+
+	result.Usage = domain.LLMUsage{
+		InputTokens:              anthroResp.Usage.InputTokens,
+		OutputTokens:             anthroResp.Usage.OutputTokens,
+		TotalTokens:              anthroResp.Usage.InputTokens + anthroResp.Usage.OutputTokens + anthroResp.Usage.CacheCreationInputTokens + anthroResp.Usage.CacheReadInputTokens,
+		Model:                    c.model,
+		CacheCreationInputTokens: anthroResp.Usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     anthroResp.Usage.CacheReadInputTokens,
+	}
+	result.Usage.CostUSD = result.Usage.CalculateCost()
+
+	for _, block := range anthroResp.Content {
+		switch block.Type {
+		case "text":
+			result.Text = block.Text
+		case "tool_use":
+			result.ToolCalls = append(result.ToolCalls, domain.ToolCall{
+				ID:    block.ID,
+				Name:  block.Name,
+				Input: block.Input,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+// markMessageCacheControl adds cache_control to a message
+// For text content, wraps in content block array with cache_control
+func markMessageCacheControl(msg *anthropicToolMsg) {
+	switch content := msg.Content.(type) {
+	case string:
+		// Wrap string content in array with cache_control
+		msg.Content = []contentBlockWithCache{
+			{
+				Type:         "text",
+				Text:         content,
+				CacheControl: &cacheControl{Type: "ephemeral"},
+			},
+		}
+	case []contentBlock:
+		// Already an array, add cache_control to the last block
+		if len(content) > 0 {
+			blocks := make([]contentBlockWithCache, 0, len(content))
+			for i, b := range content {
+				cached := contentBlockWithCache{
+					Type: b.Type,
+					Text: b.Text,
+				}
+				if i == len(content)-1 {
+					cached.CacheControl = &cacheControl{Type: "ephemeral"}
+				}
+				blocks = append(blocks, cached)
+			}
+			msg.Content = blocks
+		}
+	}
+}
+
 // convertToAnthropicMessage converts domain message to Anthropic format
 func convertToAnthropicMessage(msg domain.LLMMessage) anthropicToolMsg {
 	if msg.ToolResult != nil {

@@ -55,9 +55,11 @@ func (m *mockStatePort) UpdateState(ctx context.Context, state *domain.SessionSt
 	return nil
 }
 
-func (m *mockStatePort) AddDelta(ctx context.Context, sessionID string, delta *domain.Delta) error {
+func (m *mockStatePort) AddDelta(ctx context.Context, sessionID string, delta *domain.Delta) (int, error) {
+	step := len(m.deltas) + 1
+	delta.Step = step
 	m.deltas = append(m.deltas, *delta)
-	return nil
+	return step, nil
 }
 
 func (m *mockStatePort) GetDeltas(ctx context.Context, sessionID string) ([]domain.Delta, error) {

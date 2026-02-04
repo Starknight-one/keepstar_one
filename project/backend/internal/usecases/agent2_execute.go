@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 	"keepstar/internal/ports"
 	"keepstar/internal/prompts"
 	"keepstar/internal/tools"
@@ -40,6 +41,7 @@ type Agent2ExecuteUseCase struct {
 	llm          ports.LLMPort
 	statePort    ports.StatePort
 	toolRegistry *tools.Registry
+	log          *logger.Logger
 }
 
 // NewAgent2ExecuteUseCase creates Agent 2 use case
@@ -47,11 +49,13 @@ func NewAgent2ExecuteUseCase(
 	llm ports.LLMPort,
 	statePort ports.StatePort,
 	toolRegistry *tools.Registry,
+	log *logger.Logger,
 ) *Agent2ExecuteUseCase {
 	return &Agent2ExecuteUseCase{
 		llm:          llm,
 		statePort:    statePort,
 		toolRegistry: toolRegistry,
+		log:          log,
 	}
 }
 
@@ -88,13 +92,34 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	// Get render tool definitions (filter only render_* tools)
 	toolDefs := uc.getAgent2Tools()
 
-	// Call LLM with tools
+	// Call LLM with caching
 	llmStart := time.Now()
-	llmResp, err := uc.llm.ChatWithTools(ctx, prompts.Agent2ToolSystemPrompt, messages, toolDefs)
+	llmResp, err := uc.llm.ChatWithToolsCached(
+		ctx,
+		prompts.Agent2ToolSystemPrompt,
+		messages,
+		toolDefs,
+		&ports.CacheConfig{
+			CacheTools:  true,
+			CacheSystem: true,
+		},
+	)
 	llmDuration := time.Since(llmStart).Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("llm call: %w", err)
 	}
+
+	// Log LLM usage with cache metrics
+	uc.log.LLMUsageWithCache(
+		"agent2",
+		llmResp.Usage.Model,
+		llmResp.Usage.InputTokens,
+		llmResp.Usage.OutputTokens,
+		llmResp.Usage.CacheCreationInputTokens,
+		llmResp.Usage.CacheReadInputTokens,
+		llmResp.Usage.CostUSD,
+		llmDuration,
+	)
 
 	response := &Agent2ExecuteResponse{
 		Usage:      llmResp.Usage,

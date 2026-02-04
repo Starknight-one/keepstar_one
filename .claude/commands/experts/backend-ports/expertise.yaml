@@ -14,9 +14,11 @@ interfaces:
     methods:
       - "Chat(ctx, message) (string, error)"
       - "ChatWithTools(ctx, systemPrompt, messages []LLMMessage, tools []ToolDefinition) (*LLMResponse, error)"
+      - "ChatWithToolsCached(ctx, systemPrompt, messages []LLMMessage, tools []ToolDefinition, cacheConfig *CacheConfig) (*LLMResponse, error)"
       - "ChatWithUsage(ctx, systemPrompt, userMessage) (*ChatResponse, error)"
     types:
       - "ChatResponse: { Text string, Usage LLMUsage }"
+      - "CacheConfig: { CacheTools bool, CacheSystem bool, CacheConversation bool }"
 
   cache_port:
     file: "cache_port.go"
@@ -53,7 +55,7 @@ interfaces:
       - "CreateState(ctx, sessionID) (*SessionState, error)"
       - "GetState(ctx, sessionID) (*SessionState, error)"
       - "UpdateState(ctx, state) error"
-      - "AddDelta(ctx, sessionID, delta) error"
+      - "AddDelta(ctx, sessionID, delta) (int, error) — step auto-assigned via MAX(step)+1"
       - "GetDeltas(ctx, sessionID) ([]Delta, error)"
       - "GetDeltasSince(ctx, sessionID, fromStep) ([]Delta, error)"
       - "GetDeltasUntil(ctx, sessionID, toStep) ([]Delta, error)"
@@ -65,5 +67,7 @@ gotchas:
   - "CatalogPort.ListProducts(tenantID) requires UUID, not slug"
   - "Use GetTenantBySlug(slug) first to get tenant UUID"
   - "StatePort.GetState returns ErrSessionNotFound if no state"
+  - "AddDelta auto-assigns step (MAX(step)+1), Delta.Step input is ignored"
+  - "ChatWithToolsCached falls back to ChatWithTools if cacheConfig is nil"
 
 naming: "{name}_port.go"

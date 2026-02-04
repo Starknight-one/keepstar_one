@@ -39,11 +39,13 @@ type LLMResponse struct {
 
 // LLMUsage tracks token usage and cost
 type LLMUsage struct {
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	TotalTokens  int     `json:"total_tokens"`
-	Model        string  `json:"model"`
-	CostUSD      float64 `json:"cost_usd"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	TotalTokens              int     `json:"total_tokens"`
+	Model                    string  `json:"model"`
+	CostUSD                  float64 `json:"cost_usd"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens,omitempty"`
 }
 
 // LLM pricing per million tokens (as of 2024)
@@ -59,7 +61,7 @@ var LLMPricing = map[string]struct {
 	"claude-3-haiku-20240307":    {0.25, 1.25}, // Haiku 3
 }
 
-// CalculateCost calculates USD cost for token usage
+// CalculateCost calculates USD cost for token usage including cache pricing
 func (u *LLMUsage) CalculateCost() float64 {
 	pricing, ok := LLMPricing[u.Model]
 	if !ok {
@@ -67,8 +69,17 @@ func (u *LLMUsage) CalculateCost() float64 {
 		pricing = LLMPricing["claude-haiku-4-5-20251001"]
 	}
 
+	// Regular input tokens (non-cached)
 	inputCost := float64(u.InputTokens) * pricing.InputPerMillion / 1_000_000
+
+	// Cache write tokens cost 1.25x for 5min TTL
+	cacheWriteCost := float64(u.CacheCreationInputTokens) * pricing.InputPerMillion * 1.25 / 1_000_000
+
+	// Cache read tokens cost 0.1x
+	cacheReadCost := float64(u.CacheReadInputTokens) * pricing.InputPerMillion * 0.1 / 1_000_000
+
+	// Output tokens
 	outputCost := float64(u.OutputTokens) * pricing.OutputPerMillion / 1_000_000
 
-	return inputCost + outputCost
+	return inputCost + cacheWriteCost + cacheReadCost + outputCost
 }

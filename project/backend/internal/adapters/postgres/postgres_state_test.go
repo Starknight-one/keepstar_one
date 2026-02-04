@@ -207,7 +207,7 @@ func TestStateAdapter_AddAndGetDeltas(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	err = adapter.AddDelta(ctx, sessionID, delta1)
+	_, err = adapter.AddDelta(ctx, sessionID, delta1)
 	if err != nil {
 		t.Fatalf("AddDelta failed: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestStateAdapter_AddAndGetDeltas(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	err = adapter.AddDelta(ctx, sessionID, delta2)
+	_, err = adapter.AddDelta(ctx, sessionID, delta2)
 	if err != nil {
 		t.Fatalf("AddDelta failed: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestStateAdapter_DeltaWithSourceTracking(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	err = adapter.AddDelta(ctx, sessionID, delta1)
+	_, err = adapter.AddDelta(ctx, sessionID, delta1)
 	if err != nil {
 		t.Fatalf("AddDelta failed: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestStateAdapter_DeltaWithSourceTracking(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	err = adapter.AddDelta(ctx, sessionID, delta2)
+	_, err = adapter.AddDelta(ctx, sessionID, delta2)
 	if err != nil {
 		t.Fatalf("AddDelta failed: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestStateAdapter_GetDeltasUntil(t *testing.T) {
 			Result:    domain.ResultMeta{Count: i * 10},
 			CreatedAt: time.Now(),
 		}
-		if err := adapter.AddDelta(ctx, sessionID, delta); err != nil {
+		if _, err := adapter.AddDelta(ctx, sessionID, delta); err != nil {
 			t.Fatalf("AddDelta step %d failed: %v", i, err)
 		}
 	}

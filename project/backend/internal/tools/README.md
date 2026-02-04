@@ -7,6 +7,7 @@ Tool executors for LLM tool calling.
 - `tool_registry.go` — Registry для всех tools
 - `tool_search_products.go` — Поиск товаров (Agent1)
 - `tool_render_preset.go` — Рендеринг с пресетами (Agent2)
+- `mock_tools.go` — Padding tools для достижения порога кэширования (4096 tokens)
 
 ## Registry
 
@@ -56,8 +57,17 @@ Input schema:
 - `"ok: found N products"` — товары найдены и записаны в state
 - `"empty"` — ничего не найдено
 
+## Padding Tools (mock_tools.go)
+
+Временные инструменты для достижения минимального порога кэширования Anthropic (4096 tokens).
+- `CachePaddingEnabled` — флаг включения (default: true)
+- `GetCachePaddingTools()` — возвращает 8 dummy tools с prefix `_internal_`
+- LLM не должен их вызывать (описание: "INTERNAL SYSTEM TOOL - DO NOT USE")
+- ~3200 tokens, вместе с реальными tools ~4000
+
 ## Правила
 
 - Импорты: `domain/`, `ports/`
 - Tools пишут результат в state, не возвращают данные напрямую
 - Возвращают только статус: "ok" / "empty" / error
+- `GetDefinitions()` автоматически включает padding tools

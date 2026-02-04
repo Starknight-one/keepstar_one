@@ -17,8 +17,10 @@ type StatePort interface {
 	// UpdateState updates the current materialized state
 	UpdateState(ctx context.Context, state *domain.SessionState) error
 
-	// AddDelta appends a new delta to the session history
-	AddDelta(ctx context.Context, sessionID string, delta *domain.Delta) error
+	// AddDelta appends a new delta to the session history.
+	// Step is auto-assigned (next sequential step for the session).
+	// Returns the assigned step number. Delta.Step is ignored on input.
+	AddDelta(ctx context.Context, sessionID string, delta *domain.Delta) (int, error)
 
 	// GetDeltas retrieves all deltas for a session (for replay)
 	GetDeltas(ctx context.Context, sessionID string) ([]domain.Delta, error)

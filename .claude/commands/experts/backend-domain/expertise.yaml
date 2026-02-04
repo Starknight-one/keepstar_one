@@ -70,6 +70,9 @@ entities:
       file: "tool_entity.go"
       types: ["ToolDefinition", "ToolCall", "ToolResult", "LLMMessage", "LLMResponse", "LLMUsage"]
       helpers: ["LLMUsage.CalculateCost()", "LLMPricing"]
+      llm_usage_fields: ["InputTokens", "OutputTokens", "TotalTokens", "Model", "CostUSD", "CacheCreationInputTokens", "CacheReadInputTokens"]
+      calculate_cost: "Accounts for cache pricing: write ×1.25, read ×0.1 of base input price"
+      llm_pricing_models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20251014", "claude-opus-4-5-20251101", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"]
     template_entity:
       file: "template_entity.go"
       types: ["AtomTemplate", "WidgetTemplate", "GridConfig", "FormationTemplate", "FormationWithData"]
@@ -84,7 +87,8 @@ entities:
       delta_fields: ["Step", "Trigger", "Source", "ActorID", "DeltaType", "Path", "Action", "Result", "Template", "CreatedAt"]
       state_data_fields: ["Products", "Services"]
       state_meta_fields: ["Count", "ProductCount", "ServiceCount", "Fields", "Aliases"]
-      session_state_fields: ["ID", "SessionID", "Current", "View", "ViewStack", "Step", "CreatedAt", "UpdatedAt"]
+      session_state_fields: ["ID", "SessionID", "Current", "View", "ViewStack", "ConversationHistory", "Step", "CreatedAt", "UpdatedAt"]
+      conversation_history: "[]LLMMessage - LLM conversation history for prompt caching, append-only"
     preset_entity:
       file: "preset_entity.go"
       types: ["FieldConfig", "SlotConfig", "Preset", "PresetName"]

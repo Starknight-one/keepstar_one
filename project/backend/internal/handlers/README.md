@@ -86,6 +86,8 @@ Response:
 `GET /debug/session/{id}` — Детали сессии (HTML, или JSON с `?format=json`)
 `GET /debug/api?session={id}` — JSON API для дебага
 
+AgentMetrics включает cache поля: `CacheCreationInputTokens`, `CacheReadInputTokens`, `CacheHitRate`
+
 ## Правила
 
 - Никакой бизнес-логики, только:

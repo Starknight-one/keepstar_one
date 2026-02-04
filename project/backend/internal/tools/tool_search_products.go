@@ -142,8 +142,6 @@ func (t *SearchProductsTool) Execute(ctx context.Context, sessionID string, inpu
 		Fields:  fields,
 		Aliases: make(map[string]string),
 	}
-	state.Step++
-
 	if err := t.statePort.UpdateState(ctx, state); err != nil {
 		return nil, fmt.Errorf("update state: %w", err)
 	}

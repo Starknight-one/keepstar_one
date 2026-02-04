@@ -57,10 +57,8 @@ func (uc *BackUseCase) Execute(ctx context.Context, req BackRequest) (*BackRespo
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
-	// 3. Create and save delta (IMPORTANT: increment step!)
-	state.Step++
+	// 3. Create and save delta (step auto-assigned by AddDelta)
 	delta := &domain.Delta{
-		Step:      state.Step,
 		Trigger:   domain.TriggerWidgetAction,
 		Source:    domain.SourceUser,
 		ActorID:   "user_back",
@@ -68,7 +66,7 @@ func (uc *BackUseCase) Execute(ctx context.Context, req BackRequest) (*BackRespo
 		Path:      "viewStack",
 		CreatedAt: time.Now(),
 	}
-	if err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
+	if _, err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
 		return nil, fmt.Errorf("add delta: %w", err)
 	}
 

@@ -24,8 +24,8 @@
 - `master_product_entity.go` — MasterProduct (канонический товар)
 
 ### Pipeline
-- `state_entity.go` — SessionState, Delta, StateData (state для pipeline)
-- `tool_entity.go` — ToolDefinition, ToolCall, LLMMessage, LLMResponse
+- `state_entity.go` — SessionState, Delta, StateData, ViewState, ViewSnapshot (state для pipeline). SessionState содержит ConversationHistory для prompt caching
+- `tool_entity.go` — ToolDefinition, ToolCall, LLMMessage, LLMResponse, LLMUsage (с cache полями: CacheCreationInputTokens, CacheReadInputTokens). CalculateCost() учитывает cache pricing
 - `template_entity.go` — FormationTemplate, FormationWithData
 - `preset_entity.go` — Preset, FieldConfig, SlotConfig (пресеты рендеринга)
 

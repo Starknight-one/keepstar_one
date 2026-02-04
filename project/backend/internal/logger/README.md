@@ -6,6 +6,16 @@
 
 - `logger.go` — Базовый логгер, уровни, формат
 
+## Методы
+
+- `ChatMessageReceived(sessionID, message)` — incoming chat message
+- `LLMRequestStarted(stage)` — LLM request start
+- `LLMResponseReceived(stage, tokens, durationMs)` — LLM response
+- `LLMUsage(stage, model, inputTokens, outputTokens, costUSD, durationMs)` — token usage
+- `LLMUsageWithCache(stage, model, inputTokens, outputTokens, cacheCreated, cacheRead, costUSD, durationMs)` — token usage with cache metrics (hit rate computed)
+- `ToolExecuted(toolName, sessionID, result, durationMs)` — tool execution
+- `Agent1Completed(sessionID, toolCalled, productsFound, totalTokens, costUSD, durationMs)` — agent1 summary
+
 ## Правила
 
 - Логи — это методы, не inline код

@@ -94,10 +94,8 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 		return nil, fmt.Errorf("push view: %w", err)
 	}
 
-	// 5. Create and save delta (IMPORTANT: increment step!)
-	state.Step++
+	// 5. Create and save delta (step auto-assigned by AddDelta)
 	delta := &domain.Delta{
-		Step:      state.Step,
 		Trigger:   domain.TriggerWidgetAction,
 		Source:    domain.SourceUser,
 		ActorID:   "user_expand",
@@ -105,7 +103,7 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 		Path:      "viewStack",
 		CreatedAt: time.Now(),
 	}
-	if err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
+	if _, err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
 		return nil, fmt.Errorf("add delta: %w", err)
 	}
 

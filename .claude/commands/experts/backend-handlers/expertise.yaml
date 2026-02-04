@@ -52,6 +52,7 @@ handlers:
       - "GET /debug/api - all sessions JSON"
       - "GET /debug/api?session={id} - specific session JSON"
     types: ["MetricsStore", "PipelineMetrics", "AgentMetrics", "FormationInfo"]
+    agent_metrics_cache_fields: ["CacheCreationInputTokens", "CacheReadInputTokens", "CacheHitRate"]
 
   navigation:
     file: "handler_navigation.go"

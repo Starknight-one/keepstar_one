@@ -35,6 +35,10 @@ type AgentMetrics struct {
 	TotalTokens  int      `json:"totalTokens"`
 	CostUSD      float64  `json:"costUsd"`
 	Model        string   `json:"model"`
+	// Cache metrics
+	CacheCreationInputTokens int     `json:"cacheCreationInputTokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cacheReadInputTokens,omitempty"`
+	CacheHitRate             float64 `json:"cacheHitRate,omitempty"` // percentage
 	// Agent 1 specific
 	ToolCalled    string `json:"toolCalled,omitempty"`
 	ToolInput     string `json:"toolInput,omitempty"`
@@ -361,8 +365,8 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 	h.statePort.AddDelta(ctx, sessionID, delta)
-	state.Step = 1
-	h.statePort.UpdateState(ctx, state)
+	// step is now auto-assigned by AddDelta and synced to state
+
 
 	// Return response
 	resp := SeedStateResponse{
@@ -460,6 +464,8 @@ var listTemplate = template.Must(template.New("list").Funcs(templateFuncs).Parse
         .cost { color: #ffd700; }
         .time { color: #90EE90; }
         .tokens { color: #DDA0DD; }
+        .cache-hit { color: #00ff88; font-weight: bold; }
+        .cache-write { color: #ff9800; }
         .empty { color: #666; font-style: italic; }
     </style>
 </head>
@@ -472,6 +478,7 @@ var listTemplate = template.Must(template.New("list").Funcs(templateFuncs).Parse
             <th>Query</th>
             <th>Agent 1</th>
             <th>Agent 2</th>
+            <th>Cache</th>
             <th>Total</th>
             <th>Cost</th>
             <th>Time</th>
@@ -490,6 +497,13 @@ var listTemplate = template.Must(template.New("list").Funcs(templateFuncs).Parse
                 {{if .Agent2Metrics}}
                 <span class="time">{{.Agent2Metrics.DurationMs}}ms</span> /
                 <span class="tokens">{{.Agent2Metrics.TotalTokens}}tok</span>
+                {{end}}
+            </td>
+            <td>
+                {{if .Agent1Metrics}}
+                {{if gt .Agent1Metrics.CacheReadInputTokens 0}}<span class="cache-hit">HIT {{printf "%.0f" .Agent1Metrics.CacheHitRate}}%</span>
+                {{else if gt .Agent1Metrics.CacheCreationInputTokens 0}}<span class="cache-write">WRITE</span>
+                {{else}}<span style="color:#666">-</span>{{end}}
                 {{end}}
             </td>
             <td class="time">{{.TotalMs}}ms</td>
@@ -525,6 +539,8 @@ var detailTemplate = template.Must(template.New("detail").Funcs(templateFuncs).P
         .cost { color: #ffd700; }
         .time { color: #90EE90; }
         .tokens { color: #DDA0DD; }
+        .cache-hit { color: #00ff88; font-weight: bold; }
+        .cache-write { color: #ff9800; }
         .error { color: #ff6b6b; }
         pre { background: #0f0f23; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 12px; max-height: 300px; overflow-y: auto; }
         table { border-collapse: collapse; width: 100%; }
@@ -604,7 +620,7 @@ var detailTemplate = template.Must(template.New("detail").Funcs(templateFuncs).P
             </div>
         </div>
 
-        <h3>Tokens</h3>
+        <h3>Tokens & Cache</h3>
         <div class="breakdown">
             <div class="breakdown-item">
                 <div class="breakdown-title">Input</div>
@@ -613,6 +629,18 @@ var detailTemplate = template.Must(template.New("detail").Funcs(templateFuncs).P
             <div class="breakdown-item">
                 <div class="breakdown-title">Output</div>
                 <div class="breakdown-value tokens">{{.Metrics.Agent1Metrics.OutputTokens}}</div>
+            </div>
+            <div class="breakdown-item">
+                <div class="breakdown-title">Cache Write</div>
+                <div class="breakdown-value" style="color: #ff9800;">{{.Metrics.Agent1Metrics.CacheCreationInputTokens}}</div>
+            </div>
+            <div class="breakdown-item">
+                <div class="breakdown-title">Cache Read</div>
+                <div class="breakdown-value" style="color: #00ff88;">{{.Metrics.Agent1Metrics.CacheReadInputTokens}}</div>
+            </div>
+            <div class="breakdown-item">
+                <div class="breakdown-title">Cache Hit Rate</div>
+                <div class="breakdown-value {{if gt .Metrics.Agent1Metrics.CacheHitRate 0.0}}cache-hit{{end}}">{{printf "%.1f" .Metrics.Agent1Metrics.CacheHitRate}}%</div>
             </div>
             <div class="breakdown-item">
                 <div class="breakdown-title">Total</div>
@@ -658,7 +686,7 @@ var detailTemplate = template.Must(template.New("detail").Funcs(templateFuncs).P
             </div>
         </div>
 
-        <h3>Tokens</h3>
+        <h3>Tokens & Cache</h3>
         <div class="breakdown">
             <div class="breakdown-item">
                 <div class="breakdown-title">Input</div>
@@ -667,6 +695,18 @@ var detailTemplate = template.Must(template.New("detail").Funcs(templateFuncs).P
             <div class="breakdown-item">
                 <div class="breakdown-title">Output</div>
                 <div class="breakdown-value tokens">{{.Metrics.Agent2Metrics.OutputTokens}}</div>
+            </div>
+            <div class="breakdown-item">
+                <div class="breakdown-title">Cache Write</div>
+                <div class="breakdown-value" style="color: #ff9800;">{{.Metrics.Agent2Metrics.CacheCreationInputTokens}}</div>
+            </div>
+            <div class="breakdown-item">
+                <div class="breakdown-title">Cache Read</div>
+                <div class="breakdown-value" style="color: #00ff88;">{{.Metrics.Agent2Metrics.CacheReadInputTokens}}</div>
+            </div>
+            <div class="breakdown-item">
+                <div class="breakdown-title">Cache Hit Rate</div>
+                <div class="breakdown-value {{if gt .Metrics.Agent2Metrics.CacheHitRate 0.0}}cache-hit{{end}}">{{printf "%.1f" .Metrics.Agent2Metrics.CacheHitRate}}%</div>
             </div>
             <div class="breakdown-item">
                 <div class="breakdown-title">Total</div>

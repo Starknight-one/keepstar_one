@@ -17,10 +17,20 @@ tools:
     struct: "Registry"
     purpose: "Central registry for all tool executors"
     methods:
-      - "NewRegistry(statePort, catalogPort)"
+      - "NewRegistry(statePort, catalogPort, presetRegistry)"
       - "Register(tool)"
-      - "GetDefinitions() []ToolDefinition"
-      - "Execute(ctx, sessionID, toolCall) (string, error)"
+      - "GetDefinitions() []ToolDefinition — includes padding tools from GetCachePaddingTools()"
+      - "Execute(ctx, sessionID, toolCall) (*ToolResult, error)"
+
+  mock_tools:
+    file: "mock_tools.go"
+    purpose: "Padding tools to reach 4096 token cache threshold"
+    var: "CachePaddingEnabled bool (default true)"
+    function: "GetCachePaddingTools() []ToolDefinition"
+    tools_count: 8
+    prefix: "_internal_ — LLM should never call these"
+    estimated_tokens: "~3200 tokens"
+    note: "TODO: remove when real tools exceed 4096 threshold"
 
   search_products:
     file: "tool_search_products.go"
@@ -112,11 +122,27 @@ pipeline_flow:
     4: "ApplyTemplate merges template + data → FormationWithData"
     5: "Frontend renders FormationWithData"
 
+logger:
+  path: "internal/logger/"
+  file: "logger.go"
+  struct: "Logger"
+  methods:
+    - "New(level) *Logger"
+    - "ChatMessageReceived(sessionID, message)"
+    - "LLMRequestStarted(stage)"
+    - "LLMResponseReceived(stage, tokens, durationMs)"
+    - "LLMUsage(stage, model, inputTokens, outputTokens, costUSD, durationMs)"
+    - "LLMUsageWithCache(stage, model, inputTokens, outputTokens, cacheCreated, cacheRead, costUSD, durationMs)"
+    - "ToolExecuted(toolName, sessionID, result, durationMs)"
+    - "Agent1Completed(sessionID, toolCalled, productsFound, totalTokens, costUSD, durationMs)"
+
 gotchas:
   - "If brand specified, don't use query as search (AND conflict)"
   - "Tool writes to state, returns only status string"
   - "Must resolve tenant slug → UUID before search"
   - "Agent2 never sees raw data, only meta"
+  - "Padding tools use _internal_ prefix — LLM ignores them"
+  - "GetDefinitions() always includes padding tools when CachePaddingEnabled=true"
 
 naming:
   tools: "tool_{name}.go"

@@ -126,12 +126,13 @@ type ViewState struct {
 
 // SessionState represents the full state for a chat session
 type SessionState struct {
-	ID        string         `json:"id"`
-	SessionID string         `json:"session_id"`
-	Current   StateCurrent   `json:"current"`
-	View      ViewState      `json:"view"`       // Current view configuration
-	ViewStack []ViewSnapshot `json:"view_stack"` // Navigation history for back/forward
-	Step      int            `json:"step"`       // Current step number
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID                  string         `json:"id"`
+	SessionID           string         `json:"session_id"`
+	Current             StateCurrent   `json:"current"`
+	View                ViewState      `json:"view"`                          // Current view configuration
+	ViewStack           []ViewSnapshot `json:"view_stack"`                    // Navigation history for back/forward
+	ConversationHistory []LLMMessage   `json:"conversation_history,omitempty"` // LLM conversation history for caching
+	Step                int            `json:"step"`                          // Current step number
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
 }

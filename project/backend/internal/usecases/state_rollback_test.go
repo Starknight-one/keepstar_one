@@ -39,7 +39,7 @@ func cleanupTestSession(t *testing.T, client *postgres.Client, sessionID string)
 }
 
 // =============================================================================
-// User Scenario: Search → Filter → Rollback
+// User Scenario: Search -> Filter -> Rollback
 // =============================================================================
 // User searches for "ноутбуки", then filters by "Apple", then wants to go back
 // to see all laptops again (rollback to step 1)
@@ -77,7 +77,6 @@ func TestRollbackUseCase_UserRollbackAfterFilter(t *testing.T) {
 
 	// Step 1: Agent1 searches for laptops - found 50 products
 	delta1 := &domain.Delta{
-		Step:      1,
 		Trigger:   domain.TriggerUserQuery,
 		Source:    domain.SourceLLM,
 		ActorID:   "agent1",
@@ -94,20 +93,18 @@ func TestRollbackUseCase_UserRollbackAfterFilter(t *testing.T) {
 		},
 		CreatedAt: time.Now(),
 	}
-	if err := stateAdapter.AddDelta(ctx, sessionID, delta1); err != nil {
+	if _, err := stateAdapter.AddDelta(ctx, sessionID, delta1); err != nil {
 		t.Fatalf("AddDelta 1 failed: %v", err)
 	}
 
-	// Update state to reflect search results
+	// Update state meta (step is auto-synced by AddDelta)
 	state, _ := stateAdapter.GetState(ctx, sessionID)
-	state.Step = 1
 	state.Current.Meta.Count = 50
 	state.Current.Meta.Fields = []string{"name", "price", "brand", "rating"}
 	stateAdapter.UpdateState(ctx, state)
 
 	// Step 2: User asks to filter by Apple - now 5 products
 	delta2 := &domain.Delta{
-		Step:      2,
 		Trigger:   domain.TriggerUserQuery,
 		Source:    domain.SourceLLM,
 		ActorID:   "agent1",
@@ -124,12 +121,11 @@ func TestRollbackUseCase_UserRollbackAfterFilter(t *testing.T) {
 		},
 		CreatedAt: time.Now(),
 	}
-	if err := stateAdapter.AddDelta(ctx, sessionID, delta2); err != nil {
+	if _, err := stateAdapter.AddDelta(ctx, sessionID, delta2); err != nil {
 		t.Fatalf("AddDelta 2 failed: %v", err)
 	}
 
 	state, _ = stateAdapter.GetState(ctx, sessionID)
-	state.Step = 2
 	state.Current.Meta.Count = 5
 	stateAdapter.UpdateState(ctx, state)
 
@@ -186,7 +182,7 @@ func TestRollbackUseCase_UserRollbackAfterFilter(t *testing.T) {
 // =============================================================================
 // User Scenario: Multi-step session with reconstruct
 // =============================================================================
-// User does: search → filter → sort → wants to see state at step 2
+// User does: search -> filter -> sort -> wants to see state at step 2
 
 func TestReconstructStateUseCase_ReplayToSpecificStep(t *testing.T) {
 	dbURL := testDatabaseURL()
@@ -218,21 +214,19 @@ func TestReconstructStateUseCase_ReplayToSpecificStep(t *testing.T) {
 		t.Fatalf("CreateState failed: %v", err)
 	}
 
-	// Build session history
-	steps := []struct {
-		step   int
+	// Build session history (steps auto-assigned: 1, 2, 3, 4)
+	actions := []struct {
 		action domain.ActionType
 		count  int
 	}{
-		{1, domain.ActionSearch, 100}, // Search: found 100 products
-		{2, domain.ActionFilter, 30},  // Filter by brand: 30 products
-		{3, domain.ActionFilter, 10},  // Filter by price: 10 products
-		{4, domain.ActionSort, 10},    // Sort by rating: still 10, different order
+		{domain.ActionSearch, 100}, // Step 1: Search: found 100 products
+		{domain.ActionFilter, 30},  // Step 2: Filter by brand: 30 products
+		{domain.ActionFilter, 10},  // Step 3: Filter by price: 10 products
+		{domain.ActionSort, 10},    // Step 4: Sort by rating: still 10
 	}
 
-	for _, s := range steps {
+	for _, s := range actions {
 		delta := &domain.Delta{
-			Step:      s.step,
 			Trigger:   domain.TriggerUserQuery,
 			Source:    domain.SourceLLM,
 			ActorID:   "agent1",
@@ -242,8 +236,8 @@ func TestReconstructStateUseCase_ReplayToSpecificStep(t *testing.T) {
 			Result:    domain.ResultMeta{Count: s.count, Fields: []string{"name", "price"}},
 			CreatedAt: time.Now(),
 		}
-		if err := stateAdapter.AddDelta(ctx, sessionID, delta); err != nil {
-			t.Fatalf("AddDelta step %d failed: %v", s.step, err)
+		if _, err := stateAdapter.AddDelta(ctx, sessionID, delta); err != nil {
+			t.Fatalf("AddDelta failed: %v", err)
 		}
 	}
 
@@ -276,7 +270,7 @@ func TestReconstructStateUseCase_ReplayToSpecificStep(t *testing.T) {
 // =============================================================================
 // User Scenario: Drill-down with ViewStack
 // =============================================================================
-// User: sees grid → clicks product → sees detail → clicks back → sees grid again
+// User: sees grid -> clicks product -> sees detail -> clicks back -> sees grid again
 
 func TestRollbackUseCase_ViewStackNavigation(t *testing.T) {
 	dbURL := testDatabaseURL()
@@ -303,14 +297,13 @@ func TestRollbackUseCase_ViewStackNavigation(t *testing.T) {
 	sessionID := setupTestSession(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	state, err := stateAdapter.CreateState(ctx, sessionID)
+	_, err = stateAdapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
 
 	// Step 1: Agent1 searches, user sees grid with 10 products
 	delta1 := &domain.Delta{
-		Step:      1,
 		Trigger:   domain.TriggerUserQuery,
 		Source:    domain.SourceLLM,
 		ActorID:   "agent1",
@@ -322,8 +315,8 @@ func TestRollbackUseCase_ViewStackNavigation(t *testing.T) {
 	}
 	stateAdapter.AddDelta(ctx, sessionID, delta1)
 
-	// Update state to grid mode
-	state.Step = 1
+	// Update state to grid mode (step auto-synced)
+	state, _ := stateAdapter.GetState(ctx, sessionID)
 	state.View.Mode = domain.ViewModeGrid
 	state.Current.Meta.Count = 10
 	stateAdapter.UpdateState(ctx, state)
@@ -343,7 +336,6 @@ func TestRollbackUseCase_ViewStackNavigation(t *testing.T) {
 
 	// Record the expand action
 	delta2 := &domain.Delta{
-		Step:      2,
 		Trigger:   domain.TriggerWidgetAction,
 		Source:    domain.SourceUser,
 		ActorID:   "user_click",
@@ -358,9 +350,8 @@ func TestRollbackUseCase_ViewStackNavigation(t *testing.T) {
 	}
 	stateAdapter.AddDelta(ctx, sessionID, delta2)
 
-	// Update state to detail mode
+	// Update state to detail mode (step auto-synced)
 	state, _ = stateAdapter.GetState(ctx, sessionID)
-	state.Step = 2
 	state.View.Mode = domain.ViewModeDetail
 	state.View.Focused = &domain.EntityRef{Type: domain.EntityTypeProduct, ID: "p5"}
 	stateAdapter.UpdateState(ctx, state)
@@ -373,7 +364,6 @@ func TestRollbackUseCase_ViewStackNavigation(t *testing.T) {
 
 	// Record the back action
 	delta3 := &domain.Delta{
-		Step:      3,
 		Trigger:   domain.TriggerWidgetAction,
 		Source:    domain.SourceUser,
 		ActorID:   "user_back",
@@ -388,9 +378,8 @@ func TestRollbackUseCase_ViewStackNavigation(t *testing.T) {
 	}
 	stateAdapter.AddDelta(ctx, sessionID, delta3)
 
-	// Restore view from popped snapshot
+	// Restore view from popped snapshot (step auto-synced)
 	state, _ = stateAdapter.GetState(ctx, sessionID)
-	state.Step = 3
 	state.View.Mode = poppedView.Mode
 	state.View.Focused = poppedView.Focused
 	stateAdapter.UpdateState(ctx, state)
@@ -452,11 +441,10 @@ func TestRollbackUseCase_CannotRollbackForward(t *testing.T) {
 	sessionID := setupTestSession(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	state, _ := stateAdapter.CreateState(ctx, sessionID)
+	_, _ = stateAdapter.CreateState(ctx, sessionID)
 
-	// Add one delta
+	// Add one delta (step auto-assigned = 1)
 	delta := &domain.Delta{
-		Step:      1,
 		Trigger:   domain.TriggerUserQuery,
 		Source:    domain.SourceLLM,
 		ActorID:   "agent1",
@@ -467,9 +455,6 @@ func TestRollbackUseCase_CannotRollbackForward(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 	stateAdapter.AddDelta(ctx, sessionID, delta)
-
-	state.Step = 1
-	stateAdapter.UpdateState(ctx, state)
 
 	// Try to rollback to step 5 (doesn't exist yet)
 	rollbackUC := usecases.NewRollbackUseCase(stateAdapter)
@@ -511,9 +496,20 @@ func TestRollbackUseCase_CannotRollbackToNegativeStep(t *testing.T) {
 	sessionID := setupTestSession(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	state, _ := stateAdapter.CreateState(ctx, sessionID)
-	state.Step = 1
-	stateAdapter.UpdateState(ctx, state)
+	_, _ = stateAdapter.CreateState(ctx, sessionID)
+
+	// Add a delta so state.Step = 1
+	delta := &domain.Delta{
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   "agent1",
+		DeltaType: domain.DeltaTypeAdd,
+		Path:      "data.products",
+		Action:    domain.Action{Type: domain.ActionSearch},
+		Result:    domain.ResultMeta{Count: 10},
+		CreatedAt: time.Now(),
+	}
+	stateAdapter.AddDelta(ctx, sessionID, delta)
 
 	rollbackUC := usecases.NewRollbackUseCase(stateAdapter)
 

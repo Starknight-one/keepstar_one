@@ -73,6 +73,34 @@ func (l *Logger) ToolExecuted(toolName, sessionID, result string, durationMs int
 	)
 }
 
+// LLMUsageWithCache logs detailed token usage, cost, and cache metrics
+func (l *Logger) LLMUsageWithCache(
+	stage, model string,
+	inputTokens, outputTokens int,
+	cacheCreated, cacheRead int,
+	costUSD float64,
+	durationMs int64,
+) {
+	totalInput := inputTokens + cacheCreated + cacheRead
+	var hitRate float64
+	if totalInput > 0 {
+		hitRate = float64(cacheRead) / float64(totalInput) * 100
+	}
+
+	l.Info("llm_usage",
+		"stage", stage,
+		"model", model,
+		"input_tokens", inputTokens,
+		"output_tokens", outputTokens,
+		"cache_creation_input_tokens", cacheCreated,
+		"cache_read_input_tokens", cacheRead,
+		"cache_hit_rate", hitRate,
+		"total_tokens", inputTokens+outputTokens+cacheCreated+cacheRead,
+		"cost_usd", costUSD,
+		"duration_ms", durationMs,
+	)
+}
+
 // Agent1Completed logs Agent 1 completion with full metrics
 func (l *Logger) Agent1Completed(sessionID string, toolCalled string, productsFound int, totalTokens int, costUSD float64, durationMs int64) {
 	l.Info("agent1_completed",

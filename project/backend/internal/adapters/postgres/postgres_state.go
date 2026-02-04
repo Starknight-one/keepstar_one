@@ -132,8 +132,11 @@ func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionSta
 	return nil
 }
 
-// AddDelta appends a new delta to the session history
-func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *domain.Delta) error {
+// AddDelta appends a new delta to the session history.
+// Step is auto-assigned as MAX(step)+1 for the session.
+// Also updates chat_session_state.step to keep it in sync.
+// Returns the assigned step number.
+func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *domain.Delta) (int, error) {
 	actionJSON, _ := json.Marshal(delta.Action)
 	resultJSON, _ := json.Marshal(delta.Result)
 	var templateJSON []byte
@@ -151,18 +154,39 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 		deltaType = domain.DeltaTypeAdd
 	}
 
-	_, err := a.client.pool.Exec(ctx, `
-		INSERT INTO chat_session_deltas
-			(session_id, step, trigger, source, actor_id, delta_type, path, action, result, template)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, sessionID, delta.Step, delta.Trigger,
+	// Auto-assign step and update state.step atomically
+	var assignedStep int
+	err := a.client.pool.QueryRow(ctx, `
+		WITH next_step AS (
+			SELECT COALESCE(MAX(step), 0) + 1 AS step
+			FROM chat_session_deltas
+			WHERE session_id = $1
+		),
+		inserted AS (
+			INSERT INTO chat_session_deltas
+				(session_id, step, trigger, source, actor_id, delta_type, path, action, result, template)
+			SELECT $1, next_step.step, $2, $3, $4, $5, $6, $7, $8, $9
+			FROM next_step
+			RETURNING step
+		)
+		SELECT step FROM inserted
+	`, sessionID, delta.Trigger,
 		source, delta.ActorID, deltaType, delta.Path,
-		actionJSON, resultJSON, templateJSON)
+		actionJSON, resultJSON, templateJSON).Scan(&assignedStep)
 	if err != nil {
-		return fmt.Errorf("add delta: %w", err)
+		return 0, fmt.Errorf("add delta: %w", err)
 	}
 
-	return nil
+	// Update state.step to stay in sync
+	_, _ = a.client.pool.Exec(ctx, `
+		UPDATE chat_session_state SET step = $1, updated_at = NOW()
+		WHERE session_id = $2
+	`, assignedStep, sessionID)
+
+	// Write back to delta struct so caller can see the assigned step
+	delta.Step = assignedStep
+
+	return assignedStep, nil
 }
 
 // GetDeltas retrieves all deltas for a session

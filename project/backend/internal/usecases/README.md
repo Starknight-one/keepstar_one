@@ -11,6 +11,7 @@
 - `agent1_execute_test.go` — Тесты Agent 1
 - `agent2_execute.go` — Agent 2 (Template Builder) для two-agent pipeline
 - `agent2_execute_test.go` — Тесты Agent 2
+- `cache_test.go` — Integration test для prompt caching (10 queries, 1 session)
 - `pipeline_execute.go` — Оркестратор: Agent 1 → Agent 2 → Formation
 - `template_apply.go` — Применение шаблона к данным
 - `state_reconstruct.go` — Реконструкция state на любой шаг
@@ -73,9 +74,11 @@ func (uc *GetProductUseCase) Execute(ctx, req) (*Product, error)
 
 Agent 1 (Tool Caller) для two-agent pipeline:
 - Получает/создаёт state сессии
-- Вызывает LLM с tools (ChatWithTools)
+- Строит messages из ConversationHistory + новый запрос
+- Вызывает LLM с ChatWithToolsCached (cache tools, system, conversation)
 - Выполняет tool call через Registry
-- Создаёт и сохраняет delta
+- Создаёт и сохраняет delta (step auto-assigned)
+- Обновляет ConversationHistory в state
 
 ```go
 type Agent1ExecuteUseCase struct {
@@ -90,17 +93,19 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx, req) (*Agent1ExecuteResponse, error
 
 ## Agent2ExecuteUseCase
 
-Agent 2 (Template Builder) для two-agent pipeline:
+Agent 2 (Preset Selector) для two-agent pipeline:
 - Получает состояние сессии (после Agent 1)
-- Проверяет наличие данных (count > 0)
-- Вызывает LLM с meta данными (не сырыми данными!)
-- Парсит JSON шаблон из ответа
-- Сохраняет шаблон в state
+- Проверяет наличие данных (count > 0), возвращает empty если нет
+- Вызывает LLM с ChatWithToolsCached (cache tools, system) и только render_* tools
+- LLM выбирает render tool, tool записывает formation в state
+- Получает formation из state.Template["formation"]
 
 ```go
 type Agent2ExecuteUseCase struct {
-    llm       ports.LLMPort
-    statePort ports.StatePort
+    llm          ports.LLMPort
+    statePort    ports.StatePort
+    toolRegistry *tools.Registry
+    log          *logger.Logger
 }
 
 func (uc *Agent2ExecuteUseCase) Execute(ctx, req) (*Agent2ExecuteResponse, error)

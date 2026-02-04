@@ -19,6 +19,15 @@ type LLMPort interface {
 		tools []domain.ToolDefinition,
 	) (*domain.LLMResponse, error)
 
+	// ChatWithToolsCached sends messages with prompt caching enabled
+	ChatWithToolsCached(
+		ctx context.Context,
+		systemPrompt string,
+		messages []domain.LLMMessage,
+		tools []domain.ToolDefinition,
+		cacheConfig *CacheConfig,
+	) (*domain.LLMResponse, error)
+
 	// ChatWithUsage sends a message with system prompt and returns response with usage stats
 	ChatWithUsage(ctx context.Context, systemPrompt, userMessage string) (*ChatResponse, error)
 }
@@ -27,4 +36,11 @@ type LLMPort interface {
 type ChatResponse struct {
 	Text  string
 	Usage domain.LLMUsage
+}
+
+// CacheConfig controls prompt caching behavior
+type CacheConfig struct {
+	CacheTools        bool // cache tool definitions
+	CacheSystem       bool // cache system prompt
+	CacheConversation bool // cache conversation history
 }

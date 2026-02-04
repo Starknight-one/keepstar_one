@@ -65,9 +65,8 @@ func (uc *RollbackUseCase) Execute(ctx context.Context, req RollbackRequest) (*R
 		return nil, fmt.Errorf("reconstruct state at step %d: %w", req.ToStep, err)
 	}
 
-	// Create rollback delta to record what was undone
+	// Create rollback delta to record what was undone (step auto-assigned)
 	rollbackDelta := &domain.Delta{
-		Step:      currentState.Step + 1,
 		Trigger:   domain.TriggerSystem,
 		Source:    req.Source,
 		ActorID:   req.ActorID,
@@ -87,8 +86,8 @@ func (uc *RollbackUseCase) Execute(ctx context.Context, req RollbackRequest) (*R
 		CreatedAt: time.Now(),
 	}
 
-	// Save the rollback delta
-	if err := uc.statePort.AddDelta(ctx, req.SessionID, rollbackDelta); err != nil {
+	// Save the rollback delta (step auto-assigned)
+	if _, err := uc.statePort.AddDelta(ctx, req.SessionID, rollbackDelta); err != nil {
 		return nil, fmt.Errorf("add rollback delta: %w", err)
 	}
 

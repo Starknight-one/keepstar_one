@@ -94,32 +94,38 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 			Timestamp: time.Now(),
 			TotalMs:   result.TotalMs,
 			Agent1Metrics: &AgentMetrics{
-				DurationMs:    result.Agent1Ms,
-				LLMCallMs:     result.Agent1LLMMs,
-				ToolMs:        result.Agent1ToolMs,
-				InputTokens:   result.Agent1Usage.InputTokens,
-				OutputTokens:  result.Agent1Usage.OutputTokens,
-				TotalTokens:   result.Agent1Usage.TotalTokens,
-				CostUSD:       result.Agent1Usage.CostUSD,
-				Model:         result.Agent1Usage.Model,
-				ToolCalled:    result.ToolCalled,
-				ToolInput:     result.ToolInput,
-				ToolResult:    result.ToolResult,
-				ProductsFound: result.ProductsFound,
+				DurationMs:               result.Agent1Ms,
+				LLMCallMs:                result.Agent1LLMMs,
+				ToolMs:                   result.Agent1ToolMs,
+				InputTokens:              result.Agent1Usage.InputTokens,
+				OutputTokens:             result.Agent1Usage.OutputTokens,
+				TotalTokens:              result.Agent1Usage.TotalTokens,
+				CostUSD:                  result.Agent1Usage.CostUSD,
+				Model:                    result.Agent1Usage.Model,
+				CacheCreationInputTokens: result.Agent1Usage.CacheCreationInputTokens,
+				CacheReadInputTokens:     result.Agent1Usage.CacheReadInputTokens,
+				CacheHitRate:             cacheHitRate(result.Agent1Usage),
+				ToolCalled:               result.ToolCalled,
+				ToolInput:                result.ToolInput,
+				ToolResult:               result.ToolResult,
+				ProductsFound:            result.ProductsFound,
 			},
 			Agent2Metrics: &AgentMetrics{
-				DurationMs:   result.Agent2Ms,
-				LLMCallMs:    result.Agent2LLMMs,
-				InputTokens:  result.Agent2Usage.InputTokens,
-				OutputTokens: result.Agent2Usage.OutputTokens,
-				TotalTokens:  result.Agent2Usage.TotalTokens,
-				CostUSD:      result.Agent2Usage.CostUSD,
-				Model:        result.Agent2Usage.Model,
-				PromptSent:   result.Agent2Prompt,
-				RawResponse:  result.Agent2RawResp,
-				TemplateJSON: result.TemplateJSON,
-				MetaCount:    result.MetaCount,
-				MetaFields:   result.MetaFields,
+				DurationMs:               result.Agent2Ms,
+				LLMCallMs:                result.Agent2LLMMs,
+				InputTokens:              result.Agent2Usage.InputTokens,
+				OutputTokens:             result.Agent2Usage.OutputTokens,
+				TotalTokens:              result.Agent2Usage.TotalTokens,
+				CostUSD:                  result.Agent2Usage.CostUSD,
+				Model:                    result.Agent2Usage.Model,
+				CacheCreationInputTokens: result.Agent2Usage.CacheCreationInputTokens,
+				CacheReadInputTokens:     result.Agent2Usage.CacheReadInputTokens,
+				CacheHitRate:             cacheHitRate(result.Agent2Usage),
+				PromptSent:               result.Agent2Prompt,
+				RawResponse:              result.Agent2RawResp,
+				TemplateJSON:             result.TemplateJSON,
+				MetaCount:                result.MetaCount,
+				MetaFields:               result.MetaFields,
 			},
 		}
 		if result.Formation != nil {
@@ -154,4 +160,13 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 
 func generateSessionID() string {
 	return uuid.New().String()
+}
+
+// cacheHitRate calculates cache hit percentage from LLM usage
+func cacheHitRate(usage domain.LLMUsage) float64 {
+	total := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
+	if total == 0 {
+		return 0
+	}
+	return float64(usage.CacheReadInputTokens) / float64(total) * 100
 }
