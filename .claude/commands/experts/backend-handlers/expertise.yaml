@@ -58,10 +58,10 @@ handlers:
     file: "handler_navigation.go"
     struct: "NavigationHandler"
     endpoints:
-      - "POST /api/v1/session/{id}/expand - Expand widget to detail view"
-      - "POST /api/v1/session/{id}/back - Navigate back from detail view"
-    request_expand: "{ entityType, entityId }"
-    response: "{ formation, viewMode, canGoBack }"
+      - "POST /api/v1/navigation/expand - Expand widget to detail view"
+      - "POST /api/v1/navigation/back - Navigate back from detail view"
+    request_expand: "{ sessionId, entityType, entityId }"
+    response: "{ success, formation, viewMode, focused, stackSize, canGoBack }"
 
   health:
     file: "handler_health.go"
@@ -90,8 +90,8 @@ api_summary:
   - "GET /api/v1/tenants/{slug}/products"
   - "GET /api/v1/tenants/{slug}/products/{id}"
   - "POST /api/v1/pipeline"
-  - "POST /api/v1/session/{id}/expand"
-  - "POST /api/v1/session/{id}/back"
+  - "POST /api/v1/navigation/expand"
+  - "POST /api/v1/navigation/back"
   - "GET /debug/session/"
   - "GET /health"
   - "GET /ready"

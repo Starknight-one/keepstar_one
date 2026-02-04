@@ -43,6 +43,18 @@ api:
       body: "{ query, sessionId? }"
       response: "{ sessionId, formation, agent1Ms, agent2Ms, totalMs }"
 
+    expandView:
+      signature: "expandView(sessionId, entityType, entityId)"
+      endpoint: "POST /api/v1/navigation/expand"
+      body: "{ sessionId, entityType, entityId }"
+      response: "{ success, formation, viewMode, focused, stackSize, canGoBack }"
+
+    goBack:
+      signature: "goBack(sessionId)"
+      endpoint: "POST /api/v1/navigation/back"
+      body: "{ sessionId }"
+      response: "{ success, formation, viewMode, focused, stackSize, canGoBack }"
+
 patterns:
   - "All functions are async"
   - "Return null on 404, throw on other errors"

@@ -44,12 +44,13 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 	dataJSON, _ := json.Marshal(state.Current.Data)
 	metaJSON, _ := json.Marshal(state.Current.Meta)
 	viewStackJSON, _ := json.Marshal(state.ViewStack)
+	conversationHistoryJSON, _ := json.Marshal(state.ConversationHistory)
 
 	err := a.client.pool.QueryRow(ctx, `
-		INSERT INTO chat_session_state (session_id, current_data, current_meta, step, view_mode, view_stack)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO chat_session_state (session_id, current_data, current_meta, step, view_mode, view_stack, conversation_history)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at
-	`, sessionID, dataJSON, metaJSON, state.Step, state.View.Mode, viewStackJSON).Scan(
+	`, sessionID, dataJSON, metaJSON, state.Step, state.View.Mode, viewStackJSON, conversationHistoryJSON).Scan(
 		&state.ID, &state.CreatedAt, &state.UpdatedAt,
 	)
 	if err != nil {
@@ -62,17 +63,17 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 // GetState retrieves the current state for a session
 func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.SessionState, error) {
 	var state domain.SessionState
-	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON []byte
+	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON []byte
 	var viewMode *string
 
 	err := a.client.pool.QueryRow(ctx, `
 		SELECT id, session_id, current_data, current_meta, current_template,
-		       view_mode, view_focused, view_stack, step, created_at, updated_at
+		       view_mode, view_focused, view_stack, conversation_history, step, created_at, updated_at
 		FROM chat_session_state
 		WHERE session_id = $1
 	`, sessionID).Scan(
 		&state.ID, &state.SessionID, &dataJSON, &metaJSON, &templateJSON,
-		&viewMode, &viewFocusedJSON, &viewStackJSON,
+		&viewMode, &viewFocusedJSON, &viewStackJSON, &conversationHistoryJSON,
 		&state.Step, &state.CreatedAt, &state.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -104,6 +105,9 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 	if len(viewStackJSON) > 0 {
 		json.Unmarshal(viewStackJSON, &state.ViewStack)
 	}
+	if len(conversationHistoryJSON) > 0 {
+		json.Unmarshal(conversationHistoryJSON, &state.ConversationHistory)
+	}
 
 	return &state, nil
 }
@@ -115,16 +119,17 @@ func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionSta
 	templateJSON, _ := json.Marshal(state.Current.Template)
 	viewFocusedJSON, _ := json.Marshal(state.View.Focused)
 	viewStackJSON, _ := json.Marshal(state.ViewStack)
+	conversationHistoryJSON, _ := json.Marshal(state.ConversationHistory)
 
 	_, err := a.client.pool.Exec(ctx, `
 		UPDATE chat_session_state
 		SET current_data = $1, current_meta = $2, current_template = $3,
 		    view_mode = $4, view_focused = $5, view_stack = $6,
-		    step = $7, updated_at = NOW()
-		WHERE session_id = $8
+		    conversation_history = $7, step = $8, updated_at = NOW()
+		WHERE session_id = $9
 	`, dataJSON, metaJSON, templateJSON,
 		state.View.Mode, viewFocusedJSON, viewStackJSON,
-		state.Step, state.SessionID)
+		conversationHistoryJSON, state.Step, state.SessionID)
 	if err != nil {
 		return fmt.Errorf("update state: %w", err)
 	}

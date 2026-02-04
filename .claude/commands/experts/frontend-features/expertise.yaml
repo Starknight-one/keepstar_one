@@ -26,7 +26,7 @@ features:
         params: ["sessionId", "addMessage", "setLoading", "setError", "setSessionId", "onFormationReceived"]
         returns: ["submit"]
     props:
-      ChatPanel: ["onClose", "onFormationReceived", "hideFormation"]
+      ChatPanel: ["onClose", "onFormationReceived", "onNavigationStateChange", "hideFormation"]
       ChatHistory: ["messages", "isLoading", "hideFormation"]
       MessageBubble: ["message", "hideFormation"]
     session_persistence:
@@ -72,7 +72,7 @@ features:
       - "BackButton.css - Back button styles"
     components:
       BackButton:
-        props: ["onClick", "disabled"]
+        props: ["onClick", "visible"]
         purpose: "Navigate back from detail view to previous view"
 
   canvas:

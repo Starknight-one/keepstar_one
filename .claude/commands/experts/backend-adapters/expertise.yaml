@@ -46,7 +46,7 @@ adapters:
       public: ["chat_users", "chat_sessions", "chat_messages", "chat_events", "chat_session_state", "chat_session_deltas"]
       catalog: ["tenants", "categories", "master_products", "products"]
     state_columns:
-      chat_session_state: ["id", "session_id", "current_data", "current_meta", "current_template", "view_mode", "view_focused", "view_stack", "step", "created_at", "updated_at"]
+      chat_session_state: ["id", "session_id", "current_data", "current_meta", "current_template", "view_mode", "view_focused", "view_stack", "conversation_history", "step", "created_at", "updated_at"]
       chat_session_deltas: ["id", "session_id", "step", "trigger", "source", "actor_id", "delta_type", "path", "action", "result", "template", "created_at"]
     add_delta_auto_increment: "Step assigned via COALESCE(MAX(step),0)+1 — no manual step management needed"
     env: "DATABASE_URL=postgresql://user:pass@host/db?sslmode=require"
@@ -73,8 +73,9 @@ gotchas:
   anthropic:
     - "API version: 2023-06-01"
     - "Response includes usage.input_tokens, usage.output_tokens"
-    - "ChatWithToolsCached requires anthropic-beta header for cache activation (TODO: not yet added)"
-    - "Prompt caching needs minimum 4096 tokens for Haiku (TODO: current padding ~3200 tokens)"
-    - "ConversationHistory not yet persisted in postgres (in-memory only via UpdateState blob)"
+    - "Prompt caching is GA (Dec 2024) — no beta header needed, just cache_control in request"
+    - "Prompt caching needs minimum 4096 tokens for Haiku (padding tools provide ~4000 tokens)"
+    - "ConversationHistory persisted in postgres via conversation_history JSONB column"
+    - "Go encoding/json.Marshal sorts map keys deterministically — cache-stable tool definitions"
 
 naming: "{tech}_{purpose}.go"

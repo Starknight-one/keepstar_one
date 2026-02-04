@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-02-04 17:30
+
+### Activate Prompt Caching — Phase 2 (ADW-r4w8n3k)
+- `conversation_history JSONB` column in `chat_session_state` (migration + CreateState/GetState/UpdateState)
+- Padding tools expanded: 8 → 10 tools (~3200 → ~4000 tokens), safely above 4096 threshold for Haiku
+- Confirmed: Go `encoding/json.Marshal` sorts map keys deterministically — no cache instability
+- Confirmed: Prompt caching is GA (Dec 2024), no beta header needed
+- `cache_test.go`: upgraded WARNING to `t.Error` for zero cache hits
+- Expertise synced: backend-adapters, backend-pipeline, backend-domain, backend-handlers, frontend-shared, frontend-features
+
+---
+
 ## 2026-02-04 15:00
 
 ### Anthropic Prompt Caching — Phase 1 (ADW-k7x9m2p)

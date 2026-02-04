@@ -62,6 +62,12 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_deltas_source
     ON chat_session_deltas(session_id, source);
 `
 
+// Prompt caching support — conversation history persistence
+const migrationConversationHistory = `
+ALTER TABLE chat_session_state
+    ADD COLUMN IF NOT EXISTS conversation_history JSONB DEFAULT '[]';
+`
+
 // RunStateMigrations executes state-related migrations
 func (c *Client) RunStateMigrations(ctx context.Context) error {
 	migrations := []string{
@@ -69,6 +75,7 @@ func (c *Client) RunStateMigrations(ctx context.Context) error {
 		migrationChatSessionDeltas,
 		migrationStateIndexes,
 		migrationDeltaStateExtension,
+		migrationConversationHistory,
 	}
 
 	for i, migration := range migrations {

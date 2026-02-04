@@ -295,9 +295,6 @@ func TestPromptCaching_Chain(t *testing.T) {
 
 	// Verify cache is working (at least some requests should have cache reads)
 	if cacheHits == 0 && len(results) > 1 {
-		t.Logf("WARNING: No cache hits detected. This could mean:")
-		t.Logf("  - Token count below 4096 threshold (check padding tools)")
-		t.Logf("  - API not returning cache metrics")
-		t.Logf("  - Requests too far apart (>5 min TTL)")
+		t.Error("Expected cache hits on requests 2+, but got 0 cache reads. Check: padding tools >= 4096 tokens, conversation_history persistence, stable JSON key ordering.")
 	}
 }

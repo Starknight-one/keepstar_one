@@ -27,9 +27,9 @@ tools:
     purpose: "Padding tools to reach 4096 token cache threshold"
     var: "CachePaddingEnabled bool (default true)"
     function: "GetCachePaddingTools() []ToolDefinition"
-    tools_count: 8
+    tools_count: 10
     prefix: "_internal_ — LLM should never call these"
-    estimated_tokens: "~3200 tokens"
+    estimated_tokens: "~4000 tokens"
     note: "TODO: remove when real tools exceed 4096 threshold"
 
   search_products:

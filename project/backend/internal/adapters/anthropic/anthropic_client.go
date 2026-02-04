@@ -316,7 +316,10 @@ func (c *Client) ChatWithTools(
 	return result, nil
 }
 
-// ChatWithToolsCached sends messages with prompt caching enabled
+// ChatWithToolsCached sends messages with prompt caching enabled.
+// Note: Prompt caching is GA since Dec 2024 — no beta header needed.
+// Go's encoding/json.Marshal sorts map keys deterministically (since Go 1.12),
+// so tool InputSchema serialization is cache-stable without extra handling.
 func (c *Client) ChatWithToolsCached(
 	ctx context.Context,
 	systemPrompt string,

@@ -13,12 +13,12 @@ entities:
       file: "atom_entity.go"
       types: ["AtomType", "AtomSlot", "Atom"]
       atom_types: ["text", "number", "price", "image", "rating", "badge", "button", "icon", "divider", "progress", "selector"]
-      atom_slots: ["hero", "badge", "title", "primary", "price", "secondary"]
+      atom_slots: ["hero", "badge", "title", "primary", "price", "secondary", "gallery", "stock", "description", "tags", "specs"]
     widget_entity:
       file: "widget_entity.go"
       types: ["WidgetType", "WidgetSize", "Widget"]
       templates: ["ProductCard"]
-      widget_fields: ["ID", "Type", "Template", "Size", "Priority", "Atoms", "Children", "Meta"]
+      widget_fields: ["ID", "Type", "Template", "Size", "Priority", "Atoms", "Children", "Meta", "EntityRef"]
     formation_entity:
       file: "formation_entity.go"
       types: ["FormationType", "Formation"]
@@ -39,7 +39,7 @@ entities:
     event_entity:
       file: "event_entity.go"
       types: ["EventType", "ChatEvent"]
-      event_types: ["chat_opened", "message_sent", "message_received", "chat_closed", "widget_clicked"]
+      event_types: ["chat_opened", "message_sent", "message_received", "chat_closed", "widget_clicked", "session_timeout"]
 
   catalog:
     entity_type:
@@ -49,7 +49,7 @@ entities:
     product_entity:
       file: "product_entity.go"
       types: ["Product"]
-      fields: ["ID", "TenantID", "MasterProductID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Images", "Rating", "Brand", "Category"]
+      fields: ["ID", "TenantID", "MasterProductID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Images", "Rating", "StockQuantity", "Brand", "Category", "Tags", "Attributes"]
     service_entity:
       file: "service_entity.go"
       types: ["Service"]
@@ -97,7 +97,7 @@ entities:
 
   errors:
     file: "domain_errors.go"
-    errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound"]
+    errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound", "ErrRateLimitExceeded"]
 
 gotchas:
   - "Price stored in kopecks (int), not rubles (float)"

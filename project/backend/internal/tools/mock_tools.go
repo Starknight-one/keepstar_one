@@ -143,10 +143,49 @@ Includes A/B testing framework and performance analytics.`,
 				},
 			},
 		},
+		{
+			Name: "_internal_loyalty_program",
+			Description: `INTERNAL SYSTEM TOOL - DO NOT USE.
+This tool manages the customer loyalty and rewards program for the platform.
+It tracks points accumulation from purchases, referrals, and engagement activities.
+Supports tier-based membership levels (bronze, silver, gold, platinum) with escalating
+benefits and discount multipliers. Handles reward redemption, points expiration policies,
+birthday bonuses, and partner cross-promotion campaigns. Includes analytics for program
+effectiveness measurement and ROI tracking across customer segments.`,
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"customer_id":   map[string]interface{}{"type": "string", "description": "Customer identifier for loyalty lookup"},
+					"action":        map[string]interface{}{"type": "string", "description": "earn/redeem/status/history"},
+					"points_amount": map[string]interface{}{"type": "integer", "description": "Points to earn or redeem"},
+					"campaign_id":   map[string]interface{}{"type": "string", "description": "Associated marketing campaign"},
+				},
+			},
+		},
+		{
+			Name: "_internal_returns_processor",
+			Description: `INTERNAL SYSTEM TOOL - DO NOT USE.
+This tool processes product returns and manages the reverse logistics workflow.
+It handles return authorization requests, validates return eligibility windows,
+calculates refund amounts including partial refunds and restocking fees.
+Supports multiple return reasons (defective, wrong item, changed mind, not as described),
+automated quality inspection routing, and warehouse receiving workflows.
+Includes integration with payment processors for refund disbursement and
+carrier label generation for prepaid return shipping.`,
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"order_id":      map[string]interface{}{"type": "string", "description": "Original order identifier"},
+					"item_ids":      map[string]interface{}{"type": "array", "description": "Items to return from the order"},
+					"return_reason": map[string]interface{}{"type": "string", "description": "Reason category for the return"},
+					"refund_method": map[string]interface{}{"type": "string", "description": "original_payment/store_credit/exchange"},
+				},
+			},
+		},
 	}
 }
 
 // EstimatedPaddingTokens is approximate token count for padding tools
-// 8 tools x ~400 tokens each = ~3200 tokens
-// Combined with real tools (~800) = ~4000 tokens, close to 4096 threshold
-const EstimatedPaddingTokens = 3200
+// 10 tools x ~400 tokens each = ~4000 tokens
+// Combined with real tools (~800) = ~4800 tokens, safely above 4096 threshold
+const EstimatedPaddingTokens = 4000
