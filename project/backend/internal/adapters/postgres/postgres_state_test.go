@@ -676,3 +676,546 @@ func TestStateAdapter_ViewStateInSessionState(t *testing.T) {
 		t.Errorf("Expected ViewStack length 1, got %d", len(retrieved.ViewStack))
 	}
 }
+
+// =============================================================================
+// Zone-Write Tests (z8v4q1w)
+// =============================================================================
+
+// TestStateAdapter_UpdateData tests zone-write for data zone
+func TestStateAdapter_UpdateData(t *testing.T) {
+	dbURL := testDatabaseURL()
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+
+	ctx := context.Background()
+	client, err := postgres.NewClient(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.RunMigrations(ctx); err != nil {
+		t.Fatalf("Migrations failed: %v", err)
+	}
+	if err := client.RunStateMigrations(ctx); err != nil {
+		t.Fatalf("State migrations failed: %v", err)
+	}
+
+	adapter := postgres.NewStateAdapter(client)
+	sessionID := testSessionID(t, client)
+	defer cleanupTestSession(t, client, sessionID)
+
+	_, err = adapter.CreateState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CreateState failed: %v", err)
+	}
+
+	// Zone-write: update data + create delta atomically
+	data := domain.StateData{
+		Products: []domain.Product{
+			{ID: "p1", Name: "Nike Air Max", Price: 12990},
+			{ID: "p2", Name: "Nike Dunk Low", Price: 10990},
+		},
+	}
+	meta := domain.StateMeta{
+		Count:  2,
+		Fields: []string{"id", "name", "price"},
+	}
+	info := domain.DeltaInfo{
+		TurnID:    "turn-data-1",
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   "agent1",
+		DeltaType: domain.DeltaTypeAdd,
+		Path:      "data.products",
+		Action:    domain.Action{Type: domain.ActionSearch, Tool: "search_products"},
+		Result:    domain.ResultMeta{Count: 2, Fields: []string{"id", "name", "price"}},
+	}
+
+	step, err := adapter.UpdateData(ctx, sessionID, data, meta, info)
+	if err != nil {
+		t.Fatalf("UpdateData failed: %v", err)
+	}
+	if step != 1 {
+		t.Errorf("Expected step 1, got %d", step)
+	}
+
+	// Verify state was updated
+	state, err := adapter.GetState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+	if len(state.Current.Data.Products) != 2 {
+		t.Errorf("Expected 2 products, got %d", len(state.Current.Data.Products))
+	}
+	if state.Current.Meta.Count != 2 {
+		t.Errorf("Expected meta count 2, got %d", state.Current.Meta.Count)
+	}
+
+	// Verify delta was created with TurnID
+	deltas, err := adapter.GetDeltas(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetDeltas failed: %v", err)
+	}
+	if len(deltas) != 1 {
+		t.Fatalf("Expected 1 delta, got %d", len(deltas))
+	}
+	if deltas[0].TurnID != "turn-data-1" {
+		t.Errorf("Expected TurnID 'turn-data-1', got '%s'", deltas[0].TurnID)
+	}
+	if deltas[0].ActorID != "agent1" {
+		t.Errorf("Expected actor_id 'agent1', got '%s'", deltas[0].ActorID)
+	}
+
+	// Verify template and view were NOT affected
+	if state.Current.Template != nil {
+		t.Error("Expected template to remain nil after UpdateData")
+	}
+	if state.View.Mode != domain.ViewModeGrid {
+		t.Errorf("Expected view mode 'grid' unchanged, got '%s'", state.View.Mode)
+	}
+}
+
+// TestStateAdapter_UpdateTemplate tests zone-write for template zone
+func TestStateAdapter_UpdateTemplate(t *testing.T) {
+	dbURL := testDatabaseURL()
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+
+	ctx := context.Background()
+	client, err := postgres.NewClient(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.RunMigrations(ctx); err != nil {
+		t.Fatalf("Migrations failed: %v", err)
+	}
+	if err := client.RunStateMigrations(ctx); err != nil {
+		t.Fatalf("State migrations failed: %v", err)
+	}
+
+	adapter := postgres.NewStateAdapter(client)
+	sessionID := testSessionID(t, client)
+	defer cleanupTestSession(t, client, sessionID)
+
+	_, err = adapter.CreateState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CreateState failed: %v", err)
+	}
+
+	// First, set some data to verify it's not overwritten
+	state, _ := adapter.GetState(ctx, sessionID)
+	state.Current.Data.Products = []domain.Product{{ID: "p1", Name: "Test"}}
+	state.Current.Meta.Count = 1
+	adapter.UpdateState(ctx, state)
+
+	// Zone-write: update template
+	template := map[string]interface{}{
+		"formation": map[string]interface{}{"mode": "grid", "widgets": []interface{}{}},
+	}
+	info := domain.DeltaInfo{
+		TurnID:    "turn-tmpl-1",
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   "agent2",
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
+		Action:    domain.Action{Type: domain.ActionLayout, Tool: "render_product_preset"},
+	}
+
+	step, err := adapter.UpdateTemplate(ctx, sessionID, template, info)
+	if err != nil {
+		t.Fatalf("UpdateTemplate failed: %v", err)
+	}
+	if step != 1 {
+		t.Errorf("Expected step 1, got %d", step)
+	}
+
+	// Verify template was updated
+	state, _ = adapter.GetState(ctx, sessionID)
+	if state.Current.Template == nil {
+		t.Fatal("Expected template to be set")
+	}
+	if _, ok := state.Current.Template["formation"]; !ok {
+		t.Error("Expected 'formation' key in template")
+	}
+
+	// Verify data was NOT affected
+	if len(state.Current.Data.Products) != 1 {
+		t.Errorf("Expected data unchanged (1 product), got %d", len(state.Current.Data.Products))
+	}
+
+	// Verify delta
+	deltas, _ := adapter.GetDeltas(ctx, sessionID)
+	if len(deltas) != 1 {
+		t.Fatalf("Expected 1 delta, got %d", len(deltas))
+	}
+	if deltas[0].TurnID != "turn-tmpl-1" {
+		t.Errorf("Expected TurnID 'turn-tmpl-1', got '%s'", deltas[0].TurnID)
+	}
+	if deltas[0].ActorID != "agent2" {
+		t.Errorf("Expected actor_id 'agent2', got '%s'", deltas[0].ActorID)
+	}
+}
+
+// TestStateAdapter_UpdateView tests zone-write for view zone
+func TestStateAdapter_UpdateView(t *testing.T) {
+	dbURL := testDatabaseURL()
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+
+	ctx := context.Background()
+	client, err := postgres.NewClient(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.RunMigrations(ctx); err != nil {
+		t.Fatalf("Migrations failed: %v", err)
+	}
+	if err := client.RunStateMigrations(ctx); err != nil {
+		t.Fatalf("State migrations failed: %v", err)
+	}
+
+	adapter := postgres.NewStateAdapter(client)
+	sessionID := testSessionID(t, client)
+	defer cleanupTestSession(t, client, sessionID)
+
+	_, err = adapter.CreateState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CreateState failed: %v", err)
+	}
+
+	// Zone-write: switch to detail mode
+	view := domain.ViewState{
+		Mode:    domain.ViewModeDetail,
+		Focused: &domain.EntityRef{Type: domain.EntityTypeProduct, ID: "p1"},
+	}
+	stack := []domain.ViewSnapshot{
+		{Mode: domain.ViewModeGrid, Step: 0, CreatedAt: time.Now()},
+	}
+	info := domain.DeltaInfo{
+		TurnID:    "turn-view-1",
+		Trigger:   domain.TriggerWidgetAction,
+		Source:    domain.SourceUser,
+		ActorID:   "user_expand",
+		DeltaType: domain.DeltaTypePush,
+		Path:      "view",
+	}
+
+	step, err := adapter.UpdateView(ctx, sessionID, view, stack, info)
+	if err != nil {
+		t.Fatalf("UpdateView failed: %v", err)
+	}
+	if step != 1 {
+		t.Errorf("Expected step 1, got %d", step)
+	}
+
+	// Verify view was updated
+	state, _ := adapter.GetState(ctx, sessionID)
+	if state.View.Mode != domain.ViewModeDetail {
+		t.Errorf("Expected view mode 'detail', got '%s'", state.View.Mode)
+	}
+	if state.View.Focused == nil || state.View.Focused.ID != "p1" {
+		t.Error("Expected focused to be p1")
+	}
+	if len(state.ViewStack) != 1 {
+		t.Errorf("Expected ViewStack length 1, got %d", len(state.ViewStack))
+	}
+
+	// Verify delta
+	deltas, _ := adapter.GetDeltas(ctx, sessionID)
+	if len(deltas) != 1 {
+		t.Fatalf("Expected 1 delta, got %d", len(deltas))
+	}
+	if deltas[0].TurnID != "turn-view-1" {
+		t.Errorf("Expected TurnID 'turn-view-1', got '%s'", deltas[0].TurnID)
+	}
+	if deltas[0].Source != domain.SourceUser {
+		t.Errorf("Expected source 'user', got '%s'", deltas[0].Source)
+	}
+}
+
+// TestStateAdapter_AppendConversation tests conversation history zone-write
+func TestStateAdapter_AppendConversation(t *testing.T) {
+	dbURL := testDatabaseURL()
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+
+	ctx := context.Background()
+	client, err := postgres.NewClient(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.RunMigrations(ctx); err != nil {
+		t.Fatalf("Migrations failed: %v", err)
+	}
+	if err := client.RunStateMigrations(ctx); err != nil {
+		t.Fatalf("State migrations failed: %v", err)
+	}
+
+	adapter := postgres.NewStateAdapter(client)
+	sessionID := testSessionID(t, client)
+	defer cleanupTestSession(t, client, sessionID)
+
+	_, err = adapter.CreateState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CreateState failed: %v", err)
+	}
+
+	// Append conversation messages
+	messages := []domain.LLMMessage{
+		{Role: "user", Content: "покажи кроссовки nike"},
+		{Role: "assistant", Content: "tool_use"},
+	}
+
+	err = adapter.AppendConversation(ctx, sessionID, messages)
+	if err != nil {
+		t.Fatalf("AppendConversation failed: %v", err)
+	}
+
+	// Verify conversation was saved
+	state, _ := adapter.GetState(ctx, sessionID)
+	if len(state.ConversationHistory) != 2 {
+		t.Errorf("Expected 2 messages, got %d", len(state.ConversationHistory))
+	}
+	if state.ConversationHistory[0].Role != "user" {
+		t.Errorf("Expected first message role 'user', got '%s'", state.ConversationHistory[0].Role)
+	}
+	if state.ConversationHistory[0].Content != "покажи кроссовки nike" {
+		t.Errorf("Expected first message content, got '%s'", state.ConversationHistory[0].Content)
+	}
+
+	// Verify no delta was created (AppendConversation doesn't create deltas)
+	deltas, _ := adapter.GetDeltas(ctx, sessionID)
+	if len(deltas) != 0 {
+		t.Errorf("Expected 0 deltas for AppendConversation, got %d", len(deltas))
+	}
+}
+
+// TestStateAdapter_DeltaWithTurnID tests that turn_id is stored and retrieved correctly
+func TestStateAdapter_DeltaWithTurnID(t *testing.T) {
+	dbURL := testDatabaseURL()
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+
+	ctx := context.Background()
+	client, err := postgres.NewClient(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.RunMigrations(ctx); err != nil {
+		t.Fatalf("Migrations failed: %v", err)
+	}
+	if err := client.RunStateMigrations(ctx); err != nil {
+		t.Fatalf("State migrations failed: %v", err)
+	}
+
+	adapter := postgres.NewStateAdapter(client)
+	sessionID := testSessionID(t, client)
+	defer cleanupTestSession(t, client, sessionID)
+
+	_, err = adapter.CreateState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CreateState failed: %v", err)
+	}
+
+	turnID := "turn-abc-123"
+
+	// Add delta with TurnID
+	delta := &domain.Delta{
+		TurnID:    turnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   "agent1",
+		DeltaType: domain.DeltaTypeAdd,
+		Path:      "data.products",
+		Action:    domain.Action{Type: domain.ActionSearch},
+		Result:    domain.ResultMeta{Count: 5},
+		CreatedAt: time.Now(),
+	}
+
+	_, err = adapter.AddDelta(ctx, sessionID, delta)
+	if err != nil {
+		t.Fatalf("AddDelta failed: %v", err)
+	}
+
+	// Add another delta with same TurnID (grouped turn)
+	delta2 := &domain.Delta{
+		TurnID:    turnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   "agent2",
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
+		Action:    domain.Action{Type: domain.ActionLayout},
+		Result:    domain.ResultMeta{},
+		CreatedAt: time.Now(),
+	}
+
+	_, err = adapter.AddDelta(ctx, sessionID, delta2)
+	if err != nil {
+		t.Fatalf("AddDelta 2 failed: %v", err)
+	}
+
+	// Add delta without TurnID
+	delta3 := &domain.Delta{
+		Trigger:   domain.TriggerSystem,
+		Source:    domain.SourceSystem,
+		ActorID:   "system",
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "state",
+		Action:    domain.Action{Type: domain.ActionRollback},
+		Result:    domain.ResultMeta{},
+		CreatedAt: time.Now(),
+	}
+
+	_, err = adapter.AddDelta(ctx, sessionID, delta3)
+	if err != nil {
+		t.Fatalf("AddDelta 3 failed: %v", err)
+	}
+
+	// Retrieve and verify
+	deltas, err := adapter.GetDeltas(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetDeltas failed: %v", err)
+	}
+
+	if len(deltas) != 3 {
+		t.Fatalf("Expected 3 deltas, got %d", len(deltas))
+	}
+
+	// First two should have TurnID
+	if deltas[0].TurnID != turnID {
+		t.Errorf("Delta 1: expected TurnID '%s', got '%s'", turnID, deltas[0].TurnID)
+	}
+	if deltas[1].TurnID != turnID {
+		t.Errorf("Delta 2: expected TurnID '%s', got '%s'", turnID, deltas[1].TurnID)
+	}
+
+	// Third should have empty TurnID
+	if deltas[2].TurnID != "" {
+		t.Errorf("Delta 3: expected empty TurnID, got '%s'", deltas[2].TurnID)
+	}
+
+	t.Logf("TurnID grouping works: deltas 1,2 share '%s', delta 3 has no TurnID", turnID)
+}
+
+// TestStateAdapter_ZoneWriteIsolation tests that zone-writes don't affect other zones
+func TestStateAdapter_ZoneWriteIsolation(t *testing.T) {
+	dbURL := testDatabaseURL()
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+
+	ctx := context.Background()
+	client, err := postgres.NewClient(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.RunMigrations(ctx); err != nil {
+		t.Fatalf("Migrations failed: %v", err)
+	}
+	if err := client.RunStateMigrations(ctx); err != nil {
+		t.Fatalf("State migrations failed: %v", err)
+	}
+
+	adapter := postgres.NewStateAdapter(client)
+	sessionID := testSessionID(t, client)
+	defer cleanupTestSession(t, client, sessionID)
+
+	_, err = adapter.CreateState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CreateState failed: %v", err)
+	}
+
+	turnID := "turn-isolation"
+
+	// 1. Write data zone
+	data := domain.StateData{Products: []domain.Product{{ID: "p1", Name: "Test", Price: 100}}}
+	meta := domain.StateMeta{Count: 1, Fields: []string{"id", "name", "price"}}
+	adapter.UpdateData(ctx, sessionID, data, meta, domain.DeltaInfo{
+		TurnID: turnID, Trigger: domain.TriggerUserQuery, Source: domain.SourceLLM,
+		ActorID: "agent1", DeltaType: domain.DeltaTypeAdd, Path: "data.products",
+	})
+
+	// 2. Write template zone
+	template := map[string]interface{}{"formation": "grid"}
+	adapter.UpdateTemplate(ctx, sessionID, template, domain.DeltaInfo{
+		TurnID: turnID, Trigger: domain.TriggerUserQuery, Source: domain.SourceLLM,
+		ActorID: "agent2", DeltaType: domain.DeltaTypeUpdate, Path: "template",
+	})
+
+	// 3. Write view zone
+	view := domain.ViewState{Mode: domain.ViewModeDetail, Focused: &domain.EntityRef{Type: domain.EntityTypeProduct, ID: "p1"}}
+	stack := []domain.ViewSnapshot{{Mode: domain.ViewModeGrid, Step: 0, CreatedAt: time.Now()}}
+	adapter.UpdateView(ctx, sessionID, view, stack, domain.DeltaInfo{
+		TurnID: turnID, Trigger: domain.TriggerWidgetAction, Source: domain.SourceUser,
+		ActorID: "user_expand", DeltaType: domain.DeltaTypePush, Path: "view",
+	})
+
+	// 4. Write conversation
+	adapter.AppendConversation(ctx, sessionID, []domain.LLMMessage{{Role: "user", Content: "test"}})
+
+	// Verify ALL zones are intact
+	state, err := adapter.GetState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+
+	// Data zone
+	if len(state.Current.Data.Products) != 1 || state.Current.Data.Products[0].ID != "p1" {
+		t.Error("Data zone corrupted after other zone-writes")
+	}
+	if state.Current.Meta.Count != 1 {
+		t.Errorf("Meta corrupted: expected count 1, got %d", state.Current.Meta.Count)
+	}
+
+	// Template zone
+	if state.Current.Template == nil || state.Current.Template["formation"] != "grid" {
+		t.Error("Template zone corrupted after other zone-writes")
+	}
+
+	// View zone
+	if state.View.Mode != domain.ViewModeDetail {
+		t.Errorf("View zone corrupted: expected detail, got %s", state.View.Mode)
+	}
+	if state.View.Focused == nil || state.View.Focused.ID != "p1" {
+		t.Error("View focused corrupted")
+	}
+	if len(state.ViewStack) != 1 {
+		t.Errorf("ViewStack corrupted: expected 1, got %d", len(state.ViewStack))
+	}
+
+	// Conversation zone
+	if len(state.ConversationHistory) != 1 || state.ConversationHistory[0].Content != "test" {
+		t.Error("Conversation zone corrupted after other zone-writes")
+	}
+
+	// Verify 3 deltas with same TurnID (data + template + view, conversation has no delta)
+	deltas, _ := adapter.GetDeltas(ctx, sessionID)
+	if len(deltas) != 3 {
+		t.Errorf("Expected 3 deltas, got %d", len(deltas))
+	}
+	for i, d := range deltas {
+		if d.TurnID != turnID {
+			t.Errorf("Delta %d: expected TurnID '%s', got '%s'", i, turnID, d.TurnID)
+		}
+	}
+
+	t.Log("Zone isolation verified: all 4 zones written independently, no cross-contamination")
+}

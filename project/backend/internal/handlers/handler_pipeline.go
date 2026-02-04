@@ -76,10 +76,12 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 		tenantSlug = tenant.Slug
 	}
 
+	turnID := uuid.New().String()
 	result, err := h.pipelineUC.Execute(r.Context(), usecases.PipelineExecuteRequest{
 		SessionID:  sessionID,
 		Query:      req.Query,
 		TenantSlug: tenantSlug,
+		TurnID:     turnID,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

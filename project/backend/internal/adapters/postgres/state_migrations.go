@@ -68,6 +68,12 @@ ALTER TABLE chat_session_state
     ADD COLUMN IF NOT EXISTS conversation_history JSONB DEFAULT '[]';
 `
 
+// Zone-based state management — turn_id for delta grouping
+const migrationDeltaTurnID = `
+ALTER TABLE chat_session_deltas
+    ADD COLUMN IF NOT EXISTS turn_id TEXT;
+`
+
 // RunStateMigrations executes state-related migrations
 func (c *Client) RunStateMigrations(ctx context.Context) error {
 	migrations := []string{
@@ -76,6 +82,7 @@ func (c *Client) RunStateMigrations(ctx context.Context) error {
 		migrationStateIndexes,
 		migrationDeltaStateExtension,
 		migrationConversationHistory,
+		migrationDeltaTurnID,
 	}
 
 	for i, migration := range migrations {

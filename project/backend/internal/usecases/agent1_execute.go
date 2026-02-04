@@ -18,6 +18,7 @@ type Agent1ExecuteRequest struct {
 	SessionID  string
 	Query      string
 	TenantSlug string // Tenant context for search
+	TurnID     string // Turn ID for delta grouping
 }
 
 // Agent1ExecuteResponse is the output from Agent 1
@@ -166,8 +167,9 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		state, _ = uc.statePort.GetState(ctx, req.SessionID)
 		productsFound = state.Current.Meta.Count
 
-		// Create delta with source tracking (step auto-assigned by AddDelta)
-		delta = &domain.Delta{
+		// Create delta via DeltaInfo with TurnID (step auto-assigned by AddDelta)
+		info := domain.DeltaInfo{
+			TurnID:    req.TurnID,
 			Trigger:   domain.TriggerUserQuery,
 			Source:    domain.SourceLLM,
 			ActorID:   "agent1",
@@ -182,8 +184,8 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 				Count:  state.Current.Meta.Count,
 				Fields: state.Current.Meta.Fields,
 			},
-			CreatedAt: time.Now(),
 		}
+		delta = info.ToDelta()
 
 		// Save delta (step auto-assigned)
 		if _, err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
@@ -197,17 +199,17 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		)
 	}
 
-	// Update conversation history in state for future cache hits
-	state.ConversationHistory = append(state.ConversationHistory,
+	// Update conversation history via AppendConversation (zone-write, no blob UpdateState)
+	newHistory := append(state.ConversationHistory,
 		domain.LLMMessage{Role: "user", Content: req.Query},
 	)
 	if len(llmResp.ToolCalls) > 0 {
-		state.ConversationHistory = append(state.ConversationHistory,
+		newHistory = append(newHistory,
 			domain.LLMMessage{Role: "assistant", ToolCalls: llmResp.ToolCalls},
 		)
 	}
-	if err := uc.statePort.UpdateState(ctx, state); err != nil {
-		uc.log.Error("update_conversation_history_failed", "error", err, "session_id", req.SessionID)
+	if err := uc.statePort.AppendConversation(ctx, req.SessionID, newHistory); err != nil {
+		uc.log.Error("append_conversation_failed", "error", err, "session_id", req.SessionID)
 	}
 
 	totalDuration := time.Since(start).Milliseconds()

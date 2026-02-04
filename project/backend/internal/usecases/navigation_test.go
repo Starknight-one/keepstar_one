@@ -15,6 +15,13 @@ type mockStatePort struct {
 	state     *domain.SessionState
 	deltas    []domain.Delta
 	viewStack []domain.ViewSnapshot
+	// Call tracking for zone-write assertions
+	UpdateDataCalls         int
+	UpdateTemplateCalls     int
+	UpdateViewCalls         int
+	AppendConversationCalls int
+	UpdateStateCalls        int
+	LastConversation        []domain.LLMMessage
 }
 
 func newMockStatePort() *mockStatePort {
@@ -51,7 +58,55 @@ func (m *mockStatePort) GetState(ctx context.Context, sessionID string) (*domain
 }
 
 func (m *mockStatePort) UpdateState(ctx context.Context, state *domain.SessionState) error {
+	m.UpdateStateCalls++
 	m.state = state
+	return nil
+}
+
+func (m *mockStatePort) UpdateData(ctx context.Context, sessionID string, data domain.StateData, meta domain.StateMeta, info domain.DeltaInfo) (int, error) {
+	m.UpdateDataCalls++
+	if m.state != nil {
+		m.state.Current.Data = data
+		m.state.Current.Meta = meta
+	}
+	delta := info.ToDelta()
+	step := len(m.deltas) + 1
+	delta.Step = step
+	m.deltas = append(m.deltas, *delta)
+	return step, nil
+}
+
+func (m *mockStatePort) UpdateTemplate(ctx context.Context, sessionID string, template map[string]interface{}, info domain.DeltaInfo) (int, error) {
+	m.UpdateTemplateCalls++
+	if m.state != nil {
+		m.state.Current.Template = template
+	}
+	delta := info.ToDelta()
+	step := len(m.deltas) + 1
+	delta.Step = step
+	m.deltas = append(m.deltas, *delta)
+	return step, nil
+}
+
+func (m *mockStatePort) UpdateView(ctx context.Context, sessionID string, view domain.ViewState, stack []domain.ViewSnapshot, info domain.DeltaInfo) (int, error) {
+	m.UpdateViewCalls++
+	if m.state != nil {
+		m.state.View = view
+		m.state.ViewStack = stack
+	}
+	delta := info.ToDelta()
+	step := len(m.deltas) + 1
+	delta.Step = step
+	m.deltas = append(m.deltas, *delta)
+	return step, nil
+}
+
+func (m *mockStatePort) AppendConversation(ctx context.Context, sessionID string, messages []domain.LLMMessage) error {
+	m.AppendConversationCalls++
+	m.LastConversation = messages
+	if m.state != nil {
+		m.state.ConversationHistory = messages
+	}
 	return nil
 }
 
@@ -148,11 +203,12 @@ func TestExpandUseCase_Success(t *testing.T) {
 	// Create use case
 	expandUC := usecases.NewExpandUseCase(statePort, presetRegistry)
 
-	// Execute expand
+	// Execute expand with TurnID
 	resp, err := expandUC.Execute(ctx, usecases.ExpandRequest{
 		SessionID:  "session-1",
 		EntityType: domain.EntityTypeProduct,
 		EntityID:   "product-1",
+		TurnID:     "turn-expand-1",
 	})
 
 	// Verify
@@ -200,21 +256,48 @@ func TestExpandUseCase_Success(t *testing.T) {
 		t.Error("Expected widget to have entityRef with product-1")
 	}
 
-	// Verify delta was created
-	if len(statePort.deltas) != 1 {
-		t.Errorf("Expected 1 delta, got %d", len(statePort.deltas))
+	// Verify zone-write was used (not UpdateState)
+	if statePort.UpdateViewCalls != 1 {
+		t.Errorf("Expected 1 UpdateView call, got %d", statePort.UpdateViewCalls)
+	}
+	if statePort.UpdateTemplateCalls != 1 {
+		t.Errorf("Expected 1 UpdateTemplate call, got %d", statePort.UpdateTemplateCalls)
+	}
+	if statePort.UpdateStateCalls != 0 {
+		t.Errorf("Expected 0 UpdateState calls (should use zone-write), got %d", statePort.UpdateStateCalls)
 	}
 
-	delta := statePort.deltas[0]
-	if delta.DeltaType != domain.DeltaTypePush {
-		t.Errorf("Expected deltaType=push, got %s", delta.DeltaType)
-	}
-	if delta.Source != domain.SourceUser {
-		t.Errorf("Expected source=user, got %s", delta.Source)
+	// Verify 2 deltas (view + template zone-writes)
+	if len(statePort.deltas) != 2 {
+		t.Errorf("Expected 2 deltas (view + template), got %d", len(statePort.deltas))
 	}
 
-	t.Logf("Expand successful: viewMode=%s, stackSize=%d, widget=%s",
-		resp.ViewMode, resp.StackSize, widget.Template)
+	// Verify view delta
+	viewDelta := statePort.deltas[0]
+	if viewDelta.DeltaType != domain.DeltaTypePush {
+		t.Errorf("Expected deltaType=push, got %s", viewDelta.DeltaType)
+	}
+	if viewDelta.Source != domain.SourceUser {
+		t.Errorf("Expected source=user, got %s", viewDelta.Source)
+	}
+	if viewDelta.TurnID != "turn-expand-1" {
+		t.Errorf("Expected TurnID=turn-expand-1, got %s", viewDelta.TurnID)
+	}
+	if viewDelta.Path != "view" {
+		t.Errorf("Expected path=view, got %s", viewDelta.Path)
+	}
+
+	// Verify template delta
+	templateDelta := statePort.deltas[1]
+	if templateDelta.TurnID != "turn-expand-1" {
+		t.Errorf("Expected TurnID=turn-expand-1 on template delta, got %s", templateDelta.TurnID)
+	}
+	if templateDelta.Path != "template" {
+		t.Errorf("Expected path=template, got %s", templateDelta.Path)
+	}
+
+	t.Logf("Expand successful: viewMode=%s, stackSize=%d, widget=%s, deltas=%d",
+		resp.ViewMode, resp.StackSize, widget.Template, len(statePort.deltas))
 }
 
 func TestExpandUseCase_EntityNotFound(t *testing.T) {
@@ -274,9 +357,10 @@ func TestBackUseCase_Success(t *testing.T) {
 	// Create use case
 	backUC := usecases.NewBackUseCase(statePort, presetRegistry)
 
-	// Execute back
+	// Execute back with TurnID
 	resp, err := backUC.Execute(ctx, usecases.BackRequest{
 		SessionID: "session-1",
+		TurnID:    "turn-back-1",
 	})
 
 	// Verify
@@ -313,18 +397,33 @@ func TestBackUseCase_Success(t *testing.T) {
 		t.Errorf("Expected 2 widgets, got %d", len(resp.Formation.Widgets))
 	}
 
-	// Verify delta was created
-	if len(statePort.deltas) != 1 {
-		t.Errorf("Expected 1 delta, got %d", len(statePort.deltas))
+	// Verify zone-write was used (not UpdateState)
+	if statePort.UpdateViewCalls != 1 {
+		t.Errorf("Expected 1 UpdateView call, got %d", statePort.UpdateViewCalls)
+	}
+	if statePort.UpdateTemplateCalls != 1 {
+		t.Errorf("Expected 1 UpdateTemplate call, got %d", statePort.UpdateTemplateCalls)
+	}
+	if statePort.UpdateStateCalls != 0 {
+		t.Errorf("Expected 0 UpdateState calls (should use zone-write), got %d", statePort.UpdateStateCalls)
 	}
 
-	delta := statePort.deltas[0]
-	if delta.DeltaType != domain.DeltaTypePop {
-		t.Errorf("Expected deltaType=pop, got %s", delta.DeltaType)
+	// Verify 2 deltas (view + template)
+	if len(statePort.deltas) != 2 {
+		t.Errorf("Expected 2 deltas (view + template), got %d", len(statePort.deltas))
 	}
 
-	t.Logf("Back successful: viewMode=%s, stackSize=%d, widgets=%d",
-		resp.ViewMode, resp.StackSize, len(resp.Formation.Widgets))
+	// Verify view delta has TurnID
+	viewDelta := statePort.deltas[0]
+	if viewDelta.DeltaType != domain.DeltaTypePop {
+		t.Errorf("Expected deltaType=pop, got %s", viewDelta.DeltaType)
+	}
+	if viewDelta.TurnID != "turn-back-1" {
+		t.Errorf("Expected TurnID=turn-back-1, got %s", viewDelta.TurnID)
+	}
+
+	t.Logf("Back successful: viewMode=%s, stackSize=%d, widgets=%d, deltas=%d",
+		resp.ViewMode, resp.StackSize, len(resp.Formation.Widgets), len(statePort.deltas))
 }
 
 func TestBackUseCase_EmptyStack(t *testing.T) {
@@ -341,6 +440,7 @@ func TestBackUseCase_EmptyStack(t *testing.T) {
 	// Execute back on empty stack
 	resp, err := backUC.Execute(ctx, usecases.BackRequest{
 		SessionID: "session-1",
+		TurnID:    "turn-empty",
 	})
 
 	// Should succeed but indicate can't go back
@@ -393,6 +493,7 @@ func TestNavigationFlow_ExpandAndBack(t *testing.T) {
 		SessionID:  "session-1",
 		EntityType: domain.EntityTypeProduct,
 		EntityID:   "product-1",
+		TurnID:     "turn-flow-1",
 	})
 	if err != nil {
 		t.Fatalf("Expand failed: %v", err)
@@ -414,6 +515,7 @@ func TestNavigationFlow_ExpandAndBack(t *testing.T) {
 	t.Log("\n=== Step 3: Go back ===")
 	backResp, err := backUC.Execute(ctx, usecases.BackRequest{
 		SessionID: "session-1",
+		TurnID:    "turn-flow-2",
 	})
 	if err != nil {
 		t.Fatalf("Back failed: %v", err)
@@ -434,15 +536,25 @@ func TestNavigationFlow_ExpandAndBack(t *testing.T) {
 		t.Errorf("After back: expected canGoBack=false")
 	}
 
-	// Verify deltas
+	// Verify deltas (2 per action: view + template zone-writes)
 	t.Log("\n=== Deltas ===")
 	for i, d := range statePort.deltas {
-		t.Logf("Delta %d: step=%d, type=%s, source=%s, actor=%s",
-			i, d.Step, d.DeltaType, d.Source, d.ActorID)
+		t.Logf("Delta %d: step=%d, type=%s, source=%s, actor=%s, turn=%s, path=%s",
+			i, d.Step, d.DeltaType, d.Source, d.ActorID, d.TurnID, d.Path)
 	}
 
-	if len(statePort.deltas) != 2 {
-		t.Errorf("Expected 2 deltas (push + pop), got %d", len(statePort.deltas))
+	if len(statePort.deltas) != 4 {
+		t.Errorf("Expected 4 deltas (expand: view+template, back: view+template), got %d", len(statePort.deltas))
+	}
+
+	// Verify TurnID grouping: first 2 deltas share turn-flow-1, last 2 share turn-flow-2
+	if len(statePort.deltas) >= 4 {
+		if statePort.deltas[0].TurnID != "turn-flow-1" || statePort.deltas[1].TurnID != "turn-flow-1" {
+			t.Error("Expand deltas should share turn-flow-1")
+		}
+		if statePort.deltas[2].TurnID != "turn-flow-2" || statePort.deltas[3].TurnID != "turn-flow-2" {
+			t.Error("Back deltas should share turn-flow-2")
+		}
 	}
 }
 
@@ -477,6 +589,7 @@ func TestExpandUseCase_Service(t *testing.T) {
 		SessionID:  "session-1",
 		EntityType: domain.EntityTypeService,
 		EntityID:   "service-1",
+		TurnID:     "turn-svc-1",
 	})
 
 	if err != nil {

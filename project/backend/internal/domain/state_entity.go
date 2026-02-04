@@ -60,6 +60,7 @@ type ResultMeta struct {
 // Delta represents a single change in state history
 type Delta struct {
 	Step      int                    `json:"step"`
+	TurnID    string                 `json:"turn_id,omitempty"`
 	Trigger   TriggerType            `json:"trigger"`
 	Source    DeltaSource            `json:"source"`     // Who initiated: user/llm/system
 	ActorID   string                 `json:"actor_id"`   // Which actor: "agent1", "agent2", "user_click", "user_back"
@@ -69,6 +70,34 @@ type Delta struct {
 	Result    ResultMeta             `json:"result"`
 	Template  map[string]interface{} `json:"template,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
+}
+
+// DeltaInfo contains metadata for creating a delta via zone-write.
+// Use ToDelta() to convert to a full Delta.
+type DeltaInfo struct {
+	TurnID    string      `json:"turn_id"`
+	Trigger   TriggerType `json:"trigger"`
+	Source    DeltaSource `json:"source"`
+	ActorID   string      `json:"actor_id"`
+	DeltaType DeltaType   `json:"delta_type"`
+	Path      string      `json:"path"`
+	Action    Action      `json:"action"`
+	Result    ResultMeta  `json:"result"`
+}
+
+// ToDelta converts DeltaInfo to a Delta with CreatedAt set to now.
+func (di DeltaInfo) ToDelta() *Delta {
+	return &Delta{
+		TurnID:    di.TurnID,
+		Trigger:   di.Trigger,
+		Source:    di.Source,
+		ActorID:   di.ActorID,
+		DeltaType: di.DeltaType,
+		Path:      di.Path,
+		Action:    di.Action,
+		Result:    di.Result,
+		CreatedAt: time.Now(),
+	}
 }
 
 // StateMeta contains metadata for Agent 2

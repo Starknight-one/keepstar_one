@@ -17,6 +17,7 @@ import (
 type Agent2ExecuteRequest struct {
 	SessionID  string
 	LayoutHint string // Optional hint for layout
+	TurnID     string // Turn ID for delta grouping
 }
 
 // Agent2ExecuteResponse is the output from Agent 2
@@ -75,7 +76,22 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 
 	// Check if we have data
 	if state.Current.Meta.ProductCount == 0 && state.Current.Meta.ServiceCount == 0 {
-		// No data, return empty
+		// Create delta for empty path
+		if req.TurnID != "" {
+			emptyInfo := domain.DeltaInfo{
+				TurnID:    req.TurnID,
+				Trigger:   domain.TriggerUserQuery,
+				Source:    domain.SourceLLM,
+				ActorID:   "agent2",
+				DeltaType: domain.DeltaTypeUpdate,
+				Path:      "template",
+				Action:    domain.Action{Type: domain.ActionLayout},
+				Result:    domain.ResultMeta{Count: 0},
+			}
+			emptyDelta := emptyInfo.ToDelta()
+			uc.statePort.AddDelta(ctx, req.SessionID, emptyDelta)
+		}
+
 		return &Agent2ExecuteResponse{
 			Template:  nil,
 			LatencyMs: int(time.Since(start).Milliseconds()),
@@ -145,6 +161,26 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		// Tool writes formation to state
 		if result.IsError {
 			return nil, fmt.Errorf("tool error: %s", result.Content)
+		}
+
+		// Create delta for template zone after tool execution
+		if req.TurnID != "" {
+			templateInfo := domain.DeltaInfo{
+				TurnID:    req.TurnID,
+				Trigger:   domain.TriggerUserQuery,
+				Source:    domain.SourceLLM,
+				ActorID:   "agent2",
+				DeltaType: domain.DeltaTypeUpdate,
+				Path:      "template",
+				Action: domain.Action{
+					Type: domain.ActionLayout,
+					Tool: toolCall.Name,
+				},
+			}
+			templateDelta := templateInfo.ToDelta()
+			if _, err := uc.statePort.AddDelta(ctx, req.SessionID, templateDelta); err != nil {
+				uc.log.Error("agent2_add_delta_failed", "error", err)
+			}
 		}
 	}
 

@@ -169,15 +169,15 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 		),
 		inserted AS (
 			INSERT INTO chat_session_deltas
-				(session_id, step, trigger, source, actor_id, delta_type, path, action, result, template)
-			SELECT $1, next_step.step, $2, $3, $4, $5, $6, $7, $8, $9
+				(session_id, step, trigger, source, actor_id, delta_type, path, action, result, template, turn_id)
+			SELECT $1, next_step.step, $2, $3, $4, $5, $6, $7, $8, $9, $10
 			FROM next_step
 			RETURNING step
 		)
 		SELECT step FROM inserted
 	`, sessionID, delta.Trigger,
 		source, delta.ActorID, deltaType, delta.Path,
-		actionJSON, resultJSON, templateJSON).Scan(&assignedStep)
+		actionJSON, resultJSON, templateJSON, delta.TurnID).Scan(&assignedStep)
 	if err != nil {
 		return 0, fmt.Errorf("add delta: %w", err)
 	}
@@ -194,6 +194,71 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 	return assignedStep, nil
 }
 
+// UpdateData updates the data zone (products/services + meta) and creates a delta
+func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data domain.StateData, meta domain.StateMeta, info domain.DeltaInfo) (int, error) {
+	dataJSON, _ := json.Marshal(data)
+	metaJSON, _ := json.Marshal(meta)
+	delta := info.ToDelta()
+	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
+		UPDATE chat_session_state
+		SET current_data = $1, current_meta = $2, updated_at = NOW()
+		WHERE session_id = $3
+	`, dataJSON, metaJSON, sessionID)
+}
+
+// UpdateTemplate updates the template zone and creates a delta
+func (a *StateAdapter) UpdateTemplate(ctx context.Context, sessionID string, template map[string]interface{}, info domain.DeltaInfo) (int, error) {
+	templateJSON, _ := json.Marshal(template)
+	delta := info.ToDelta()
+	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
+		UPDATE chat_session_state
+		SET current_template = $1, updated_at = NOW()
+		WHERE session_id = $2
+	`, templateJSON, sessionID)
+}
+
+// UpdateView updates the view zone (mode, focused, stack) and creates a delta
+func (a *StateAdapter) UpdateView(ctx context.Context, sessionID string, view domain.ViewState, stack []domain.ViewSnapshot, info domain.DeltaInfo) (int, error) {
+	viewFocusedJSON, _ := json.Marshal(view.Focused)
+	viewStackJSON, _ := json.Marshal(stack)
+	delta := info.ToDelta()
+	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
+		UPDATE chat_session_state
+		SET view_mode = $1, view_focused = $2, view_stack = $3, updated_at = NOW()
+		WHERE session_id = $4
+	`, view.Mode, viewFocusedJSON, viewStackJSON, sessionID)
+}
+
+// AppendConversation updates conversation history (no delta — append-only for LLM cache)
+func (a *StateAdapter) AppendConversation(ctx context.Context, sessionID string, messages []domain.LLMMessage) error {
+	historyJSON, _ := json.Marshal(messages)
+	_, err := a.client.pool.Exec(ctx, `
+		UPDATE chat_session_state
+		SET conversation_history = $1, updated_at = NOW()
+		WHERE session_id = $2
+	`, historyJSON, sessionID)
+	if err != nil {
+		return fmt.Errorf("append conversation: %w", err)
+	}
+	return nil
+}
+
+// zoneWriteWithDelta executes a zone UPDATE + AddDelta in sequence.
+// AddDelta auto-assigns step and syncs state.step.
+func (a *StateAdapter) zoneWriteWithDelta(ctx context.Context, sessionID string, delta *domain.Delta, zoneSQL string, zoneArgs ...interface{}) (int, error) {
+	// 1. Execute zone update
+	_, err := a.client.pool.Exec(ctx, zoneSQL, zoneArgs...)
+	if err != nil {
+		return 0, fmt.Errorf("zone update: %w", err)
+	}
+	// 2. Add delta (step auto-assigned, state.step synced)
+	step, err := a.AddDelta(ctx, sessionID, delta)
+	if err != nil {
+		return 0, fmt.Errorf("add delta: %w", err)
+	}
+	return step, nil
+}
+
 // GetDeltas retrieves all deltas for a session
 func (a *StateAdapter) GetDeltas(ctx context.Context, sessionID string) ([]domain.Delta, error) {
 	return a.GetDeltasSince(ctx, sessionID, 0)
@@ -202,7 +267,7 @@ func (a *StateAdapter) GetDeltas(ctx context.Context, sessionID string) ([]domai
 // GetDeltasSince retrieves deltas from a specific step
 func (a *StateAdapter) GetDeltasSince(ctx context.Context, sessionID string, fromStep int) ([]domain.Delta, error) {
 	rows, err := a.client.pool.Query(ctx, `
-		SELECT step, trigger, source, actor_id, delta_type, path, action, result, template, created_at
+		SELECT step, trigger, source, actor_id, delta_type, path, action, result, template, turn_id, created_at
 		FROM chat_session_deltas
 		WHERE session_id = $1 AND step >= $2
 		ORDER BY step ASC
@@ -218,7 +283,7 @@ func (a *StateAdapter) GetDeltasSince(ctx context.Context, sessionID string, fro
 // GetDeltasUntil retrieves deltas up to and including a specific step (for reconstruction)
 func (a *StateAdapter) GetDeltasUntil(ctx context.Context, sessionID string, toStep int) ([]domain.Delta, error) {
 	rows, err := a.client.pool.Query(ctx, `
-		SELECT step, trigger, source, actor_id, delta_type, path, action, result, template, created_at
+		SELECT step, trigger, source, actor_id, delta_type, path, action, result, template, turn_id, created_at
 		FROM chat_session_deltas
 		WHERE session_id = $1 AND step <= $2
 		ORDER BY step ASC
@@ -238,10 +303,10 @@ func (a *StateAdapter) scanDeltas(rows pgx.Rows) ([]domain.Delta, error) {
 		var d domain.Delta
 		var actionJSON, resultJSON, templateJSON []byte
 		var trigger string
-		var source, actorID, deltaType, path *string
+		var source, actorID, deltaType, path, turnID *string
 
 		err := rows.Scan(&d.Step, &trigger, &source, &actorID, &deltaType, &path,
-			&actionJSON, &resultJSON, &templateJSON, &d.CreatedAt)
+			&actionJSON, &resultJSON, &templateJSON, &turnID, &d.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan delta: %w", err)
 		}
@@ -258,6 +323,9 @@ func (a *StateAdapter) scanDeltas(rows pgx.Rows) ([]domain.Delta, error) {
 		}
 		if path != nil {
 			d.Path = *path
+		}
+		if turnID != nil {
+			d.TurnID = *turnID
 		}
 		json.Unmarshal(actionJSON, &d.Action)
 		json.Unmarshal(resultJSON, &d.Result)

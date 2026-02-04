@@ -16,6 +16,7 @@ type ExpandRequest struct {
 	SessionID  string
 	EntityType domain.EntityType
 	EntityID   string
+	TurnID     string // Turn ID for delta grouping
 }
 
 // ExpandResponse is the response from expand operation
@@ -94,40 +95,48 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 		return nil, fmt.Errorf("push view: %w", err)
 	}
 
-	// 5. Create and save delta (step auto-assigned by AddDelta)
-	delta := &domain.Delta{
+	// 5. Build detail formation
+	formation := uc.buildDetailFormation(preset, entity, req.EntityType)
+
+	// 6. Zone-write: UpdateView (view zone)
+	stack, _ := uc.statePort.GetViewStack(ctx, req.SessionID)
+	newView := domain.ViewState{
+		Mode:    domain.ViewModeDetail,
+		Focused: &domain.EntityRef{Type: req.EntityType, ID: req.EntityID},
+	}
+	viewInfo := domain.DeltaInfo{
+		TurnID:    req.TurnID,
 		Trigger:   domain.TriggerWidgetAction,
 		Source:    domain.SourceUser,
 		ActorID:   "user_expand",
 		DeltaType: domain.DeltaTypePush,
-		Path:      "viewStack",
-		CreatedAt: time.Now(),
+		Path:      "view",
 	}
-	if _, err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
-		return nil, fmt.Errorf("add delta: %w", err)
+	if _, err := uc.statePort.UpdateView(ctx, req.SessionID, newView, stack, viewInfo); err != nil {
+		return nil, fmt.Errorf("update view: %w", err)
 	}
 
-	// 6. Build detail formation
-	formation := uc.buildDetailFormation(preset, entity, req.EntityType)
-
-	// 7. Update state
-	state.Current.Template = map[string]interface{}{
+	// 7. Zone-write: UpdateTemplate (template zone)
+	template := map[string]interface{}{
 		"formation": formation,
 	}
-	state.View.Mode = domain.ViewModeDetail
-	state.View.Focused = &domain.EntityRef{Type: req.EntityType, ID: req.EntityID}
-	if err := uc.statePort.UpdateState(ctx, state); err != nil {
-		return nil, fmt.Errorf("update state: %w", err)
+	templateInfo := domain.DeltaInfo{
+		TurnID:    req.TurnID,
+		Trigger:   domain.TriggerWidgetAction,
+		Source:    domain.SourceUser,
+		ActorID:   "user_expand",
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
 	}
-
-	// 8. Get stack size
-	stack, _ := uc.statePort.GetViewStack(ctx, req.SessionID)
+	if _, err := uc.statePort.UpdateTemplate(ctx, req.SessionID, template, templateInfo); err != nil {
+		return nil, fmt.Errorf("update template: %w", err)
+	}
 
 	return &ExpandResponse{
 		Success:   true,
 		Formation: formation,
-		ViewMode:  state.View.Mode,
-		Focused:   state.View.Focused,
+		ViewMode:  newView.Mode,
+		Focused:   newView.Focused,
 		StackSize: len(stack),
 	}, nil
 }

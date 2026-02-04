@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"keepstar/internal/domain"
 	"keepstar/internal/logger"
 	"keepstar/internal/ports"
@@ -17,6 +18,7 @@ type PipelineExecuteRequest struct {
 	SessionID  string
 	Query      string
 	TenantSlug string // Tenant context (default: "nike")
+	TurnID     string // Turn ID for delta grouping
 }
 
 // PipelineExecuteResponse is the output from the full pipeline
@@ -93,11 +95,18 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		}
 	}
 
+	// Generate TurnID for delta grouping
+	turnID := req.TurnID
+	if turnID == "" {
+		turnID = uuid.New().String()
+	}
+
 	// Step 1: Agent 1 (Tool Caller)
 	agent1Resp, err := uc.agent1UC.Execute(ctx, Agent1ExecuteRequest{
 		SessionID:  req.SessionID,
 		Query:      req.Query,
 		TenantSlug: req.TenantSlug,
+		TurnID:     turnID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent 1: %w", err)
@@ -106,6 +115,7 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	// Step 2: Agent 2 (Template Builder) - triggered after Agent 1
 	agent2Resp, err := uc.agent2UC.Execute(ctx, Agent2ExecuteRequest{
 		SessionID: req.SessionID,
+		TurnID:    turnID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent 2: %w", err)

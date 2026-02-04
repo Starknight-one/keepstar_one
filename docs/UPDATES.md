@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-02-04 20:00
+
+### Zone-based State Management (ADW-z8v4q1w)
+- `DeltaInfo` struct + `Delta.TurnID` — дельты группируются по Turn'ам
+- 4 zone-write метода в StatePort: `UpdateData`, `UpdateTemplate`, `UpdateView`, `AppendConversation`
+- Postgres adapter: zone-write реализация (UPDATE зоны + INSERT delta), `zoneWriteWithDelta` helper
+- `turn_id` колонка в `chat_session_deltas` (миграция + AddDelta + scanDeltas)
+- Pipeline генерирует TurnID, передаёт в Agent1/Agent2
+- Agent1: дельта через `DeltaInfo.ToDelta()`, conversation через `AppendConversation` (не UpdateState)
+- Agent2: создаёт дельту на render path и empty path через `AddDelta`
+- Expand/Back: zone-write (`UpdateView` + `UpdateTemplate`) вместо `AddDelta` + `UpdateState`
+- Navigation handler: генерирует TurnID для Expand/Back
+- Fix: search_products при total==0 очищает stale data, сохраняет Aliases
+- `UpdateState` остаётся только в: rollback (легитимный blob), tools (промежуточно), debug seed
+- Тесты: 3 unit (domain), 6 usecase (mock), 6 integration (Postgres) — все PASS
+
+**E2E тесты с LLM не проводились** — полный pipeline flow (Agent1 → tool → Agent2 → render) не тестировался. Возможны баги на стыке LLM ↔ zone-write. Требуется smoke test через `/api/v1/pipeline` + проверка дельт в `/debug/session/{id}`.
+
+**TODO**: полное покрытие тестами кодовой базы — нужна стратегия тестирования (моки для LLMPort, contract tests для API, regression suite).
+
+---
+
 ## 2026-02-04 17:30
 
 ### Activate Prompt Caching — Phase 2 (ADW-r4w8n3k)

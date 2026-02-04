@@ -3,7 +3,6 @@ package usecases
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
@@ -14,6 +13,7 @@ import (
 // BackRequest is the request for going back to previous view
 type BackRequest struct {
 	SessionID string
+	TurnID    string // Turn ID for delta grouping
 }
 
 // BackResponse is the response from back operation
@@ -57,40 +57,48 @@ func (uc *BackUseCase) Execute(ctx context.Context, req BackRequest) (*BackRespo
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
-	// 3. Create and save delta (step auto-assigned by AddDelta)
-	delta := &domain.Delta{
+	// 3. Rebuild formation from state data using grid preset
+	formation := uc.rebuildFormationFromState(state)
+
+	// 4. Zone-write: UpdateView (view zone — restore previous)
+	stack, _ := uc.statePort.GetViewStack(ctx, req.SessionID)
+	restoredView := domain.ViewState{
+		Mode:    snapshot.Mode,
+		Focused: snapshot.Focused,
+	}
+	viewInfo := domain.DeltaInfo{
+		TurnID:    req.TurnID,
 		Trigger:   domain.TriggerWidgetAction,
 		Source:    domain.SourceUser,
 		ActorID:   "user_back",
 		DeltaType: domain.DeltaTypePop,
-		Path:      "viewStack",
-		CreatedAt: time.Now(),
+		Path:      "view",
 	}
-	if _, err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
-		return nil, fmt.Errorf("add delta: %w", err)
+	if _, err := uc.statePort.UpdateView(ctx, req.SessionID, restoredView, stack, viewInfo); err != nil {
+		return nil, fmt.Errorf("update view: %w", err)
 	}
 
-	// 4. Rebuild formation from state data using grid preset
-	formation := uc.rebuildFormationFromState(state)
-
-	// 5. Update state to restore previous view
-	state.Current.Template = map[string]interface{}{
+	// 5. Zone-write: UpdateTemplate (template zone)
+	template := map[string]interface{}{
 		"formation": formation,
 	}
-	state.View.Mode = snapshot.Mode
-	state.View.Focused = snapshot.Focused
-	if err := uc.statePort.UpdateState(ctx, state); err != nil {
-		return nil, fmt.Errorf("update state: %w", err)
+	templateInfo := domain.DeltaInfo{
+		TurnID:    req.TurnID,
+		Trigger:   domain.TriggerWidgetAction,
+		Source:    domain.SourceUser,
+		ActorID:   "user_back",
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
 	}
-
-	// 6. Get remaining stack size
-	stack, _ := uc.statePort.GetViewStack(ctx, req.SessionID)
+	if _, err := uc.statePort.UpdateTemplate(ctx, req.SessionID, template, templateInfo); err != nil {
+		return nil, fmt.Errorf("update template: %w", err)
+	}
 
 	return &BackResponse{
 		Success:   true,
 		Formation: formation,
-		ViewMode:  state.View.Mode,
-		Focused:   state.View.Focused,
+		ViewMode:  restoredView.Mode,
+		Focused:   restoredView.Focused,
 		StackSize: len(stack),
 		CanGoBack: len(stack) > 0,
 	}, nil

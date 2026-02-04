@@ -129,6 +129,16 @@ func (t *SearchProductsTool) Execute(ctx context.Context, sessionID string, inpu
 	}
 
 	if total == 0 {
+		// Clear stale data from previous search
+		state.Current.Data = domain.StateData{}
+		state.Current.Meta = domain.StateMeta{
+			Count:   0,
+			Fields:  []string{},
+			Aliases: state.Current.Meta.Aliases, // preserve tenant_slug
+		}
+		if err := t.statePort.UpdateState(ctx, state); err != nil {
+			return nil, fmt.Errorf("update state: %w", err)
+		}
 		return &domain.ToolResult{Content: "empty"}, nil
 	}
 

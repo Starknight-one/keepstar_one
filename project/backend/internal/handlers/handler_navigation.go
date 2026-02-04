@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/google/uuid"
 	"keepstar/internal/domain"
 	"keepstar/internal/usecases"
 )
@@ -70,10 +71,12 @@ func (h *NavigationHandler) HandleExpand(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	turnID := uuid.New().String()
 	result, err := h.expandUC.Execute(r.Context(), usecases.ExpandRequest{
 		SessionID:  req.SessionID,
 		EntityType: domain.EntityType(req.EntityType),
 		EntityID:   req.EntityID,
+		TurnID:     turnID,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -117,8 +120,10 @@ func (h *NavigationHandler) HandleBack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	backTurnID := uuid.New().String()
 	result, err := h.backUC.Execute(r.Context(), usecases.BackRequest{
 		SessionID: req.SessionID,
+		TurnID:    backTurnID,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
