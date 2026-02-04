@@ -27,9 +27,9 @@ tools:
     purpose: "Padding tools to reach 4096 token cache threshold"
     var: "CachePaddingEnabled bool (default true)"
     function: "GetCachePaddingTools() []ToolDefinition"
-    tools_count: 10
+    tools_count: 20
     prefix: "_internal_ — LLM should never call these"
-    estimated_tokens: "~4000 tokens"
+    estimated_tokens: "~5500 tokens (safely above 4096 min for Haiku 4.5)"
     note: "TODO: remove when real tools exceed 4096 threshold"
 
   search_products:
@@ -146,7 +146,7 @@ logger:
     - "Agent1Completed(sessionID, toolCalled, productsFound, totalTokens, costUSD, durationMs)"
 
 gotchas:
-  - "If brand specified, don't use query as search (AND conflict)"
+  - "If brand specified, don't use query as search (AND conflict). Multi-word queries split into words with OR"
   - "Tool writes to state, returns only status string"
   - "Must resolve tenant slug → UUID before search"
   - "Agent2 never sees raw data, only meta"

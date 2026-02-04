@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-02-04 23:00
+
+### Bugfix: E2E Pipeline Smoke Test
+- **Search fix**: `postgres_catalog.go` — ILIKE `%Nike shoes%` не матчил "Nike Air Max 90". Поиск теперь разбивает запрос на слова с OR (`%Nike%` OR `%shoes%`)
+- **Conversation history fix**: `agent1_execute.go` — не сохранялся `tool_result` в history. Anthropic API требует `[user → assistant:tool_use → user:tool_result]`. Второе сообщение в чат вызывало 500
+- **Cache control fix**: `anthropic_client.go` `markMessageCacheControl()` — при конвертации `[]contentBlock → []contentBlockWithCache` терялись поля `id`, `name`, `input`. Добавлен `contentBlockFullCache` тип с полным набором полей
+- **Cache threshold fix**: `mock_tools.go` — 10 → 20 padding tools. Input tokens 2985 → 5512, выше минимума 4096 для Haiku 4.5. Cache hit rate: 91.6%, LLM latency 2685ms → 698ms
+
+**Известные ограничения (debug page):**
+- `/debug/session/{id}` показывает метрики только последнего turn'а (MetricsStore перезаписывает). Нет истории по шагам агентов
+- Состояние (стейт) отображается слабо — нет визуализации зон и дельт по turn'ам
+
+---
+
 ## 2026-02-04 22:00
 
 ### Documentation Sync

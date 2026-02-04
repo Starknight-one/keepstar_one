@@ -5,11 +5,25 @@ type cacheControl struct {
 	Type string `json:"type"` // "ephemeral"
 }
 
-// contentBlockWithCache is a content block that supports cache_control
+// contentBlockWithCache is a text content block that supports cache_control
 type contentBlockWithCache struct {
 	Type         string        `json:"type"`
 	Text         string        `json:"text,omitempty"`
 	CacheControl *cacheControl `json:"cache_control,omitempty"`
+}
+
+// contentBlockFullCache is a content block with all fields + cache_control.
+// Used for marking cache_control on tool_use/tool_result blocks in conversation history.
+type contentBlockFullCache struct {
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        map[string]interface{} `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"`
+	Content      string                 `json:"content,omitempty"`
+	IsError      bool                   `json:"is_error,omitempty"`
+	CacheControl *cacheControl          `json:"cache_control,omitempty"`
 }
 
 // anthropicToolWithCache is a tool definition with cache_control support

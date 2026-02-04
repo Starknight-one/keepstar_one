@@ -200,12 +200,20 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	}
 
 	// Update conversation history via AppendConversation (zone-write, no blob UpdateState)
+	// Full sequence: user → assistant:tool_use → user:tool_result (required by Anthropic API)
 	newHistory := append(state.ConversationHistory,
 		domain.LLMMessage{Role: "user", Content: req.Query},
 	)
 	if len(llmResp.ToolCalls) > 0 {
 		newHistory = append(newHistory,
 			domain.LLMMessage{Role: "assistant", ToolCalls: llmResp.ToolCalls},
+			domain.LLMMessage{
+				Role: "user",
+				ToolResult: &domain.ToolResult{
+					ToolUseID: llmResp.ToolCalls[0].ID,
+					Content:   toolResult,
+				},
+			},
 		)
 	}
 	if err := uc.statePort.AppendConversation(ctx, req.SessionID, newHistory); err != nil {

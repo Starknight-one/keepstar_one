@@ -12,7 +12,7 @@ adapters:
     directory: "anthropic/"
     files:
       - "anthropic_client.go - LLMPort implementation: Chat, ChatWithTools, ChatWithToolsCached, ChatWithUsage"
-      - "cache_types.go - Prompt caching types: cacheControl, contentBlockWithCache, anthropicToolWithCache, anthropicCachedRequest, anthropicCachedResponse"
+      - "cache_types.go - Prompt caching types: cacheControl, contentBlockWithCache, contentBlockFullCache, anthropicToolWithCache, anthropicCachedRequest, anthropicCachedResponse"
     implements: "LLMPort"
     status: "implemented"
     api: "POST https://api.anthropic.com/v1/messages"
@@ -26,7 +26,7 @@ adapters:
       method: "ChatWithToolsCached"
       cache_points: ["last tool (cache_control)", "system prompt block (cache_control)", "second-to-last message (cache_control)"]
       types_file: "cache_types.go"
-      helpers: ["markMessageCacheControl(msg)", "convertToAnthropicMessage(msg)"]
+      helpers: ["markMessageCacheControl(msg) — uses contentBlockFullCache to preserve all fields (id, name, input)", "convertToAnthropicMessage(msg)"]
 
   postgres:
     directory: "postgres/"
@@ -71,12 +71,12 @@ gotchas:
     - "FK: chat_session_deltas.session_id → chat_sessions.id"
     - "FK: catalog.products.tenant_id → catalog.tenants.id"
     - "ProductFilter conditions are AND-combined"
-    - "Search uses ILIKE with % wildcards"
+    - "Search splits multi-word queries into words with OR matching (each word ILIKE in name/brand)"
   anthropic:
     - "API version: 2023-06-01"
     - "Response includes usage.input_tokens, usage.output_tokens"
     - "Prompt caching is GA (Dec 2024) — no beta header needed, just cache_control in request"
-    - "Prompt caching needs minimum 4096 tokens for Haiku (padding tools provide ~4000 tokens)"
+    - "Prompt caching needs minimum 4096 tokens for Haiku (20 padding tools provide ~5500 tokens)"
     - "ConversationHistory persisted in postgres via conversation_history JSONB column"
     - "Go encoding/json.Marshal sorts map keys deterministically — cache-stable tool definitions"
 

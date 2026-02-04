@@ -53,7 +53,7 @@ usecases:
         - "Call LLM with ChatWithToolsCached (cache tools, system, conversation)"
         - "Execute tool call via Registry"
         - "Create and save delta (step auto-assigned)"
-        - "AppendConversation zone-write (user+assistant messages)"
+        - "AppendConversation zone-write (user+assistant:tool_use+user:tool_result messages)"
 
     agent2_execute:
       file: "agent2_execute.go"

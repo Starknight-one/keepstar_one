@@ -183,9 +183,21 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	}
 
 	if filter.Search != "" {
-		conditions = append(conditions, fmt.Sprintf("(p.name ILIKE $%d OR mp.name ILIKE $%d OR mp.brand ILIKE $%d)", argNum, argNum, argNum))
-		args = append(args, "%"+filter.Search+"%")
-		argNum++
+		// Split search into words and match ANY word in any field (OR between words)
+		words := strings.Fields(filter.Search)
+		if len(words) == 1 {
+			conditions = append(conditions, fmt.Sprintf("(p.name ILIKE $%d OR mp.name ILIKE $%d OR mp.brand ILIKE $%d)", argNum, argNum, argNum))
+			args = append(args, "%"+words[0]+"%")
+			argNum++
+		} else if len(words) > 1 {
+			var wordConds []string
+			for _, word := range words {
+				wordConds = append(wordConds, fmt.Sprintf("(p.name ILIKE $%d OR mp.name ILIKE $%d OR mp.brand ILIKE $%d)", argNum, argNum, argNum))
+				args = append(args, "%"+word+"%")
+				argNum++
+			}
+			conditions = append(conditions, "("+strings.Join(wordConds, " OR ")+")")
+		}
 	}
 
 	if len(conditions) > 0 {

@@ -445,6 +445,7 @@ func (c *Client) ChatWithToolsCached(
 
 // markMessageCacheControl adds cache_control to a message
 // For text content, wraps in content block array with cache_control
+// For tool_use/tool_result blocks, preserves all fields while adding cache_control
 func markMessageCacheControl(msg *anthropicToolMsg) {
 	switch content := msg.Content.(type) {
 	case string:
@@ -457,13 +458,19 @@ func markMessageCacheControl(msg *anthropicToolMsg) {
 			},
 		}
 	case []contentBlock:
-		// Already an array, add cache_control to the last block
+		// Already an array — use contentBlockFullCache to preserve all fields (id, name, input, etc.)
 		if len(content) > 0 {
-			blocks := make([]contentBlockWithCache, 0, len(content))
+			blocks := make([]contentBlockFullCache, 0, len(content))
 			for i, b := range content {
-				cached := contentBlockWithCache{
-					Type: b.Type,
-					Text: b.Text,
+				cached := contentBlockFullCache{
+					Type:      b.Type,
+					Text:      b.Text,
+					ID:        b.ID,
+					Name:      b.Name,
+					Input:     b.Input,
+					ToolUseID: b.ToolUseID,
+					Content:   b.Content,
+					IsError:   b.IsError,
 				}
 				if i == len(content)-1 {
 					cached.CacheControl = &cacheControl{Type: "ephemeral"}
