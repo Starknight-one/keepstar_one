@@ -10,8 +10,8 @@
 - `formation_entity.go` — Formation (layout виджетов)
 
 ### Chat
-- `message_entity.go` — Message (сообщение в чате)
-- `session_entity.go` — Session (сессия пользователя), SessionTTL (5 min sliding expiration)
+- `message_entity.go` — Message (сообщение в чате, поля: SentAt, ReceivedAt, Timestamp)
+- `session_entity.go` — Session (сессия пользователя, поля: CreatedAt, UpdatedAt), SessionTTL (5 min sliding expiration)
 - `user_entity.go` — ChatUser (пользователь чата)
 - `event_entity.go` — ChatEvent (события аналитики)
 
@@ -24,7 +24,7 @@
 - `master_product_entity.go` — MasterProduct (канонический товар)
 
 ### Pipeline
-- `state_entity.go` — SessionState, Delta, StateData, ViewState, ViewSnapshot (state для pipeline). SessionState содержит ConversationHistory для prompt caching
+- `state_entity.go` — SessionState, Delta, DeltaInfo, StateData, ViewState, ViewSnapshot (state для pipeline). Delta.TurnID для группировки дельт по Turn'ам. DeltaInfo — лёгкая структура для zone-write, конвертируется в Delta через ToDelta(). SessionState содержит ConversationHistory для prompt caching
 - `tool_entity.go` — ToolDefinition, ToolCall, LLMMessage, LLMResponse, LLMUsage (с cache полями: CacheCreationInputTokens, CacheReadInputTokens). CalculateCost() учитывает cache pricing
 - `template_entity.go` — FormationTemplate, FormationWithData
 - `preset_entity.go` — Preset, FieldConfig, SlotConfig (пресеты рендеринга)

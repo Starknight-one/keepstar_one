@@ -42,12 +42,14 @@ adapters:
       - "catalog_migrations.go - Catalog schema"
       - "state_migrations.go - State tables"
       - "catalog_seed.go - Seed data"
+      - "catalog_search_test.go - CatalogPort search tests"
+      - "postgres_state_test.go - StatePort integration tests"
     schemas:
       public: ["chat_users", "chat_sessions", "chat_messages", "chat_events", "chat_session_state", "chat_session_deltas"]
       catalog: ["tenants", "categories", "master_products", "products"]
     state_columns:
       chat_session_state: ["id", "session_id", "current_data", "current_meta", "current_template", "view_mode", "view_focused", "view_stack", "conversation_history", "step", "created_at", "updated_at"]
-      chat_session_deltas: ["id", "session_id", "step", "trigger", "source", "actor_id", "delta_type", "path", "action", "result", "template", "created_at"]
+      chat_session_deltas: ["id", "session_id", "step", "trigger", "source", "actor_id", "delta_type", "path", "action", "result", "template", "turn_id", "created_at"]
     add_delta_auto_increment: "Step assigned via COALESCE(MAX(step),0)+1 — no manual step management needed"
     env: "DATABASE_URL=postgresql://user:pass@host/db?sslmode=require"
 

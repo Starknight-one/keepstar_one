@@ -28,7 +28,7 @@ entities:
   widget:
     path: "src/entities/widget/"
     files:
-      - "widgetModel.js - WidgetType, WidgetTemplate enums"
+      - "widgetModel.js - WidgetType, WidgetTemplate, WidgetSize enums + FormationType"
       - "WidgetRenderer.jsx - Template-based or legacy rendering"
       - "Widget.css - Styles"
       - "templates/index.js - Template exports"
@@ -40,8 +40,10 @@ entities:
       - "templates/ServiceCardTemplate.css - Service card styles"
       - "templates/ServiceDetailTemplate.jsx - Full service detail view"
       - "templates/ServiceDetailTemplate.css - Service detail styles"
-    types_legacy: ["PRODUCT_CARD", "TEXT_BLOCK", "QUICK_REPLIES"]
-    templates: ["ProductCard", "ProductDetail", "ServiceCard", "ServiceDetail"]
+    types_legacy: ["PRODUCT_CARD", "PRODUCT_LIST", "COMPARISON_TABLE", "IMAGE_CAROUSEL", "TEXT_BLOCK", "QUICK_REPLIES"]
+    template_enum: ["PRODUCT_CARD", "SERVICE_CARD"]
+    templates_rendered: ["ProductCard", "ProductDetail", "ServiceCard", "ServiceDetail"]
+    sizes: ["TINY", "SMALL", "MEDIUM", "LARGE"]
     status: "implemented"
     components:
       - "ProductCardTemplate: renders atoms by slot (hero, badge, title, primary, price, secondary)"
@@ -65,7 +67,7 @@ entities:
     path: "src/entities/formation/"
     files:
       - "formationModel.js - FormationMode enum"
-      - "FormationRenderer.jsx - Renders layout"
+      - "FormationRenderer.jsx - Renders layout, accepts onWidgetClick prop"
       - "Formation.css - Styles"
       - "index.js - Exports"
     modes: ["GRID", "CAROUSEL", "SINGLE", "LIST"]
@@ -80,16 +82,20 @@ entities:
     path: "src/entities/message/"
     files:
       - "messageModel.js - MessageRole enum"
-      - "MessageBubble.jsx - Renders message"
+      - "MessageBubble.jsx - Renders message (no CSS file)"
     roles: ["USER", "ASSISTANT"]
     status: "implemented"
+    features:
+      - "hideFormation prop to suppress widget/formation rendering"
+      - "Legacy widgets: renders when widgets exist but no formation"
+      - "New formation: renders FormationRenderer when formation exists"
 
 pattern:
-  - "Each entity: model.js + Renderer.jsx + .css"
+  - "Each entity: model.js + Renderer.jsx + .css (except message has no .css)"
   - "Renderers accept entity object as prop"
   - "Switch on type to render appropriate component"
 
 naming:
   models: "{entity}Model.js"
-  renderers: "{Entity}Renderer.jsx"
-  styles: "{Entity}.css"
+  renderers: "{Entity}Renderer.jsx or MessageBubble.jsx (message)"
+  styles: "{Entity}.css (atom, widget, formation only)"

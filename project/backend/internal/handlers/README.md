@@ -9,9 +9,9 @@ HTTP слой. Только parse/validate/respond.
 - `handler_catalog.go` — GET /api/v1/tenants/{slug}/products
 - `handler_pipeline.go` — POST /api/v1/pipeline (two-agent pipeline)
 - `handler_navigation.go` — POST /api/v1/session/{id}/expand, /back (drill-down navigation)
-- `handler_debug.go` — Debug console for pipeline metrics
-- `handler_health.go` — GET /health, GET /ready
-- `routes.go` — Настройка роутов
+- `handler_debug.go` — Debug console for pipeline metrics + POST /debug/seed
+- `handler_health.go` — HealthHandler struct, GET /health, GET /ready
+- `routes.go` — SetupRoutes(), SetupNavigationRoutes(), SetupCatalogRoutes()
 - `middleware_cors.go` — CORS middleware
 - `middleware_tenant.go` — Tenant resolution middleware
 - `response.go` — JSON response helper
@@ -28,6 +28,7 @@ POST /api/v1/session/{id}/expand         — Expand widget to detail view
 POST /api/v1/session/{id}/back           — Navigate back from detail view
 GET  /debug/session/                     — Debug console (all sessions)
 GET  /debug/session/{id}                 — Session detail (HTML/JSON)
+POST /debug/seed                         — Create session with mock products (no LLM)
 GET  /debug/api                          — Debug API (JSON)
 GET  /health                             — Health check
 GET  /ready                              — Readiness check

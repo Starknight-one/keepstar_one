@@ -59,6 +59,10 @@ interfaces:
       - "GetDeltas(ctx, sessionID) ([]Delta, error)"
       - "GetDeltasSince(ctx, sessionID, fromStep) ([]Delta, error)"
       - "GetDeltasUntil(ctx, sessionID, toStep) ([]Delta, error)"
+      - "UpdateData(ctx, sessionID, data, meta, info) (int, error) — zone write: updates data zone + creates delta atomically"
+      - "UpdateTemplate(ctx, sessionID, template, info) (int, error) — zone write: updates template zone + creates delta atomically"
+      - "UpdateView(ctx, sessionID, view, stack, info) (int, error) — zone write: updates view zone + creates delta atomically"
+      - "AppendConversation(ctx, sessionID, messages) error — append-only, no delta (LLM cache)"
       - "PushView(ctx, sessionID, snapshot) error"
       - "PopView(ctx, sessionID) (*ViewSnapshot, error)"
       - "GetViewStack(ctx, sessionID) ([]ViewSnapshot, error)"
@@ -69,5 +73,7 @@ gotchas:
   - "StatePort.GetState returns ErrSessionNotFound if no state"
   - "AddDelta auto-assigns step (MAX(step)+1), Delta.Step input is ignored"
   - "ChatWithToolsCached falls back to ChatWithTools if cacheConfig is nil"
+  - "Zone writes (UpdateData/UpdateTemplate/UpdateView) atomically update their zone column and create a delta"
+  - "AppendConversation does NOT create a delta — it is append-only for LLM cache continuity"
 
 naming: "{name}_port.go"

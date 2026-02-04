@@ -27,12 +27,12 @@ entities:
     message_entity:
       file: "message_entity.go"
       types: ["MessageRole", "Message"]
-      fields: ["ID", "SessionID", "Role", "Content", "Widgets", "Formation", "TokensUsed", "ModelUsed", "LatencyMs"]
+      fields: ["ID", "SessionID", "Role", "Content", "Widgets", "Formation", "TokensUsed", "ModelUsed", "LatencyMs", "SentAt", "ReceivedAt", "Timestamp"]
     session_entity:
       file: "session_entity.go"
       types: ["SessionStatus", "Session"]
       constants: ["SessionTTL = 5 minutes"]
-      fields: ["ID", "UserID", "TenantID", "Status", "Messages", "Metadata", "StartedAt", "EndedAt", "LastActivityAt"]
+      fields: ["ID", "UserID", "TenantID", "Status", "Messages", "Metadata", "StartedAt", "EndedAt", "LastActivityAt", "CreatedAt", "UpdatedAt"]
     user_entity:
       file: "user_entity.go"
       types: ["ChatUser"]
@@ -78,13 +78,14 @@ entities:
       types: ["AtomTemplate", "WidgetTemplate", "GridConfig", "FormationTemplate", "FormationWithData"]
     state_entity:
       file: "state_entity.go"
-      types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "StateMeta", "StateData", "StateCurrent", "SessionState", "DeltaSource", "DeltaType", "ViewMode", "EntityRef", "ViewSnapshot", "ViewState"]
+      types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "DeltaInfo", "StateMeta", "StateData", "StateCurrent", "SessionState", "DeltaSource", "DeltaType", "ViewMode", "EntityRef", "ViewSnapshot", "ViewState"]
       trigger_types: ["USER_QUERY", "WIDGET_ACTION", "SYSTEM"]
       action_types: ["SEARCH", "FILTER", "SORT", "LAYOUT", "ROLLBACK"]
       delta_sources: ["user", "llm", "system"]
       delta_types: ["add", "remove", "update", "push", "pop", "rollback"]
       view_modes: ["grid", "detail", "list", "carousel"]
-      delta_fields: ["Step", "Trigger", "Source", "ActorID", "DeltaType", "Path", "Action", "Result", "Template", "CreatedAt"]
+      delta_fields: ["Step", "TurnID", "Trigger", "Source", "ActorID", "DeltaType", "Path", "Action", "Result", "Template", "CreatedAt"]
+      delta_info: "Lightweight metadata for creating deltas via zone-write; ToDelta() converts to full Delta with CreatedAt"
       state_data_fields: ["Products", "Services"]
       state_meta_fields: ["Count", "ProductCount", "ServiceCount", "Fields", "Aliases"]
       session_state_fields: ["ID", "SessionID", "Current", "View", "ViewStack", "ConversationHistory", "Step", "CreatedAt", "UpdatedAt"]

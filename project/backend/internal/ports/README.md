@@ -63,6 +63,15 @@ CreateState(ctx, sessionID) (*SessionState, error)
 GetState(ctx, sessionID) (*SessionState, error)
 UpdateState(ctx, state) error
 AddDelta(ctx, sessionID, delta) (int, error) // step auto-assigned
+
+// Zone writes — atomically update zone + create delta
+UpdateData(ctx, sessionID, data, meta, info) (int, error)
+UpdateTemplate(ctx, sessionID, template, info) (int, error)
+UpdateView(ctx, sessionID, view, stack, info) (int, error)
+
+// Append-only, no delta (for LLM cache continuity)
+AppendConversation(ctx, sessionID, messages) error
+
 GetDeltas(ctx, sessionID) ([]Delta, error)
 GetDeltasSince(ctx, sessionID, fromStep) ([]Delta, error)
 GetDeltasUntil(ctx, sessionID, toStep) ([]Delta, error)

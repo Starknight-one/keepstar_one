@@ -51,6 +51,7 @@ handlers:
       - "GET /debug/session/{id} - session detail (HTML or JSON with ?format=json)"
       - "GET /debug/api - all sessions JSON"
       - "GET /debug/api?session={id} - specific session JSON"
+      - "POST /debug/seed - create session with mock products for testing without LLM"
     types: ["MetricsStore", "PipelineMetrics", "AgentMetrics", "FormationInfo"]
     agent_metrics_cache_fields: ["CacheCreationInputTokens", "CacheReadInputTokens", "CacheHitRate"]
 
@@ -65,6 +66,7 @@ handlers:
 
   health:
     file: "handler_health.go"
+    struct: "HealthHandler"
     endpoints: ["GET /health", "GET /ready"]
 
 middleware:
@@ -82,7 +84,7 @@ helpers:
     functions: ["writeJSON(w, status, data)"]
   routes:
     file: "routes.go"
-    functions: ["SetupRoutes()", "SetupCatalogRoutes()"]
+    functions: ["SetupRoutes()", "SetupNavigationRoutes()", "SetupCatalogRoutes()"]
 
 api_summary:
   - "POST /api/v1/chat"
@@ -93,6 +95,7 @@ api_summary:
   - "POST /api/v1/navigation/expand"
   - "POST /api/v1/navigation/back"
   - "GET /debug/session/"
+  - "POST /debug/seed"
   - "GET /health"
   - "GET /ready"
 

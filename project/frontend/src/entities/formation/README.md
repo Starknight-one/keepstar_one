@@ -23,11 +23,14 @@ Layout виджетов — расположение группы виджето
 ```jsx
 import { FormationRenderer } from './FormationRenderer';
 
-<FormationRenderer formation={{
-  mode: 'grid',
-  grid: { cols: 2 },
-  widgets: [...]
-}} />
+<FormationRenderer
+  formation={{
+    mode: 'grid',
+    grid: { cols: 2 },
+    widgets: [...]
+  }}
+  onWidgetClick={(widget) => handleExpand(widget)}
+/>
 ```
 
 ## Структура formation

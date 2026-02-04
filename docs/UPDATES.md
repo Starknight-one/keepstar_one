@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-02-04 22:00
+
+### Documentation Sync
+- Expert sync: 8 expertise.yaml files updated to match codebase
+  - backend-domain: added DeltaInfo, TurnID, SentAt/ReceivedAt/Timestamp, CreatedAt/UpdatedAt fields
+  - backend-ports: added 4 zone-write methods + AppendConversation to StatePort
+  - backend-adapters: added turn_id column, test files
+  - backend-usecases: TurnID in requests, zone-writes in navigation, AppendConversation, fixed SessionTTL
+  - backend-handlers: added /debug/seed, SetupNavigationRoutes(), HealthHandler struct
+  - backend-pipeline: Agent2 dual prompts, PresetRegistry methods, BuildFormation exports
+  - frontend-entities: WidgetSize, full legacy types, FormationType duplicate note
+  - frontend-features: navState + BackButton in App.jsx
+- README sync: 10 backend/frontend READMEs updated
+  - domain: DeltaInfo, TurnID, Message timestamps, Session timestamps
+  - ports: zone-write methods (UpdateData/UpdateTemplate/UpdateView/AppendConversation)
+  - adapters/postgres: test files, turn_id column, conversation_history
+  - usecases: zone-writes in navigation, TurnID in requests, imports fix, SessionTTL 5min
+  - handlers: /debug/seed, SetupNavigationRoutes(), HealthHandler
+  - prompts: Agent2 dual prompts (text + tool), mode rule update
+  - presets: GetByEntityType(), List() methods
+  - tools: BuildFormation export, getter function types
+  - frontend/widget: enums section (WidgetType, WidgetTemplate, FormationType, WidgetSize)
+  - frontend/formation: onWidgetClick prop
+  - frontend/features: App.jsx navState integration
+
+---
+
 ## 2026-02-04 20:00
 
 ### Zone-based State Management (ADW-z8v4q1w)

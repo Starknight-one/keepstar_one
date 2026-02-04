@@ -13,6 +13,8 @@
 - `catalog_migrations.go` — Миграции для catalog схемы
 - `state_migrations.go` — Миграции для state таблиц
 - `catalog_seed.go` — Seed данные (tenants, categories, products)
+- `catalog_search_test.go` — Тесты CatalogPort (search)
+- `postgres_state_test.go` — Интеграционные тесты StatePort (zone-write, deltas)
 
 ## Схемы и таблицы
 
@@ -38,8 +40,8 @@
 
 | Таблица | Назначение |
 |---------|------------|
-| chat_session_state | Текущее состояние сессии (JSONB) |
-| chat_session_deltas | История дельт для replay |
+| chat_session_state | Текущее состояние сессии (JSONB), conversation_history |
+| chat_session_deltas | История дельт для replay (включая turn_id) |
 
 ## Использование
 

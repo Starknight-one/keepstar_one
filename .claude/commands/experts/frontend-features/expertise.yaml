@@ -82,11 +82,11 @@ features:
 
 app:
   path: "src/App.jsx"
-  state: ["isChatOpen: boolean", "activeFormation: Formation|null"]
-  components: ["ChatPanel", "FormationRenderer"]
+  state: ["isChatOpen: boolean", "activeFormation: Formation|null", "navState: { canGoBack, onExpand, onBack }"]
+  components: ["ChatPanel", "FormationRenderer", "BackButton"]
   overlay_layout:
     - "Backdrop dims screen when chat open"
-    - "Widget display area: left, shows activeFormation"
+    - "Widget display area: left, shows BackButton + activeFormation"
     - "Chat area: right, ChatPanel with hideFormation=true"
 
 pattern:

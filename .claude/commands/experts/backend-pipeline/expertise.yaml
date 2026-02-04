@@ -61,6 +61,9 @@ tools:
       - "Build formation from preset + data"
       - "Write formation to state.Template"
     returns: "'ok: rendered N items with preset_name'"
+    exported:
+      - "BuildFormation(preset, count, getEntity) *FormationWithData — generic builder, used by navigation usecases"
+      - "FieldGetter, CurrencyGetter, IDGetter — function types for entity field access"
 
   interface:
     name: "ToolExecutor"
@@ -79,6 +82,8 @@ presets:
       - "NewPresetRegistry()"
       - "Register(preset)"
       - "Get(name) (Preset, bool)"
+      - "GetByEntityType(entityType) []Preset"
+      - "List() []PresetName"
 
   product_presets:
     file: "product_presets.go"
@@ -104,14 +109,18 @@ prompts:
 
   agent2:
     file: "prompt_compose_widgets.go"
-    const: "Agent2SystemPrompt"
-    function: "BuildAgent2Prompt(meta StateMeta, layoutHint string) string"
-    purpose: "System prompt for Agent 2 (Template Builder)"
+    consts:
+      - "Agent2SystemPrompt — system prompt for text-based template building"
+      - "Agent2ToolSystemPrompt — system prompt for tool-based preset rendering"
+    functions:
+      - "BuildAgent2Prompt(meta StateMeta, layoutHint string) string"
+      - "BuildAgent2ToolPrompt(meta StateMeta, layoutHint string) string"
+    purpose: "System prompts for Agent 2 (Template Builder / Preset Renderer)"
     rules:
       - "ONLY output valid JSON, no explanations"
       - "Use fields that exist in input"
       - "Choose widget size based on atom count"
-      - "Choose mode based on count (1→single, 2-6→grid, 7+→carousel)"
+      - "Choose mode based on count (1→single, 2-6→grid, 7+→grid preferred, carousel only if asked)"
 
 pipeline_flow:
   description: "User Query → Agent 1 → Agent 2 → Formation"

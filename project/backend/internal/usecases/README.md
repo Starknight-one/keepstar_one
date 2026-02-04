@@ -25,7 +25,7 @@
 
 Основной use case для чата:
 - Получает/создаёт сессию
-- Проверяет TTL (10 мин sliding window)
+- Проверяет TTL (5 мин sliding window, domain.SessionTTL)
 - Отправляет сообщение в LLM
 - Сохраняет сообщения в БД
 - Трекает события (chat_opened, message_sent, message_received)
@@ -77,8 +77,8 @@ Agent 1 (Tool Caller) для two-agent pipeline:
 - Строит messages из ConversationHistory + новый запрос
 - Вызывает LLM с ChatWithToolsCached (cache tools, system, conversation)
 - Выполняет tool call через Registry
-- Создаёт и сохраняет delta (step auto-assigned)
-- Обновляет ConversationHistory в state
+- Создаёт и сохраняет delta через DeltaInfo.ToDelta()
+- AppendConversation zone-write (user+assistant messages)
 
 ```go
 type Agent1ExecuteUseCase struct {
@@ -114,9 +114,11 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx, req) (*Agent2ExecuteResponse, error
 ## PipelineExecuteUseCase
 
 Оркестратор полного pipeline:
+- Ensure session exists (CachePort) для FK constraint
+- Генерирует TurnID для группировки дельт
 - Step 1: Agent 1 (Tool Caller) — query → tool call → state
-- Step 2: Agent 2 (Template Builder) — meta → template → state
-- Step 3: ApplyTemplate — template + data → FormationWithData
+- Step 2: Agent 2 (Template Builder via render tool) — meta → template → state
+- Step 3: Get formation from state (built by render tool, fallback to ApplyTemplate)
 
 ```go
 type PipelineExecuteUseCase struct {
@@ -176,9 +178,12 @@ func (uc *RollbackUseCase) Execute(ctx, req) (*RollbackResponse, error)
 ## ExpandUseCase
 
 Drill-down: расширение виджета до детального просмотра:
-- Сохраняет текущий view в ViewStack
-- Устанавливает view в detail mode
-- Рендерит detail preset для entity
+- Находит entity и получает detail preset
+- Push текущего view в ViewStack через zone-write (UpdateView)
+- Рендерит detail formation через BuildFormation
+- Записывает template через zone-write (UpdateTemplate)
+- Request: `{ SessionID, EntityType, EntityID, TurnID }`
+- Response: `{ Success, Formation, ViewMode, Focused, StackSize }`
 
 ```go
 type ExpandUseCase struct {
@@ -193,8 +198,10 @@ func (uc *ExpandUseCase) Execute(ctx, req) (*ExpandResponse, error)
 
 Навигация назад из детального просмотра:
 - Pop view из ViewStack
-- Восстанавливает предыдущее состояние view
-- Перерендеривает предыдущую formation
+- Восстанавливает предыдущее состояние view через zone-write (UpdateView)
+- Перерендеривает formation из restored state через zone-write (UpdateTemplate)
+- Request: `{ SessionID, TurnID }`
+- Response: `{ Success, Formation, ViewMode, Focused, StackSize }`
 
 ```go
 type BackUseCase struct {
@@ -207,7 +214,7 @@ func (uc *BackUseCase) Execute(ctx, req) (*BackResponse, error)
 
 ## Правила
 
-- Импорты только из `domain/` и `ports/`
+- Импорты из `domain/`, `ports/`, `prompts/`, `tools/`, `presets/`, `logger/`
 - Нельзя импортировать `adapters/` напрямую (только через порты)
 - Каждый use case — структура с методом Execute()
 - Graceful degradation если БД не настроена

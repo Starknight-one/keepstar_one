@@ -4,7 +4,7 @@
 overview:
   layer: "usecases"
   path: "project/backend/internal/usecases/"
-  imports: "domain/, ports/"
+  imports: "domain/, ports/, prompts/, tools/, presets/, logger/"
   contains: "Business logic orchestration"
 
 pattern:
@@ -23,7 +23,7 @@ usecases:
         - "Execute(ctx, req) (*SendMessageResponse, error)"
         - "WithSessionTTL(duration) *SendMessageUseCase"
       features:
-        - "Session management with sliding TTL (10 min)"
+        - "Session management with sliding TTL (5 min via domain.SessionTTL)"
         - "Message persistence to PostgreSQL"
         - "Event tracking (chat_opened, message_sent, message_received)"
 
@@ -45,7 +45,7 @@ usecases:
       file: "agent1_execute.go"
       struct: "Agent1ExecuteUseCase"
       purpose: "Agent 1 Tool Caller - query → tool call → state"
-      request: "{ SessionID, Query, TenantSlug }"
+      request: "{ SessionID, Query, TenantSlug, TurnID }"
       response: "{ Delta, Usage, LatencyMs, LLMCallMs, ToolExecuteMs, ToolName, ToolInput, ToolResult, ProductsFound, StopReason }"
       flow:
         - "Get or create session state"
@@ -53,14 +53,13 @@ usecases:
         - "Call LLM with ChatWithToolsCached (cache tools, system, conversation)"
         - "Execute tool call via Registry"
         - "Create and save delta (step auto-assigned)"
-        - "Append user+assistant messages to ConversationHistory"
-        - "UpdateState to persist conversation history"
+        - "AppendConversation zone-write (user+assistant messages)"
 
     agent2_execute:
       file: "agent2_execute.go"
       struct: "Agent2ExecuteUseCase"
       purpose: "Agent 2 Preset Selector - meta → LLM tool call → render tool → formation"
-      request: "{ SessionID, LayoutHint }"
+      request: "{ SessionID, LayoutHint, TurnID }"
       response: "{ Template, Formation, Usage, LatencyMs, ToolCalled, ToolName, LLMCallMs, PromptSent, RawResponse, MetaCount, MetaFields }"
       flow:
         - "Get current state (must exist after Agent 1)"
@@ -75,12 +74,14 @@ usecases:
       file: "pipeline_execute.go"
       struct: "PipelineExecuteUseCase"
       purpose: "Orchestrator: Agent 1 → Agent 2 → Formation"
-      request: "{ SessionID, Query }"
+      request: "{ SessionID, Query, TenantSlug, TurnID }"
       response: "{ Formation, Delta, Agent1Ms, Agent2Ms, TotalMs, ... }"
       flow:
+        - "Ensure session exists (CachePort) for FK constraint"
+        - "Generate TurnID for delta grouping"
         - "Step 1: Agent 1 (Tool Caller)"
-        - "Step 2: Agent 2 (Template Builder)"
-        - "Step 3: ApplyTemplate → FormationWithData"
+        - "Step 2: Agent 2 (Template Builder via render tool)"
+        - "Step 3: Get formation from state (built by render tool, fallback to ApplyTemplate)"
 
     template_apply:
       file: "template_apply.go"
@@ -120,25 +121,28 @@ usecases:
       file: "navigation_expand.go"
       struct: "ExpandUseCase"
       purpose: "Expand widget to detail view (drill-down)"
-      request: "{ SessionID, EntityType, EntityID }"
-      response: "{ State, Formation, Expanded }"
+      request: "{ SessionID, EntityType, EntityID, TurnID }"
+      response: "{ Success, Formation, ViewMode, Focused, StackSize }"
       flow:
         - "Get current state"
-        - "Push current view to ViewStack"
-        - "Set view to detail mode"
-        - "Render detail preset for entity"
+        - "Find entity and get detail preset"
+        - "Push current view to ViewStack (PushView)"
+        - "Build detail formation from preset"
+        - "Zone-write UpdateView (view zone — detail mode)"
+        - "Zone-write UpdateTemplate (template zone — formation)"
 
     navigation_back:
       file: "navigation_back.go"
       struct: "BackUseCase"
       purpose: "Navigate back from detail to previous view"
-      request: "{ SessionID }"
-      response: "{ State, Formation, PoppedFrom }"
+      request: "{ SessionID, TurnID }"
+      response: "{ Success, Formation, ViewMode, Focused, StackSize, CanGoBack }"
       flow:
+        - "Pop view from ViewStack (PopView)"
         - "Get current state"
-        - "Pop view from ViewStack"
-        - "Restore previous view state"
-        - "Re-render previous formation"
+        - "Rebuild formation from state data (rebuildFormationFromState)"
+        - "Zone-write UpdateView (view zone — restore previous)"
+        - "Zone-write UpdateTemplate (template zone — rebuilt formation)"
 
 gotchas:
   - "Create session (CachePort) before creating state (StatePort)"
@@ -147,8 +151,10 @@ gotchas:
   - "Agent2 receives meta only, never raw product data"
   - "Agent2 expects state to exist (run Agent1 first)"
   - "LLM may wrap JSON in markdown code blocks, use extractJSON()"
-  - "Agent1 updates ConversationHistory in state after each call (for cache hits)"
+  - "Agent1 uses AppendConversation zone-write (not UpdateState blob) after each call"
   - "AddDelta auto-assigns step — no manual state.Step++ needed"
   - "Agent2 filters tools to render_* only via getAgent2Tools()"
+  - "Pipeline generates TurnID (uuid) for delta grouping if not provided"
+  - "Navigation uses zone-writes (UpdateView, UpdateTemplate) not blob UpdateState"
 
 naming: "{domain}_{action}.go"

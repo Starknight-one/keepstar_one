@@ -24,6 +24,12 @@ registry := presets.NewPresetRegistry()
 // Get preset by name
 preset, ok := registry.Get(domain.PresetProductGrid)
 
+// Get all presets for entity type
+presets := registry.GetByEntityType(domain.EntityTypeProduct)
+
+// List all preset names
+names := registry.List()
+
 // Available presets
 // - product_grid: multiple products in grid
 // - product_card: single product card

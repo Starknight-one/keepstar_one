@@ -21,17 +21,23 @@ const Agent1SystemPrompt = `...`
 
 ## Agent 2 (prompt_compose_widgets.go)
 
-```go
-const Agent2SystemPrompt = `...`
+Два режима работы:
 
+```go
+// Text-based template building
+const Agent2SystemPrompt = `...`
 func BuildAgent2Prompt(meta StateMeta, layoutHint string) string
+
+// Tool-based preset rendering
+const Agent2ToolSystemPrompt = `...`
+func BuildAgent2ToolPrompt(meta StateMeta, layoutHint string) string
 ```
 
 Правила Agent 2:
 - ТОЛЬКО валидный JSON, без объяснений
 - Использует только поля из input
 - Выбирает размер виджета по количеству атомов
-- Выбирает mode по количеству items (1→single, 2-6→grid, 7+→carousel)
+- Выбирает mode по количеству items (1→single, 2-6→grid, 7+→grid preferred, carousel only if asked)
 
 ## Правила
 

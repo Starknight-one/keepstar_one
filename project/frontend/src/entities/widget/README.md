@@ -4,7 +4,7 @@
 
 ## Файлы
 
-- `widgetModel.js` — WidgetType, WidgetTemplate, WidgetSize
+- `widgetModel.js` — WidgetType, WidgetTemplate, FormationType, WidgetSize enums
 - `WidgetRenderer.jsx` — Рендерер (template-based или legacy)
 - `Widget.css` — Стили виджетов
 - `templates/index.js` — Экспорт шаблонов
@@ -16,6 +16,13 @@
 - `templates/ServiceCardTemplate.css` — Стили ServiceCard
 - `templates/ServiceDetailTemplate.jsx` — Полный детальный вид услуги
 - `templates/ServiceDetailTemplate.css` — Стили ServiceDetail
+
+## Enums (widgetModel.js)
+
+- **WidgetType** (legacy): PRODUCT_CARD, PRODUCT_LIST, COMPARISON_TABLE, IMAGE_CAROUSEL, TEXT_BLOCK, QUICK_REPLIES
+- **WidgetTemplate**: PRODUCT_CARD, SERVICE_CARD
+- **FormationType**: GRID, LIST, CAROUSEL, SINGLE
+- **WidgetSize**: TINY (80-110px, max 2 atoms), SMALL (160-220px, max 3), MEDIUM (280-350px, max 5), LARGE (384-460px, max 10)
 
 ## Шаблоны (Templates)
 

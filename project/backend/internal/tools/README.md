@@ -6,7 +6,7 @@ Tool executors for LLM tool calling.
 
 - `tool_registry.go` — Registry для всех tools
 - `tool_search_products.go` — Поиск товаров (Agent1)
-- `tool_render_preset.go` — Рендеринг с пресетами (Agent2)
+- `tool_render_preset.go` — Рендеринг с пресетами (Agent2). Exports: BuildFormation(), FieldGetter, CurrencyGetter, IDGetter
 - `mock_tools.go` — Padding tools для достижения порога кэширования (4096 tokens)
 
 ## Registry
