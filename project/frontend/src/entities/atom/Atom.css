@@ -1,68 +1,467 @@
-/* Text styles */
-.atom-text { display: inline; }
-.atom-text.style-heading { font-size: 1.1em; font-weight: 600; }
-.atom-text.style-body { font-size: 1em; }
-.atom-text.style-caption { font-size: 0.85em; color: #666; }
+/* =============================================================================
+   Atom Styles — Matched to Pencil Design System
+   ============================================================================= */
 
-/* Number styles */
-.atom-number { font-family: monospace; }
-.atom-number.format-currency::before { content: '$'; }
-.atom-number.format-percent::after { content: '%'; }
+.atom {
+  display: inline-block;
+  font-family: inherit;
+}
 
-/* Price */
-.atom-price { font-weight: 600; color: #2563eb; }
+/* =============================================================================
+   Heading Displays (from Pencil Atom/H1-H4)
+   - Font: Plus Jakarta Sans
+   - H1: 34px, 700  |  H2: 28px, 700
+   ============================================================================= */
 
-/* Image sizes */
-.atom-image { object-fit: cover; border-radius: 8px; }
-.atom-image.size-small { width: 60px; height: 60px; }
-.atom-image.size-medium { width: 120px; height: 120px; }
-.atom-image.size-large { width: 100%; max-height: 200px; }
+.atom.display-h1,
+.atom.display-h1 h1,
+.atom.display-h1 .atom-heading {
+  font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
+  font-size: var(--font-size-h1, 34px);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--color-text-primary, #18181B);
+  margin: 0;
+}
 
-/* Rating */
-.atom-rating { color: #f59e0b; letter-spacing: 2px; }
+.atom.display-h2,
+.atom.display-h2 h2,
+.atom.display-h2 .atom-heading {
+  font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
+  font-size: var(--font-size-h2, 28px);
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--color-text-primary, #18181B);
+  margin: 0;
+}
 
-/* Badge variants */
+.atom.display-h3,
+.atom.display-h3 h3,
+.atom.display-h3 .atom-heading {
+  font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
+  font-size: var(--font-size-h3, 22px);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--color-text-primary, #18181B);
+  margin: 0;
+}
+
+.atom.display-h4,
+.atom.display-h4 h4,
+.atom.display-h4 .atom-heading {
+  font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
+  font-size: var(--font-size-h4, 18px);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text-primary, #18181B);
+  margin: 0;
+}
+
+/* =============================================================================
+   Body Text Displays (from Pencil)
+   - Font: Inter
+   ============================================================================= */
+
+.atom-text {
+  display: inline;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+}
+
+.atom-text.body-lg {
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--color-text-primary, #18181B);
+}
+
+.atom-text.body {
+  font-size: var(--font-size-body, 15px);
+  line-height: 1.5;
+  color: var(--color-text-primary, #18181B);
+}
+
+.atom-text.body-sm {
+  font-size: var(--font-size-body-sm, 13px);
+  line-height: 1.5;
+  color: var(--color-text-secondary, #71717A);
+}
+
+.atom-text.caption {
+  font-size: var(--font-size-caption, 11px);
+  line-height: 1.4;
+  color: var(--color-text-tertiary, #A1A1AA);
+}
+
+/* Legacy text styles */
+.atom-text.style-heading {
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.atom-text.style-body {
+  font-size: 1em;
+}
+
+.atom-text.style-caption {
+  font-size: 0.85em;
+  color: var(--color-text-tertiary, #A1A1AA);
+}
+
+/* =============================================================================
+   Badge Displays (from Pencil Atom/Badge Sale)
+   - cornerRadius: 20, padding: 6/12, fontSize: 11, fontWeight: 700
+   - Background: --error (#EF4444) for SALE badge
+   ============================================================================= */
+
 .atom-badge {
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.75em;
-}
-.atom-badge.variant-success { background: #dcfce7; color: #166534; }
-.atom-badge.variant-warning { background: #fef3c7; color: #92400e; }
-.atom-badge.variant-danger { background: #fee2e2; color: #991b1b; }
-
-/* Button */
-.atom-button {
-  padding: 8px 16px;
-  background: #2563eb;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.atom-button:hover { background: #1d4ed8; }
-
-/* Icon */
-.atom-icon { font-size: 1.2em; }
-
-/* Divider */
-.atom-divider {
-  width: 100%;
-  height: 1px;
-  background: #e5e7eb;
-  margin: 8px 0;
+  display: inline-flex;
+  align-items: center;
+  padding: var(--badge-padding-y, 6px) var(--badge-padding-x, 12px);
+  border-radius: var(--border-radius-badge, 20px);
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: var(--font-size-badge, 11px);
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  background: var(--color-badge-bg, #EF4444);
+  color: var(--color-badge-text, #FFFFFF);
 }
 
-/* Progress */
+.atom-badge.badge,
+.atom-badge.badge-success {
+  background: var(--color-success, #22C55E);
+  color: #FFFFFF;
+}
+
+.atom-badge.badge-error {
+  background: var(--color-error, #EF4444);
+  color: #FFFFFF;
+}
+
+.atom-badge.badge-warning {
+  background: var(--color-warning, #F97316);
+  color: #FFFFFF;
+}
+
+.atom-badge.badge-new {
+  background: var(--color-primary, #8B5CF6);
+  color: #FFFFFF;
+}
+
+/* Legacy variant classes */
+.atom-badge.variant-success {
+  background: var(--color-success, #22C55E);
+  color: #FFFFFF;
+}
+
+.atom-badge.variant-warning {
+  background: var(--color-warning, #F97316);
+  color: #FFFFFF;
+}
+
+.atom-badge.variant-danger {
+  background: var(--color-error, #EF4444);
+  color: #FFFFFF;
+}
+
+/* =============================================================================
+   Tag Displays (from Pencil Atom/Tag Category)
+   - cornerRadius: 20, padding: 8/14, fontSize: 13, fontWeight: 500
+   - Background: --bg-card (#F4F4F5)
+   ============================================================================= */
+
+.atom-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--tag-padding-y, 8px) var(--tag-padding-x, 14px);
+  border-radius: var(--border-radius-badge, 20px);
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: var(--font-size-tag, 13px);
+  font-weight: 500;
+  background: var(--color-tag-bg, #F4F4F5);
+  color: var(--color-tag-text, #18181B);
+}
+
+.atom-tag.tag-active {
+  background: var(--color-primary, #8B5CF6);
+  color: #FFFFFF;
+}
+
+/* =============================================================================
+   Price Displays (from Pencil Atom/Price, Atom/Price Large)
+   - Price Large: 28px, 800  |  Price: 20px, 700
+   - Font: Plus Jakarta Sans
+   ============================================================================= */
+
+.atom-price {
+  font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
+  font-weight: 700;
+  color: var(--color-price, #18181B);
+}
+
+.atom-price.price {
+  font-size: var(--font-size-price, 20px);
+  font-weight: 700;
+}
+
+.atom-price.price-lg {
+  font-size: var(--font-size-price-lg, 28px);
+  font-weight: 800;
+}
+
+.atom-price.price-old {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-tertiary, #A1A1AA);
+  text-decoration: line-through;
+}
+
+.atom-price.price-discount {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-error, #EF4444);
+}
+
+/* =============================================================================
+   Rating Displays (from Pencil Atom/Rating 5 Stars)
+   - lucide star icons, --accent-orange (#F97316), 18px, gap: 4px
+   ============================================================================= */
+
+.atom-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-rating, #F97316);
+  font-size: var(--icon-size, 18px);
+}
+
+.atom-rating.rating-text {
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: 14px;
+  font-weight: 500;
+  gap: 6px;
+}
+
+.atom-rating.rating-compact {
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: 13px;
+  font-weight: 500;
+  gap: 4px;
+}
+
+/* =============================================================================
+   Percent & Progress Displays
+   ============================================================================= */
+
+.atom-percent {
+  font-weight: 500;
+  color: var(--color-text-secondary, #71717A);
+}
+
 .atom-progress {
   width: 100%;
   height: 8px;
-  background: #e5e7eb;
+  background: var(--color-progress-bg, #E4E4E7);
   border-radius: 4px;
   overflow: hidden;
 }
+
 .atom-progress-bar {
   height: 100%;
-  background: #2563eb;
-  transition: width 0.3s;
+  background: var(--color-primary, #8B5CF6);
+  transition: width 0.3s ease;
+}
+
+/* =============================================================================
+   Image Displays
+   ============================================================================= */
+
+.atom-image {
+  object-fit: cover;
+  border-radius: var(--border-radius-sm, 8px);
+}
+
+.atom-image.image {
+  width: 100%;
+  max-height: 300px;
+}
+
+.atom-image.image-cover {
+  width: 100%;
+  height: var(--product-card-image-height, 180px);
+  object-fit: cover;
+}
+
+.atom-image.thumbnail {
+  width: 80px;
+  height: 80px;
+}
+
+.atom-image.avatar {
+  width: var(--avatar-size-md, 40px);
+  height: var(--avatar-size-md, 40px);
+  border-radius: 50%;
+}
+
+.atom-image.avatar-sm {
+  width: var(--avatar-size-sm, 32px);
+  height: var(--avatar-size-sm, 32px);
+  border-radius: 50%;
+}
+
+.atom-image.avatar-lg {
+  width: var(--avatar-size-lg, 56px);
+  height: var(--avatar-size-lg, 56px);
+  border-radius: 50%;
+}
+
+/* Legacy size classes */
+.atom-image.size-small {
+  width: 60px;
+  height: 60px;
+}
+
+.atom-image.size-medium {
+  width: 120px;
+  height: 120px;
+}
+
+.atom-image.size-large {
+  width: 100%;
+  max-height: 200px;
+}
+
+/* Gallery display */
+.atom-gallery {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.atom-gallery .gallery-item {
+  flex-shrink: 0;
+  width: 100px;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+/* =============================================================================
+   Icon Displays
+   ============================================================================= */
+
+.atom-icon {
+  font-size: var(--icon-size, 18px);
+  line-height: 1;
+}
+
+.atom-icon.icon-sm {
+  font-size: var(--icon-size-sm, 16px);
+}
+
+.atom-icon.icon-lg {
+  font-size: var(--icon-size-lg, 24px);
+}
+
+/* =============================================================================
+   Button Displays (from Pencil Atom/Button Primary)
+   - cornerRadius: 24, padding: 12/24, fontSize: 15, fontWeight: 600
+   - Background: --accent-primary (#8B5CF6)
+   ============================================================================= */
+
+.atom-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: var(--button-padding-y, 12px) var(--button-padding-x, 24px);
+  border: none;
+  border-radius: var(--border-radius-xl, 24px);
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: var(--font-size-button, 15px);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.atom-button:active {
+  transform: scale(0.98);
+}
+
+.atom-button.button-primary {
+  background: var(--color-primary, #8B5CF6);
+  color: #FFFFFF;
+}
+
+.atom-button.button-primary:hover {
+  background: var(--color-primary-hover, #7C3AED);
+}
+
+.atom-button.button-secondary {
+  background: var(--color-bg-tertiary, #E4E4E7);
+  color: var(--color-text-primary, #18181B);
+}
+
+.atom-button.button-secondary:hover {
+  background: var(--color-border, #D4D4D8);
+}
+
+.atom-button.button-outline {
+  background: transparent;
+  border: 1px solid var(--color-border, #D4D4D8);
+  color: var(--color-text-primary, #18181B);
+}
+
+.atom-button.button-outline:hover {
+  background: var(--color-bg-secondary, #F4F4F5);
+}
+
+.atom-button.button-ghost {
+  background: transparent;
+  color: var(--color-primary, #8B5CF6);
+}
+
+.atom-button.button-ghost:hover {
+  background: var(--color-primary-light, #8B5CF620);
+}
+
+.atom-button.button-danger {
+  background: var(--color-error, #EF4444);
+  color: #FFFFFF;
+}
+
+.atom-button.button-danger:hover {
+  background: #DC2626;
+}
+
+/* =============================================================================
+   Layout Displays
+   ============================================================================= */
+
+.atom-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--color-divider, #E4E4E7);
+  margin: 8px 0;
+}
+
+.atom-spacer {
+  width: 100%;
+  height: 16px;
+}
+
+/* =============================================================================
+   Number formatting (legacy)
+   ============================================================================= */
+
+.atom-number {
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+}
+
+.atom-number.format-currency::before {
+  content: '$';
+}
+
+.atom-number.format-percent::after {
+  content: '%';
 }

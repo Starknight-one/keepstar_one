@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AtomRenderer } from '../../atom/AtomRenderer';
 import './ServiceDetailTemplate.css';
 
 // Slot names match backend domain.AtomSlot
@@ -50,10 +51,10 @@ export function ServiceDetailTemplate({ atoms = [] }) {
 
         {/* Right: Info */}
         <div className="service-detail-info">
-          {/* Title */}
+          {/* Title - use AtomRenderer */}
           {titleAtoms.length > 0 && (
             <h1 className="service-detail-title">
-              {titleAtoms[0].value}
+              <AtomRenderer atom={titleAtoms[0]} />
             </h1>
           )}
 
@@ -66,21 +67,21 @@ export function ServiceDetailTemplate({ atoms = [] }) {
             </div>
           )}
 
-          {/* Price */}
+          {/* Price - use AtomRenderer */}
           {priceAtoms.length > 0 && (
             <div className="service-detail-price">
-              {priceAtoms[0].meta?.currency || '$'}{priceAtoms[0].value}
+              <AtomRenderer atom={priceAtoms[0]} />
             </div>
           )}
 
           {/* Availability */}
           <AvailabilityIndicator atoms={stockAtoms} />
 
-          {/* Description */}
+          {/* Description - use AtomRenderer */}
           {descriptionAtoms.length > 0 && (
             <div className="service-detail-description">
               <h3>About this service</h3>
-              <p>{descriptionAtoms[0].value}</p>
+              <p><AtomRenderer atom={descriptionAtoms[0]} /></p>
             </div>
           )}
 
@@ -182,12 +183,14 @@ function SpecsTable({ atoms }) {
 
 function AtomChip({ atom }) {
   const value = atom.value;
+  // Use atom.display (new) or fallback to meta.display (legacy)
+  const display = atom.display || atom.meta?.display;
 
   // Duration display with clock icon
   if (atom.meta?.label === 'duration' || (typeof value === 'string' && value.includes('min'))) {
     return (
       <div className="service-detail-chip service-detail-duration">
-        &#9201; {value}
+        &#9201; <AtomRenderer atom={atom} />
       </div>
     );
   }
@@ -196,17 +199,25 @@ function AtomChip({ atom }) {
   if (atom.meta?.label === 'provider') {
     return (
       <div className="service-detail-chip service-detail-provider">
-        &#128100; {value}
+        &#128100; <AtomRenderer atom={atom} />
       </div>
     );
   }
 
-  // Rating display
-  if (atom.type === 'rating') {
-    const stars = Math.round(Number(value) || 0);
+  // Rating display - check subtype (new) or type (legacy)
+  if (atom.subtype === 'rating' || atom.type === 'rating') {
     return (
       <div className="service-detail-chip service-detail-rating">
-        {'★'.repeat(Math.min(stars, 5))}{'☆'.repeat(Math.max(0, 5 - stars))}
+        <AtomRenderer atom={atom} />
+      </div>
+    );
+  }
+
+  // Tag display
+  if (display === 'tag' || display === 'caption') {
+    return (
+      <div className="service-detail-chip">
+        <AtomRenderer atom={atom} />
       </div>
     );
   }
@@ -214,7 +225,7 @@ function AtomChip({ atom }) {
   // Default chip display
   return (
     <div className="service-detail-chip">
-      {value}
+      <AtomRenderer atom={atom} />
     </div>
   );
 }

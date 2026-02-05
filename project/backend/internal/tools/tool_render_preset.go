@@ -210,6 +210,7 @@ func BuildFormation(preset domain.Preset, count int, getEntity EntityGetterFunc)
 }
 
 // buildAtoms creates atoms from fields using generic field getter
+// Now uses the new atom model with Type, Subtype, Display
 func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency CurrencyGetter) []domain.Atom {
 	atoms := make([]domain.Atom, 0)
 
@@ -220,32 +221,25 @@ func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency C
 		}
 
 		atom := domain.Atom{
-			Type:  field.AtomType,
-			Value: value,
-			Slot:  field.Slot,
+			Type:    field.AtomType,
+			Subtype: field.Subtype,
+			Display: string(field.Display), // Use Display from FieldConfig
+			Value:   value,
+			Slot:    field.Slot,
 		}
 
-		// Add meta based on atom type
+		// Add meta for backward compatibility and additional data
 		switch field.AtomType {
 		case domain.AtomTypeImage:
 			atom.Meta = map[string]interface{}{"size": "large"}
-		case domain.AtomTypeText:
-			switch field.Slot {
-			case domain.AtomSlotTitle:
-				atom.Meta = map[string]interface{}{"style": "heading"}
-			case domain.AtomSlotPrimary:
-				atom.Meta = map[string]interface{}{"display": "chip"}
-			case domain.AtomSlotSecondary:
-				atom.Meta = map[string]interface{}{"label": field.Name}
+		case domain.AtomTypeNumber:
+			if field.Subtype == domain.SubtypeCurrency {
+				currency := getCurrency()
+				if currency == "" {
+					currency = "$"
+				}
+				atom.Meta = map[string]interface{}{"currency": currency}
 			}
-		case domain.AtomTypePrice:
-			currency := getCurrency()
-			if currency == "" {
-				currency = "$"
-			}
-			atom.Meta = map[string]interface{}{"currency": currency}
-		case domain.AtomTypeRating:
-			atom.Meta = map[string]interface{}{"display": "chip"}
 		}
 
 		atoms = append(atoms, atom)

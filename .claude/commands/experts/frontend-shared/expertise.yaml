@@ -1,11 +1,11 @@
 # Frontend Shared Expertise
-# API client, hooks, utilities - zero project imports
+# API client, hooks, utilities, theme - zero project imports
 
 overview:
   layer: "shared"
   path: "project/frontend/src/shared/"
   imports: "Only external libraries"
-  contains: "API client, hooks, UI components, utilities"
+  contains: "API client, hooks, UI components, utilities, theme"
 
 api:
   path: "src/shared/api/"
@@ -55,10 +55,42 @@ api:
       body: "{ sessionId }"
       response: "{ success, formation, viewMode, focused, stackSize, canGoBack }"
 
+theme:
+  path: "src/shared/theme/"
+  files:
+    - "themeModel.js - ThemeType enum, DEFAULT_THEME, ThemeMeta"
+    - "ThemeContext.js - React context for theme"
+    - "ThemeProvider.jsx - Provider component with localStorage persistence"
+    - "useTheme.js - Hook to access theme context"
+    - "ThemeSwitcher.jsx - Theme selector component"
+    - "themes/marketplace.css - Default marketplace theme CSS variables"
+    - "index.js - Exports all theme modules"
+
+  types:
+    ThemeType: ["marketplace", "dark", "light"]
+    exports: ["ThemeProvider", "ThemeSwitcher", "useTheme", "ThemeType", "DEFAULT_THEME", "ThemeMeta"]
+
+  css_variables:
+    colors: ["--color-primary", "--color-secondary", "--color-success", "--color-error", "--color-warning"]
+    text: ["--color-text-primary", "--color-text-secondary", "--color-text-muted"]
+    backgrounds: ["--color-bg-primary", "--color-bg-secondary", "--color-bg-tertiary"]
+    components: ["--color-price", "--color-rating", "--color-badge-bg", "--color-tag-bg", "--color-progress-bg"]
+    typography: ["--font-family-base", "--font-size-*", "--line-height-*"]
+    spacing: ["--spacing-xs", "--spacing-sm", "--spacing-md", "--spacing-lg", "--spacing-xl"]
+    borders: ["--border-radius-sm", "--border-radius-md", "--border-radius-lg"]
+    shadows: ["--shadow-sm", "--shadow-md", "--shadow-lg"]
+
+  usage:
+    - "Wrap app with ThemeProvider: <ThemeProvider defaultTheme='marketplace'>"
+    - "Access theme: const { theme, setTheme } = useTheme()"
+    - "Theme persists to localStorage automatically"
+    - "CSS variables available via var(--color-*) in any component"
+
 patterns:
-  - "All functions are async"
+  - "All API functions are async"
   - "Return null on 404, throw on other errors"
   - "JSON content type for all requests"
+  - "Theme uses CSS custom properties for styling"
 
 future_folders:
   - "hooks/ - Shared hooks"

@@ -41,6 +41,7 @@ func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, prese
 	// Render tools (Agent2)
 	r.Register(NewRenderProductPresetTool(statePort, presetRegistry))
 	r.Register(NewRenderServicePresetTool(statePort, presetRegistry))
+	r.Register(NewFreestyleTool(statePort))
 
 	return r
 }

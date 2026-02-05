@@ -1,105 +1,207 @@
-import { AtomType } from './atomModel';
+import { AtomType, AtomSubtype, LEGACY_TYPE_TO_DISPLAY } from './atomModel';
 import './Atom.css';
 
-export function AtomRenderer({ atom }) {
-  const style = atom.meta?.style || '';
-  const format = atom.meta?.format || '';
-  const size = atom.meta?.size || 'medium';
-  const variant = atom.meta?.variant || '';
+export function AtomRenderer({ atom, onClick }) {
+  // Determine display: explicit display > legacy mapping > inferred from type/subtype
+  const display = atom.display || LEGACY_TYPE_TO_DISPLAY[atom.type] || inferDisplay(atom);
 
-  switch (atom.type) {
-    case AtomType.TEXT:
-      return (
-        <span className={`atom-text ${style ? `style-${style}` : ''}`}>
-          {atom.value}
-        </span>
-      );
+  return (
+    <span
+      className={`atom display-${display}`}
+      onClick={onClick}
+      data-slot={atom.slot}
+    >
+      {renderByDisplay(atom, display)}
+    </span>
+  );
+}
 
-    case AtomType.NUMBER:
-      return (
-        <span className={`atom-number ${format ? `format-${format}` : ''}`}>
-          {formatNumber(atom.value, format)}
-        </span>
-      );
-
-    case AtomType.PRICE:
-      return (
-        <span className="atom-price">
-          {atom.meta?.currency || '$'}{atom.value}
-        </span>
-      );
-
-    case AtomType.IMAGE:
-      return (
-        <img
-          className={`atom-image size-${size}`}
-          src={atom.value}
-          alt={atom.meta?.label || ''}
-        />
-      );
-
-    case AtomType.RATING: {
-      const stars = Math.round(atom.value);
-      return (
-        <span className="atom-rating">
-          {'★'.repeat(stars)}{'☆'.repeat(5 - stars)}
-        </span>
-      );
-    }
-
-    case AtomType.BADGE:
-      return (
-        <span className={`atom-badge ${variant ? `variant-${variant}` : ''}`}>
-          {atom.value}
-        </span>
-      );
-
-    case AtomType.BUTTON:
-      return (
-        <button
-          className="atom-button"
-          data-action={atom.meta?.action}
-          onClick={() => handleAction(atom.meta?.action)}
-        >
-          {atom.value}
-        </button>
-      );
-
-    case AtomType.ICON:
-      return <span className="atom-icon">{atom.value}</span>;
-
-    case AtomType.DIVIDER:
-      return <div className="atom-divider" />;
-
-    case AtomType.PROGRESS:
-      return (
-        <div className="atom-progress">
-          <div
-            className="atom-progress-bar"
-            style={{ width: `${atom.value}%` }}
-          />
-        </div>
-      );
-
-    default:
-      return <span>{String(atom.value)}</span>;
+// Infer display from type + subtype when not explicitly set
+function inferDisplay(atom) {
+  if (atom.type === AtomType.TEXT) {
+    return 'body';
   }
+  if (atom.type === AtomType.NUMBER) {
+    if (atom.subtype === AtomSubtype.CURRENCY) return 'price';
+    if (atom.subtype === AtomSubtype.RATING) return 'rating';
+    if (atom.subtype === AtomSubtype.PERCENT) return 'percent';
+    return 'body';
+  }
+  if (atom.type === AtomType.IMAGE) {
+    return 'image';
+  }
+  if (atom.type === AtomType.ICON) {
+    return 'icon';
+  }
+  if (atom.type === AtomType.VIDEO) {
+    return 'body'; // placeholder
+  }
+  if (atom.type === AtomType.AUDIO) {
+    return 'body'; // placeholder
+  }
+  return 'body';
 }
 
-function formatNumber(value, format) {
-  if (format === 'currency') return value.toLocaleString();
-  if (format === 'percent') return value;
-  if (format === 'compact') return compactNumber(value);
-  return value;
+// Render content based on display type
+function renderByDisplay(atom, display) {
+  // Heading displays
+  if (['h1', 'h2', 'h3', 'h4'].includes(display)) {
+    const Tag = display;
+    return <Tag className="atom-heading">{formatText(atom)}</Tag>;
+  }
+
+  // Body text displays
+  if (['body-lg', 'body', 'body-sm', 'caption'].includes(display)) {
+    return <span className={`atom-text ${display}`}>{formatText(atom)}</span>;
+  }
+
+  // Badge displays
+  if (display.startsWith('badge')) {
+    return <span className={`atom-badge ${display}`}>{atom.value}</span>;
+  }
+
+  // Tag displays
+  if (display.startsWith('tag')) {
+    return <span className={`atom-tag ${display}`}>{atom.value}</span>;
+  }
+
+  // Price displays
+  if (display.startsWith('price')) {
+    return <span className={`atom-price ${display}`}>{formatPrice(atom)}</span>;
+  }
+
+  // Rating displays
+  if (display.startsWith('rating')) {
+    return renderRating(atom, display);
+  }
+
+  // Percent display
+  if (display === 'percent') {
+    return <span className="atom-percent">{atom.value}%</span>;
+  }
+
+  // Progress display
+  if (display === 'progress') {
+    return (
+      <div className="atom-progress">
+        <div className="atom-progress-bar" style={{ width: `${atom.value}%` }} />
+      </div>
+    );
+  }
+
+  // Image displays
+  if (['image', 'image-cover', 'avatar', 'avatar-sm', 'avatar-lg', 'thumbnail', 'gallery'].includes(display)) {
+    return renderImage(atom, display);
+  }
+
+  // Icon displays
+  if (display.startsWith('icon')) {
+    return <span className={`atom-icon ${display}`}>{atom.value}</span>;
+  }
+
+  // Button displays
+  if (display.startsWith('button')) {
+    return (
+      <button
+        className={`atom-button ${display}`}
+        data-action={atom.meta?.action}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleAction(atom.meta?.action);
+        }}
+      >
+        {atom.value}
+      </button>
+    );
+  }
+
+  // Divider display
+  if (display === 'divider') {
+    return <div className="atom-divider" />;
+  }
+
+  // Spacer display
+  if (display === 'spacer') {
+    return <div className="atom-spacer" />;
+  }
+
+  // Default: just render value
+  return <span>{String(atom.value)}</span>;
 }
 
-function compactNumber(num) {
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-  if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-  return num;
+// Format text based on subtype
+function formatText(atom) {
+  if (atom.subtype === 'date' && atom.value) {
+    return new Date(atom.value).toLocaleDateString();
+  }
+  if (atom.subtype === 'datetime' && atom.value) {
+    return new Date(atom.value).toLocaleString();
+  }
+  return atom.value;
+}
+
+// Format price with currency
+function formatPrice(atom) {
+  const currency = atom.meta?.currency || '$';
+  const value = typeof atom.value === 'number'
+    ? atom.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : atom.value;
+  return `${currency}${value}`;
+}
+
+// Render rating based on display variant
+function renderRating(atom, display) {
+  const value = Number(atom.value) || 0;
+  const stars = Math.round(value);
+
+  if (display === 'rating-text') {
+    return <span className="atom-rating rating-text">{value.toFixed(1)}/5</span>;
+  }
+
+  if (display === 'rating-compact') {
+    return <span className="atom-rating rating-compact">★ {value.toFixed(1)}</span>;
+  }
+
+  // Default: full star display
+  const fullStars = Math.min(stars, 5);
+  const emptyStars = Math.max(0, 5 - fullStars);
+  return (
+    <span className="atom-rating">
+      {'★'.repeat(fullStars)}{'☆'.repeat(emptyStars)}
+    </span>
+  );
+}
+
+// Render image based on display variant
+function renderImage(atom, display) {
+  // Handle array of images (take first) or single value
+  const src = Array.isArray(atom.value) ? atom.value[0] : atom.value;
+
+  if (display === 'gallery' && Array.isArray(atom.value)) {
+    return (
+      <div className="atom-gallery">
+        {atom.value.map((imgSrc, i) => (
+          <img
+            key={i}
+            src={imgSrc}
+            alt={atom.meta?.label || `Image ${i + 1}`}
+            className="atom-image gallery-item"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={atom.meta?.label || ''}
+      className={`atom-image ${display}`}
+    />
+  );
 }
 
 function handleAction(action) {
-  // TODO: dispatch action to parent
+  // TODO: dispatch action to parent via context or callback
   console.log('Widget action:', action);
 }

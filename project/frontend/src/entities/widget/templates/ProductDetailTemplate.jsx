@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AtomRenderer } from '../../atom/AtomRenderer';
 import './ProductDetailTemplate.css';
 
 // Slot names match backend domain.AtomSlot
@@ -45,10 +46,10 @@ export function ProductDetailTemplate({ atoms = [] }) {
 
         {/* Right: Info */}
         <div className="product-detail-info">
-          {/* Title */}
+          {/* Title - use AtomRenderer */}
           {titleAtoms.length > 0 && (
             <h1 className="product-detail-title">
-              {titleAtoms[0].value}
+              <AtomRenderer atom={titleAtoms[0]} />
             </h1>
           )}
 
@@ -61,21 +62,21 @@ export function ProductDetailTemplate({ atoms = [] }) {
             </div>
           )}
 
-          {/* Price */}
+          {/* Price - use AtomRenderer */}
           {priceAtoms.length > 0 && (
             <div className="product-detail-price">
-              {priceAtoms[0].meta?.currency || '$'}{priceAtoms[0].value}
+              <AtomRenderer atom={priceAtoms[0]} />
             </div>
           )}
 
           {/* Stock */}
           <StockIndicator atoms={stockAtoms} />
 
-          {/* Description */}
+          {/* Description - use AtomRenderer */}
           {descriptionAtoms.length > 0 && (
             <div className="product-detail-description">
               <h3>Description</h3>
-              <p>{descriptionAtoms[0].value}</p>
+              <p><AtomRenderer atom={descriptionAtoms[0]} /></p>
             </div>
           )}
 
@@ -203,14 +204,23 @@ function SpecsTable({ atoms }) {
 }
 
 function AtomChip({ atom }) {
-  const value = atom.value;
+  // Use atom.display (new) or fallback to meta.display (legacy)
+  const display = atom.display || atom.meta?.display;
 
-  // Rating display
-  if (atom.type === 'rating') {
-    const stars = Math.round(Number(value) || 0);
+  // Rating display - check subtype (new) or type (legacy)
+  if (atom.subtype === 'rating' || atom.type === 'rating') {
     return (
       <div className="product-detail-chip product-detail-rating">
-        {'★'.repeat(Math.min(stars, 5))}{'☆'.repeat(Math.max(0, 5 - stars))}
+        <AtomRenderer atom={atom} />
+      </div>
+    );
+  }
+
+  // Tag display
+  if (display === 'tag' || display === 'tag-active') {
+    return (
+      <div className="product-detail-chip">
+        <AtomRenderer atom={atom} />
       </div>
     );
   }
@@ -218,7 +228,7 @@ function AtomChip({ atom }) {
   // Default chip display
   return (
     <div className="product-detail-chip">
-      {value}
+      <AtomRenderer atom={atom} />
     </div>
   );
 }

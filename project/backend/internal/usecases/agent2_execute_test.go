@@ -480,6 +480,7 @@ func TestPipelineExecute_CostReport(t *testing.T) {
 // TestApplyTemplate_Unit tests template application without LLM
 func TestApplyTemplate_Unit(t *testing.T) {
 	// Create test template
+	// Note: AtomTemplate.Type uses the new 6 base types (text, number, image, icon, video, audio)
 	template := &domain.FormationTemplate{
 		Mode: domain.FormationTypeGrid,
 		Grid: &domain.GridConfig{Rows: 2, Cols: 2},
@@ -489,7 +490,7 @@ func TestApplyTemplate_Unit(t *testing.T) {
 				{Type: domain.AtomTypeImage, Field: "images", Size: "medium"},
 				{Type: domain.AtomTypeText, Field: "name", Style: "heading"},
 				{Type: domain.AtomTypeNumber, Field: "price", Format: "currency"},
-				{Type: domain.AtomTypeRating, Field: "rating"},
+				{Type: domain.AtomTypeNumber, Field: "rating"}, // Rating is now AtomTypeNumber with subtype rating
 			},
 		},
 	}

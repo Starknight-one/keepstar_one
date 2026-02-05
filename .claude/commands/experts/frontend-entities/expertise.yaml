@@ -11,19 +11,31 @@ entities:
   atom:
     path: "src/entities/atom/"
     files:
-      - "atomModel.js - AtomType enum"
-      - "AtomRenderer.jsx - Renders by type"
-      - "Atom.css - Styles"
-    types: ["TEXT", "NUMBER", "PRICE", "IMAGE", "RATING", "BADGE", "BUTTON", "ICON", "DIVIDER", "PROGRESS"]
+      - "atomModel.js - AtomType, AtomSubtype, AtomDisplay enums + legacy mapping"
+      - "AtomRenderer.jsx - Renders by display (with legacy fallback)"
+      - "Atom.css - Display-based styles"
+    types: ["TEXT", "NUMBER", "IMAGE", "ICON", "VIDEO", "AUDIO"]
+    subtypes:
+      text: ["string", "date", "datetime", "url", "email", "phone"]
+      number: ["int", "float", "currency", "percent", "rating"]
+      image: ["url", "base64"]
+      icon: ["name", "emoji", "svg"]
+    displays:
+      text: ["h1", "h2", "h3", "h4", "body-lg", "body", "body-sm", "caption", "badge-*", "tag-*"]
+      number: ["price", "price-lg", "price-old", "rating", "rating-text", "rating-compact", "percent", "progress"]
+      image: ["image", "image-cover", "avatar-*", "thumbnail", "gallery"]
+      icon: ["icon", "icon-sm", "icon-lg"]
+      interactive: ["button-primary", "button-secondary", "button-outline", "button-ghost"]
+      layout: ["divider", "spacer"]
+    legacy_mapping: "LEGACY_TYPE_TO_DISPLAY maps old types (price, badge, rating) to displays"
     status: "implemented"
     features:
-      - "TEXT: renders with optional style class"
-      - "NUMBER: formats as currency/percent/compact"
-      - "PRICE: displays with currency symbol"
-      - "IMAGE: renders with size class"
-      - "RATING: renders star rating (★/☆)"
-      - "BADGE: renders with variant class"
-      - "BUTTON: clickable with action handler"
+      - "Display-based rendering: atom.display determines visual style"
+      - "Legacy fallback: LEGACY_TYPE_TO_DISPLAY for old atom.type values"
+      - "Type inference: inferDisplay(atom) when no display set"
+      - "Subtype formatting: date/datetime formatting, currency display"
+      - "Rating variants: full stars, text, compact"
+      - "Image gallery: renders array of images"
 
   widget:
     path: "src/entities/widget/"
@@ -45,6 +57,13 @@ entities:
     templates_rendered: ["ProductCard", "ProductDetail", "ServiceCard", "ServiceDetail"]
     sizes: ["TINY", "SMALL", "MEDIUM", "LARGE"]
     status: "implemented"
+    implementation_critical: |
+      Templates contain internal helper components (AtomChip, SpecsTable, StockIndicator, etc.)
+      that render atoms. These helpers MUST:
+      1. Import and use AtomRenderer for all atom rendering
+      2. Check atom.subtype (new) OR atom.type (legacy) for type-specific logic
+      3. Check atom.display (new) OR atom.meta?.display (legacy) for display hints
+      Never hardcode atom rendering logic - always delegate to AtomRenderer.
     components:
       - "ProductCardTemplate: renders atoms by slot (hero, badge, title, primary, price, secondary)"
       - "ProductDetailTemplate: full product view with all details, expandable sections"
@@ -93,7 +112,7 @@ entities:
 pattern:
   - "Each entity: model.js + Renderer.jsx + .css (except message has no .css)"
   - "Renderers accept entity object as prop"
-  - "Switch on type to render appropriate component"
+  - "Atoms render by display field, with legacy type fallback"
 
 naming:
   models: "{entity}Model.js"
