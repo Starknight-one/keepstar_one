@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -105,7 +106,13 @@ func main() {
 	var toolRegistry *tools.Registry
 	if stateAdapter != nil && catalogAdapter != nil {
 		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
-		appLog.Info("tool_registry_initialized", "tools", "search_products, render_product_preset, render_service_preset")
+		toolNames := make([]string, 0)
+		for _, def := range toolRegistry.GetDefinitions() {
+			if !strings.HasPrefix(def.Name, "_internal_") {
+				toolNames = append(toolNames, def.Name)
+			}
+		}
+		appLog.Info("tool_registry_initialized", "tools", strings.Join(toolNames, ", "), "count", len(toolNames))
 	}
 
 	// Initialize Agent 1 use case (Two-Agent Pipeline)

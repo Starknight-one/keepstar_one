@@ -62,14 +62,14 @@ func (t *FreestyleTool) Definition() domain.ToolDefinition {
 }
 
 // Execute renders entities with freestyle styling
-func (t *FreestyleTool) Execute(ctx context.Context, sessionID string, input map[string]interface{}) (*domain.ToolResult, error) {
+func (t *FreestyleTool) Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
 	entityType, _ := input["entity_type"].(string)
 	formationMode, _ := input["formation"].(string)
 	styleName, _ := input["style"].(string)
 	overrides, _ := input["overrides"].(map[string]interface{})
 	limit, _ := input["limit"].(float64) // JSON numbers come as float64
 
-	state, err := t.statePort.GetState(ctx, sessionID)
+	state, err := t.statePort.GetState(ctx, toolCtx.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
 	}
@@ -132,13 +132,22 @@ func (t *FreestyleTool) Execute(ctx context.Context, sessionID string, input map
 		Widgets: widgets,
 	}
 
-	// Store in state
-	state.Current.Template = map[string]interface{}{
+	// Store in state via zone-write
+	template := map[string]interface{}{
 		"formation": formation,
 	}
 
-	if err := t.statePort.UpdateState(ctx, state); err != nil {
-		return nil, fmt.Errorf("update state: %w", err)
+	info := domain.DeltaInfo{
+		TurnID:    toolCtx.TurnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   toolCtx.ActorID,
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
+		Action:    domain.Action{Type: domain.ActionLayout, Tool: "freestyle"},
+	}
+	if _, err := t.statePort.UpdateTemplate(ctx, toolCtx.SessionID, template, info); err != nil {
+		return nil, fmt.Errorf("update template: %w", err)
 	}
 
 	styleInfo := "custom"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"keepstar/internal/domain"
@@ -23,7 +24,6 @@ type Agent1ExecuteRequest struct {
 
 // Agent1ExecuteResponse is the output from Agent 1
 type Agent1ExecuteResponse struct {
-	Delta     *domain.Delta
 	Usage     domain.LLMUsage
 	LatencyMs int
 	// Detailed timing breakdown
@@ -93,8 +93,8 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		Content: req.Query,
 	})
 
-	// Get tool definitions
-	toolDefs := uc.toolRegistry.GetDefinitions()
+	// Get data-only tool definitions (Agent1 = data layer, no render tools)
+	toolDefs := uc.getAgent1Tools()
 
 	// Call LLM with caching
 	llmStart := time.Now()
@@ -129,7 +129,6 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	)
 
 	// Process tool calls
-	var delta *domain.Delta
 	var toolName string
 	var toolInput string
 	var toolResult string
@@ -152,7 +151,11 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		)
 
 		toolStart := time.Now()
-		result, err := uc.toolRegistry.Execute(ctx, req.SessionID, toolCall)
+		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
+			SessionID: req.SessionID,
+			TurnID:    req.TurnID,
+			ActorID:   "agent1",
+		}, toolCall)
 		toolDuration = time.Since(toolStart).Milliseconds()
 		toolResult = result.Content
 
@@ -163,34 +166,9 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 
 		uc.log.ToolExecuted(toolCall.Name, req.SessionID, result.Content, toolDuration)
 
-		// Get updated state for delta
+		// Get updated state after tool zone-write
 		state, _ = uc.statePort.GetState(ctx, req.SessionID)
 		productsFound = state.Current.Meta.Count
-
-		// Create delta via DeltaInfo with TurnID (step auto-assigned by AddDelta)
-		info := domain.DeltaInfo{
-			TurnID:    req.TurnID,
-			Trigger:   domain.TriggerUserQuery,
-			Source:    domain.SourceLLM,
-			ActorID:   "agent1",
-			DeltaType: domain.DeltaTypeAdd,
-			Path:      "data.products",
-			Action: domain.Action{
-				Type:   domain.ActionSearch,
-				Tool:   toolCall.Name,
-				Params: toolCall.Input,
-			},
-			Result: domain.ResultMeta{
-				Count:  state.Current.Meta.Count,
-				Fields: state.Current.Meta.Fields,
-			},
-		}
-		delta = info.ToDelta()
-
-		// Save delta (step auto-assigned)
-		if _, err := uc.statePort.AddDelta(ctx, req.SessionID, delta); err != nil {
-			return nil, fmt.Errorf("add delta: %w", err)
-		}
 	} else {
 		uc.log.Warn("no_tool_call",
 			"session_id", req.SessionID,
@@ -233,7 +211,6 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	)
 
 	return &Agent1ExecuteResponse{
-		Delta:         delta,
 		Usage:         llmResp.Usage,
 		LatencyMs:     int(totalDuration),
 		LLMCallMs:     llmDuration,
@@ -244,4 +221,21 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		ProductsFound: productsFound,
 		StopReason:    llmResp.StopReason,
 	}, nil
+}
+
+// getAgent1Tools returns data tools only for Agent 1 (search_*)
+func (uc *Agent1ExecuteUseCase) getAgent1Tools() []domain.ToolDefinition {
+	allTools := uc.toolRegistry.GetDefinitions()
+	var agent1Tools []domain.ToolDefinition
+	for _, t := range allTools {
+		if strings.HasPrefix(t.Name, "search_") || strings.HasPrefix(t.Name, "_internal_") {
+			agent1Tools = append(agent1Tools, t)
+		}
+	}
+	return agent1Tools
+}
+
+// GetToolDefs returns the filtered tool definitions for Agent1 (exported for testing)
+func (uc *Agent1ExecuteUseCase) GetToolDefs() []domain.ToolDefinition {
+	return uc.getAgent1Tools()
 }

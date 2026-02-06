@@ -24,7 +24,6 @@ type PipelineExecuteRequest struct {
 // PipelineExecuteResponse is the output from the full pipeline
 type PipelineExecuteResponse struct {
 	Formation   *domain.FormationWithData
-	Delta       *domain.Delta
 	Agent1Ms    int
 	Agent2Ms    int
 	TotalMs     int
@@ -116,6 +115,7 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	agent2Resp, err := uc.agent2UC.Execute(ctx, Agent2ExecuteRequest{
 		SessionID: req.SessionID,
 		TurnID:    turnID,
+		UserQuery: req.Query,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent 2: %w", err)
@@ -150,15 +150,8 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		}
 	}
 
-	// Update delta with template (if Agent 2 produced one)
-	if agent1Resp.Delta != nil && (agent2Resp.Template != nil || agent2Resp.Formation != nil) {
-		agent1Resp.Delta.Template = state.Current.Template
-		// Note: delta already saved in Agent 1, template added to state in Agent 2
-	}
-
 	return &PipelineExecuteResponse{
 		Formation:     formation,
-		Delta:         agent1Resp.Delta,
 		Agent1Ms:      agent1Resp.LatencyMs,
 		Agent2Ms:      agent2Resp.LatencyMs,
 		TotalMs:       int(time.Since(start).Milliseconds()),

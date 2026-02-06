@@ -17,7 +17,7 @@
 | 1.5 | service_presets.go — display mapping | ✅ Done |
 | 1.6 | tool_render_preset.go — atom.Display | ✅ Done |
 | 1.7 | tool_freestyle.go — создать | ✅ Done |
-| 1.8 | prompt_compose_widgets.go — обновить промпты | ❌ **FORGOTTEN** |
+| 1.8 | prompt_compose_widgets.go — обновить промпты | ✅ Done |
 | 1.9 | template_apply.go — новые типы | ✅ Done (fixed build error) |
 | 1.10 | agent2_execute_test.go — тесты | ✅ Done (fixed build error) |
 | 2.1 | atomModel.js — 6 типов + enums | ✅ Done |
@@ -32,7 +32,7 @@
 | — | ProductDetailTemplate.css | ❌ FORGOTTEN → 🔧 Fixed later |
 | — | ServiceDetailTemplate.css | ❌ FORGOTTEN → 🔧 Fixed later |
 | — | index.html — Google Fonts | ❌ FORGOTTEN → 🔧 Fixed |
-| — | lucide-react dependency | ❌ **NOT INSTALLED** |
+| — | lucide-react dependency | ✅ Done |
 | — | Formation.css | ❓ Not checked |
 | — | Widget.css | ❓ Not checked |
 
@@ -142,7 +142,7 @@ var DisplayStyles = map[string]map[string]string{
 - `project/backend/internal/presets/service_presets.go` — добавить display mapping ✅
 - `project/backend/internal/tools/tool_render_preset.go` — использовать atom.Display вместо meta.display ✅
 - `project/backend/internal/tools/tool_freestyle.go` — **создать** freestyle tool ✅
-- `project/backend/internal/prompts/prompt_compose_widgets.go` — обновить промпты ❌ **FORGOTTEN**
+- `project/backend/internal/prompts/prompt_compose_widgets.go` — обновить промпты ✅
 - `project/backend/internal/usecases/template_apply.go` — обновить под новые типы ✅
 - `project/backend/internal/usecases/agent2_execute_test.go` — обновить тесты ✅
 
@@ -392,9 +392,11 @@ func (t *FreestyleTool) Execute(input FreestyleInput) (*Widget, error) {
 }
 ```
 
-#### 1.8 Обновить prompt_compose_widgets.go ❌ FORGOTTEN
+#### 1.8 Обновить prompt_compose_widgets.go ✅ DONE
 
-Промпты для Agent2 не были обновлены под новую модель!
+Промпты для Agent2 обновлены:
+- `Agent2SystemPrompt`: 6 типов + subtypes + displays
+- `Agent2ToolSystemPrompt`: добавлен freestyle tool, style aliases, display overrides
 
 ### Phase 2: Frontend — Рендер по display
 
@@ -536,7 +538,7 @@ cd project/frontend && npm run lint
 - [x] Пресеты обновлены с display mapping
 - [x] `tool_freestyle.go` создан и работает
 - [x] `go test ./...` проходит
-- [ ] ❌ `prompt_compose_widgets.go` обновлён — **FORGOTTEN**
+- [x] `prompt_compose_widgets.go` обновлён — ✅ Done
 
 ### Frontend
 - [x] `atomModel.js` содержит 6 типов + enums + legacy mapping
@@ -546,7 +548,7 @@ cd project/frontend && npm run lint
 - [x] Обратная совместимость: старые атомы рендерятся
 - [x] Widget templates используют AtomRenderer — 🔧 Fixed (не было в спеке!)
 - [x] Card/Detail CSS соответствует Pencil — 🔧 Fixed (не было в спеке!)
-- [ ] ❌ `lucide-react` установлен — **NOT DONE**
+- [x] `lucide-react` установлен — ✅ Done
 
 ### Integration
 - [x] Agent2 может использовать preset tool
@@ -573,7 +575,7 @@ Frontend поддерживает legacy типы через `LEGACY_TYPE_TO_DIS
 
 ```bash
 # Frontend
-npm install lucide-react  # ❌ NOT INSTALLED
+npm install lucide-react  # ✅ INSTALLED
 ```
 
 ---

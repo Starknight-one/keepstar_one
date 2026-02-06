@@ -9,13 +9,20 @@ import (
 	"keepstar/internal/presets"
 )
 
+// ToolContext provides session/turn context to tools for zone-write deltas
+type ToolContext struct {
+	SessionID string
+	TurnID    string
+	ActorID   string
+}
+
 // ToolExecutor executes a tool and writes results to state
 type ToolExecutor interface {
 	// Definition returns the tool definition for LLM
 	Definition() domain.ToolDefinition
 
 	// Execute runs the tool with given input, writes to state, returns "ok"/"empty"
-	Execute(ctx context.Context, sessionID string, input map[string]interface{}) (*domain.ToolResult, error)
+	Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error)
 }
 
 // Registry holds all available tools
@@ -66,7 +73,7 @@ func (r *Registry) GetDefinitions() []domain.ToolDefinition {
 }
 
 // Execute runs a tool by name
-func (r *Registry) Execute(ctx context.Context, sessionID string, toolCall domain.ToolCall) (*domain.ToolResult, error) {
+func (r *Registry) Execute(ctx context.Context, toolCtx ToolContext, toolCall domain.ToolCall) (*domain.ToolResult, error) {
 	tool, ok := r.tools[toolCall.Name]
 	if !ok {
 		return &domain.ToolResult{
@@ -76,7 +83,7 @@ func (r *Registry) Execute(ctx context.Context, sessionID string, toolCall domai
 		}, nil
 	}
 
-	result, err := tool.Execute(ctx, sessionID, toolCall.Input)
+	result, err := tool.Execute(ctx, toolCtx, toolCall.Input)
 	if err != nil {
 		return &domain.ToolResult{
 			ToolUseID: toolCall.ID,

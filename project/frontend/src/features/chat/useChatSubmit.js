@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import { sendPipelineQuery } from '../../shared/api/apiClient';
 import { MessageRole } from '../../entities/message/messageModel';
 
@@ -15,6 +15,10 @@ function getProductWord(count) {
 }
 
 export function useChatSubmit({ sessionId, addMessage, setLoading, setError, setSessionId, onFormationReceived }) {
+  // useRef to avoid stale closure — callback doesn't depend on sessionId re-renders
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+
   const submit = useCallback(async (text) => {
     if (!text.trim()) return;
 
@@ -30,10 +34,11 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
     setError(null);
 
     try {
-      const response = await sendPipelineQuery(sessionId, text);
+      const response = await sendPipelineQuery(sessionIdRef.current, text);
 
       // Save sessionId to localStorage if new
-      if (response.sessionId && response.sessionId !== sessionId) {
+      if (response.sessionId && response.sessionId !== sessionIdRef.current) {
+        sessionIdRef.current = response.sessionId;
         localStorage.setItem(SESSION_STORAGE_KEY, response.sessionId);
         setSessionId(response.sessionId);
       }
@@ -64,7 +69,7 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
     } finally {
       setLoading(false);
     }
-  }, [sessionId, addMessage, setLoading, setError, setSessionId, onFormationReceived]);
+  }, [addMessage, setLoading, setError, setSessionId, onFormationReceived]);
 
   return { submit };
 }
