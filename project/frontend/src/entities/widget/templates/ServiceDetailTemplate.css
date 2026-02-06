@@ -1,11 +1,13 @@
-/* Service Detail Template */
+/* =============================================================================
+   Service Detail Template — Matched to Pencil Design System
+   ============================================================================= */
+
 .service-detail-template {
   width: 100%;
   max-width: 900px;
   margin: 0 auto;
-  background: white;
-  border-radius: 16px;
-  border: 3px solid #7ba3d4;
+  background: var(--color-bg-secondary, #F4F4F5);
+  border-radius: var(--border-radius-lg, 16px);
   overflow: hidden;
   padding: 24px;
 }
@@ -24,61 +26,63 @@
   }
 }
 
-/* Gallery */
+/* =============================================================================
+   Gallery
+   ============================================================================= */
+
 .service-detail-gallery {
   width: 100%;
 }
 
-.gallery-container {
+.service-detail-template .gallery-container {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.gallery-main {
+.service-detail-template .gallery-main {
   width: 100%;
   aspect-ratio: 1;
-  border-radius: 12px;
-  border: 3px solid #7ba3d4;
+  border-radius: var(--border-radius-md, 12px);
   overflow: hidden;
-  background: white;
+  background: var(--color-bg-tertiary, #E4E4E7);
 }
 
-.gallery-main-image {
+.service-detail-template .gallery-main-image {
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
 
-.gallery-thumbnails {
+.service-detail-template .gallery-thumbnails {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   padding: 4px 0;
 }
 
-.gallery-thumbnail {
+.service-detail-template .gallery-thumbnail {
   width: 60px;
   height: 60px;
-  border-radius: 8px;
-  border: 2px solid #e0e0e0;
+  border-radius: var(--border-radius-sm, 8px);
+  border: 2px solid transparent;
   overflow: hidden;
   cursor: pointer;
   padding: 0;
-  background: white;
+  background: var(--color-bg-tertiary, #E4E4E7);
   flex-shrink: 0;
   transition: border-color 0.2s;
 }
 
-.gallery-thumbnail.active {
-  border-color: #7ba3d4;
+.service-detail-template .gallery-thumbnail.active {
+  border-color: var(--color-primary, #8B5CF6);
 }
 
-.gallery-thumbnail:hover {
-  border-color: #5a8bc4;
+.service-detail-template .gallery-thumbnail:hover {
+  border-color: var(--color-border, #D4D4D8);
 }
 
-.gallery-thumbnail img {
+.service-detail-template .gallery-thumbnail img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -88,19 +92,22 @@
 .service-detail-icon-large {
   width: 100%;
   aspect-ratio: 1;
-  border-radius: 12px;
-  border: 3px solid #7ba3d4;
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+  border-radius: var(--border-radius-md, 12px);
+  background: var(--color-bg-tertiary, #E4E4E7);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .service-icon-large {
-  font-size: 120px;
+  font-size: 80px;
+  opacity: 0.4;
 }
 
-/* Info section */
+/* =============================================================================
+   Info section
+   ============================================================================= */
+
 .service-detail-info {
   display: flex;
   flex-direction: column;
@@ -109,14 +116,18 @@
 
 /* Title */
 .service-detail-title {
-  font-size: 24px;
+  font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
+  font-size: 28px;
   font-weight: 700;
-  color: #333;
+  color: var(--color-text-primary, #18181B);
   margin: 0;
-  line-height: 1.3;
+  line-height: 1.2;
 }
 
-/* Primary Attributes */
+/* =============================================================================
+   Primary Attributes
+   ============================================================================= */
+
 .service-detail-primary {
   display: flex;
   flex-wrap: wrap;
@@ -124,110 +135,131 @@
 }
 
 .service-detail-chip {
-  padding: 8px 16px;
-  background: #7ba3d4;
-  color: white;
-  border-radius: 8px;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--color-bg-tertiary, #E4E4E7);
+  border-radius: 16px;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: 13px;
   font-weight: 500;
+  color: var(--color-text-secondary, #71717A);
 }
 
 .service-detail-duration {
-  background: #26a69a;
+  /* inherits from chip */
 }
 
 .service-detail-provider {
-  background: #5c6bc0;
+  /* inherits from chip */
 }
 
 .service-detail-rating {
-  background: #ffc107;
-  color: #333;
+  background: transparent;
+  padding: 0;
+  color: var(--color-accent-orange, #F97316);
 }
 
-/* Price */
+/* =============================================================================
+   Price
+   ============================================================================= */
+
 .service-detail-price {
-  padding: 16px;
-  background: #7ba3d4;
-  color: white;
-  border-radius: 8px;
+  font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
   font-size: 28px;
-  font-weight: 700;
-  text-align: center;
+  font-weight: 800;
+  color: var(--color-text-primary, #18181B);
 }
 
-/* Availability */
+/* =============================================================================
+   Availability
+   ============================================================================= */
+
 .service-detail-availability {
-  padding: 12px 16px;
-  border-radius: 8px;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--border-radius-badge, 20px);
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: 13px;
   font-weight: 600;
-  text-align: center;
 }
 
 .service-detail-availability.available {
-  background: #e8f5e9;
-  color: #2e7d32;
+  background: var(--color-success-light, #22C55E20);
+  color: var(--color-success, #22C55E);
 }
 
 .service-detail-availability.busy {
-  background: #fff3e0;
-  color: #e65100;
+  background: var(--color-warning-light, #F9731620);
+  color: var(--color-warning, #F97316);
 }
 
-/* Description */
+/* =============================================================================
+   Description
+   ============================================================================= */
+
 .service-detail-description {
-  padding-top: 8px;
-  border-top: 1px solid #e0e0e0;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border, #D4D4D8);
 }
 
 .service-detail-description h3 {
-  font-size: 16px;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: 15px;
   font-weight: 600;
-  color: #333;
+  color: var(--color-text-primary, #18181B);
   margin: 0 0 8px 0;
 }
 
 .service-detail-description p {
+  font-family: var(--font-family-base, 'Inter', sans-serif);
   font-size: 14px;
-  color: #666;
+  color: var(--color-text-secondary, #71717A);
   line-height: 1.6;
   margin: 0;
 }
 
-/* Specs */
+/* =============================================================================
+   Specs
+   ============================================================================= */
+
 .service-detail-specs {
-  padding-top: 8px;
-  border-top: 1px solid #e0e0e0;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border, #D4D4D8);
 }
 
 .service-detail-specs h3 {
-  font-size: 16px;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  font-size: 15px;
   font-weight: 600;
-  color: #333;
-  margin: 0 0 8px 0;
+  color: var(--color-text-primary, #18181B);
+  margin: 0 0 12px 0;
 }
 
-.specs-table {
+.service-detail-template .specs-table {
   width: 100%;
   border-collapse: collapse;
 }
 
-.specs-table tr:nth-child(even) {
-  background: #f5f5f5;
+.service-detail-template .specs-table tr:nth-child(even) {
+  background: var(--color-bg-primary, #FFFFFF);
 }
 
-.specs-table td {
-  padding: 8px 12px;
+.service-detail-template .specs-table td {
+  padding: 10px 12px;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
   font-size: 13px;
 }
 
-.spec-key {
-  color: #666;
+.service-detail-template .spec-key {
+  color: var(--color-text-secondary, #71717A);
   font-weight: 500;
   width: 40%;
 }
 
-.spec-value {
-  color: #333;
+.service-detail-template .spec-value {
+  color: var(--color-text-primary, #18181B);
 }

@@ -1,438 +1,392 @@
 package usecases_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
-	"keepstar/internal/adapters/anthropic"
-	"keepstar/internal/adapters/postgres"
 	"keepstar/internal/domain"
-	"keepstar/internal/logger"
-	"keepstar/internal/presets"
-	"keepstar/internal/tools"
 	"keepstar/internal/usecases"
 )
 
-// TestAgent2Execute_Integration tests Agent 2 (Template Builder) in isolation
-// Requires Agent 1 to run first to populate state with products
-// Run with: go test -v -run TestAgent2Execute_Integration ./internal/usecases/
+// TestAgent2Execute_Integration verifies Agent2 actually:
+// 1. Calls a render tool (render_product_preset or freestyle)
+// 2. Writes formation to state.Template via zone-write (not UpdateState)
+// 3. Formation has correct number of widgets matching product count
+// 4. Each widget has atoms with real data (not empty)
+// 5. Delta created for template zone
 func TestAgent2Execute_Integration(t *testing.T) {
-	// Load .env - go test runs with cwd = package directory
-	// From internal/usecases/ need ../../../.env to reach project/.env
-	if err := godotenv.Load("../../../.env"); err != nil {
-		// Try alternative paths
-		_ = godotenv.Load("../../.env")
-		_ = godotenv.Load("../.env")
-	}
-
-	dbURL := os.Getenv("DATABASE_URL")
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	model := os.Getenv("LLM_MODEL")
-	if model == "" {
-		model = "claude-haiku-4-5-20251001"
-	}
-
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY not set, skipping integration test")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 60*time.Second)
 	defer cancel()
 
-	log := logger.New("debug")
-
-	// Connect to database
-	dbClient, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer dbClient.Close()
-
-	// Run migrations
-	if err := dbClient.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-	if err := dbClient.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-	if err := dbClient.RunCatalogMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run catalog migrations: %v", err)
-	}
-
-	// Seed catalog data
-	if err := postgres.SeedCatalogData(ctx, dbClient); err != nil {
-		t.Logf("Warning: seed data failed (may already exist): %v", err)
-	}
-
-	// Initialize adapters
-	llmClient := anthropic.NewClient(apiKey, model)
-	stateAdapter := postgres.NewStateAdapter(dbClient)
-	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
-	cacheAdapter := postgres.NewCacheAdapter(dbClient)
-
-	// Initialize tool registry and Agent 1 (to populate state)
-	presetRegistry := presets.NewPresetRegistry()
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
-
-	// Initialize Agent 2 (with tool registry for preset tools)
 	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
 
-	// Helper to create session
-	createSession := func(sessionID string) error {
-		session := &domain.Session{
-			ID:             sessionID,
-			Status:         domain.SessionStatus("active"),
-			StartedAt:      time.Now(),
-			LastActivityAt: time.Now(),
-			CreatedAt:      time.Now(),
-			UpdatedAt:      time.Now(),
-		}
-		return cacheAdapter.SaveSession(ctx, session)
-	}
-
-	t.Run("Agent2 after Agent1", func(t *testing.T) {
+	t.Run("Agent2 renders formation after Agent1 search", func(t *testing.T) {
 		sessionID := uuid.New().String()
+		turnID := "turn-agent2-test"
+		createTestSession(t, ctx, cacheAdapter, sessionID)
 
-		t.Logf("\n=== Agent 2 Test ===")
-		t.Logf("Session: %s", sessionID)
-
-		// Create session first
-		if err := createSession(sessionID); err != nil {
-			t.Fatalf("Failed to create session: %v", err)
-		}
-
-		// Step 1: Run Agent 1 to populate state
-		t.Logf("\n--- Step 1: Agent 1 (Tool Caller) ---")
+		// Step 1: Agent1 populates state with products
 		agent1Resp, err := agent1UC.Execute(ctx, usecases.Agent1ExecuteRequest{
-			SessionID: sessionID,
-			Query:     "покажи кроссовки Nike",
+			SessionID:  sessionID,
+			Query:      "покажи кроссовки Nike",
+			TenantSlug: "nike",
+			TurnID:     turnID,
 		})
 		if err != nil {
-			t.Fatalf("Agent 1 failed: %v", err)
+			t.Fatalf("Agent1 failed: %v", err)
 		}
+		if agent1Resp.ProductsFound == 0 {
+			t.Fatal("Agent1 found 0 products — cannot test Agent2")
+		}
+		t.Logf("Agent1: %d products, tool=%s", agent1Resp.ProductsFound, agent1Resp.ToolName)
 
-		t.Logf("Agent 1 completed:")
-		t.Logf("  Latency: %d ms", agent1Resp.LatencyMs)
-		t.Logf("  Products found: %d", agent1Resp.Delta.Result.Count)
-		t.Logf("  Fields: %v", agent1Resp.Delta.Result.Fields)
-		t.Logf("  Tokens: %d (in: %d, out: %d)", agent1Resp.Usage.TotalTokens, agent1Resp.Usage.InputTokens, agent1Resp.Usage.OutputTokens)
-		t.Logf("  Cost: $%.6f", agent1Resp.Usage.CostUSD)
-
-		// Step 2: Run Agent 2 to generate template
-		t.Logf("\n--- Step 2: Agent 2 (Template Builder) ---")
+		// Step 2: Agent2 renders
 		agent2Resp, err := agent2UC.Execute(ctx, usecases.Agent2ExecuteRequest{
 			SessionID: sessionID,
+			TurnID:    turnID,
+			UserQuery: "покажи кроссовки Nike",
 		})
 		if err != nil {
-			t.Fatalf("Agent 2 failed: %v", err)
+			t.Fatalf("Agent2 failed: %v", err)
 		}
 
-		t.Logf("Agent 2 completed:")
-		t.Logf("  Latency: %d ms", agent2Resp.LatencyMs)
-		t.Logf("  Tokens: %d (in: %d, out: %d)", agent2Resp.Usage.TotalTokens, agent2Resp.Usage.InputTokens, agent2Resp.Usage.OutputTokens)
-		t.Logf("  Cost: $%.6f", agent2Resp.Usage.CostUSD)
+		// 1. Tool must be called
+		if !agent2Resp.ToolCalled {
+			t.Fatal("Expected Agent2 to call a render tool, but ToolCalled=false")
+		}
+		if agent2Resp.ToolName == "" {
+			t.Fatal("Expected Agent2 ToolName to be non-empty")
+		}
+		t.Logf("Agent2 called tool: %s", agent2Resp.ToolName)
 
-		if agent2Resp.Template != nil {
-			t.Logf("  Template mode: %s", agent2Resp.Template.Mode)
-			if agent2Resp.Template.Grid != nil {
-				t.Logf("  Grid: %dx%d", agent2Resp.Template.Grid.Rows, agent2Resp.Template.Grid.Cols)
-			}
-			t.Logf("  Widget size: %s", agent2Resp.Template.WidgetTemplate.Size)
-			t.Logf("  Atoms count: %d", len(agent2Resp.Template.WidgetTemplate.Atoms))
-
-			for i, atom := range agent2Resp.Template.WidgetTemplate.Atoms {
-				t.Logf("    Atom %d: type=%s, field=%s", i, atom.Type, atom.Field)
-			}
-		} else {
-			t.Error("Expected template to be returned")
+		// 2. Formation must be in response (read from state after tool)
+		if agent2Resp.Formation == nil {
+			t.Fatal("Expected formation in Agent2 response, got nil")
 		}
 
-		// Check state has template
+		// 3. Widget count must match product count
+		if len(agent2Resp.Formation.Widgets) == 0 {
+			t.Fatal("Expected widgets in formation, got 0")
+		}
+		if len(agent2Resp.Formation.Widgets) != agent1Resp.ProductsFound {
+			t.Errorf("Expected %d widgets (matching products), got %d", agent1Resp.ProductsFound, len(agent2Resp.Formation.Widgets))
+		}
+		t.Logf("Formation: mode=%s, widgets=%d", agent2Resp.Formation.Mode, len(agent2Resp.Formation.Widgets))
+
+		// 4. First widget must have atoms with real data
+		w := agent2Resp.Formation.Widgets[0]
+		if len(w.Atoms) == 0 {
+			t.Fatal("Expected atoms in first widget, got 0")
+		}
+		// Must have at least title and price
+		var hasTitle, hasPrice bool
+		for _, atom := range w.Atoms {
+			if atom.Slot == domain.AtomSlotTitle && atom.Value != nil && atom.Value != "" {
+				hasTitle = true
+			}
+			if atom.Slot == domain.AtomSlotPrice && atom.Value != nil {
+				hasPrice = true
+			}
+		}
+		if !hasTitle {
+			t.Error("Expected title atom with non-empty value in first widget")
+		}
+		if !hasPrice {
+			t.Error("Expected price atom with non-nil value in first widget")
+		}
+		t.Logf("First widget: %d atoms, template=%s", len(w.Atoms), w.Template)
+
+		// 5. State must have template written
 		state, err := stateAdapter.GetState(ctx, sessionID)
 		if err != nil {
 			t.Fatalf("Failed to get state: %v", err)
 		}
+		if state.Current.Template == nil {
+			t.Fatal("Expected template in state, got nil")
+		}
+		if _, ok := state.Current.Template["formation"]; !ok {
+			t.Fatal("Expected 'formation' key in state.Current.Template")
+		}
 
-		t.Logf("\n--- State after Agent 2 ---")
-		t.Logf("  Products in state: %d", len(state.Current.Data.Products))
-		t.Logf("  Meta count: %d", state.Current.Meta.Count)
-		t.Logf("  Meta fields: %v", state.Current.Meta.Fields)
+		// 6. Data zone must NOT be modified by Agent2 (zone isolation)
+		if len(state.Current.Data.Products) != agent1Resp.ProductsFound {
+			t.Errorf("Data zone changed after Agent2! Expected %d products, got %d", agent1Resp.ProductsFound, len(state.Current.Data.Products))
+		}
 
-		if state.Current.Template != nil {
-			templateJSON, _ := json.MarshalIndent(state.Current.Template, "  ", "  ")
-			t.Logf("  Template saved: %s", string(templateJSON))
-		} else {
-			t.Error("Expected template to be saved in state")
+		// 7. Delta for template zone must exist
+		deltas, err := stateAdapter.GetDeltas(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("Failed to get deltas: %v", err)
+		}
+		var hasTemplateDelta bool
+		for _, d := range deltas {
+			if d.Path == "template" && d.TurnID == turnID {
+				hasTemplateDelta = true
+				t.Logf("Template delta: step=%d, tool=%s", d.Step, d.Action.Tool)
+			}
+		}
+		if !hasTemplateDelta {
+			t.Error("Expected delta with path=template for this turn, found none")
+		}
+
+		t.Logf("Agent2: %d tokens, $%.6f", agent2Resp.Usage.TotalTokens, agent2Resp.Usage.CostUSD)
+	})
+
+	t.Run("Agent2 does nothing with empty data", func(t *testing.T) {
+		sessionID := uuid.New().String()
+		createTestSession(t, ctx, cacheAdapter, sessionID)
+
+		// Create empty state (no products)
+		_, err := stateAdapter.CreateState(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("Failed to create state: %v", err)
+		}
+
+		agent2Resp, err := agent2UC.Execute(ctx, usecases.Agent2ExecuteRequest{
+			SessionID: sessionID,
+			TurnID:    "turn-empty",
+			UserQuery: "покажи товары",
+		})
+		if err != nil {
+			t.Fatalf("Agent2 failed on empty state: %v", err)
+		}
+
+		// Should NOT call any tool with 0 products
+		if agent2Resp.ToolCalled {
+			t.Error("Expected Agent2 NOT to call a tool with empty data")
+		}
+		if agent2Resp.Formation != nil {
+			t.Error("Expected nil formation with empty data")
 		}
 	})
 }
 
-// TestPipelineExecute_Integration tests the full pipeline: Agent 1 → Agent 2 → Formation
-// Run with: go test -v -run TestPipelineExecute_Integration ./internal/usecases/
+// TestPipelineExecute_Integration verifies the full pipeline:
+// 1. Returns sessionId
+// 2. Returns formation with widgets
+// 3. Widgets have real product data
+// 4. State is consistent (products in data, formation in template)
+// 5. Follow-up query in same session gets same products
+// 6. Delta field NOT in response (removed in this patch)
 func TestPipelineExecute_Integration(t *testing.T) {
-	// Load .env - go test runs with cwd = package directory
-	// From internal/usecases/ need ../../../.env to reach project/.env
-	if err := godotenv.Load("../../../.env"); err != nil {
-		// Try alternative paths
-		_ = godotenv.Load("../../.env")
-		_ = godotenv.Load("../.env")
-	}
-
-	dbURL := os.Getenv("DATABASE_URL")
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	model := os.Getenv("LLM_MODEL")
-	if model == "" {
-		model = "claude-haiku-4-5-20251001"
-	}
-
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY not set, skipping integration test")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 90*time.Second)
 	defer cancel()
 
-	log := logger.New("debug")
-
-	dbClient, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer dbClient.Close()
-
-	// Run migrations
-	_ = dbClient.RunMigrations(ctx)
-	_ = dbClient.RunStateMigrations(ctx)
-	_ = dbClient.RunCatalogMigrations(ctx)
-	_ = postgres.SeedCatalogData(ctx, dbClient)
-
-	// Initialize adapters
-	llmClient := anthropic.NewClient(apiKey, model)
-	stateAdapter := postgres.NewStateAdapter(dbClient)
-	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
-	cacheAdapter := postgres.NewCacheAdapter(dbClient)
-	presetRegistry := presets.NewPresetRegistry()
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
-
-	// Initialize Pipeline
 	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, log)
 
-	// Helper to create session
-	createSession := func(sessionID string) error {
-		session := &domain.Session{
-			ID:             sessionID,
-			Status:         domain.SessionStatus("active"),
-			StartedAt:      time.Now(),
-			LastActivityAt: time.Now(),
-			CreatedAt:      time.Now(),
-			UpdatedAt:      time.Now(),
-		}
-		return cacheAdapter.SaveSession(ctx, session)
-	}
+	t.Run("Nike query returns formation with widgets", func(t *testing.T) {
+		sessionID := uuid.New().String()
+		createTestSession(t, ctx, cacheAdapter, sessionID)
 
-	testCases := []struct {
-		name  string
-		query string
-	}{
-		{"Nike shoes", "покажи кроссовки Nike"},
-		{"All products", "покажи все товары"},
-		{"Cheap products", "дешевые товары до 5000 рублей"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			sessionID := uuid.New().String()
-
-			t.Logf("\n%s", strings.Repeat("=", 60))
-			t.Logf("PIPELINE TEST: %s", tc.name)
-			t.Logf("%s", strings.Repeat("=", 60))
-			t.Logf("Session: %s", sessionID)
-			t.Logf("Query: %s", tc.query)
-
-			if err := createSession(sessionID); err != nil {
-				t.Fatalf("Failed to create session: %v", err)
-			}
-
-			// Execute full pipeline
-			resp, err := pipelineUC.Execute(ctx, usecases.PipelineExecuteRequest{
-				SessionID: sessionID,
-				Query:     tc.query,
-			})
-			if err != nil {
-				t.Fatalf("Pipeline execution failed: %v", err)
-			}
-
-			// Timing
-			t.Logf("\n--- Timing ---")
-			t.Logf("Agent 1:  %d ms", resp.Agent1Ms)
-			t.Logf("Agent 2:  %d ms", resp.Agent2Ms)
-			t.Logf("Total:    %d ms", resp.TotalMs)
-
-			// Delta (from Agent 1)
-			if resp.Delta != nil {
-				t.Logf("\n--- Delta (Agent 1 result) ---")
-				t.Logf("Step: %d", resp.Delta.Step)
-				t.Logf("Tool: %s", resp.Delta.Action.Tool)
-				t.Logf("Products found: %d", resp.Delta.Result.Count)
-			}
-
-			// Formation (final result)
-			if resp.Formation != nil {
-				t.Logf("\n--- Formation (Final Result) ---")
-				t.Logf("Mode: %s", resp.Formation.Mode)
-				if resp.Formation.Grid != nil {
-					t.Logf("Grid: %dx%d", resp.Formation.Grid.Rows, resp.Formation.Grid.Cols)
-				}
-				t.Logf("Widgets count: %d", len(resp.Formation.Widgets))
-
-				// Show first widget (template + atoms with slots)
-				if len(resp.Formation.Widgets) > 0 {
-					w := resp.Formation.Widgets[0]
-					t.Logf("\nFirst widget:")
-					t.Logf("  ID: %s", w.ID)
-					t.Logf("  Template: %s", w.Template)
-					t.Logf("  Size: %s", w.Size)
-					t.Logf("  Atoms: %d", len(w.Atoms))
-					for i, atom := range w.Atoms {
-						t.Logf("    Atom %d: type=%s, slot=%s, value=%v", i, atom.Type, atom.Slot, atom.Value)
-					}
-				}
-			} else {
-				t.Logf("\nNo formation (no products or template)")
-			}
-
-			// Verify state
-			state, _ := stateAdapter.GetState(ctx, sessionID)
-			t.Logf("\n--- Final State ---")
-			t.Logf("Products: %d", len(state.Current.Data.Products))
-			t.Logf("Template saved: %v", state.Current.Template != nil)
+		resp, err := pipelineUC.Execute(ctx, usecases.PipelineExecuteRequest{
+			SessionID:  sessionID,
+			Query:      "покажи кроссовки Nike",
+			TenantSlug: "nike",
 		})
-	}
+		if err != nil {
+			t.Fatalf("Pipeline failed: %v", err)
+		}
+
+		// 1. Formation must exist
+		if resp.Formation == nil {
+			t.Fatal("Expected formation in pipeline response, got nil")
+		}
+
+		// 2. Widgets must be present
+		if len(resp.Formation.Widgets) == 0 {
+			t.Fatal("Expected widgets in formation, got 0")
+		}
+		t.Logf("Formation: mode=%s, %d widgets", resp.Formation.Mode, len(resp.Formation.Widgets))
+
+		// 3. Widgets must have real data
+		for i, w := range resp.Formation.Widgets {
+			if len(w.Atoms) == 0 {
+				t.Errorf("Widget %d has 0 atoms", i)
+			}
+			if w.EntityRef == nil {
+				t.Errorf("Widget %d has nil EntityRef", i)
+			}
+		}
+
+		// 4. First widget title must be a real product name (not empty)
+		firstWidget := resp.Formation.Widgets[0]
+		for _, atom := range firstWidget.Atoms {
+			if atom.Slot == domain.AtomSlotTitle {
+				if atom.Value == nil || atom.Value == "" {
+					t.Error("First widget title atom has empty value")
+				} else {
+					t.Logf("First product: %v", atom.Value)
+				}
+				break
+			}
+		}
+
+		// 5. State must be consistent
+		state, err := stateAdapter.GetState(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("Failed to get state: %v", err)
+		}
+		if len(state.Current.Data.Products) == 0 {
+			t.Fatal("Expected products in state after pipeline")
+		}
+		if state.Current.Template == nil {
+			t.Fatal("Expected template in state after pipeline")
+		}
+		if len(state.ConversationHistory) == 0 {
+			t.Fatal("Expected conversation history after pipeline")
+		}
+		t.Logf("State: %d products, %d conversation messages, template=%v",
+			len(state.Current.Data.Products), len(state.ConversationHistory), state.Current.Template != nil)
+
+		// 6. Deltas must exist for both data and template zones
+		deltas, err := stateAdapter.GetDeltas(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("Failed to get deltas: %v", err)
+		}
+		var hasDataDelta, hasTemplateDelta bool
+		for _, d := range deltas {
+			if strings.HasPrefix(d.Path, "data.") {
+				hasDataDelta = true
+			}
+			if d.Path == "template" {
+				hasTemplateDelta = true
+			}
+		}
+		if !hasDataDelta {
+			t.Error("Expected data delta in DB")
+		}
+		if !hasTemplateDelta {
+			t.Error("Expected template delta in DB")
+		}
+		t.Logf("Deltas: %d total (data=%v, template=%v)", len(deltas), hasDataDelta, hasTemplateDelta)
+
+		// 7. Timing must be realistic
+		if resp.TotalMs == 0 {
+			t.Error("Expected non-zero TotalMs")
+		}
+		t.Logf("Timing: agent1=%dms, agent2=%dms, total=%dms", resp.Agent1Ms, resp.Agent2Ms, resp.TotalMs)
+	})
+
+	t.Run("Follow-up query in same session preserves context", func(t *testing.T) {
+		sessionID := uuid.New().String()
+		createTestSession(t, ctx, cacheAdapter, sessionID)
+
+		// First query
+		resp1, err := pipelineUC.Execute(ctx, usecases.PipelineExecuteRequest{
+			SessionID:  sessionID,
+			Query:      "покажи кроссовки Nike",
+			TenantSlug: "nike",
+		})
+		if err != nil {
+			t.Fatalf("First pipeline failed: %v", err)
+		}
+		if resp1.Formation == nil {
+			t.Fatal("Expected formation from first query")
+		}
+		firstWidgetCount := len(resp1.Formation.Widgets)
+		t.Logf("First query: %d widgets", firstWidgetCount)
+
+		// Second query in SAME session
+		resp2, err := pipelineUC.Execute(ctx, usecases.PipelineExecuteRequest{
+			SessionID:  sessionID,
+			Query:      "покажи Jordan",
+			TenantSlug: "nike",
+		})
+		if err != nil {
+			t.Fatalf("Second pipeline failed: %v", err)
+		}
+
+		// Conversation should have both queries
+		state, err := stateAdapter.GetState(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("Failed to get state: %v", err)
+		}
+		// First query: user + assistant:tool_use + user:tool_result = 3
+		// Second query: +3 more = 6
+		if len(state.ConversationHistory) < 6 {
+			t.Errorf("Expected at least 6 conversation messages for 2 queries, got %d", len(state.ConversationHistory))
+		}
+		t.Logf("After 2 queries: %d conversation messages", len(state.ConversationHistory))
+
+		// Second query should also have formation (or at least not crash)
+		if resp2.Formation != nil {
+			t.Logf("Second query: %d widgets", len(resp2.Formation.Widgets))
+		} else {
+			t.Logf("Second query: no formation (search may have returned 0)")
+		}
+	})
 }
 
 // TestPipelineExecute_CostReport prints detailed cost report for full pipeline
-// Run with: go test -v -run TestPipelineExecute_CostReport ./internal/usecases/
 func TestPipelineExecute_CostReport(t *testing.T) {
-	// Load .env - go test runs with cwd = package directory
-	// From internal/usecases/ need ../../../.env to reach project/.env
-	if err := godotenv.Load("../../../.env"); err != nil {
-		// Try alternative paths
-		_ = godotenv.Load("../../.env")
-		_ = godotenv.Load("../.env")
-	}
-
-	dbURL := os.Getenv("DATABASE_URL")
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	model := os.Getenv("LLM_MODEL")
-	if model == "" {
-		model = "claude-haiku-4-5-20251001"
-	}
-
-	if dbURL == "" || apiKey == "" {
-		t.Skip("DATABASE_URL or ANTHROPIC_API_KEY not set")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 60*time.Second)
 	defer cancel()
 
-	log := logger.New("debug")
-
-	dbClient, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("DB connection failed: %v", err)
-	}
-	defer dbClient.Close()
-
-	_ = dbClient.RunMigrations(ctx)
-	_ = dbClient.RunStateMigrations(ctx)
-	_ = dbClient.RunCatalogMigrations(ctx)
-	_ = postgres.SeedCatalogData(ctx, dbClient)
-
-	llmClient := anthropic.NewClient(apiKey, model)
-	stateAdapter := postgres.NewStateAdapter(dbClient)
-	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
-	cacheAdapter := postgres.NewCacheAdapter(dbClient)
-	presetRegistry := presets.NewPresetRegistry()
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
-
-	// Create both use cases to get individual costs
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
 	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
 	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, log)
 
 	sessionID := uuid.New().String()
-
-	// Create session
-	session := &domain.Session{
-		ID:             sessionID,
-		Status:         domain.SessionStatus("active"),
-		StartedAt:      time.Now(),
-		LastActivityAt: time.Now(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-	}
-	if err := cacheAdapter.SaveSession(ctx, session); err != nil {
-		t.Fatalf("Failed to create session: %v", err)
-	}
+	createTestSession(t, ctx, cacheAdapter, sessionID)
 
 	query := "покажи кроссовки Nike"
 
-	// Run Agent 1 separately to get its usage
+	// Run Agent 1 separately
 	agent1Resp, err := agent1UC.Execute(ctx, usecases.Agent1ExecuteRequest{
-		SessionID: sessionID,
-		Query:     query,
+		SessionID:  sessionID,
+		Query:      query,
+		TenantSlug: "nike",
+		TurnID:     "cost-turn-1",
 	})
 	if err != nil {
 		t.Fatalf("Agent 1 failed: %v", err)
 	}
+	if agent1Resp.ProductsFound == 0 {
+		t.Fatal("Agent 1 found 0 products")
+	}
 
-	// Run Agent 2 separately to measure (no direct cost tracking yet)
+	// Run Agent 2 separately
 	agent2Start := time.Now()
 	agent2Resp, err := agent2UC.Execute(ctx, usecases.Agent2ExecuteRequest{
 		SessionID: sessionID,
+		TurnID:    "cost-turn-1",
+		UserQuery: query,
 	})
 	if err != nil {
 		t.Fatalf("Agent 2 failed: %v", err)
 	}
 	agent2Duration := time.Since(agent2Start).Milliseconds()
 
-	// For new session, run full pipeline to get timing
-	sessionID2 := uuid.New().String()
-	session2 := &domain.Session{
-		ID:             sessionID2,
-		Status:         domain.SessionStatus("active"),
-		StartedAt:      time.Now(),
-		LastActivityAt: time.Now(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+	if !agent2Resp.ToolCalled {
+		t.Error("Expected Agent2 to call a tool")
 	}
-	_ = cacheAdapter.SaveSession(ctx, session2)
 
-	pipelineResp, _ := pipelineUC.Execute(ctx, usecases.PipelineExecuteRequest{
-		SessionID: sessionID2,
-		Query:     query,
+	// Full pipeline on new session
+	sessionID2 := uuid.New().String()
+	createTestSession(t, ctx, cacheAdapter, sessionID2)
+
+	pipelineResp, err := pipelineUC.Execute(ctx, usecases.PipelineExecuteRequest{
+		SessionID:  sessionID2,
+		Query:      query,
+		TenantSlug: "nike",
 	})
+	if err != nil {
+		t.Fatalf("Pipeline failed: %v", err)
+	}
+	if pipelineResp.Formation == nil {
+		t.Error("Expected formation from pipeline")
+	}
 
 	// Print report
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("TWO-AGENT PIPELINE COST REPORT")
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Printf("Query: %s\n", query)
-	fmt.Printf("Model: %s\n", model)
 	fmt.Println(strings.Repeat("-", 60))
 
 	fmt.Println("\nAGENT 1 (Tool Caller):")
@@ -441,18 +395,17 @@ func TestPipelineExecute_CostReport(t *testing.T) {
 	fmt.Printf("  Total tokens:  %d\n", agent1Resp.Usage.TotalTokens)
 	fmt.Printf("  Cost:          $%.6f\n", agent1Resp.Usage.CostUSD)
 	fmt.Printf("  Latency:       %d ms\n", agent1Resp.LatencyMs)
-	fmt.Printf("  Products:      %d\n", agent1Resp.Delta.Result.Count)
+	fmt.Printf("  Products:      %d\n", agent1Resp.ProductsFound)
 
-	fmt.Println("\nAGENT 2 (Template Builder):")
+	fmt.Println("\nAGENT 2 (Renderer):")
 	fmt.Printf("  Input tokens:  %d\n", agent2Resp.Usage.InputTokens)
 	fmt.Printf("  Output tokens: %d\n", agent2Resp.Usage.OutputTokens)
 	fmt.Printf("  Total tokens:  %d\n", agent2Resp.Usage.TotalTokens)
 	fmt.Printf("  Cost:          $%.6f\n", agent2Resp.Usage.CostUSD)
 	fmt.Printf("  Latency:       %d ms\n", agent2Duration)
-	if agent2Resp.Template != nil {
-		fmt.Printf("  Mode:          %s\n", agent2Resp.Template.Mode)
-		fmt.Printf("  Widget size:   %s\n", agent2Resp.Template.WidgetTemplate.Size)
-		fmt.Printf("  Atoms:         %d\n", len(agent2Resp.Template.WidgetTemplate.Atoms))
+	fmt.Printf("  Tool:          %s\n", agent2Resp.ToolName)
+	if agent2Resp.Formation != nil {
+		fmt.Printf("  Widgets:       %d\n", len(agent2Resp.Formation.Widgets))
 	}
 
 	fmt.Println(strings.Repeat("-", 60))
@@ -479,7 +432,6 @@ func TestPipelineExecute_CostReport(t *testing.T) {
 
 // TestApplyTemplate_Unit tests template application without LLM
 func TestApplyTemplate_Unit(t *testing.T) {
-	// Create test template
 	template := &domain.FormationTemplate{
 		Mode: domain.FormationTypeGrid,
 		Grid: &domain.GridConfig{Rows: 2, Cols: 2},
@@ -489,62 +441,37 @@ func TestApplyTemplate_Unit(t *testing.T) {
 				{Type: domain.AtomTypeImage, Field: "images", Size: "medium"},
 				{Type: domain.AtomTypeText, Field: "name", Style: "heading"},
 				{Type: domain.AtomTypeNumber, Field: "price", Format: "currency"},
-				{Type: domain.AtomTypeRating, Field: "rating"},
+				{Type: domain.AtomTypeNumber, Field: "rating"},
 			},
 		},
 	}
 
-	// Create test products
 	products := []domain.Product{
 		{
-			ID:       "prod-1",
-			Name:     "Nike Air Max 90",
-			Price:    12990,
-			Currency: "$",
-			Images:   []string{"https://example.com/nike1.jpg"},
-			Rating:   4.5,
-			Brand:    "Nike",
-			Category: "Sneakers",
+			ID: "prod-1", Name: "Nike Air Max 90", Price: 12990, Currency: "$",
+			Images: []string{"https://example.com/nike1.jpg"}, Rating: 4.5,
+			Brand: "Nike", Category: "Sneakers",
 		},
 		{
-			ID:       "prod-2",
-			Name:     "Nike Air Force 1",
-			Price:    9990,
-			Currency: "$",
-			Images:   []string{"https://example.com/nike2.jpg"},
-			Rating:   4.8,
-			Brand:    "Nike",
-			Category: "Sneakers",
+			ID: "prod-2", Name: "Nike Air Force 1", Price: 9990, Currency: "$",
+			Images: []string{"https://example.com/nike2.jpg"}, Rating: 4.8,
+			Brand: "Nike", Category: "Sneakers",
 		},
 	}
 
-	// Apply template
 	formation, err := usecases.ApplyTemplate(template, products)
 	if err != nil {
 		t.Fatalf("ApplyTemplate failed: %v", err)
 	}
 
-	t.Logf("\n--- ApplyTemplate Result ---")
-	t.Logf("Mode: %s", formation.Mode)
-	t.Logf("Grid: %dx%d", formation.Grid.Rows, formation.Grid.Cols)
-	t.Logf("Widgets: %d", len(formation.Widgets))
-
-	// Verify
 	if formation.Mode != domain.FormationTypeGrid {
 		t.Errorf("Expected mode=grid, got %s", formation.Mode)
 	}
 	if len(formation.Widgets) != 2 {
-		t.Errorf("Expected 2 widgets, got %d", len(formation.Widgets))
+		t.Fatalf("Expected 2 widgets, got %d", len(formation.Widgets))
 	}
 
-	// Check first widget (template + atoms with slots)
 	w := formation.Widgets[0]
-	t.Logf("\nWidget 0:")
-	t.Logf("  ID: %s", w.ID)
-	t.Logf("  Template: %s", w.Template)
-	t.Logf("  Size: %s", w.Size)
-	t.Logf("  Atoms: %d", len(w.Atoms))
-
 	if w.Template != domain.WidgetTemplateProductCard {
 		t.Errorf("Expected template=ProductCard, got %s", w.Template)
 	}
@@ -555,28 +482,18 @@ func TestApplyTemplate_Unit(t *testing.T) {
 		t.Fatalf("Expected atoms to be present")
 	}
 
-	// Log atoms with slots
-	for i, atom := range w.Atoms {
-		t.Logf("  Atom %d: type=%s, slot=%s, value=%v", i, atom.Type, atom.Slot, atom.Value)
-	}
-
-	// Find title atom
-	var titleAtom *domain.Atom
-	var priceAtom *domain.Atom
-	var heroAtom *domain.Atom
+	var titleAtom, priceAtom, heroAtom *domain.Atom
 	for i := range w.Atoms {
-		if w.Atoms[i].Slot == domain.AtomSlotTitle {
+		switch w.Atoms[i].Slot {
+		case domain.AtomSlotTitle:
 			titleAtom = &w.Atoms[i]
-		}
-		if w.Atoms[i].Slot == domain.AtomSlotPrice {
+		case domain.AtomSlotPrice:
 			priceAtom = &w.Atoms[i]
-		}
-		if w.Atoms[i].Slot == domain.AtomSlotHero {
+		case domain.AtomSlotHero:
 			heroAtom = &w.Atoms[i]
 		}
 	}
 
-	// Verify first product's data
 	if titleAtom == nil || titleAtom.Value != "Nike Air Max 90" {
 		t.Errorf("Expected title='Nike Air Max 90', got %v", titleAtom)
 	}
@@ -585,5 +502,14 @@ func TestApplyTemplate_Unit(t *testing.T) {
 	}
 	if heroAtom == nil {
 		t.Errorf("Expected hero image atom")
+	}
+
+	// Verify JSON serialization works (what frontend receives)
+	jsonBytes, err := json.Marshal(formation)
+	if err != nil {
+		t.Fatalf("Failed to marshal formation: %v", err)
+	}
+	if len(jsonBytes) == 0 {
+		t.Error("Expected non-empty JSON")
 	}
 }

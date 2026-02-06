@@ -54,7 +54,7 @@ func (t *RenderProductPresetTool) Definition() domain.ToolDefinition {
 }
 
 // Execute renders products with preset and writes formation to state
-func (t *RenderProductPresetTool) Execute(ctx context.Context, sessionID string, input map[string]interface{}) (*domain.ToolResult, error) {
+func (t *RenderProductPresetTool) Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
 	presetName, _ := input["preset"].(string)
 
 	preset, ok := t.presetRegistry.Get(domain.PresetName(presetName))
@@ -62,7 +62,7 @@ func (t *RenderProductPresetTool) Execute(ctx context.Context, sessionID string,
 		return &domain.ToolResult{Content: "error: unknown preset", IsError: true}, nil
 	}
 
-	state, err := t.statePort.GetState(ctx, sessionID)
+	state, err := t.statePort.GetState(ctx, toolCtx.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
 	}
@@ -78,13 +78,22 @@ func (t *RenderProductPresetTool) Execute(ctx context.Context, sessionID string,
 		return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 	})
 
-	// Store formation in state template
-	state.Current.Template = map[string]interface{}{
+	// Store formation in state template via zone-write
+	template := map[string]interface{}{
 		"formation": formation,
 	}
 
-	if err := t.statePort.UpdateState(ctx, state); err != nil {
-		return nil, fmt.Errorf("update state: %w", err)
+	info := domain.DeltaInfo{
+		TurnID:    toolCtx.TurnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   toolCtx.ActorID,
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
+		Action:    domain.Action{Type: domain.ActionLayout, Tool: "render_product_preset"},
+	}
+	if _, err := t.statePort.UpdateTemplate(ctx, toolCtx.SessionID, template, info); err != nil {
+		return nil, fmt.Errorf("update template: %w", err)
 	}
 
 	return &domain.ToolResult{
@@ -126,7 +135,7 @@ func (t *RenderServicePresetTool) Definition() domain.ToolDefinition {
 }
 
 // Execute renders services with preset and writes formation to state
-func (t *RenderServicePresetTool) Execute(ctx context.Context, sessionID string, input map[string]interface{}) (*domain.ToolResult, error) {
+func (t *RenderServicePresetTool) Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
 	presetName, _ := input["preset"].(string)
 
 	preset, ok := t.presetRegistry.Get(domain.PresetName(presetName))
@@ -134,7 +143,7 @@ func (t *RenderServicePresetTool) Execute(ctx context.Context, sessionID string,
 		return &domain.ToolResult{Content: "error: unknown preset", IsError: true}, nil
 	}
 
-	state, err := t.statePort.GetState(ctx, sessionID)
+	state, err := t.statePort.GetState(ctx, toolCtx.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
 	}
@@ -155,12 +164,21 @@ func (t *RenderServicePresetTool) Execute(ctx context.Context, sessionID string,
 		formation.Widgets = append(existing.Widgets, formation.Widgets...)
 	}
 
-	state.Current.Template = map[string]interface{}{
+	template := map[string]interface{}{
 		"formation": formation,
 	}
 
-	if err := t.statePort.UpdateState(ctx, state); err != nil {
-		return nil, fmt.Errorf("update state: %w", err)
+	info := domain.DeltaInfo{
+		TurnID:    toolCtx.TurnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   toolCtx.ActorID,
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
+		Action:    domain.Action{Type: domain.ActionLayout, Tool: "render_service_preset"},
+	}
+	if _, err := t.statePort.UpdateTemplate(ctx, toolCtx.SessionID, template, info); err != nil {
+		return nil, fmt.Errorf("update template: %w", err)
 	}
 
 	return &domain.ToolResult{
@@ -210,6 +228,7 @@ func BuildFormation(preset domain.Preset, count int, getEntity EntityGetterFunc)
 }
 
 // buildAtoms creates atoms from fields using generic field getter
+// Now uses the new atom model with Type, Subtype, Display
 func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency CurrencyGetter) []domain.Atom {
 	atoms := make([]domain.Atom, 0)
 
@@ -220,32 +239,25 @@ func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency C
 		}
 
 		atom := domain.Atom{
-			Type:  field.AtomType,
-			Value: value,
-			Slot:  field.Slot,
+			Type:    field.AtomType,
+			Subtype: field.Subtype,
+			Display: string(field.Display), // Use Display from FieldConfig
+			Value:   value,
+			Slot:    field.Slot,
 		}
 
-		// Add meta based on atom type
+		// Add meta for backward compatibility and additional data
 		switch field.AtomType {
 		case domain.AtomTypeImage:
 			atom.Meta = map[string]interface{}{"size": "large"}
-		case domain.AtomTypeText:
-			switch field.Slot {
-			case domain.AtomSlotTitle:
-				atom.Meta = map[string]interface{}{"style": "heading"}
-			case domain.AtomSlotPrimary:
-				atom.Meta = map[string]interface{}{"display": "chip"}
-			case domain.AtomSlotSecondary:
-				atom.Meta = map[string]interface{}{"label": field.Name}
+		case domain.AtomTypeNumber:
+			if field.Subtype == domain.SubtypeCurrency {
+				currency := getCurrency()
+				if currency == "" {
+					currency = "$"
+				}
+				atom.Meta = map[string]interface{}{"currency": currency}
 			}
-		case domain.AtomTypePrice:
-			currency := getCurrency()
-			if currency == "" {
-				currency = "$"
-			}
-			atom.Meta = map[string]interface{}{"currency": currency}
-		case domain.AtomTypeRating:
-			atom.Meta = map[string]interface{}{"display": "chip"}
 		}
 
 		atoms = append(atoms, atom)

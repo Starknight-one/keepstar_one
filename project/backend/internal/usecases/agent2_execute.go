@@ -15,9 +15,9 @@ import (
 
 // Agent2ExecuteRequest is the input for Agent 2
 type Agent2ExecuteRequest struct {
-	SessionID  string
-	LayoutHint string // Optional hint for layout
-	TurnID     string // Turn ID for delta grouping
+	SessionID string
+	TurnID    string // Turn ID for delta grouping
+	UserQuery string // User's original query (for style selection)
 }
 
 // Agent2ExecuteResponse is the output from Agent 2
@@ -74,32 +74,28 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	state.Current.Meta.ProductCount = len(state.Current.Data.Products)
 	state.Current.Meta.ServiceCount = len(state.Current.Data.Services)
 
-	// Check if we have data
+	// Check if we have data — no data means nothing to render
 	if state.Current.Meta.ProductCount == 0 && state.Current.Meta.ServiceCount == 0 {
-		// Create delta for empty path
-		if req.TurnID != "" {
-			emptyInfo := domain.DeltaInfo{
-				TurnID:    req.TurnID,
-				Trigger:   domain.TriggerUserQuery,
-				Source:    domain.SourceLLM,
-				ActorID:   "agent2",
-				DeltaType: domain.DeltaTypeUpdate,
-				Path:      "template",
-				Action:    domain.Action{Type: domain.ActionLayout},
-				Result:    domain.ResultMeta{Count: 0},
-			}
-			emptyDelta := emptyInfo.ToDelta()
-			uc.statePort.AddDelta(ctx, req.SessionID, emptyDelta)
-		}
-
 		return &Agent2ExecuteResponse{
 			Template:  nil,
 			LatencyMs: int(time.Since(start).Milliseconds()),
 		}, nil
 	}
 
-	// Build user message with meta info
-	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, req.LayoutHint)
+	// Get data delta for current turn (for Agent2 context)
+	var dataDelta *domain.Delta
+	if req.TurnID != "" {
+		deltas, _ := uc.statePort.GetDeltasSince(ctx, req.SessionID, 0)
+		for i := len(deltas) - 1; i >= 0; i-- {
+			if deltas[i].TurnID == req.TurnID && strings.HasPrefix(deltas[i].Path, "data.") {
+				dataDelta = &deltas[i]
+				break
+			}
+		}
+	}
+
+	// Build user message with view context, user query, and data delta
+	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta)
 
 	messages := []domain.LLMMessage{
 		{Role: "user", Content: userPrompt},
@@ -146,12 +142,16 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		MetaFields: state.Current.Meta.Fields,
 	}
 
-	// Execute tool calls
+	// Execute tool calls — tools create deltas via zone-write internally
 	for _, toolCall := range llmResp.ToolCalls {
 		response.ToolCalled = true
 		response.ToolName = toolCall.Name
 
-		result, err := uc.toolRegistry.Execute(ctx, req.SessionID, toolCall)
+		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
+			SessionID: req.SessionID,
+			TurnID:    req.TurnID,
+			ActorID:   "agent2",
+		}, toolCall)
 		if err != nil {
 			return nil, fmt.Errorf("execute tool %s: %w", toolCall.Name, err)
 		}
@@ -161,26 +161,6 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		// Tool writes formation to state
 		if result.IsError {
 			return nil, fmt.Errorf("tool error: %s", result.Content)
-		}
-
-		// Create delta for template zone after tool execution
-		if req.TurnID != "" {
-			templateInfo := domain.DeltaInfo{
-				TurnID:    req.TurnID,
-				Trigger:   domain.TriggerUserQuery,
-				Source:    domain.SourceLLM,
-				ActorID:   "agent2",
-				DeltaType: domain.DeltaTypeUpdate,
-				Path:      "template",
-				Action: domain.Action{
-					Type: domain.ActionLayout,
-					Tool: toolCall.Name,
-				},
-			}
-			templateDelta := templateInfo.ToDelta()
-			if _, err := uc.statePort.AddDelta(ctx, req.SessionID, templateDelta); err != nil {
-				uc.log.Error("agent2_add_delta_failed", "error", err)
-			}
 		}
 	}
 
@@ -203,12 +183,12 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	return response, nil
 }
 
-// getAgent2Tools returns only render_* tools for Agent 2
+// getAgent2Tools returns render_* and freestyle tools for Agent 2
 func (uc *Agent2ExecuteUseCase) getAgent2Tools() []domain.ToolDefinition {
 	allTools := uc.toolRegistry.GetDefinitions()
 	var agent2Tools []domain.ToolDefinition
 	for _, t := range allTools {
-		if strings.HasPrefix(t.Name, "render_") {
+		if strings.HasPrefix(t.Name, "render_") || t.Name == "freestyle" {
 			agent2Tools = append(agent2Tools, t)
 		}
 	}

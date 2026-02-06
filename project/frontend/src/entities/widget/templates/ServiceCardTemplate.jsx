@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AtomRenderer } from '../../atom/AtomRenderer';
 import './ServiceCardTemplate.css';
 
 // Slot names match backend domain.AtomSlot
@@ -32,8 +33,8 @@ export function ServiceCardTemplate({ atoms = [], size = 'medium' }) {
 
   return (
     <div className={`service-card-template size-${size}`}>
-      {/* Hero: Image (optional for services) */}
-      {images.length > 0 && (
+      {/* Image Area */}
+      {images.length > 0 ? (
         <div className="service-card-images">
           <ImageCarousel
             images={images}
@@ -42,65 +43,67 @@ export function ServiceCardTemplate({ atoms = [], size = 'medium' }) {
           />
           {/* Badge overlay */}
           {badgeAtoms.length > 0 && (
-            <BadgeOverlay atom={badgeAtoms[0]} />
+            <div className="service-card-badge-container">
+              <AtomRenderer atom={badgeAtoms[0]} />
+            </div>
           )}
         </div>
-      )}
-
-      {/* Service Icon (when no image) */}
-      {images.length === 0 && (
+      ) : (
         <div className="service-card-icon">
           <span className="service-icon">🛠️</span>
         </div>
       )}
 
-      {/* Title */}
-      {titleAtoms.length > 0 && (
-        <div className="service-card-title">
-          {titleAtoms[0].value}
-        </div>
-      )}
+      {/* Content Area */}
+      <div className="service-card-content">
+        {/* Title */}
+        {titleAtoms.length > 0 && (
+          <div className="service-card-title">
+            <AtomRenderer atom={titleAtoms[0]} />
+          </div>
+        )}
 
-      {/* Primary Attributes (duration, provider, rating) */}
-      {primaryAtoms.length > 0 && (
-        <div className="service-card-primary">
-          {primaryAtoms.map((atom, i) => (
-            <AtomChip key={i} atom={atom} />
-          ))}
-        </div>
-      )}
+        {/* Primary Attributes (duration, provider, rating) */}
+        {primaryAtoms.length > 0 && (
+          <div className="service-card-primary">
+            {primaryAtoms.map((atom, i) => (
+              <AtomChip key={i} atom={atom} />
+            ))}
+          </div>
+        )}
 
-      {/* Price */}
-      {priceAtoms.length > 0 && (
-        <div className="service-card-price">
-          {priceAtoms[0].meta?.currency || '$'}{priceAtoms[0].value}
-        </div>
-      )}
+        {/* Price */}
+        {priceAtoms.length > 0 && (
+          <div className="service-card-price">
+            <AtomRenderer atom={priceAtoms[0]} />
+          </div>
+        )}
 
-      {/* Expand Button & Secondary */}
-      {hasSecondary && (
-        <>
-          <button
-            className="service-card-expand"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? 'Hide details' : 'Show details'}
-          </button>
+        {/* Expand Button & Secondary */}
+        {hasSecondary && (
+          <>
+            <button
+              className="service-card-expand"
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? 'Hide details' : 'Show details'}
+            </button>
 
-          {expanded && (
-            <div className="service-card-secondary">
-              {secondaryAtoms.map((atom, i) => (
-                <div key={i} className="service-card-secondary-item">
-                  {atom.meta?.label && (
-                    <span className="secondary-label">{atom.meta.label}:</span>
-                  )}
-                  <span className="secondary-value">{atom.value}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+            {expanded && (
+              <div className="service-card-secondary">
+                {secondaryAtoms.map((atom, i) => (
+                  <div key={i} className="service-card-secondary-item">
+                    {atom.meta?.label && (
+                      <span className="secondary-label">{atom.meta.label}:</span>
+                    )}
+                    <AtomRenderer atom={atom} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -159,23 +162,16 @@ function ImageCarousel({ images, currentIndex, onIndexChange }) {
   );
 }
 
-function BadgeOverlay({ atom }) {
-  const variant = atom.meta?.variant || 'default';
-  return (
-    <div className={`service-card-badge variant-${variant}`}>
-      {atom.value}
-    </div>
-  );
-}
-
 function AtomChip({ atom }) {
   const value = atom.value;
+  // Use atom.display (new) or fallback to meta.display (legacy)
+  const display = atom.display || atom.meta?.display;
 
   // Duration display with clock icon
   if (atom.meta?.label === 'duration' || (typeof value === 'string' && value.includes('min'))) {
     return (
       <div className="service-card-chip service-card-duration">
-        ⏱️ {value}
+        ⏱️ <AtomRenderer atom={atom} />
       </div>
     );
   }
@@ -184,25 +180,33 @@ function AtomChip({ atom }) {
   if (atom.meta?.label === 'provider') {
     return (
       <div className="service-card-chip service-card-provider">
-        👤 {value}
+        👤 <AtomRenderer atom={atom} />
       </div>
     );
   }
 
-  // Rating display
-  if (atom.type === 'rating') {
-    const stars = Math.round(Number(value) || 0);
+  // Rating display - check subtype (new) or type (legacy)
+  if (atom.subtype === 'rating' || atom.type === 'rating') {
     return (
       <div className="service-card-chip service-card-rating">
-        {'★'.repeat(Math.min(stars, 5))}{'☆'.repeat(Math.max(0, 5 - stars))}
+        <AtomRenderer atom={atom} />
       </div>
+    );
+  }
+
+  // Caption display
+  if (display === 'caption') {
+    return (
+      <span className="service-card-caption">
+        <AtomRenderer atom={atom} />
+      </span>
     );
   }
 
   // Default chip display
   return (
     <div className="service-card-chip">
-      {value}
+      <AtomRenderer atom={atom} />
     </div>
   );
 }

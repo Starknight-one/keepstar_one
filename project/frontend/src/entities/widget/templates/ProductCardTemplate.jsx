@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AtomRenderer } from '../../atom/AtomRenderer';
 import './ProductCardTemplate.css';
 
 // Slot names match backend domain.AtomSlot
@@ -38,73 +39,81 @@ export function ProductCardTemplate({ atoms = [], size = 'medium', onSelect }) {
 
   return (
     <div className={`product-card-template size-${size}`}>
-      {/* Hero: Image Carousel */}
-      {images.length > 0 && (
-        <div className="product-card-images">
+      {/* Image Area */}
+      <div className="product-card-images">
+        {images.length > 0 ? (
           <ImageCarousel
             images={images}
             currentIndex={currentImageIndex}
             onIndexChange={setCurrentImageIndex}
           />
-          {/* Badge overlay */}
-          {badgeAtoms.length > 0 && (
-            <BadgeOverlay atom={badgeAtoms[0]} />
-          )}
-        </div>
-      )}
+        ) : (
+          <div className="image-placeholder" />
+        )}
 
-      {/* Title */}
-      {titleAtoms.length > 0 && (
-        <div className="product-card-title">
-          {titleAtoms[0].value}
-        </div>
-      )}
+        {/* Badge overlay */}
+        {badgeAtoms.length > 0 && (
+          <div className="product-card-badge-container">
+            <AtomRenderer atom={badgeAtoms[0]} />
+          </div>
+        )}
+      </div>
 
-      {/* Primary Attributes */}
-      {primaryAtoms.length > 0 && (
-        <div className="product-card-primary">
-          {primaryAtoms.map((atom, i) => (
-            <AtomChip
-              key={i}
-              atom={atom}
-              selected={selectedValues[i]}
-              onSelect={(value) => handleSelectorClick(i, value)}
-            />
-          ))}
-        </div>
-      )}
+      {/* Content Area */}
+      <div className="product-card-content">
+        {/* Title */}
+        {titleAtoms.length > 0 && (
+          <div className="product-card-title">
+            <AtomRenderer atom={titleAtoms[0]} />
+          </div>
+        )}
 
-      {/* Price */}
-      {priceAtoms.length > 0 && (
-        <div className="product-card-price">
-          {priceAtoms[0].meta?.currency || '$'}{priceAtoms[0].value}
-        </div>
-      )}
+        {/* Primary Attributes (rating, brand chips) */}
+        {primaryAtoms.length > 0 && (
+          <div className="product-card-primary">
+            {primaryAtoms.map((atom, i) => (
+              <AtomChip
+                key={i}
+                atom={atom}
+                selected={selectedValues[i]}
+                onSelect={(value) => handleSelectorClick(i, value)}
+              />
+            ))}
+          </div>
+        )}
 
-      {/* Expand Button & Secondary */}
-      {hasSecondary && (
-        <>
-          <button
-            className="product-card-expand"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? 'Hide details' : 'Show details'}
-          </button>
+        {/* Price */}
+        {priceAtoms.length > 0 && (
+          <div className="product-card-price">
+            <AtomRenderer atom={priceAtoms[0]} />
+          </div>
+        )}
 
-          {expanded && (
-            <div className="product-card-secondary">
-              {secondaryAtoms.map((atom, i) => (
-                <div key={i} className="product-card-secondary-item">
-                  {atom.meta?.label && (
-                    <span className="secondary-label">{atom.meta.label}:</span>
-                  )}
-                  <span className="secondary-value">{atom.value}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+        {/* Expand Button & Secondary */}
+        {hasSecondary && (
+          <>
+            <button
+              className="product-card-expand"
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? 'Hide details' : 'Show details'}
+            </button>
+
+            {expanded && (
+              <div className="product-card-secondary">
+                {secondaryAtoms.map((atom, i) => (
+                  <div key={i} className="product-card-secondary-item">
+                    {atom.meta?.label && (
+                      <span className="secondary-label">{atom.meta.label}:</span>
+                    )}
+                    <AtomRenderer atom={atom} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -132,12 +141,10 @@ function normalizeImages(value) {
 function ImageCarousel({ images, currentIndex, onIndexChange }) {
   if (!images || images.length === 0) return null;
 
-  const handleDotClick = (index) => {
-    onIndexChange(index);
-  };
-
   const handleImageClick = () => {
-    onIndexChange((currentIndex + 1) % images.length);
+    if (images.length > 1) {
+      onIndexChange((currentIndex + 1) % images.length);
+    }
   };
 
   return (
@@ -154,7 +161,10 @@ function ImageCarousel({ images, currentIndex, onIndexChange }) {
             <button
               key={index}
               className={`carousel-dot ${index === currentIndex ? 'active' : ''}`}
-              onClick={() => handleDotClick(index)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onIndexChange(index);
+              }}
             />
           ))}
         </div>
@@ -163,21 +173,13 @@ function ImageCarousel({ images, currentIndex, onIndexChange }) {
   );
 }
 
-function BadgeOverlay({ atom }) {
-  const variant = atom.meta?.variant || 'default';
-  return (
-    <div className={`product-card-badge variant-${variant}`}>
-      {atom.value}
-    </div>
-  );
-}
-
 function AtomChip({ atom, selected, onSelect }) {
-  const display = atom.meta?.display || 'chip';
+  // Use atom.display (new) or fallback to atom.meta?.display (legacy)
+  const display = atom.display || atom.meta?.display || 'chip';
   const value = atom.value;
 
   // Selector display - for arrays (sizes, colors)
-  if (display === 'selector' && Array.isArray(value)) {
+  if ((display === 'selector' || display === 'tag') && Array.isArray(value)) {
     return (
       <div className="product-card-selector">
         {atom.meta?.label && (
@@ -198,30 +200,30 @@ function AtomChip({ atom, selected, onSelect }) {
     );
   }
 
-  // Rating display
-  if (atom.type === 'rating') {
-    const stars = Math.round(Number(value) || 0);
+  // Rating display - check subtype (new) or type (legacy)
+  if (atom.subtype === 'rating' || atom.type === 'rating') {
     return (
       <div className="product-card-chip product-card-rating">
-        {'★'.repeat(Math.min(stars, 5))}{'☆'.repeat(Math.max(0, 5 - stars))}
+        <span className="star-icon">★</span>
+        <span className="rating-value">{atom.value}</span>
       </div>
     );
   }
 
   // Text display - no border
-  if (display === 'text') {
+  if (display === 'text' || display === 'caption') {
     return (
       <span className="product-card-text">
         {atom.meta?.label && <span className="text-label">{atom.meta.label}:</span>}
-        <span className="text-value">{value}</span>
+        <AtomRenderer atom={atom} />
       </span>
     );
   }
 
-  // Default chip display
+  // Tag/chip display - use AtomRenderer
   return (
     <div className="product-card-chip">
-      {value}
+      <AtomRenderer atom={atom} />
     </div>
   );
 }

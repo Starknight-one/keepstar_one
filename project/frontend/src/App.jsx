@@ -2,8 +2,10 @@ import { useState, useCallback } from 'react'
 import { ChatPanel } from './features/chat/ChatPanel'
 import { FormationRenderer } from './entities/formation/FormationRenderer'
 import { BackButton } from './features/navigation/BackButton'
+import { ThemeProvider } from './shared/theme'
 import './App.css'
 import './features/overlay/Overlay.css'
+import './shared/theme/themes/marketplace.css'
 
 function App() {
   const [isChatOpen, setIsChatOpen] = useState(false)
@@ -20,6 +22,7 @@ function App() {
   }
 
   return (
+    <ThemeProvider defaultTheme="marketplace">
     <div className="app">
       <main className="content">
         <h1>Welcome to Our Platform</h1>
@@ -128,6 +131,7 @@ function App() {
         </>
       )}
     </div>
+    </ThemeProvider>
   )
 }
 

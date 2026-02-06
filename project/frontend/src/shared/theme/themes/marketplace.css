@@ -1,0 +1,228 @@
+/* =============================================================================
+   Marketplace Theme — Extracted from Pencil Design System
+   ============================================================================= */
+
+.theme-marketplace {
+  /* ==========================================================================
+     Color Palette (from Pencil --variables)
+     ========================================================================== */
+
+  /* Accent colors */
+  --color-primary: #8B5CF6;          /* --accent-primary */
+  --color-primary-hover: #7C3AED;
+  --color-primary-light: #8B5CF620;  /* --accent-primary-soft */
+  --color-primary-dark: #6D28D9;
+
+  /* Additional accents */
+  --color-accent-orange: #F97316;    /* --accent-orange (ratings) */
+  --color-accent-pink: #F472B6;      /* --accent-pink */
+  --color-accent-teal: #14B8A6;      /* --accent-teal */
+
+  /* Status colors */
+  --color-success: #22C55E;          /* --success */
+  --color-success-light: #22C55E20;
+  --color-error: #EF4444;            /* --error */
+  --color-error-light: #EF444420;
+  --color-warning: #F97316;
+  --color-warning-light: #F9731620;
+
+  /* Text colors (from Pencil) */
+  --color-text-primary: #18181B;     /* --text-primary */
+  --color-text-secondary: #71717A;   /* --text-secondary */
+  --color-text-tertiary: #A1A1AA;    /* --text-tertiary */
+  --color-text-muted: #D4D4D8;       /* --text-muted */
+  --color-text-inverse: #FFFFFF;     /* --text-on-accent */
+
+  /* Background colors (from Pencil) */
+  --color-bg-primary: #FFFFFF;       /* --bg-page */
+  --color-bg-secondary: #F4F4F5;     /* --bg-card */
+  --color-bg-tertiary: #E4E4E7;      /* --bg-elevated */
+  --color-bg-overlay: rgba(0, 0, 0, 0.5);
+
+  /* Border colors */
+  --color-border: #D4D4D8;           /* --border */
+  --color-border-hover: #A1A1AA;
+  --color-border-focus: #8B5CF6;
+  --color-divider: #E4E4E7;
+
+  /* Component-specific colors */
+  --color-price: #18181B;            /* prices use text-primary */
+  --color-rating: #F97316;           /* --accent-orange */
+  --color-badge-bg: #EF4444;         /* --error (SALE badge) */
+  --color-badge-text: #FFFFFF;
+  --color-tag-bg: #F4F4F5;           /* --bg-card */
+  --color-tag-text: #18181B;         /* --text-primary */
+  --color-progress-bg: #E4E4E7;
+
+  /* ==========================================================================
+     Typography (from Pencil)
+     ========================================================================== */
+
+  --font-family-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;  /* --font-display */
+  --font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;                 /* --font-body */
+  --font-family-mono: 'SF Mono', Monaco, 'Courier New', monospace;
+
+  /* Font sizes from Pencil components */
+  --font-size-h1: 34px;              /* Atom/H1 */
+  --font-size-h2: 28px;              /* Atom/H2 */
+  --font-size-h3: 22px;              /* extrapolated */
+  --font-size-h4: 18px;              /* extrapolated */
+  --font-size-price-lg: 28px;        /* Atom/Price Large */
+  --font-size-price: 20px;           /* Atom/Price */
+  --font-size-button: 15px;          /* Button label */
+  --font-size-tag: 13px;             /* Tag Category */
+  --font-size-badge: 11px;           /* Badge Sale */
+  --font-size-body: 15px;
+  --font-size-body-sm: 13px;
+  --font-size-caption: 11px;
+
+  --font-weight-bold: 800;           /* Price Large */
+  --font-weight-semibold: 700;       /* H1, H2, Price */
+  --font-weight-medium: 600;         /* Button, Title */
+  --font-weight-normal: 500;         /* Tag */
+
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.6;
+
+  /* ==========================================================================
+     Spacing
+     ========================================================================== */
+
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+
+  /* ==========================================================================
+     Borders & Radius (from Pencil)
+     ========================================================================== */
+
+  --border-radius-sm: 8px;           /* --radius-sm */
+  --border-radius-md: 12px;          /* --radius-md */
+  --border-radius-lg: 16px;          /* --radius-lg (Product Card) */
+  --border-radius-xl: 24px;          /* --radius-xl (Button Primary) */
+  --border-radius-pill: 100px;       /* --radius-pill */
+  --border-radius-badge: 20px;       /* Badge/Tag corner radius */
+
+  --border-width: 1px;
+
+  /* ==========================================================================
+     Component Sizes (from Pencil)
+     ========================================================================== */
+
+  --product-card-width: 220px;
+  --product-card-image-height: 180px;
+  --button-padding-y: 12px;
+  --button-padding-x: 24px;
+  --badge-padding-y: 6px;
+  --badge-padding-x: 12px;
+  --tag-padding-y: 8px;
+  --tag-padding-x: 14px;
+  --icon-size: 18px;
+  --icon-size-sm: 16px;
+  --icon-size-lg: 24px;
+  --avatar-size-sm: 32px;
+  --avatar-size-md: 40px;
+  --avatar-size-lg: 56px;
+
+  /* ==========================================================================
+     Shadows
+     ========================================================================== */
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.15);
+
+  /* ==========================================================================
+     Transitions
+     ========================================================================== */
+
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+  --transition-slow: 300ms ease;
+}
+
+/* =============================================================================
+   Base Styles for Marketplace Theme
+   ============================================================================= */
+
+.theme-marketplace {
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-primary);
+}
+
+/* Headings use display font */
+.theme-marketplace h1,
+.theme-marketplace h2,
+.theme-marketplace h3,
+.theme-marketplace h4 {
+  font-family: var(--font-family-display);
+}
+
+/* =============================================================================
+   Widget Card Styling (from Pencil Widget/Product Card)
+   ============================================================================= */
+
+.theme-marketplace .widget-card,
+.theme-marketplace .product-card-template,
+.theme-marketplace .service-card-template {
+  background: var(--color-bg-secondary);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+  transition: box-shadow var(--transition-normal), transform var(--transition-normal);
+}
+
+.theme-marketplace .widget-card:hover,
+.theme-marketplace .product-card-template:hover,
+.theme-marketplace .service-card-template:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+/* Product card specific */
+.theme-marketplace .product-card-template {
+  width: var(--product-card-width);
+}
+
+.theme-marketplace .product-card-images,
+.theme-marketplace .service-card-images {
+  height: var(--product-card-image-height);
+  background: var(--color-bg-tertiary);
+}
+
+.theme-marketplace .product-card-title,
+.theme-marketplace .service-card-title {
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+/* Formation grid */
+.theme-marketplace .formation-grid {
+  gap: var(--spacing-md);
+}
+
+/* =============================================================================
+   Chat Styling
+   ============================================================================= */
+
+.theme-marketplace .chat-message {
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-md);
+}
+
+.theme-marketplace .chat-message.user {
+  background: var(--color-primary-light);
+}
+
+.theme-marketplace .chat-message.assistant {
+  background: var(--color-bg-secondary);
+}

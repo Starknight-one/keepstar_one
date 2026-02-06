@@ -11,9 +11,28 @@ entities:
   ui_primitives:
     atom_entity:
       file: "atom_entity.go"
-      types: ["AtomType", "AtomSlot", "Atom"]
-      atom_types: ["text", "number", "price", "image", "rating", "badge", "button", "icon", "divider", "progress", "selector"]
+      types: ["AtomType", "AtomSubtype", "AtomSlot", "Atom"]
+      atom_types: ["text", "number", "image", "icon", "video", "audio"]
+      atom_subtypes:
+        text: ["string", "date", "datetime", "url", "email", "phone"]
+        number: ["int", "float", "currency", "percent", "rating"]
+        image: ["url", "base64"]
+        icon: ["name", "emoji", "svg"]
       atom_slots: ["hero", "badge", "title", "primary", "price", "secondary", "gallery", "stock", "description", "tags", "specs"]
+      atom_fields: ["Type", "Subtype", "Display", "Value", "Slot", "Meta"]
+      legacy_mapping: "LegacyTypeMapping maps old types (price, rating, badge) to new type+subtype+display"
+    display_entity:
+      file: "display_entity.go"
+      types: ["AtomDisplay", "DisplayStyle"]
+      displays:
+        text: ["h1", "h2", "h3", "h4", "body-lg", "body", "body-sm", "caption", "badge", "badge-success", "badge-error", "badge-warning", "tag", "tag-active"]
+        number: ["price", "price-lg", "price-old", "price-discount", "rating", "rating-text", "rating-compact", "percent", "progress"]
+        image: ["image", "image-cover", "avatar", "avatar-sm", "avatar-lg", "thumbnail", "gallery"]
+        icon: ["icon", "icon-sm", "icon-lg"]
+        interactive: ["button-primary", "button-secondary", "button-outline", "button-ghost", "input"]
+        layout: ["divider", "spacer"]
+      display_styles: ["product-hero", "product-compact", "product-detail", "service-card", "service-detail"]
+      helpers: ["DisplayStyles map", "GetDisplayForSlot()"]
     widget_entity:
       file: "widget_entity.go"
       types: ["WidgetType", "WidgetSize", "Widget"]
@@ -94,7 +113,8 @@ entities:
       file: "preset_entity.go"
       types: ["FieldConfig", "SlotConfig", "Preset", "PresetName"]
       preset_names: ["product_grid", "product_card", "product_compact", "product_detail", "service_card", "service_list", "service_detail"]
-      field_config: ["Name", "Slot", "AtomType", "Priority", "Required"]
+      field_config: ["Name", "Slot", "AtomType", "Subtype", "Display", "Priority", "Required"]
+      preset_fields: ["Name", "EntityType", "Template", "Slots", "Fields", "DefaultMode", "DefaultSize", "Displays"]
 
   errors:
     file: "domain_errors.go"
@@ -105,7 +125,10 @@ gotchas:
   - "sessionID and tenantID must be valid UUID format"
   - "ErrSessionNotFound returned when state doesn't exist"
   - "Service is parallel to Product for service-based businesses"
-  - "Preset defines field→slot→atomType mappings for rendering"
+  - "Preset defines field→slot→atomType→display mappings for rendering"
   - "SessionTTL (5 min) used for sliding expiration - session becomes closed after inactivity"
+  - "Atom model: Type (6 types) + Subtype (data format) + Display (visual format)"
+  - "Display can be set by preset, style alias, or explicitly by agent"
+  - "Legacy atom types (price, badge, rating) mapped via LegacyTypeMapping"
 
 naming: "{entity}_entity.go"

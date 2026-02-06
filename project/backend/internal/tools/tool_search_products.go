@@ -61,7 +61,7 @@ func (t *SearchProductsTool) Definition() domain.ToolDefinition {
 }
 
 // Execute searches products, writes to state, returns "ok" or "empty"
-func (t *SearchProductsTool) Execute(ctx context.Context, sessionID string, input map[string]interface{}) (*domain.ToolResult, error) {
+func (t *SearchProductsTool) Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
 	// Parse input
 	query, _ := input["query"].(string)
 	category, _ := input["category"].(string)
@@ -99,9 +99,9 @@ func (t *SearchProductsTool) Execute(ctx context.Context, sessionID string, inpu
 	}
 
 	// Get state (or create if not exists)
-	state, err := t.statePort.GetState(ctx, sessionID)
+	state, err := t.statePort.GetState(ctx, toolCtx.SessionID)
 	if err == domain.ErrSessionNotFound {
-		state, err = t.statePort.CreateState(ctx, sessionID)
+		state, err = t.statePort.CreateState(ctx, toolCtx.SessionID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get/create state: %w", err)
@@ -129,31 +129,46 @@ func (t *SearchProductsTool) Execute(ctx context.Context, sessionID string, inpu
 	}
 
 	if total == 0 {
-		// Clear stale data from previous search
-		state.Current.Data = domain.StateData{}
-		state.Current.Meta = domain.StateMeta{
-			Count:   0,
-			Fields:  []string{},
-			Aliases: state.Current.Meta.Aliases, // preserve tenant_slug
+		// Standalone AddDelta — data NOT mutated, previous products preserved
+		info := domain.DeltaInfo{
+			TurnID:    toolCtx.TurnID,
+			Trigger:   domain.TriggerUserQuery,
+			Source:    domain.SourceLLM,
+			ActorID:   toolCtx.ActorID,
+			DeltaType: domain.DeltaTypeAdd,
+			Path:      "data.products",
+			Action:    domain.Action{Type: domain.ActionSearch, Tool: "search_products", Params: input},
+			Result:    domain.ResultMeta{Count: 0},
 		}
-		if err := t.statePort.UpdateState(ctx, state); err != nil {
-			return nil, fmt.Errorf("update state: %w", err)
+		if _, err := t.statePort.AddDelta(ctx, toolCtx.SessionID, info.ToDelta()); err != nil {
+			return nil, fmt.Errorf("add empty delta: %w", err)
 		}
-		return &domain.ToolResult{Content: "empty"}, nil
+		return &domain.ToolResult{Content: "empty: 0 results, previous data preserved"}, nil
 	}
 
 	// Extract field names from first product
 	fields := extractProductFields(products[0])
 
-	// Update state with products
-	state.Current.Data.Products = products
-	state.Current.Meta = domain.StateMeta{
+	// UpdateData zone-write: atomic data + delta
+	data := domain.StateData{Products: products}
+	meta := domain.StateMeta{
 		Count:   total,
 		Fields:  fields,
-		Aliases: make(map[string]string),
+		Aliases: state.Current.Meta.Aliases, // preserve tenant_slug
 	}
-	if err := t.statePort.UpdateState(ctx, state); err != nil {
-		return nil, fmt.Errorf("update state: %w", err)
+
+	info := domain.DeltaInfo{
+		TurnID:    toolCtx.TurnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   toolCtx.ActorID,
+		DeltaType: domain.DeltaTypeAdd,
+		Path:      "data.products",
+		Action:    domain.Action{Type: domain.ActionSearch, Tool: "search_products", Params: input},
+		Result:    domain.ResultMeta{Count: total, Fields: fields},
+	}
+	if _, err := t.statePort.UpdateData(ctx, toolCtx.SessionID, data, meta, info); err != nil {
+		return nil, fmt.Errorf("update data: %w", err)
 	}
 
 	return &domain.ToolResult{
