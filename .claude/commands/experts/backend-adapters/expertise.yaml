@@ -12,7 +12,7 @@ adapters:
     directory: "anthropic/"
     files:
       - "anthropic_client.go - LLMPort implementation: Chat, ChatWithTools, ChatWithToolsCached, ChatWithUsage"
-      - "cache_types.go - Prompt caching types: cacheControl, contentBlockWithCache, contentBlockFullCache, anthropicToolWithCache, anthropicCachedRequest, anthropicCachedResponse"
+      - "cache_types.go - Prompt caching types: cacheControl, contentBlockWithCache, contentBlockFullCache, anthropicToolWithCache, anthropicCachedRequest, anthropicCachedUsage, anthropicCachedResponse"
     implements: "LLMPort"
     status: "implemented"
     api: "POST https://api.anthropic.com/v1/messages"

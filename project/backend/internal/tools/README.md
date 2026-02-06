@@ -7,7 +7,10 @@ Tool executors for LLM tool calling.
 - `tool_registry.go` — Registry для всех tools
 - `tool_search_products.go` — Поиск товаров (Agent1)
 - `tool_render_preset.go` — Рендеринг с пресетами (Agent2). Exports: BuildFormation(), FieldGetter, CurrencyGetter, IDGetter
+- `tool_freestyle.go` — Freestyle рендеринг со стилевыми алиасами и кастомными display overrides (Agent2)
 - `mock_tools.go` — Padding tools для достижения порога кэширования (4096 tokens)
+- `tool_search_products_test.go` — Тесты SearchProductsTool
+- `tool_render_preset_test.go` — Тесты RenderPresetTool
 
 ## Registry
 
@@ -29,7 +32,8 @@ registry := tools.NewRegistry(statePort, catalogPort, presetRegistry)
 defs := registry.GetDefinitions()
 
 // Выполнение tool call
-result, err := registry.Execute(ctx, sessionID, toolCall)
+toolCtx := tools.ToolContext{SessionID: sessionID, TurnID: turnID, ActorID: "agent1"}
+result, err := registry.Execute(ctx, toolCtx, toolCall)
 ```
 
 ## ToolExecutor Interface
@@ -37,7 +41,7 @@ result, err := registry.Execute(ctx, sessionID, toolCall)
 ```go
 type ToolExecutor interface {
     Definition() domain.ToolDefinition
-    Execute(ctx, sessionID, input) (*ToolResult, error)
+    Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*ToolResult, error)
 }
 ```
 
@@ -64,6 +68,19 @@ Input schema:
 - `GetCachePaddingTools()` — возвращает 8 dummy tools с prefix `_internal_`
 - LLM не должен их вызывать (описание: "INTERNAL SYSTEM TOOL - DO NOT USE")
 - ~3200 tokens, вместе с реальными tools ~4000
+
+## FreestyleTool
+
+Freestyle рендеринг с custom стилями (Agent2):
+
+Input schema:
+- `entity_type` (required) — "product" или "service"
+- `formation` (required) — "grid", "list", "carousel", "single"
+- `style` — стилевой алиас (product-hero, product-compact, product-detail, service-card, service-detail)
+- `overrides` — slot→display map для явных display overrides
+- `limit` — лимит entities (default: all)
+
+Возвращает: `"ok: rendered N entity_types with freestyle style=X, formation=Y"`
 
 ## Правила
 

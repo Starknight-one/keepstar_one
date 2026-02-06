@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-02-06 20:00
+
+### Design System Integration (UNSTABLE)
+- **Design system atoms**: 6 atom types (text, number, image, icon, video, audio) + subtype + display model
+- **Freestyle tool**: `tool_freestyle.go` — Agent2 tool for style aliases and display overrides
+- **ToolContext**: Registry.Execute now receives ToolContext (SessionID+TurnID+ActorID) instead of bare sessionID
+- **Agent2 rework**: receives view state, user query, and data delta; filters render_* + freestyle tools
+- **Agent1 rework**: filters search_* and _internal_* tools; re-reads state after tool zone-write
+- **Prompt updates**: Agent2ToolPrompt with view context, user intent, data change signal
+- **Frontend**: useChatSubmit adjustments, theme system foundation
+- **New specs**: agent-tool-isolation, session-state-flow patches
+- **New tests**: tool_render_preset_test.go, tool_search_products_test.go
+
+### Stone: Expert + README Sync
+- Expert sync: 7 expertise.yaml files updated (backend-adapters, backend-usecases, backend-pipeline, backend-handlers, backend-domain, frontend-shared, frontend-entities)
+- README sync: tools/README.md updated with freestyle tool, ToolContext, test files
+
+---
+
 ## 2026-02-04 23:00
 
 ### Bugfix: E2E Pipeline Smoke Test
