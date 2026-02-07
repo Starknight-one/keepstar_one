@@ -15,12 +15,18 @@ tools:
   registry:
     file: "tool_registry.go"
     struct: "Registry"
+    fields: ["tools map[string]ToolExecutor", "statePort", "catalogPort", "presetRegistry", "embeddingPort"]
     purpose: "Central registry for all tool executors"
     methods:
-      - "NewRegistry(statePort, catalogPort, presetRegistry)"
+      - "NewRegistry(statePort, catalogPort, presetRegistry, embeddingPort)"
       - "Register(tool)"
       - "GetDefinitions() []ToolDefinition — includes padding tools from GetCachePaddingTools()"
       - "Execute(ctx, toolCtx ToolContext, toolCall) (*ToolResult, error)"
+    registered_tools:
+      - "CatalogSearchTool (Agent1)"
+      - "RenderProductPresetTool (Agent2)"
+      - "RenderServicePresetTool (Agent2)"
+      - "FreestyleTool (Agent2)"
 
   mock_tools:
     file: "mock_tools.go"
@@ -36,7 +42,7 @@ tools:
     file: "tool_search_products.go"
     struct: "SearchProductsTool"
     implements: "ToolExecutor"
-    purpose: "Search products and write to state"
+    purpose: "Search products and write to state (legacy, not registered in Registry)"
     input_schema:
       query: "required - search query"
       category: "optional - category filter"
@@ -87,37 +93,40 @@ tools:
     file: "tool_catalog_search.go"
     struct: "CatalogSearchTool"
     implements: "ToolExecutor"
-    purpose: "Meta-tool: normalize query → filter → SQL → fallback cascade → state write"
+    fields: ["statePort", "catalogPort", "embedding ports.EmbeddingPort (nil = keyword-only mode)"]
+    purpose: "Hybrid search meta-tool: keyword SQL + vector pgvector + RRF merge → state write"
+    constructor: "NewCatalogSearchTool(statePort, catalogPort, embedding)"
     input_schema:
-      query: "required - search text in ANY language (normalized automatically)"
-      brand: "optional - brand in ANY language/transliteration (normalized automatically)"
-      category: "optional - category filter"
-      min_price: "optional - minimum price in RUBLES (converted to kopecks internally)"
-      max_price: "optional - maximum price in RUBLES (converted to kopecks internally)"
+      vector_query: "required - semantic search in user's ORIGINAL language (embeddings handle multilingual)"
+      filters:
+        type: "object - exact keyword filters"
+        brand: "optional - brand in English (e.g. Nike, Samsung)"
+        category: "optional - category (e.g. Sneakers, Laptops)"
+        min_price: "optional - minimum price in RUBLES (converted to kopecks internally)"
+        max_price: "optional - maximum price in RUBLES (converted to kopecks internally)"
+        color: "optional - color in English (e.g. Black, White)"
+        material: "optional - material (e.g. Leather, Mesh)"
+        storage: "optional - storage capacity (e.g. 128GB, 256GB)"
+        ram: "optional - RAM size (e.g. 8GB, 16GB)"
+        size: "optional - size (e.g. 11 inch, 44mm)"
       sort_by: "optional - price, rating, or name"
       sort_order: "optional - asc or desc (default asc)"
       limit: "optional - max results (default 10)"
     flow:
       - "Parse input and convert prices (rubles→kopecks ×100)"
-      - "Normalize query+brand via QueryNormalizer (fast path or LLM)"
-      - "Strip brand from search to avoid AND conflict"
+      - "Generate query embedding via EmbeddingPort (if available)"
+      - "Strip brand from ILIKE search to avoid AND conflict"
       - "Resolve tenant slug → UUID from state aliases"
-      - "Search with fallback cascade: full → brand-only → search-only → empty"
+      - "Keyword search via catalogPort.ListProducts (SQL ILIKE)"
+      - "Vector search via catalogPort.VectorSearch (pgvector cosine)"
+      - "RRF merge: combine keyword + vector results with Reciprocal Rank Fusion (k=60)"
       - "Write products to state via UpdateData zone-write"
-    fallback_cascade: "step 0=direct hit, 1=brand-only, 2=search-only, 3=empty"
+    search_modes: "hybrid (both), vector (embedding only), keyword (SQL only / embedding nil)"
     returns: "'ok: found N products' or 'empty: 0 results, previous data preserved'"
-    metadata: "Includes normalize_ms, normalize_path (fast/llm), sql_ms, fallback_step, price_conversion, sql_filter, tenant"
-
-  normalizer:
-    file: "normalizer.go"
-    struct: "QueryNormalizer"
-    types: ["NormalizeResult { Query, Brand, SourceLang, AliasResolved }"]
-    purpose: "Normalize search queries via fast path (ASCII) or LLM (non-ASCII)"
-    methods:
-      - "Normalize(ctx, query, brand) (*NormalizeResult, error)"
-    fast_path: "ASCII-only input → return as-is, lang=en"
-    llm_path: "Non-ASCII → call LLM with NormalizeQueryPrompt, parse JSON"
-    helpers: ["isASCII(s)", "stripCodeFences(s)"]
+    metadata: "Includes embed_ms, sql_ms, vector_ms, keyword_count, vector_count, merged_count, search_type, price_conversion, tenant"
+    helpers:
+      - "rrfMerge(keyword, vector []Product, limit) []Product — Reciprocal Rank Fusion merge"
+      - "catalogExtractProductFields(p Product) []string — extract field names from product"
 
   interface:
     name: "ToolExecutor"
@@ -153,12 +162,20 @@ prompts:
 
   agent1:
     file: "prompt_analyze_query.go"
-    const: "Agent1SystemPrompt"
-    purpose: "System prompt for Agent 1 (Tool Caller)"
+    consts:
+      - "Agent1SystemPrompt — primary system prompt for Agent 1 (hybrid search with vector_query + filters)"
+      - "AnalyzeQuerySystemPrompt — legacy system prompt for query analysis (backward compat)"
+      - "AnalyzeQueryUserTemplate — legacy user template (backward compat)"
+    functions:
+      - "BuildAnalyzeQueryPrompt(query string) string — legacy, returns empty (TODO)"
+    purpose: "System prompt for Agent 1 (Data Retrieval via catalog_search)"
     rules:
-      - "ALWAYS call a tool, never just text"
+      - "Call catalog_search when user needs NEW data"
+      - "vector_query: user's ORIGINAL language (do NOT translate)"
+      - "filters: structured keyword filters in English (brand, color, material, etc.)"
+      - "Prices are in RUBLES"
+      - "If user asks to change display style → do NOT call any tool"
       - "No explanations or clarifying questions"
-      - "Tool results are 'ok' or 'empty' only"
       - "Stop after getting tool result"
 
   agent2:
@@ -176,24 +193,15 @@ prompts:
       - "Choose widget size based on atom count"
       - "Choose mode based on count (1→single, 2-6→grid, 7+→grid preferred, carousel only if asked)"
 
-  normalize_query:
-    file: "prompt_normalize_query.go"
-    const: "NormalizeQueryPrompt"
-    function: "BuildNormalizeRequest(query, brand) string"
-    purpose: "System prompt for query normalization LLM call"
-    features:
-      - "Alias table: Russian slang → English (кроссы→sneakers, ноутбук→laptop, etc.)"
-      - "Brand transliteration table: Russian → English (Найк→Nike, Самсунг→Samsung, etc.)"
-      - "Returns structured JSON: { query, brand, source_lang, alias_resolved }"
-
 pipeline_flow:
   description: "User Query → Agent 1 → Agent 2 → Formation"
   steps:
-    1: "Agent 1 receives query, calls search_products tool"
-    2: "Tool writes products to state.data, returns 'ok'"
-    3: "Agent 2 receives meta (count, fields), generates template JSON"
-    4: "ApplyTemplate merges template + data → FormationWithData"
-    5: "Frontend renders FormationWithData"
+    1: "Agent 1 receives query, calls catalog_search (hybrid: keyword + vector)"
+    2: "catalog_search: embed query → SQL ILIKE + pgvector cosine → RRF merge → state write"
+    3: "Tool returns 'ok: found N products', Agent 1 stops"
+    4: "Agent 2 receives meta (count, fields), generates template JSON"
+    5: "ApplyTemplate merges template + data → FormationWithData"
+    6: "Frontend renders FormationWithData"
 
 logger:
   path: "internal/logger/"
@@ -210,7 +218,7 @@ logger:
     - "Agent1Completed(sessionID, toolCalled, productsFound, totalTokens, costUSD, durationMs)"
 
 gotchas:
-  - "If brand specified, don't use query as search (AND conflict). Multi-word queries split into words with OR"
+  - "If brand specified, strip it from ILIKE search to avoid AND conflict"
   - "Tool writes to state, returns only status string"
   - "Must resolve tenant slug → UUID before search"
   - "Agent2 never sees raw data, only meta"
@@ -219,11 +227,15 @@ gotchas:
   - "ToolExecutor.Execute receives ToolContext (SessionID+TurnID+ActorID), not bare sessionID"
   - "Freestyle tool uses domain.DisplayStyles map for style alias → slot/display mapping"
   - "Agent2ToolPrompt includes data_change=null when no data changed — signals Agent2 to use freestyle for restyle"
-  - "catalog_search is the preferred search tool (replaces search_products for Agent1)"
-  - "catalog_search normalizes non-ASCII queries via LLM, ASCII via fast path (no LLM cost)"
+  - "catalog_search is the ONLY registered search tool (SearchProductsTool file exists but is not registered)"
+  - "catalog_search uses vector embeddings via EmbeddingPort (nil = keyword-only fallback)"
   - "catalog_search converts prices rubles→kopecks (×100) before SQL filter"
-  - "catalog_search fallback cascade: full → brand-only → search-only → empty"
-  - "catalog_search metadata includes full tool breakdown for pipeline tracing"
+  - "catalog_search RRF merge combines keyword + vector results (k=60)"
+  - "catalog_search metadata includes full tool breakdown for pipeline tracing (embed_ms, sql_ms, vector_ms, search_type)"
+  - "vector_query is in user's ORIGINAL language — embeddings handle multilingual matching"
+  - "filters.brand/color/material etc. must be in English — LLM translates from user's language"
+  - "JSONB attribute filters (color, material, storage, ram, size) use ILIKE on p.attributes"
+  - "normalizer.go and prompt_normalize_query.go are REMOVED — vector search replaces LLM normalization"
 
 naming:
   tools: "tool_{name}.go"

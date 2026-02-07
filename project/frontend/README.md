@@ -25,7 +25,8 @@ src/
 │   ├── formation/     # Formation layouts
 │   └── message/       # Chat messages
 └── shared/            # Shared utilities
-    └── api/           # API client
+    ├── api/           # API client
+    └── theme/         # Theme system (CSS variables, provider, switcher)
 ```
 
 ## Setup
@@ -75,12 +76,21 @@ Located at `src/shared/api/apiClient.js`:
 - ChatInput — input with send button
 - useChatMessages — state management
 - useChatSubmit — API submission
-- Session persistence via localStorage
+- sessionCache — localStorage session cache (save/load/clear, 30min TTL)
+- Session persistence via localStorage with instant cache restore
 
 ### Catalog (`features/catalog/`)
 - ProductGrid — product display grid
 - useCatalogProducts — catalog state management
 
+### Overlay (`features/overlay/`)
+- FullscreenOverlay — backdrop + content
+- useOverlayState — { isOpen, open, close, toggle }
+- Animations: backdrop-fade-in, chat-slide-in, widget-fade-in
+
+### Navigation (`features/navigation/`)
+- BackButton — back navigation for drill-down views
+
 ## Configuration
 
-Backend API URL: `http://localhost:8080` (configured in apiClient.js)
+Backend API URL: `VITE_API_URL` env variable, fallback `http://localhost:8080/api/v1` (configured in apiClient.js)

@@ -5,6 +5,7 @@
 ## Папки
 
 - `api/` — HTTP клиент, типы API
+- `theme/` — Система тем (ThemeProvider, ThemeSwitcher, useTheme, CSS variables)
 - `hooks/` — Общие хуки
 - `ui/` — UI компоненты (кнопки, инпуты)
 - `logger/` — Логирование

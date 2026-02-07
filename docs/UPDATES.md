@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-02-07 19:00
+
+### Vector Search — Hybrid Keyword + Semantic (feature/vector-search)
+- **EmbeddingPort**: new port interface (`Embed(ctx, texts) → [][]float32`)
+- **OpenAI adapter**: `openai/embedding_client.go` — implements EmbeddingPort via OpenAI embeddings API
+- **CatalogPort extensions**: `VectorSearch`, `SeedEmbedding`, `GetMasterProductsWithoutEmbedding` methods
+- **ProductFilter extensions**: `CategoryName` (ILIKE), `SortField`/`SortOrder`, `Attributes` (JSONB ILIKE)
+- **pgvector integration**: `embedding vector(384)` column on `master_products`, HNSW index, cosine distance
+- **CatalogSearchTool rewrite**: hybrid search meta-tool — keyword SQL + vector pgvector + RRF merge
+- **Normalizer removed**: deleted `normalizer.go` and `prompt_normalize_query.go` — vector embeddings handle multilingual matching
+- **Registry update**: `NewRegistry` now accepts `embeddingPort` (nil = keyword-only mode)
+- **Agent1 prompt update**: `vector_query` in original language, `filters` in English, style request handling
+
+### Stone: Expert + README Sync
+- Expert sync: 4 of 9 updated (backend-ports, backend-adapters, backend-usecases, backend-pipeline)
+- README sync: 20 of 30 updated (root, AI_docs, .claude, backend×9, frontend×8)
+
+---
+
 ## 2026-02-07 14:00
 
 ### Housekeeping: Spec Archive + Expert Sync

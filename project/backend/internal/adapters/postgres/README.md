@@ -1,18 +1,21 @@
 # PostgreSQL Adapter
 
-Адаптер для Neon PostgreSQL. Реализует CachePort, EventPort, CatalogPort и StatePort.
+Адаптер для Neon PostgreSQL. Реализует CachePort, EventPort, CatalogPort, StatePort и TracePort.
 
 ## Файлы
 
 - `postgres_client.go` — Connection pool (pgxpool)
-- `postgres_cache.go` — Реализация CachePort
+- `postgres_cache.go` — Реализация CachePort (incl. DeleteSession)
 - `postgres_events.go` — Реализация EventPort
-- `postgres_catalog.go` — Реализация CatalogPort с product merging
+- `postgres_catalog.go` — Реализация CatalogPort с product merging + VectorSearch (pgvector cosine), SeedEmbedding, GetMasterProductsWithoutEmbedding
 - `postgres_state.go` — Реализация StatePort для two-agent pipeline
+- `postgres_trace.go` — Реализация TracePort: Record (DB + console printTrace), List, Get
 - `migrations.go` — Миграции для chat таблиц
-- `catalog_migrations.go` — Миграции для catalog схемы
+- `catalog_migrations.go` — Миграции для catalog схемы + pgvector extension, embedding vector(384) column, HNSW index
 - `state_migrations.go` — Миграции для state таблиц
+- `trace_migrations.go` — Миграции для pipeline_traces таблицы
 - `catalog_seed.go` — Seed данные (tenants, categories, products)
+- `retention.go` — RetentionService: periodic cleanup (traces, dead sessions, conversation trim)
 - `catalog_search_test.go` — Тесты CatalogPort (search)
 - `postgres_state_test.go` — Интеграционные тесты StatePort (zone-write, deltas)
 
@@ -26,6 +29,9 @@
 | chat_sessions | Сессии чата |
 | chat_messages | Сообщения |
 | chat_events | События аналитики |
+| chat_session_state | Текущее состояние сессии (JSONB), conversation_history |
+| chat_session_deltas | История дельт для replay (включая turn_id) |
+| pipeline_traces | Трейсы pipeline (timing, cost, tool breakdown) |
 
 ### catalog
 
@@ -35,13 +41,6 @@
 | categories | Категории товаров (дерево) |
 | master_products | Канонические товары |
 | products | Листинги товаров по тенантам |
-
-### state (public schema)
-
-| Таблица | Назначение |
-|---------|------------|
-| chat_session_state | Текущее состояние сессии (JSONB), conversation_history |
-| chat_session_deltas | История дельт для replay (включая turn_id) |
 
 ## Использование
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"keepstar/internal/adapters/anthropic"
+	openaiAdapter "keepstar/internal/adapters/openai"
 	"keepstar/internal/adapters/postgres"
 	"keepstar/internal/config"
 	"keepstar/internal/handlers"
@@ -34,6 +35,13 @@ func main() {
 
 	// Initialize logger
 	appLog := logger.New(cfg.LogLevel)
+
+	// Initialize embedding client (OpenAI)
+	var embeddingClient ports.EmbeddingPort
+	if cfg.HasEmbeddings() {
+		embeddingClient = openaiAdapter.NewEmbeddingClient(cfg.OpenAIAPIKey, cfg.EmbeddingModel, 384)
+		appLog.Info("embedding_client_initialized", "model", cfg.EmbeddingModel, "dims", 384)
+	}
 
 	// Initialize PostgreSQL if configured
 	var dbClient *postgres.Client
@@ -84,6 +92,18 @@ func main() {
 			appLog.Info("extended_catalog_seed_completed", "status", "ok")
 		}
 		seedCancel()
+
+		// Startup embedding: embed products that don't have embeddings yet
+		if embeddingClient != nil {
+			go func() {
+				embedCtx, embedCancel := context.WithTimeout(context.Background(), 120*time.Second)
+				defer embedCancel()
+				catalogForEmbed := postgres.NewCatalogAdapter(dbClient)
+				if err := runEmbedding(embedCtx, catalogForEmbed, embeddingClient, appLog); err != nil {
+					appLog.Error("embedding_failed", "error", err)
+				}
+			}()
+		}
 	} else {
 		appLog.Info("database_skipped", "reason", "DATABASE_URL not configured")
 	}
@@ -121,7 +141,7 @@ func main() {
 	// Initialize tool registry (requires state and catalog adapters)
 	var toolRegistry *tools.Registry
 	if stateAdapter != nil && catalogAdapter != nil {
-		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, llmClient)
+		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, embeddingClient)
 		toolNames := make([]string, 0)
 		for _, def := range toolRegistry.GetDefinitions() {
 			if !strings.HasPrefix(def.Name, "_internal_") {
@@ -210,6 +230,27 @@ func main() {
 		mux.HandleFunc("/debug/seed", debugHandler.HandleSeedState)
 	}
 
+	// Admin: reindex embeddings endpoint
+	if embeddingClient != nil && dbClient != nil {
+		mux.HandleFunc("/admin/reindex-embeddings", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			catalogForEmbed := postgres.NewCatalogAdapter(dbClient)
+			go func() {
+				embedCtx, embedCancel := context.WithTimeout(context.Background(), 120*time.Second)
+				defer embedCancel()
+				if err := runEmbedding(embedCtx, catalogForEmbed, embeddingClient, appLog); err != nil {
+					appLog.Error("reindex_embedding_failed", "error", err)
+				}
+			}()
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, "Embedding reindex started in background")
+		})
+		appLog.Info("admin_reindex_route_enabled", "url", "POST /admin/reindex-embeddings")
+	}
+
 	// Setup trace routes (new debug view)
 	if traceAdapter != nil {
 		traceHandler := handlers.NewTraceHandler(traceAdapter, cacheAdapter)
@@ -237,7 +278,7 @@ func main() {
 		Addr:         addr,
 		Handler:      handler,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -294,4 +335,53 @@ func main() {
 	}
 
 	appLog.Info("server_stopped")
+}
+
+func runEmbedding(ctx context.Context, catalog *postgres.CatalogAdapter, emb ports.EmbeddingPort, log *logger.Logger) error {
+	products, err := catalog.GetMasterProductsWithoutEmbedding(ctx)
+	if err != nil {
+		return fmt.Errorf("get products without embedding: %w", err)
+	}
+	if len(products) == 0 {
+		log.Info("embedding_skipped", "reason", "all products have embeddings")
+		return nil
+	}
+
+	log.Info("embedding_started", "count", len(products))
+
+	texts := make([]string, len(products))
+	for i, p := range products {
+		text := p.Name
+		if p.Description != "" {
+			text += " " + p.Description
+		}
+		if p.Brand != "" {
+			text += " " + p.Brand
+		}
+		texts[i] = text
+	}
+
+	batchSize := 100
+	for i := 0; i < len(texts); i += batchSize {
+		end := i + batchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+
+		embeddings, err := emb.Embed(ctx, texts[i:end])
+		if err != nil {
+			return fmt.Errorf("embed batch %d-%d: %w", i, end, err)
+		}
+
+		for j, embedding := range embeddings {
+			if err := catalog.SeedEmbedding(ctx, products[i+j].ID, embedding); err != nil {
+				return fmt.Errorf("save embedding for %s: %w", products[i+j].ID, err)
+			}
+		}
+
+		log.Info("embedding_progress", "done", end, "total", len(products))
+	}
+
+	log.Info("embedding_completed", "count", len(products))
+	return nil
 }

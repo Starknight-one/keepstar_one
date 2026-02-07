@@ -68,7 +68,7 @@ func setupIntegration(t *testing.T, timeout time.Duration) (
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
 	cacheAdapter := postgres.NewCacheAdapter(dbClient)
 	presetRegistry := presets.NewPresetRegistry()
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, llmClient)
+	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, nil)
 
 	return ctx, cancel, stateAdapter, catalogAdapter, cacheAdapter, toolRegistry, llmClient, log
 }

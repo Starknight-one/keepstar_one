@@ -31,22 +31,21 @@ type Registry struct {
 	statePort      ports.StatePort
 	catalogPort    ports.CatalogPort
 	presetRegistry *presets.PresetRegistry
-	llmPort        ports.LLMPort
+	embeddingPort  ports.EmbeddingPort
 }
 
 // NewRegistry creates a tool registry with dependencies
-func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry, llmPort ports.LLMPort) *Registry {
+func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry, embeddingPort ports.EmbeddingPort) *Registry {
 	r := &Registry{
 		tools:          make(map[string]ToolExecutor),
 		statePort:      statePort,
 		catalogPort:    catalogPort,
 		presetRegistry: presetRegistry,
-		llmPort:        llmPort,
+		embeddingPort:  embeddingPort,
 	}
 
 	// Data tools (Agent1)
-	normalizer := NewQueryNormalizer(llmPort)
-	r.Register(NewCatalogSearchTool(statePort, catalogPort, normalizer))
+	r.Register(NewCatalogSearchTool(statePort, catalogPort, embeddingPort))
 
 	// Render tools (Agent2)
 	r.Register(NewRenderProductPresetTool(statePort, presetRegistry))

@@ -6,21 +6,28 @@ Agent layer for development automation.
 
 ```
 .claude/
-├── commands/           # Slash commands
-│   ├── init.md         # Auto-configure project
-│   ├── sdlc.md         # Full pipeline
-│   ├── feature.md      # Plan features
-│   ├── bug.md          # Plan bug fixes
-│   ├── chore.md        # Plan tech tasks
-│   ├── build.md        # Implement plans
-│   ├── test.md         # Run validations
-│   ├── accept.md       # Commit & push
-│   ├── commit.md       # Git commit
-│   ├── cold_start.md   # Session init
-│   ├── sync-experts.md # Sync expertise
+├── commands/              # Slash commands
+│   ├── init.md            # Auto-configure project
+│   ├── sdlc.md            # Full pipeline
+│   ├── feature.md         # Plan features
+│   ├── bug.md             # Plan bug fixes
+│   ├── chore.md           # Plan tech tasks
+│   ├── build.md           # Implement plans
+│   ├── test.md            # Run validations
+│   ├── accept.md          # Commit & push
+│   ├── commit.md          # Git commit
+│   ├── cold_start.md      # Session init
+│   ├── sync-experts.md    # Sync expertise
+│   ├── sync-context.md    # Sync context
+│   ├── sync-readme.md     # Sync READMEs
+│   ├── checkout.md        # Branch checkout
+│   ├── validate-spec.md   # Validate spec
+│   ├── start.md           # Start work
+│   ├── stop.md            # Stop work
+│   ├── stone.md           # Milestone marker
 │   └── experts/
-│       └── _templates/ # Expert templates
-└── agents/             # Custom agents
+│       └── _templates/    # Expert templates
+└── agents/                # Custom agents
 ```
 
 ## First Time Setup
@@ -44,6 +51,16 @@ Agent layer for development automation.
 | `/test` | Run validations |
 | `/accept` | Commit and push |
 
+### Workflow
+
+| Command | Purpose |
+|---------|---------|
+| `/start` | Start work on a task |
+| `/stop` | Stop current work |
+| `/stone` | Mark milestone |
+| `/checkout` | Branch checkout |
+| `/validate-spec` | Validate spec file |
+
 ### Setup & Maintenance
 
 | Command | Purpose |
@@ -51,6 +68,8 @@ Agent layer for development automation.
 | `/init` | Auto-detect and configure |
 | `/cold_start` | Initialize session |
 | `/sync-experts` | Update expertise |
+| `/sync-context` | Sync context files |
+| `/sync-readme` | Sync README files |
 
 ## Adding Experts
 

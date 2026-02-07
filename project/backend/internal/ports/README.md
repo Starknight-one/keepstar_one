@@ -7,8 +7,10 @@
 - `llm_port.go` — LLMPort interface (для AI провайдеров)
 - `cache_port.go` — CachePort interface (для сессий и кэширования)
 - `event_port.go` — EventPort interface (для аналитики событий)
-- `catalog_port.go` — CatalogPort interface (для каталога товаров)
+- `catalog_port.go` — CatalogPort interface (для каталога товаров + vector search)
 - `state_port.go` — StatePort interface (для session state)
+- `trace_port.go` — TracePort interface (для pipeline трейсинга)
+- `embedding_port.go` — EmbeddingPort interface (для генерации vector embeddings)
 
 ## Интерфейсы
 
@@ -38,6 +40,7 @@ type CacheConfig struct {
 ```go
 GetSession(ctx, id) (*Session, error)
 SaveSession(ctx, session) error
+DeleteSession(ctx, id) error // removes session and all related data
 CacheProducts(ctx, sessionID, products) error
 GetCachedProducts(ctx, sessionID) ([]Product, error)
 ```
@@ -55,6 +58,40 @@ GetCategories(ctx) ([]Category, error)
 GetMasterProduct(ctx, id) (*MasterProduct, error)
 ListProducts(ctx, tenantID, filter) ([]Product, int, error)
 GetProduct(ctx, tenantID, productID) (*Product, error)
+
+// Vector search (pgvector)
+VectorSearch(ctx, tenantID, embedding []float32, limit) ([]Product, error)
+SeedEmbedding(ctx, masterProductID, embedding []float32) error
+GetMasterProductsWithoutEmbedding(ctx) ([]MasterProduct, error)
+```
+
+Types:
+```go
+type ProductFilter struct {
+    CategoryID   string
+    CategoryName string            // ILIKE matching (agent passes name, not UUID)
+    Brand        string
+    MinPrice     int
+    MaxPrice     int
+    Search       string
+    SortField    string            // "price", "rating", "name"
+    SortOrder    string            // "asc", "desc"
+    Limit        int
+    Offset       int
+    Attributes   map[string]string // JSONB attribute filters (key → ILIKE value)
+}
+```
+
+### TracePort
+```go
+Record(ctx, trace *PipelineTrace) error  // saves trace to DB + console
+List(ctx, limit) ([]*PipelineTrace, error)
+Get(ctx, traceID) (*PipelineTrace, error)
+```
+
+### EmbeddingPort
+```go
+Embed(ctx, texts []string) ([][]float32, error) // generates vector embeddings
 ```
 
 ### StatePort

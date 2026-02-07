@@ -11,6 +11,8 @@ type Config struct {
 	LogLevel        string
 	DatabaseURL     string
 	TenantSlug      string
+	OpenAIAPIKey    string
+	EmbeddingModel  string
 }
 
 // Load loads configuration from environment variables
@@ -23,12 +25,19 @@ func Load() *Config {
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		DatabaseURL:     getEnv("DATABASE_URL", ""),
 		TenantSlug:      getEnv("TENANT_SLUG", "nike"),
+		OpenAIAPIKey:    getEnv("OPENAI_API_KEY", ""),
+		EmbeddingModel:  getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
 	}
 }
 
 // HasDatabase returns true if database URL is configured
 func (c *Config) HasDatabase() bool {
 	return c.DatabaseURL != ""
+}
+
+// HasEmbeddings returns true if OpenAI API key is configured for embeddings
+func (c *Config) HasEmbeddings() bool {
+	return c.OpenAIAPIKey != ""
 }
 
 func getEnv(key, defaultValue string) string {

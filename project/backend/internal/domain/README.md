@@ -6,6 +6,7 @@
 
 ### UI Primitives
 - `atom_entity.go` — Atom, AtomType (базовый элемент UI)
+- `display_entity.go` — AtomDisplay, DisplayStyle (визуальное форматирование атомов)
 - `widget_entity.go` — Widget, WidgetType (композиция атомов)
 - `formation_entity.go` — Formation (layout виджетов)
 
@@ -28,6 +29,9 @@
 - `tool_entity.go` — ToolDefinition, ToolCall, LLMMessage, LLMResponse, LLMUsage (с cache полями: CacheCreationInputTokens, CacheReadInputTokens). CalculateCost() учитывает cache pricing
 - `template_entity.go` — FormationTemplate, FormationWithData
 - `preset_entity.go` — Preset, FieldConfig, SlotConfig (пресеты рендеринга)
+
+### Tracing
+- `trace_entity.go` — PipelineTrace, AgentTrace, StateSnapshot, DeltaTrace, FormationTrace (трейсинг pipeline)
 
 ### Errors
 - `domain_errors.go` — Доменные ошибки

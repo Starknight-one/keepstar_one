@@ -15,6 +15,7 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		migrationCatalogProducts,
 		migrationCatalogIndexes,
 		migrationCatalogCategorySlugUnique,
+		migrationCatalogPgvector,
 	}
 
 	for i, migration := range migrations {
@@ -98,4 +99,21 @@ CREATE INDEX IF NOT EXISTS idx_catalog_categories_parent ON catalog.categories(p
 
 const migrationCatalogCategorySlugUnique = `
 CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_categories_slug_unique ON catalog.categories(slug);
+`
+
+const migrationCatalogPgvector = `
+CREATE EXTENSION IF NOT EXISTS vector;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'catalog'
+        AND table_name = 'master_products'
+        AND column_name = 'embedding'
+    ) THEN
+        ALTER TABLE catalog.master_products ADD COLUMN embedding vector(384);
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_master_products_embedding
+    ON catalog.master_products USING hnsw (embedding vector_cosine_ops);
 `

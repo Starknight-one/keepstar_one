@@ -8,8 +8,9 @@ HTTP слой. Только parse/validate/respond.
 - `handler_session.go` — GET /api/v1/session/{id} (checks SessionTTL on read)
 - `handler_catalog.go` — GET /api/v1/tenants/{slug}/products
 - `handler_pipeline.go` — POST /api/v1/pipeline (two-agent pipeline)
-- `handler_navigation.go` — POST /api/v1/session/{id}/expand, /back (drill-down navigation)
+- `handler_navigation.go` — POST /api/v1/navigation/expand, /back (drill-down navigation)
 - `handler_debug.go` — Debug console for pipeline metrics + POST /debug/seed
+- `handler_trace.go` — Pipeline trace list/detail (HTML/JSON) + kill-session
 - `handler_health.go` — HealthHandler struct, GET /health, GET /ready
 - `routes.go` — SetupRoutes(), SetupNavigationRoutes(), SetupCatalogRoutes()
 - `middleware_cors.go` — CORS middleware
@@ -24,12 +25,15 @@ GET  /api/v1/session/{id}                — Получить историю с�
 GET  /api/v1/tenants/{slug}/products     — Список товаров тенанта
 GET  /api/v1/tenants/{slug}/products/{id} — Один товар
 POST /api/v1/pipeline                    — Two-agent pipeline
-POST /api/v1/session/{id}/expand         — Expand widget to detail view
-POST /api/v1/session/{id}/back           — Navigate back from detail view
+POST /api/v1/navigation/expand           — Expand widget to detail view
+POST /api/v1/navigation/back             — Navigate back from detail view
 GET  /debug/session/                     — Debug console (all sessions)
 GET  /debug/session/{id}                 — Session detail (HTML/JSON)
 POST /debug/seed                         — Create session with mock products (no LLM)
 GET  /debug/api                          — Debug API (JSON)
+GET  /debug/traces/                      — Pipeline trace list (HTML/JSON)
+GET  /debug/traces/{id}                  — Trace detail (HTML/JSON)
+POST /debug/kill-session                 — Kill session (delete all data)
 GET  /health                             — Health check
 GET  /ready                              — Readiness check
 ```

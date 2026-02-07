@@ -5,7 +5,8 @@
 ## Папки
 
 - `anthropic/` — Клиент для Anthropic API (Claude) → LLMPort
-- `postgres/` — PostgreSQL адаптер → CachePort, EventPort, CatalogPort, StatePort
+- `postgres/` — PostgreSQL адаптер → CachePort, EventPort, CatalogPort, StatePort, TracePort
+- `openai/` — Клиент для OpenAI Embeddings API → EmbeddingPort
 - `json_store/` — Хранение товаров в JSON (MVP) → SearchPort
 - `memory/` — In-memory кэш (устарел, заменён postgres)
 
@@ -13,8 +14,9 @@
 
 | Адаптер | Порт | Статус |
 |---------|------|--------|
-| anthropic | LLMPort | ✅ implemented |
-| postgres | CachePort, EventPort, CatalogPort, StatePort | ✅ implemented |
+| anthropic | LLMPort | implemented |
+| postgres | CachePort, EventPort, CatalogPort, StatePort, TracePort | implemented |
+| openai | EmbeddingPort | implemented |
 | json_store | SearchPort | stub |
 | memory | CachePort | stub (deprecated) |
 

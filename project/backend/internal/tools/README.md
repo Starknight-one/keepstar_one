@@ -5,7 +5,8 @@ Tool executors for LLM tool calling.
 ## Файлы
 
 - `tool_registry.go` — Registry для всех tools
-- `tool_search_products.go` — Поиск товаров (Agent1)
+- `tool_catalog_search.go` — Hybrid search meta-tool: keyword SQL + vector pgvector + RRF merge (Agent1)
+- `tool_search_products.go` — Legacy поиск товаров (не зарегистрирован в Registry)
 - `tool_render_preset.go` — Рендеринг с пресетами (Agent2). Exports: BuildFormation(), FieldGetter, CurrencyGetter, IDGetter
 - `tool_freestyle.go` — Freestyle рендеринг со стилевыми алиасами и кастомными display overrides (Agent2)
 - `mock_tools.go` — Padding tools для достижения порога кэширования (4096 tokens)
@@ -22,11 +23,12 @@ type Registry struct {
     statePort      ports.StatePort
     catalogPort    ports.CatalogPort
     presetRegistry *presets.PresetRegistry
+    embeddingPort  ports.EmbeddingPort
 }
 
 // Создание с зависимостями
 presetRegistry := presets.NewPresetRegistry()
-registry := tools.NewRegistry(statePort, catalogPort, presetRegistry)
+registry := tools.NewRegistry(statePort, catalogPort, presetRegistry, embeddingPort)
 
 // Получение definitions для LLM
 defs := registry.GetDefinitions()
@@ -45,9 +47,31 @@ type ToolExecutor interface {
 }
 ```
 
-## SearchProductsTool
+## CatalogSearchTool (registered, Agent1)
 
-Поиск товаров с записью в state:
+Hybrid search meta-tool: keyword SQL + vector pgvector + RRF merge → state write.
+
+Input schema:
+- `vector_query` (required) — semantic search в ОРИГИНАЛЬНОМ языке пользователя
+- `filters` — object с keyword filters: brand, category, min_price, max_price, color, material, storage, ram, size
+- `sort_by` — price, rating, name
+- `sort_order` — asc, desc
+- `limit` — лимит (default: 10)
+
+Flow:
+1. Parse input, convert prices (rubles → kopecks x100)
+2. Generate query embedding via EmbeddingPort (if available)
+3. Keyword search via catalogPort.ListProducts (SQL ILIKE)
+4. Vector search via catalogPort.VectorSearch (pgvector cosine)
+5. RRF merge: combine keyword + vector results (k=60)
+6. Write products to state via UpdateData zone-write
+
+Возвращает: `"ok: found N products"` / `"empty: 0 results, previous data preserved"`
+Metadata: embed_ms, sql_ms, vector_ms, keyword_count, vector_count, merged_count, search_type
+
+## SearchProductsTool (legacy, NOT registered)
+
+Legacy поиск товаров с записью в state (не зарегистрирован в Registry, заменён CatalogSearchTool):
 
 Input schema:
 - `query` (required) — поисковый запрос
@@ -65,9 +89,9 @@ Input schema:
 
 Временные инструменты для достижения минимального порога кэширования Anthropic (4096 tokens).
 - `CachePaddingEnabled` — флаг включения (default: true)
-- `GetCachePaddingTools()` — возвращает 8 dummy tools с prefix `_internal_`
+- `GetCachePaddingTools()` — возвращает 20 dummy tools с prefix `_internal_`
 - LLM не должен их вызывать (описание: "INTERNAL SYSTEM TOOL - DO NOT USE")
-- ~3200 tokens, вместе с реальными tools ~4000
+- ~5500 tokens (safely above 4096 min for Haiku 4.5)
 
 ## FreestyleTool
 

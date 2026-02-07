@@ -46,7 +46,7 @@ usecases:
       struct: "Agent1ExecuteUseCase"
       purpose: "Agent 1 Tool Caller - query → tool call → state"
       request: "{ SessionID, Query, TenantSlug, TurnID }"
-      response: "{ Usage, LatencyMs, LLMCallMs, ToolExecuteMs, ToolName, ToolInput, ToolResult, ProductsFound, StopReason }"
+      response: "{ Usage, LatencyMs, LLMCallMs, ToolExecuteMs, ToolName, ToolInput, ToolResult, ToolMetadata, ProductsFound, StopReason, SystemPrompt, SystemPromptChars, MessageCount, ToolDefCount }"
       flow:
         - "Get or create session state"
         - "Build messages from ConversationHistory + new query"
@@ -78,7 +78,7 @@ usecases:
       struct: "PipelineExecuteUseCase"
       purpose: "Orchestrator: Agent 1 → Agent 2 → Formation"
       request: "{ SessionID, Query, TenantSlug, TurnID }"
-      response: "{ Formation, Delta, Agent1Ms, Agent2Ms, TotalMs, ... }"
+      response: "{ Formation, Agent1Ms, Agent2Ms, TotalMs, Agent1Usage, Agent2Usage, Agent1LLMMs, Agent1ToolMs, ToolCalled, ToolInput, ToolResult, ProductsFound, Agent2LLMMs, Agent2Prompt, Agent2RawResp, TemplateJSON, MetaCount, MetaFields }"
       flow:
         - "Ensure session exists (CachePort) for FK constraint"
         - "Generate TurnID for delta grouping"

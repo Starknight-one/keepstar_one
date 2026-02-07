@@ -4,29 +4,47 @@
 
 ## Файлы
 
-- `atomModel.js` — Типы атомов (AtomType)
-- `AtomRenderer.jsx` — Рендерер любого атома по типу
-- `Atom.css` — Стили атомов
+- `atomModel.js` — AtomType, AtomSubtype, AtomDisplay enums + legacy mapping (LEGACY_TYPE_TO_DISPLAY)
+- `AtomRenderer.jsx` — Рендерер по display (с legacy fallback)
+- `Atom.css` — Стили атомов (display-based)
 
-## Типы атомов
+## Система типов
 
-| Type | Описание | Meta |
-|------|----------|------|
-| TEXT | Текст | style |
-| NUMBER | Число | format (currency, percent, compact) |
-| PRICE | Цена | currency |
-| IMAGE | Изображение | size, label |
-| RATING | Звёздный рейтинг | - |
-| BADGE | Бейдж | variant |
-| BUTTON | Кнопка | action |
-| ICON | Иконка | - |
-| DIVIDER | Разделитель | - |
-| PROGRESS | Прогресс-бар | - |
+### AtomType (базовые типы)
+
+| Type | Описание |
+|------|----------|
+| text | Текст |
+| number | Число |
+| image | Изображение |
+| icon | Иконка |
+| video | Видео |
+| audio | Аудио |
+
+### AtomSubtype (форматы данных)
+
+- **text**: string, date, datetime, url, email, phone
+- **number**: int, float, currency, percent, rating
+- **image**: url, base64
+- **icon**: name, emoji, svg
+
+### AtomDisplay (визуальные форматы)
+
+- **text**: h1, h2, h3, h4, body-lg, body, body-sm, caption, badge-*, tag-*
+- **number**: price, price-lg, price-old, rating, rating-text, rating-compact, percent, progress
+- **image**: image, image-cover, avatar-*, thumbnail, gallery
+- **icon**: icon, icon-sm, icon-lg
+- **interactive**: button-primary, button-secondary, button-outline, button-ghost
+- **layout**: divider, spacer
+
+### Legacy Mapping
+
+`LEGACY_TYPE_TO_DISPLAY` — карта старых типов (price, badge, rating, button, divider, progress, selector) на display-значения.
 
 ## Использование
 
 ```jsx
-<AtomRenderer atom={{ type: 'TEXT', value: 'Hello', meta: { style: 'bold' } }} />
-<AtomRenderer atom={{ type: 'PRICE', value: 1299, meta: { currency: '₽' } }} />
-<AtomRenderer atom={{ type: 'RATING', value: 4.5 }} />
+<AtomRenderer atom={{ type: 'text', display: 'h2', value: 'Hello' }} />
+<AtomRenderer atom={{ type: 'number', subtype: 'currency', display: 'price', value: 1299 }} />
+<AtomRenderer atom={{ type: 'number', subtype: 'rating', display: 'rating', value: 4.5 }} />
 ```

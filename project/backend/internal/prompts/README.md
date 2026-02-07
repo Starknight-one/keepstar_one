@@ -10,13 +10,16 @@ LLM промпты. Отдельно от бизнес-логики.
 ## Agent 1 (prompt_analyze_query.go)
 
 ```go
-const Agent1SystemPrompt = `...`
+const Agent1SystemPrompt = `...`  // hybrid search with vector_query + filters
 ```
 
 Правила Agent 1:
-- ВСЕГДА вызывает tool, никогда не отвечает текстом
+- Вызывает catalog_search когда пользователю нужны НОВЫЕ данные
+- vector_query: на ОРИГИНАЛЬНОМ языке пользователя (embeddings handle multilingual)
+- filters: структурированные keyword filters на английском (brand, color, material...)
+- Цены в РУБЛЯХ
+- Если пользователь просит изменить СТИЛЬ отображения → НЕ вызывает tool
 - Без объяснений и уточняющих вопросов
-- Tool возвращает "ok" или "empty"
 - Останавливается после первого tool call
 
 ## Agent 2 (prompt_compose_widgets.go)
@@ -30,7 +33,7 @@ func BuildAgent2Prompt(meta StateMeta, layoutHint string) string
 
 // Tool-based preset rendering
 const Agent2ToolSystemPrompt = `...`
-func BuildAgent2ToolPrompt(meta StateMeta, layoutHint string) string
+func BuildAgent2ToolPrompt(meta StateMeta, view ViewState, userQuery string, dataDelta *Delta) string
 ```
 
 Правила Agent 2:

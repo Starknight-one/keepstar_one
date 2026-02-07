@@ -73,7 +73,7 @@ func TestPromptCaching_Chain(t *testing.T) {
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
 	cacheAdapter := postgres.NewCacheAdapter(dbClient)
 	presetRegistry := presets.NewPresetRegistry()
-	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, llmClient)
+	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, nil)
 
 	// Initialize use cases
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)

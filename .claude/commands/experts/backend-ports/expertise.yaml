@@ -46,8 +46,17 @@ interfaces:
       - "GetMasterProduct(ctx, id) (*MasterProduct, error)"
       - "ListProducts(ctx, tenantID, filter) ([]Product, int, error)"
       - "GetProduct(ctx, tenantID, productID) (*Product, error)"
+      - "VectorSearch(ctx, tenantID, embedding []float32, limit) ([]Product, error) — semantic similarity via pgvector"
+      - "SeedEmbedding(ctx, masterProductID, embedding []float32) error — saves embedding for a master product"
+      - "GetMasterProductsWithoutEmbedding(ctx) ([]MasterProduct, error) — returns master products that need embeddings"
     types:
-      - "ProductFilter: CategoryID, Brand, MinPrice, MaxPrice, Search, Limit, Offset"
+      - "ProductFilter: CategoryID, CategoryName, Brand, MinPrice, MaxPrice, Search, SortField, SortOrder, Limit, Offset, Attributes map[string]string"
+
+  embedding_port:
+    file: "embedding_port.go"
+    interface: "EmbeddingPort"
+    methods:
+      - "Embed(ctx, texts []string) ([][]float32, error) — generates vector embeddings for text"
 
   state_port:
     file: "state_port.go"
@@ -84,5 +93,9 @@ gotchas:
   - "ChatWithToolsCached falls back to ChatWithTools if cacheConfig is nil"
   - "Zone writes (UpdateData/UpdateTemplate/UpdateView) atomically update their zone column and create a delta"
   - "AppendConversation does NOT create a delta — it is append-only for LLM cache continuity"
+  - "ProductFilter.CategoryName uses ILIKE matching (agent passes name, not UUID)"
+  - "ProductFilter.Attributes filters against JSONB attributes with ILIKE values"
+  - "VectorSearch requires embeddings to be seeded first via SeedEmbedding"
+  - "EmbeddingPort.Embed accepts a batch of texts and returns parallel [][]float32 vectors"
 
 naming: "{name}_port.go"

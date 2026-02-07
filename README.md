@@ -92,26 +92,38 @@ Atoms → Widgets → Formations
 Keepstar_one_ultra/
 ├── project/
 │   ├── backend/           # Go API (гексагональная архитектура)
-│   │   ├── cmd/           # Entry points
-│   │   ├── internal/
-│   │   │   ├── domain/    # Core бизнес-логика
-│   │   │   ├── ports/     # Interfaces (in/out)
-│   │   │   └── adapters/  # Implementations
-│   │   └── pkg/           # Shared utilities
+│   │   ├── cmd/
+│   │   │   ├── server/    # HTTP server entry point
+│   │   │   └── dbcheck/   # DB connectivity check
+│   │   └── internal/
+│   │       ├── domain/    # Core бизнес-логика
+│   │       ├── ports/     # Interfaces (in/out)
+│   │       ├── adapters/  # Implementations (postgres, anthropic, openai, json_store, memory)
+│   │       ├── usecases/  # Business logic orchestration
+│   │       ├── handlers/  # HTTP handlers, middleware, routes
+│   │       ├── config/    # Configuration loading
+│   │       ├── tools/     # Agent tools (catalog_search, etc.)
+│   │       ├── prompts/   # LLM prompt templates
+│   │       ├── presets/   # Widget/formation presets
+│   │       └── logger/    # Structured logging
 │   │
-│   └── frontend/          # React widget (iframe)
+│   └── frontend/          # React widget (iframe, FSD architecture)
 │       └── src/
-│           ├── components/
-│           │   ├── atoms/     # Базовые элементы
-│           │   ├── widgets/   # Композиции
-│           │   └── chat/      # Чат-панель
-│           └── context/       # State management
+│           ├── app/           # App initialization
+│           ├── entities/      # Domain entities
+│           ├── features/      # Feature modules
+│           ├── shared/        # Shared utilities, API client
+│           └── styles/        # Global styles
 │
 ├── docs/                  # Документация
-│   └── ARCHITECTURE.md    # Детальная архитектура
+│   ├── ARCHITECTURE.md    # Детальная архитектура
+│   ├── SPEC_TWO_AGENT_PIPELINE.md
+│   └── UPDATES.md
 │
 ├── AI_docs/               # Контекст для AI-агентов
-│   └── Manifesto          # Манифест продукта
+│   ├── Manifesto          # Манифест продукта
+│   ├── agent-principles.md
+│   └── ARCHITECTURE_RULES.md
 │
 └── ADW/                   # SDLC оркестратор
 ```

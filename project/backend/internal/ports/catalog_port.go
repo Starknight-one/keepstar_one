@@ -7,15 +7,17 @@ import (
 )
 
 type ProductFilter struct {
-	CategoryID string
-	Brand      string
-	MinPrice   int
-	MaxPrice   int
-	Search     string
-	SortField  string // "price", "rating", "name", "" (default: created_at)
-	SortOrder  string // "asc", "desc" (default: "desc")
-	Limit      int
-	Offset     int
+	CategoryID   string
+	CategoryName string            // category name/slug for ILIKE matching (agent passes name, not UUID)
+	Brand        string
+	MinPrice     int
+	MaxPrice     int
+	Search       string
+	SortField    string            // "price", "rating", "name", "" (default: created_at)
+	SortOrder    string            // "asc", "desc" (default: "desc")
+	Limit        int
+	Offset       int
+	Attributes   map[string]string // JSONB attribute filters (key → ILIKE value)
 }
 
 type CatalogPort interface {
@@ -31,4 +33,13 @@ type CatalogPort interface {
 	// Tenant product operations
 	ListProducts(ctx context.Context, tenantID string, filter ProductFilter) ([]domain.Product, int, error)
 	GetProduct(ctx context.Context, tenantID string, productID string) (*domain.Product, error)
+
+	// VectorSearch finds products by semantic similarity via pgvector.
+	VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int) ([]domain.Product, error)
+
+	// SeedEmbedding saves embedding for a master product.
+	SeedEmbedding(ctx context.Context, masterProductID string, embedding []float32) error
+
+	// GetMasterProductsWithoutEmbedding returns master products that need embeddings.
+	GetMasterProductsWithoutEmbedding(ctx context.Context) ([]domain.MasterProduct, error)
 }

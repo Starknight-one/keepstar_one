@@ -52,6 +52,22 @@ const result = await sendPipelineQuery(sessionId, "Покажи кроссовк
 // { sessionId, formation: { mode, grid, widgets }, agent1Ms, agent2Ms, totalMs }
 ```
 
+### expandView(sessionId, entityType, entityId)
+Drill-down в детальный вид виджета.
+
+```js
+const result = await expandView(sessionId, "product", "uuid");
+// { success, formation, viewMode, focused, stackSize, canGoBack }
+```
+
+### goBack(sessionId)
+Навигация назад к предыдущему виду.
+
+```js
+const result = await goBack(sessionId);
+// { success, formation, viewMode, focused, stackSize, canGoBack }
+```
+
 ## API Base
 
 ```

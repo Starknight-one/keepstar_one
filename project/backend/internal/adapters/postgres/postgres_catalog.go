@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	pgvector "github.com/pgvector/pgvector-go"
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
 )
@@ -151,6 +152,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		SELECT COUNT(*)
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		WHERE p.tenant_id = $1
 	`
 
@@ -198,6 +200,18 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			}
 			conditions = append(conditions, "("+strings.Join(wordConds, " OR ")+")")
 		}
+	}
+
+	if filter.CategoryName != "" {
+		conditions = append(conditions, fmt.Sprintf("(c.name ILIKE $%d OR c.slug ILIKE $%d)", argNum, argNum))
+		args = append(args, "%"+filter.CategoryName+"%")
+		argNum++
+	}
+
+	for key, value := range filter.Attributes {
+		conditions = append(conditions, fmt.Sprintf("mp.attributes->>$%d ILIKE $%d", argNum, argNum+1))
+		args = append(args, key, "%"+value+"%")
+		argNum += 2
 	}
 
 	if len(conditions) > 0 {
@@ -422,4 +436,125 @@ func formatPrice(kopecks int, currency string) string {
 	}
 
 	return result.String() + " " + symbol
+}
+
+// VectorSearch finds products by semantic similarity via pgvector cosine distance.
+func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int) ([]domain.Product, error) {
+	query := `
+		SELECT
+			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
+			COALESCE(p.name, '') as name, COALESCE(p.description, '') as description,
+			p.price, p.currency, p.stock_quantity, COALESCE(p.rating, 0) as rating, COALESCE(p.images, '[]') as images,
+			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
+			mp.brand, mp.category_id, mp.images as mp_images, mp.attributes,
+			c.name as category_name
+		FROM catalog.products p
+		JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		WHERE p.tenant_id = $1
+		  AND mp.embedding IS NOT NULL
+		ORDER BY mp.embedding <=> $2
+		LIMIT $3
+	`
+
+	args := []interface{}{tenantID, pgvector.NewVector(embedding), limit}
+
+	rows, err := a.client.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("vector search: %w", err)
+	}
+	defer rows.Close()
+
+	var products []domain.Product
+	for rows.Next() {
+		var p domain.Product
+		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
+		var productImagesJSON, mpImagesJSON, attributesJSON []byte
+
+		err := rows.Scan(
+			&p.ID, &p.TenantID, &masterProductID,
+			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON,
+			&mpID, &mpSKU, &mpName, &mpDesc,
+			&mpBrand, &mpCategoryID, &mpImagesJSON, &attributesJSON,
+			&categoryName,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan vector product: %w", err)
+		}
+
+		if len(productImagesJSON) > 0 {
+			if err := json.Unmarshal(productImagesJSON, &p.Images); err != nil {
+				return nil, fmt.Errorf("unmarshal product images: %w", err)
+			}
+		}
+
+		if masterProductID != nil && *masterProductID != "" {
+			p.MasterProductID = *masterProductID
+			if p.Name == "" && mpName != nil {
+				p.Name = *mpName
+			}
+			if p.Description == "" && mpDesc != nil {
+				p.Description = *mpDesc
+			}
+			if mpBrand != nil {
+				p.Brand = *mpBrand
+			}
+			if categoryName != nil {
+				p.Category = *categoryName
+			}
+			if len(p.Images) == 0 && len(mpImagesJSON) > 0 {
+				if err := json.Unmarshal(mpImagesJSON, &p.Images); err != nil {
+					return nil, fmt.Errorf("unmarshal master images: %w", err)
+				}
+			}
+			if len(attributesJSON) > 0 {
+				if err := json.Unmarshal(attributesJSON, &p.Attributes); err != nil {
+					return nil, fmt.Errorf("unmarshal attributes: %w", err)
+				}
+			}
+		}
+
+		p.PriceFormatted = formatPrice(p.Price, p.Currency)
+		products = append(products, p)
+	}
+
+	return products, nil
+}
+
+// SeedEmbedding saves embedding for a master product.
+func (a *CatalogAdapter) SeedEmbedding(ctx context.Context, masterProductID string, embedding []float32) error {
+	query := `UPDATE catalog.master_products SET embedding = $2 WHERE id = $1`
+	_, err := a.client.pool.Exec(ctx, query, masterProductID, pgvector.NewVector(embedding))
+	if err != nil {
+		return fmt.Errorf("seed embedding: %w", err)
+	}
+	return nil
+}
+
+// GetMasterProductsWithoutEmbedding returns master products that need embeddings.
+func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context) ([]domain.MasterProduct, error) {
+	query := `
+		SELECT id, sku, name, COALESCE(description, '') as description, COALESCE(brand, '') as brand,
+		       COALESCE(category_id::text, '') as category_id
+		FROM catalog.master_products
+		WHERE embedding IS NULL
+		ORDER BY created_at
+	`
+
+	rows, err := a.client.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query products without embedding: %w", err)
+	}
+	defer rows.Close()
+
+	var products []domain.MasterProduct
+	for rows.Next() {
+		var p domain.MasterProduct
+		if err := rows.Scan(&p.ID, &p.SKU, &p.Name, &p.Description, &p.Brand, &p.CategoryID); err != nil {
+			return nil, fmt.Errorf("scan master product: %w", err)
+		}
+		products = append(products, p)
+	}
+
+	return products, nil
 }

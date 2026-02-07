@@ -36,11 +36,11 @@ adapters:
       - "postgres_client.go - Connection pool (pgxpool)"
       - "postgres_cache.go - CachePort (incl. DeleteSession)"
       - "postgres_events.go - EventPort"
-      - "postgres_catalog.go - CatalogPort with product merging"
+      - "postgres_catalog.go - CatalogPort with product merging + VectorSearch (pgvector cosine), SeedEmbedding, GetMasterProductsWithoutEmbedding"
       - "postgres_state.go - StatePort with JSONB"
       - "postgres_trace.go - TracePort: Record (DB + console printTrace), List, Get"
       - "migrations.go - Chat tables"
-      - "catalog_migrations.go - Catalog schema"
+      - "catalog_migrations.go - Catalog schema + pgvector extension, embedding vector(384) column, HNSW index"
       - "state_migrations.go - State tables"
       - "trace_migrations.go - pipeline_traces table"
       - "catalog_seed.go - Seed data"
@@ -63,6 +63,20 @@ adapters:
     add_delta_auto_increment: "Step assigned via COALESCE(MAX(step),0)+1 — no manual step management needed"
     env: "DATABASE_URL=postgresql://user:pass@host/db?sslmode=require"
 
+  openai:
+    directory: "openai/"
+    files:
+      - "embedding_client.go - EmbeddingPort implementation: Embed (batch text→vector via OpenAI API)"
+    implements: "EmbeddingPort"
+    status: "implemented"
+    api: "POST https://api.openai.com/v1/embeddings"
+    env:
+      - "OPENAI_API_KEY"
+      - "EMBEDDING_MODEL (default: text-embedding-3-small)"
+      - "EMBEDDING_DIMS (default: 384)"
+    struct: "EmbeddingClient { apiKey, model, dims, client }"
+    types: ["embeddingRequest", "embeddingResponse"]
+
   json_store:
     directory: "json_store/"
     file: "json_product_store.go"
@@ -82,6 +96,9 @@ gotchas:
     - "FK: catalog.products.tenant_id → catalog.tenants.id"
     - "ProductFilter conditions are AND-combined"
     - "Search splits multi-word queries into words with OR matching (each word ILIKE in name/brand)"
+    - "VectorSearch uses pgvector cosine distance (<=> operator) on master_products.embedding column"
+    - "HNSW index on embedding column for approximate nearest neighbor search"
+    - "Dependency: github.com/pgvector/pgvector-go (pgvector.NewVector for query params)"
   anthropic:
     - "API version: 2023-06-01"
     - "Response includes usage.input_tokens, usage.output_tokens"

@@ -72,6 +72,9 @@ go build -o server ./cmd/server/ && ./server
 | `LLM_MODEL` | claude-haiku-4-5-20251001 | LLM model |
 | `LOG_LEVEL` | info | Log level |
 | `ENVIRONMENT` | development | Environment |
+| `TENANT_SLUG` | nike | Default tenant slug |
+| `OPENAI_API_KEY` | - | OpenAI API key (for embeddings) |
+| `EMBEDDING_MODEL` | text-embedding-3-small | Embedding model |
 
 ## Ports
 
@@ -80,9 +83,10 @@ go build -o server ./cmd/server/ && ./server
 | LLMPort | Chat, ChatWithTools, ChatWithUsage | anthropic |
 | CachePort | Session/message persistence | postgres |
 | EventPort | Analytics tracking | postgres |
-| CatalogPort | Product catalog | postgres |
+| CatalogPort | Product catalog + vector search | postgres |
 | StatePort | Session state for agents | postgres |
 | TracePort | Pipeline execution traces | postgres |
+| EmbeddingPort | Text-to-vector embeddings | openai |
 
 ## Two-Agent Pipeline
 
