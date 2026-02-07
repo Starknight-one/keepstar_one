@@ -78,6 +78,11 @@ func main() {
 		} else {
 			appLog.Info("catalog_seed_completed", "status", "ok")
 		}
+		if err := postgres.SeedExtendedCatalog(seedCtx, dbClient); err != nil {
+			appLog.Error("extended_catalog_seed_failed", "error", err)
+		} else {
+			appLog.Info("extended_catalog_seed_completed", "status", "ok")
+		}
 		seedCancel()
 	} else {
 		appLog.Info("database_skipped", "reason", "DATABASE_URL not configured")
@@ -91,11 +96,22 @@ func main() {
 	var eventAdapter ports.EventPort
 	var catalogAdapter ports.CatalogPort
 	var stateAdapter ports.StatePort
+	var traceAdapter ports.TracePort
 	if dbClient != nil {
 		cacheAdapter = postgres.NewCacheAdapter(dbClient)
 		eventAdapter = postgres.NewEventAdapter(dbClient)
 		catalogAdapter = postgres.NewCatalogAdapter(dbClient)
 		stateAdapter = postgres.NewStateAdapter(dbClient)
+		traceAdapter = postgres.NewTraceAdapter(dbClient)
+
+		// Run trace migrations
+		traceCtx, traceCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := dbClient.RunTraceMigrations(traceCtx); err != nil {
+			appLog.Error("trace_migrations_failed", "error", err)
+		} else {
+			appLog.Info("trace_migrations_completed", "status", "ok")
+		}
+		traceCancel()
 	}
 
 	// Initialize preset registry
@@ -105,7 +121,7 @@ func main() {
 	// Initialize tool registry (requires state and catalog adapters)
 	var toolRegistry *tools.Registry
 	if stateAdapter != nil && catalogAdapter != nil {
-		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry)
+		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, llmClient)
 		toolNames := make([]string, 0)
 		for _, def := range toolRegistry.GetDefinitions() {
 			if !strings.HasPrefix(def.Name, "_internal_") {
@@ -134,7 +150,7 @@ func main() {
 	// Initialize Pipeline orchestrator (Agent 1 → Agent 2 → Formation)
 	var pipelineUC *usecases.PipelineExecuteUseCase
 	if toolRegistry != nil && stateAdapter != nil && cacheAdapter != nil {
-		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, appLog)
+		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, traceAdapter, toolRegistry, appLog)
 		appLog.Info("pipeline_usecase_initialized", "status", "ok")
 	}
 	_ = pipelineUC // Pipeline is ready to be called from handlers
@@ -181,7 +197,7 @@ func main() {
 		tenantMiddleware = handlers.NewTenantMiddleware(catalogAdapter)
 	}
 
-	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler, tenantMiddleware)
+	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler, tenantMiddleware, cfg.TenantSlug)
 
 	// Setup navigation routes (expand/back)
 	if navigationHandler != nil {
@@ -191,10 +207,16 @@ func main() {
 
 	// Setup debug routes
 	if debugHandler != nil {
-		mux.HandleFunc("/debug/session/", debugHandler.HandleDebugPage)
-		mux.HandleFunc("/debug/api", debugHandler.HandleDebugAPI)
 		mux.HandleFunc("/debug/seed", debugHandler.HandleSeedState)
-		appLog.Info("debug_routes_enabled", "url", "/debug/session/", "seed", "/debug/seed")
+	}
+
+	// Setup trace routes (new debug view)
+	if traceAdapter != nil {
+		traceHandler := handlers.NewTraceHandler(traceAdapter, cacheAdapter)
+		mux.HandleFunc("/debug/traces/", traceHandler.HandleTraces)
+		mux.HandleFunc("/debug/traces", traceHandler.HandleTraces)
+		mux.HandleFunc("/debug/kill-session", traceHandler.HandleKillSession)
+		appLog.Info("trace_routes_enabled", "url", "/debug/traces/")
 	}
 
 	// Setup catalog routes if database available
@@ -219,6 +241,23 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Start retention service (background cleanup)
+	var retentionCancel context.CancelFunc
+	if dbClient != nil {
+		retentionCtx, cancel := context.WithCancel(context.Background())
+		retentionCancel = cancel
+		retention := postgres.NewRetentionService(dbClient, postgres.DefaultRetentionConfig())
+		go retention.Start(retentionCtx, func(msg string, args ...interface{}) {
+			appLog.Info(msg, args...)
+		})
+		appLog.Info("retention_service_started",
+			"trace_ttl", "48h",
+			"dead_session_ttl", "1h",
+			"conversation_limit", 20,
+			"interval", "30min",
+		)
+	}
+
 	// Start server in goroutine
 	go func() {
 		appLog.Info("server_starting", "addr", addr, "environment", cfg.Environment)
@@ -232,6 +271,11 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+
+	// Stop retention service
+	if retentionCancel != nil {
+		retentionCancel()
+	}
 
 	appLog.Info("server_shutting_down")
 

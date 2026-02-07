@@ -14,6 +14,7 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		migrationCatalogMasterProducts,
 		migrationCatalogProducts,
 		migrationCatalogIndexes,
+		migrationCatalogCategorySlugUnique,
 	}
 
 	for i, migration := range migrations {
@@ -93,4 +94,8 @@ CREATE INDEX IF NOT EXISTS idx_catalog_master_products_owner ON catalog.master_p
 CREATE INDEX IF NOT EXISTS idx_catalog_master_products_sku ON catalog.master_products(sku);
 CREATE INDEX IF NOT EXISTS idx_catalog_categories_slug ON catalog.categories(slug);
 CREATE INDEX IF NOT EXISTS idx_catalog_categories_parent ON catalog.categories(parent_id);
+`
+
+const migrationCatalogCategorySlugUnique = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_categories_slug_unique ON catalog.categories(slug);
 `

@@ -222,7 +222,23 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		offset = 0
 	}
 
-	baseQuery += fmt.Sprintf(" ORDER BY p.created_at DESC LIMIT $%d OFFSET $%d", argNum, argNum+1)
+	// Dynamic ORDER BY (whitelist only — prevents SQL injection)
+	orderClause := "p.created_at DESC"
+	if filter.SortField != "" {
+		sortOrder := "ASC"
+		if strings.ToUpper(filter.SortOrder) == "DESC" {
+			sortOrder = "DESC"
+		}
+		switch filter.SortField {
+		case "price":
+			orderClause = fmt.Sprintf("p.price %s", sortOrder)
+		case "rating":
+			orderClause = fmt.Sprintf("p.rating %s", sortOrder)
+		case "name":
+			orderClause = fmt.Sprintf("COALESCE(p.name, mp.name) %s", sortOrder)
+		}
+	}
+	baseQuery += fmt.Sprintf(" ORDER BY %s LIMIT $%d OFFSET $%d", orderClause, argNum, argNum+1)
 	args = append(args, limit, offset)
 
 	rows, err := a.client.pool.Query(ctx, baseQuery, args...)

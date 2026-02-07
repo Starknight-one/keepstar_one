@@ -34,13 +34,20 @@ type anthropicToolWithCache struct {
 	CacheControl *cacheControl          `json:"cache_control,omitempty"`
 }
 
+// toolChoiceConfig represents Anthropic's tool_choice parameter
+type toolChoiceConfig struct {
+	Type string `json:"type"`           // "auto", "any", "tool"
+	Name string `json:"name,omitempty"` // only for type="tool"
+}
+
 // anthropicCachedRequest is the request format supporting prompt caching
 type anthropicCachedRequest struct {
-	Model     string                  `json:"model"`
-	MaxTokens int                     `json:"max_tokens"`
-	System    []contentBlockWithCache `json:"system"`
-	Messages  []anthropicToolMsg      `json:"messages"`
-	Tools     []anthropicToolWithCache `json:"tools,omitempty"`
+	Model      string                   `json:"model"`
+	MaxTokens  int                      `json:"max_tokens"`
+	System     []contentBlockWithCache  `json:"system"`
+	Messages   []anthropicToolMsg       `json:"messages"`
+	Tools      []anthropicToolWithCache `json:"tools,omitempty"`
+	ToolChoice *toolChoiceConfig        `json:"tool_choice,omitempty"`
 }
 
 // anthropicCachedUsage extends usage response with cache metrics

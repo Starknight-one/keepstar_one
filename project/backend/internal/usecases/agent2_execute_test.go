@@ -177,7 +177,7 @@ func TestPipelineExecute_Integration(t *testing.T) {
 	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 90*time.Second)
 	defer cancel()
 
-	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, log)
+	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, nil, toolRegistry, log)
 
 	t.Run("Nike query returns formation with widgets", func(t *testing.T) {
 		sessionID := uuid.New().String()
@@ -329,7 +329,7 @@ func TestPipelineExecute_CostReport(t *testing.T) {
 
 	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
 	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
-	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, toolRegistry, log)
+	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, nil, toolRegistry, log)
 
 	sessionID := uuid.New().String()
 	createTestSession(t, ctx, cacheAdapter, sessionID)

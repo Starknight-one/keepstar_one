@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
@@ -81,17 +82,24 @@ func (t *SearchProductsTool) Execute(ctx context.Context, toolCtx ToolContext, i
 	}
 
 	// Build filter
-	// Note: If brand is specified, don't use query as search to avoid AND conflict
-	// The query often contains the brand name which would cause double filtering
 	filter := ports.ProductFilter{
 		Brand:    brand,
 		MinPrice: minPrice,
 		MaxPrice: maxPrice,
 		Limit:    limit,
 	}
-	// Only use query as search if no brand specified
-	if brand == "" {
-		filter.Search = query
+
+	// Use query as search, stripping brand name to avoid double filtering
+	if query != "" {
+		searchQuery := query
+		if brand != "" {
+			// Remove brand from query to avoid AND conflict with Brand filter
+			// e.g. query="Nike Pegasus" brand="Nike" → search="Pegasus"
+			searchQuery = strings.TrimSpace(removeSubstringIgnoreCase(query, brand))
+		}
+		if searchQuery != "" {
+			filter.Search = searchQuery
+		}
 	}
 	// CategoryID is string in ProductFilter, use category as-is
 	if category != "" {
@@ -174,6 +182,17 @@ func (t *SearchProductsTool) Execute(ctx context.Context, toolCtx ToolContext, i
 	return &domain.ToolResult{
 		Content: fmt.Sprintf("ok: found %d products", total),
 	}, nil
+}
+
+// removeSubstringIgnoreCase removes first occurrence of substr from s, case-insensitive.
+// Preserves original casing of remaining text.
+func removeSubstringIgnoreCase(s, substr string) string {
+	lower := strings.ToLower(s)
+	idx := strings.Index(lower, strings.ToLower(substr))
+	if idx < 0 {
+		return s
+	}
+	return s[:idx] + s[idx+len(substr):]
 }
 
 // extractProductFields gets field names from a product

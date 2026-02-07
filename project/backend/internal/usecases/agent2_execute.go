@@ -77,7 +77,19 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	// Check if we have data — no data means nothing to render
 	if state.Current.Meta.ProductCount == 0 && state.Current.Meta.ServiceCount == 0 {
 		return &Agent2ExecuteResponse{
-			Template:  nil,
+			Formation: &domain.FormationWithData{
+				Mode: domain.FormationTypeSingle,
+				Widgets: []domain.Widget{{
+					ID:   "no-results",
+					Type: domain.WidgetTypeTextBlock,
+					Atoms: []domain.Atom{{
+						Type:    domain.AtomTypeText,
+						Subtype: domain.SubtypeString,
+						Slot:    domain.AtomSlotTitle,
+						Value:   "К сожалению, по вашему запросу ничего не найдено",
+					}},
+				}},
+			},
 			LatencyMs: int(time.Since(start).Milliseconds()),
 		}, nil
 	}
@@ -97,14 +109,34 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	// Build user message with view context, user query, and data delta
 	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta)
 
-	messages := []domain.LLMMessage{
-		{Role: "user", Content: userPrompt},
+	// Include recent user queries from conversation history for context (last 4 user messages max).
+	// Only take user messages with Content (skip assistant, tool_use, tool_result).
+	// Agent1 ConversationHistory contains tool_use/tool_result blocks from Agent1's tools,
+	// which would confuse Agent2 (it has different tools: render_* and freestyle).
+	var messages []domain.LLMMessage
+	if len(state.ConversationHistory) > 0 {
+		var userMessages []domain.LLMMessage
+		for _, msg := range state.ConversationHistory {
+			if msg.Role == "user" && msg.Content != "" && msg.ToolResult == nil {
+				userMessages = append(userMessages, msg)
+			}
+		}
+		historyLimit := 4
+		start := len(userMessages) - historyLimit
+		if start < 0 {
+			start = 0
+		}
+		messages = append(messages, userMessages[start:]...)
 	}
+	messages = append(messages, domain.LLMMessage{
+		Role:    "user",
+		Content: userPrompt,
+	})
 
 	// Get render tool definitions (filter only render_* tools)
 	toolDefs := uc.getAgent2Tools()
 
-	// Call LLM with caching
+	// Call LLM with caching and forced tool use
 	llmStart := time.Now()
 	llmResp, err := uc.llm.ChatWithToolsCached(
 		ctx,
@@ -114,6 +146,7 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		&ports.CacheConfig{
 			CacheTools:  true,
 			CacheSystem: true,
+			ToolChoice:  "any", // Force tool call — Agent2 must always render
 		},
 	)
 	llmDuration := time.Since(llmStart).Milliseconds()
@@ -147,14 +180,27 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		response.ToolCalled = true
 		response.ToolName = toolCall.Name
 
+		uc.log.Debug("tool_call_received",
+			"tool", toolCall.Name,
+			"input", toolCall.Input,
+			"session_id", req.SessionID,
+			"actor", "agent2",
+		)
+
+		toolStart := time.Now()
 		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
 			SessionID: req.SessionID,
 			TurnID:    req.TurnID,
 			ActorID:   "agent2",
 		}, toolCall)
+		toolDuration := time.Since(toolStart).Milliseconds()
+
 		if err != nil {
+			uc.log.Error("tool_execution_failed", "error", err, "tool", toolCall.Name, "actor", "agent2")
 			return nil, fmt.Errorf("execute tool %s: %w", toolCall.Name, err)
 		}
+
+		uc.log.ToolExecuted(toolCall.Name, req.SessionID, result.Content, toolDuration)
 
 		response.RawResponse = result.Content
 

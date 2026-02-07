@@ -16,9 +16,10 @@ type ToolCall struct {
 
 // ToolResult represents the result of a tool execution
 type ToolResult struct {
-	ToolUseID string `json:"tool_use_id"`
-	Content   string `json:"content"` // "ok", "empty", or error message
-	IsError   bool   `json:"is_error,omitempty"`
+	ToolUseID string                 `json:"tool_use_id"`
+	Content   string                 `json:"content"` // "ok", "empty", or error message
+	IsError   bool                   `json:"is_error,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"` // Internal breakdown for tracing
 }
 
 // LLMMessage represents a message in conversation (extended for tools)
