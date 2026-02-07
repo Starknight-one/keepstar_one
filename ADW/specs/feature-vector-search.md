@@ -2,57 +2,66 @@
 
 ## ADW ID: feature-vector-search
 
-## Feature Description
+## Суть
 
-Добавление векторного поиска в мета-тул `catalog_search` через OpenAI Embeddings API + pgvector в Neon Postgres. Мультиязычные эмбеддинги решают проблему перевода (кроссовки ↔ sneakers) без LLM-нормализатора. Hybrid search (keyword SQL + vector pgvector + RRF merge) даёт лучшее качество для любых запросов: от точных ("Nike Air Max") до семантических ("самые топовые ноутбуки для работы").
+`catalog_search` становится мета-тулом с двумя явными входами:
+- **`filters`** — структурированные атрибуты для жёсткого SQL поиска (brand, price, color, material, ...)
+- **`vector_query`** — семантический запрос на языке пользователя для vector search
 
-**Ключевое преимущество архитектуры:** замена OpenAI на собственный embedding-сервис в будущем = создать 1 файл-адаптер + изменить 1 строку в main.go. Порт, vector SQL, мета-тул — всё остаётся.
+Agent1 (Haiku) видит в tool definition **все доступные поля фильтрации с типами** (brand: string, color: string, min_price: number, ...). Сам решает что пойдёт в keyword-фильтры (точное), а что в vector (семантику). Нормализация происходит естественно — Haiku это LLM с мировыми знаниями, она знает что Найк = Nike. А если напишет чуть не так — ILIKE (нечёткий поиск) + vector search подстрахуют.
 
-## Objective
+LLM-нормализатор удаляется полностью. Статическая brand-карта не нужна.
 
-После реализации:
-- "покажи топовые ноутбуки" → embedding → vector search → релевантные ноутбуки по семантике
-- "кроссы Найк" → keyword (brand=Nike) + vector ("кроссы") → точные + семантические результаты, RRF merge
-- "что-нибудь для бега" → vector search ловит running shoes, sportswear — то что ILIKE никогда не найдёт
-- "дешёвые наушники Sony" → keyword (brand=Sony, max_price) + vector ("наушники") → фильтры + семантика
-- LLM-нормализатор (Haiku, ~300ms, $$) заменён на статическую brand-карту (0ms, бесплатно)
-- Эмбеддинги генерятся через OpenAI API (~50ms на запрос), хранятся в pgvector
-- Swap на свой сервис = 1 файл + 1 строка в main.go
+## Data Flow
 
-## Expertise Context
-
-Expertise used:
-- **backend-ports**: `CatalogPort` интерфейс с `ListProducts(ctx, tenantID, filter)`, `ProductFilter` struct. Нужно добавить `VectorSearch` метод. `EmbeddingPort` — новый порт.
-- **backend-adapters**: PostgreSQL через pgx/v5. Migrations в отдельных const-строках. Каталог в schema `catalog`. Master products содержат semantic content (name, description, brand). Products = tenant-specific (price, stock).
-- **backend-pipeline**: `CatalogSearchTool` мета-тул в `tools/`. Текущий normalizer использует LLM — заменяем на static map + embeddings. Registry создаёт тулы в `NewRegistry()`.
-- **backend-domain**: `Product` entity без embedding-поля (embedding на master_products в БД, не в domain). Price в копейках.
-- **backend-usecases**: Agent1 фильтрует тулы по `catalog_*` префиксу. Pipeline: Agent1 → Agent2 → Formation.
+```
+User: "чёрные кроссы Найк подешевле"
+  → Agent1 (Haiku) видит tool definition с полями фильтрации:
+      brand: string, category: string, color: string, min_price: number, ...
+    Agent заполняет:
+      filters: {brand: "Nike", color: "Black"}
+      vector_query: "кроссы"
+      sort_by: "price", sort_order: "asc"
+     │
+     ▼
+  catalog_search meta-tool:
+     ├─ Keyword: brand='Nike' AND category=Sneakers AND color='Black' ORDER BY price ASC
+     ├─ Vector:  embed("кроссы Nike") → pgvector cosine search
+     └─ RRF merge (k=60) → combined ranked results
+     │
+     ▼
+  State write: products = merged results
+  Return: "ok: found N products"
+```
 
 ## Relevant Files
 
 ### Existing Files (модифицируются)
 
-- `project/backend/internal/ports/catalog_port.go` — добавить `VectorSearch` метод в `CatalogPort`
-- `project/backend/internal/adapters/postgres/catalog_migrations.go` — миграция: pgvector extension, embedding column, HNSW index
-- `project/backend/internal/adapters/postgres/postgres_catalog.go` — реализация `VectorSearch`
-- `project/backend/internal/tools/tool_catalog_search.go` — hybrid search: keyword + vector + RRF
-- `project/backend/internal/tools/normalizer.go` — заменить LLM нормализатор на static brand map
-- `project/backend/internal/tools/tool_registry.go` — передать embeddingPort в CatalogSearchTool
-- `project/backend/internal/config/config.go` — добавить `OpenAIAPIKey`, `EmbeddingModel`
-- `project/backend/cmd/server/main.go` — wiring: embedding adapter, seed embeddings
-- `project/backend/go.mod` — добавить `github.com/pgvector/pgvector-go`
+- `project/backend/internal/prompts/prompt_analyze_query.go` — промпт Agent1: объяснить filters vs vector_query
+- `project/backend/internal/tools/tool_catalog_search.go` — static definition с filters/vector_query, hybrid search, RRF
+- `project/backend/internal/tools/tool_registry.go` — `EmbeddingPort` вместо `LLMPort`
+- `project/backend/internal/ports/catalog_port.go` — `VectorSearch`, `SeedEmbedding`, `GetMasterProductsWithoutEmbedding`, `Attributes` в `ProductFilter`
+- `project/backend/internal/adapters/postgres/catalog_migrations.go` — pgvector extension, embedding column, HNSW index
+- `project/backend/internal/adapters/postgres/postgres_catalog.go` — `VectorSearch`, `SeedEmbedding`, `GetMasterProductsWithoutEmbedding`, JSONB filtering в `ListProducts`
+- `project/backend/internal/config/config.go` — `OpenAIAPIKey`, `EmbeddingModel`, `HasEmbeddings()`
+- `project/backend/cmd/server/main.go` — wiring: embedding adapter, startup embed, admin endpoint
 
 ### New Files
 
 - `project/backend/internal/ports/embedding_port.go` — интерфейс `EmbeddingPort`
 - `project/backend/internal/adapters/openai/embedding_client.go` — OpenAI Embeddings API adapter
 
-### Read-Only (не менять)
+### Удалить
 
-- `project/backend/internal/domain/product_entity.go` — embedding НЕ добавляется в domain (хранится только в БД)
-- `project/backend/internal/domain/master_product_entity.go` — embedding НЕ добавляется в domain
-- `project/backend/internal/usecases/agent1_execute.go` — не меняется (фильтр `catalog_*` уже работает)
-- `project/backend/internal/prompts/prompt_analyze_query.go` — не меняется (Agent1 промпт уже ок)
+- `project/backend/internal/tools/normalizer.go` — полностью
+- `project/backend/internal/prompts/prompt_normalize_query.go` — полностью
+
+### Read-Only
+
+- `project/backend/internal/domain/` — embedding НЕ в domain, только в БД
+- `project/backend/internal/usecases/agent1_execute.go` — не меняется
+- `project/backend/internal/tools/tool_search_products.go` — содержит `removeSubstringIgnoreCase`
 
 ## Step by Step Tasks
 
@@ -60,12 +69,9 @@ IMPORTANT: Execute strictly in order.
 
 ### 1. Добавить зависимость pgvector-go
 
-**Команда:**
 ```bash
 cd project/backend && go get github.com/pgvector/pgvector-go
 ```
-
-Это добавит `github.com/pgvector/pgvector-go` в `go.mod` и `go.sum`.
 
 ### 2. Создать EmbeddingPort
 
@@ -78,22 +84,17 @@ import "context"
 
 // EmbeddingPort generates vector embeddings for text.
 // Implementations: OpenAI API, local model server, etc.
-// Swap adapter to change provider — no other code changes needed.
 type EmbeddingPort interface {
-	// Embed generates embeddings for one or more texts.
-	// Returns one []float32 per input text.
-	// Dimension depends on the configured model (e.g. 384 for text-embedding-3-small with dimensions=384).
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 ```
-
-**Принцип:** Минимальный интерфейс. Одна функция. Любой провайдер (OpenAI, Cohere, Voyage, self-hosted) реализует это за 1 файл.
 
 ### 3. Создать OpenAI Embedding Adapter
 
 **Файл:** `project/backend/internal/adapters/openai/embedding_client.go`
 
-**Struct:**
+Паттерн: как `adapters/anthropic/anthropic_client.go` — чистый `net/http` + `encoding/json`, БЕЗ SDK.
+
 ```go
 type EmbeddingClient struct {
 	apiKey string
@@ -105,7 +106,7 @@ type EmbeddingClient struct {
 
 **Конструктор:** `NewEmbeddingClient(apiKey, model string, dims int) *EmbeddingClient`
 - Default model: `"text-embedding-3-small"`
-- Default dims: `384` (OpenAI поддерживает dimension reduction — экономит storage и compute)
+- Default dims: `384`
 - HTTP client с timeout 10s
 
 **Метод `Embed(ctx, texts)`:**
@@ -120,15 +121,12 @@ type EmbeddingClient struct {
 }
 ```
 - Response: parse `data[].embedding` → `[][]float32`
-- Batch: OpenAI принимает до 2048 inputs за раз. Для seed 130 товаров = 1 вызов.
-- Error handling: HTTP status != 200 → return error с телом ответа для дебага
-
-**CRITICAL: НЕ использовать внешние OpenAI SDK.** Простой HTTP клиент через `net/http` + `encoding/json`. Никаких лишних зависимостей. Проект уже делает HTTP вызовы к Anthropic таким же образом (см. `adapters/anthropic/anthropic_client.go`).
+- Error: HTTP status != 200 → return error с телом ответа
 
 **Response struct (internal):**
 ```go
 type embeddingResponse struct {
-	Data  []struct {
+	Data []struct {
 		Embedding []float32 `json:"embedding"`
 		Index     int       `json:"index"`
 	} `json:"data"`
@@ -165,7 +163,7 @@ func (c *Config) HasEmbeddings() bool {
 
 **Файл:** `project/backend/internal/adapters/postgres/catalog_migrations.go`
 
-Добавить новую миграцию в `RunCatalogMigrations`:
+Добавить в `RunCatalogMigrations`:
 ```go
 migrations := []string{
 	migrationCatalogSchema,
@@ -199,33 +197,33 @@ CREATE INDEX IF NOT EXISTS idx_master_products_embedding
 `
 ```
 
-**Почему master_products, а не products:**
-- Semantic content (name, description, brand) живёт в master_products
-- Один embedding на master product, расшарен между тенантами
-- Products = tenant-specific (price, stock) — не семантика
-
-**Почему HNSW, а не IVFFlat:**
-- HNSW работает сразу без training step
-- Хорошо от малых (130) до больших (миллионы) датасетов
-- IVFFlat требует `lists` параметр и training — лишняя сложность
-
-**Почему 384 dimensions:**
-- OpenAI `text-embedding-3-small` поддерживает dimension reduction
-- 384 dims vs 1536 dims: ~4x меньше storage, ~4x быстрее search, quality drop минимальный
-- pgvector индекс меньше и быстрее
-
-### 6. Добавить VectorSearch в CatalogPort
+### 6. Добавить VectorSearch + SeedEmbedding + ProductFilter.Attributes
 
 **Файл:** `project/backend/internal/ports/catalog_port.go`
 
-Добавить метод в интерфейс `CatalogPort`:
+Добавить `Attributes` в `ProductFilter`:
+```go
+type ProductFilter struct {
+	CategoryID   string
+	CategoryName string            // NEW: category name/slug for ILIKE matching (agent passes name, not UUID)
+	Brand        string
+	MinPrice     int
+	MaxPrice     int
+	Search       string
+	SortField    string
+	SortOrder    string
+	Limit        int
+	Offset       int
+	Attributes   map[string]string // NEW: JSONB attribute filters (key → ILIKE value)
+}
+```
+
+Добавить методы в `CatalogPort`:
 ```go
 type CatalogPort interface {
 	// ... existing methods ...
 
 	// VectorSearch finds products by semantic similarity via pgvector.
-	// embedding is the query vector (384 dims).
-	// Returns products sorted by similarity (most similar first).
 	VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int) ([]domain.Product, error)
 
 	// SeedEmbedding saves embedding for a master product.
@@ -236,13 +234,36 @@ type CatalogPort interface {
 }
 ```
 
-### 7. Реализовать VectorSearch в Postgres адаптере
+### 7. Реализовать в Postgres адаптере
 
 **Файл:** `project/backend/internal/adapters/postgres/postgres_catalog.go`
 
-Добавить 3 метода в `CatalogAdapter`:
+**7a. JSONB filtering в `ListProducts`:**
 
-**7a. VectorSearch:**
+Добавить после существующих conditions (после `filter.Search` блока, ~строка 201):
+
+**CategoryName ILIKE (NEW — agent передаёт имя, не UUID):**
+```go
+if filter.CategoryName != "" {
+	conditions = append(conditions, fmt.Sprintf("(c.name ILIKE $%d OR c.slug ILIKE $%d)", argNum, argNum))
+	args = append(args, "%"+filter.CategoryName+"%")
+	argNum++
+}
+```
+
+**JSONB attribute filters (ILIKE для fuzzy matching):**
+```go
+for key, value := range filter.Attributes {
+	conditions = append(conditions, fmt.Sprintf("mp.attributes->>$%d ILIKE $%d", argNum, argNum+1))
+	args = append(args, key, "%"+value+"%")
+	argNum += 2
+}
+```
+
+Оба параметра (key и value) параметризованы — SQL injection невозможен.
+ILIKE вместо exact match — подстраховка если агент напишет "black" а в БД "Black".
+
+**7b. VectorSearch:**
 ```go
 func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int) ([]domain.Product, error)
 ```
@@ -255,8 +276,7 @@ SELECT
     p.price, p.currency, p.stock_quantity, COALESCE(p.rating, 0) as rating, COALESCE(p.images, '[]') as images,
     mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
     mp.brand, mp.category_id, mp.images as mp_images, mp.attributes,
-    c.name as category_name,
-    1 - (mp.embedding <=> $2) as similarity
+    c.name as category_name
 FROM catalog.products p
 JOIN catalog.master_products mp ON p.master_product_id = mp.id
 LEFT JOIN catalog.categories c ON mp.category_id = c.id
@@ -266,32 +286,25 @@ ORDER BY mp.embedding <=> $2
 LIMIT $3
 ```
 
-**CRITICAL:** Использовать `pgvector.NewVector(embedding)` из `github.com/pgvector/pgvector-go` для передачи вектора как параметра `$2`. Пример:
+Использовать `pgvector.NewVector(embedding)` для `$2`:
 ```go
 import pgvector "github.com/pgvector/pgvector-go"
-// ...
 args := []interface{}{tenantID, pgvector.NewVector(embedding), limit}
 ```
 
-Продукт-мерж логика (master → product) — **СКОПИРОВАТЬ** из существующего `ListProducts`. Не вызывать ListProducts (разный SQL). Использовать ту же scan-логику.
+Scan и merge логику **СКОПИРОВАТЬ из `ListProducts`** — тот же набор полей, та же merge-логика master → product.
 
-**7b. SeedEmbedding:**
+**7c. SeedEmbedding:**
 ```go
 func (a *CatalogAdapter) SeedEmbedding(ctx context.Context, masterProductID string, embedding []float32) error
 ```
-
-SQL:
-```sql
-UPDATE catalog.master_products SET embedding = $2 WHERE id = $1
-```
-
+SQL: `UPDATE catalog.master_products SET embedding = $2 WHERE id = $1`
 Использовать `pgvector.NewVector(embedding)` для `$2`.
 
-**7c. GetMasterProductsWithoutEmbedding:**
+**7d. GetMasterProductsWithoutEmbedding:**
 ```go
 func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context) ([]domain.MasterProduct, error)
 ```
-
 SQL:
 ```sql
 SELECT id, sku, name, COALESCE(description, '') as description, COALESCE(brand, '') as brand,
@@ -301,151 +314,209 @@ WHERE embedding IS NULL
 ORDER BY created_at
 ```
 
-Возвращает только поля нужные для генерации текста эмбеддинга. Images/attributes не нужны.
+### 8. Удалить normalizer
 
-### 8. Заменить LLM нормализатор на статическую brand-карту
+**Удалить файл:** `project/backend/internal/tools/normalizer.go`
+**Удалить файл:** `project/backend/internal/prompts/prompt_normalize_query.go`
 
-**Файл:** `project/backend/internal/tools/normalizer.go`
-
-**Полная замена содержимого.** LLM-нормализатор больше не нужен — мультиязычные эмбеддинги решают проблему перевода.
-
-Новое содержимое:
-```go
-package tools
-
-import "strings"
-
-// BrandNormalizer resolves brand transliterations via static map.
-// No LLM call needed — deterministic, 0ms, free.
-type BrandNormalizer struct {
-	brands map[string]string // lowercase alias → canonical name
-}
-
-// NewBrandNormalizer creates a normalizer with built-in brand aliases.
-func NewBrandNormalizer() *BrandNormalizer {
-	n := &BrandNormalizer{brands: make(map[string]string)}
-	// Russian transliterations
-	aliases := map[string][]string{
-		"Nike":           {"найк", "найки", "найке", "нике"},
-		"Adidas":         {"адидас", "адик", "адики"},
-		"Puma":           {"пума"},
-		"Reebok":         {"рибок", "рибоки"},
-		"Samsung":        {"самсунг", "самс"},
-		"Apple":          {"эпл", "апл", "эппл", "аппл"},
-		"Sony":           {"сони"},
-		"Lenovo":         {"леново"},
-		"Dell":           {"делл"},
-		"Levi's":         {"левайс", "левис", "леви"},
-		"The North Face": {"норс фейс", "зе норс фейс", "тнф"},
-		"Google":         {"гугл"},
-	}
-	for canonical, list := range aliases {
-		n.brands[strings.ToLower(canonical)] = canonical
-		for _, alias := range list {
-			n.brands[strings.ToLower(alias)] = canonical
-		}
-	}
-	return n
-}
-
-// NormalizeBrand resolves a brand alias to its canonical English name.
-// Returns the original string if no alias found (passthrough).
-func (n *BrandNormalizer) NormalizeBrand(brand string) string {
-	if brand == "" {
-		return ""
-	}
-	if canonical, ok := n.brands[strings.ToLower(strings.TrimSpace(brand))]; ok {
-		return canonical
-	}
-	return brand
-}
-```
-
-**Удалить:**
-- `QueryNormalizer` struct
-- `NewQueryNormalizer(llm)` constructor
-- `Normalize(ctx, query, brand)` method
-- `NormalizeResult` struct
-- `isASCII()` function
-- `stripCodeFences()` function
-- Импорт `ports` и `prompts`
-
-**Файл `project/backend/internal/prompts/prompt_normalize_query.go`** — оставить как есть (legacy, не используется после замены). Не удалять — может понадобиться.
-
-### 9. Обновить CatalogSearchTool — hybrid search + RRF
+### 9. Переписать CatalogSearchTool — hybrid search
 
 **Файл:** `project/backend/internal/tools/tool_catalog_search.go`
 
-**Изменения в struct:**
+**Imports (полный список для переписанного файла):**
+```go
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"keepstar/internal/domain"
+	"keepstar/internal/ports"
+)
+```
+
+**9a. Struct:**
 ```go
 type CatalogSearchTool struct {
-	statePort    ports.StatePort
-	catalogPort  ports.CatalogPort
-	embedding    ports.EmbeddingPort  // NEW: replaces normalizer
-	brandNorm    *BrandNormalizer     // NEW: replaces QueryNormalizer
+	statePort   ports.StatePort
+	catalogPort ports.CatalogPort
+	embedding   ports.EmbeddingPort // nil = keyword-only mode
 }
 ```
 
-**Конструктор:**
+**9b. Конструктор:**
 ```go
 func NewCatalogSearchTool(statePort ports.StatePort, catalogPort ports.CatalogPort, embedding ports.EmbeddingPort) *CatalogSearchTool {
 	return &CatalogSearchTool{
 		statePort:   statePort,
 		catalogPort: catalogPort,
 		embedding:   embedding,
-		brandNorm:   NewBrandNormalizer(),
 	}
 }
 ```
 
-**Execute() — новый flow:**
+**9c. Definition() — статическое, поля + типы (без enum-ов):**
 
-1. **Parse input** (без изменений: query, brand, category, min_price, max_price, sort_by, sort_order, limit)
+Agent видит доступные фильтры с типами. Haiku знает мировые бренды, цвета и т.д. ILIKE + vector search подстрахуют если agent напишет чуть не так.
 
-2. **Price conversion** (без изменений: рубли → копейки ×100)
-
-3. **Brand normalize** (NEW — static map, 0ms):
 ```go
-normalizedBrand := t.brandNorm.NormalizeBrand(brand)
+func (t *CatalogSearchTool) Definition() domain.ToolDefinition {
+	return domain.ToolDefinition{
+		Name:        "catalog_search",
+		Description: "Hybrid product search. Put structured/exact filters in 'filters'. Put semantic search intent in 'vector_query' in user's original language.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"vector_query": map[string]interface{}{
+					"type":        "string",
+					"description": "Semantic search in user's original language. Vector search handles multilingual matching. Example: 'кроссы для бега', 'lightweight laptop for work'.",
+				},
+				"filters": map[string]interface{}{
+					"type":        "object",
+					"description": "Exact keyword filters. Only include filters you're confident about.",
+					"properties": map[string]interface{}{
+						"brand": map[string]interface{}{
+							"type":        "string",
+							"description": "Brand name in English (e.g. Nike, Samsung, Apple)",
+						},
+						"category": map[string]interface{}{
+							"type":        "string",
+							"description": "Product category (e.g. Sneakers, Laptops, Headphones)",
+						},
+						"min_price": map[string]interface{}{
+							"type":        "number",
+							"description": "Minimum price in RUBLES",
+						},
+						"max_price": map[string]interface{}{
+							"type":        "number",
+							"description": "Maximum price in RUBLES",
+						},
+						"color": map[string]interface{}{
+							"type":        "string",
+							"description": "Product color in English (e.g. Black, White, Blue)",
+						},
+						"material": map[string]interface{}{
+							"type":        "string",
+							"description": "Material (e.g. Leather, Mesh, Fleece)",
+						},
+						"storage": map[string]interface{}{
+							"type":        "string",
+							"description": "Storage capacity (e.g. 128GB, 256GB, 512GB)",
+						},
+						"ram": map[string]interface{}{
+							"type":        "string",
+							"description": "RAM size (e.g. 8GB, 16GB)",
+						},
+						"size": map[string]interface{}{
+							"type":        "string",
+							"description": "Size (e.g. 11 inch, 44mm)",
+						},
+					},
+				},
+				"sort_by": map[string]interface{}{
+					"type": "string",
+					"enum": []string{"price", "rating", "name"},
+				},
+				"sort_order": map[string]interface{}{
+					"type": "string",
+					"enum": []string{"asc", "desc"},
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Max results (default 10)",
+				},
+			},
+			"required": []string{"vector_query"},
+		},
+	}
+}
 ```
 
-4. **Generate query embedding** (NEW):
+**9d. Execute() — новый flow:**
+
+1. **Parse input** — новая структура с `filters` и `vector_query`:
+```go
+vectorQuery, _ := input["vector_query"].(string)
+sortBy, _ := input["sort_by"].(string)
+sortOrder, _ := input["sort_order"].(string)
+limit := 10
+if v, ok := input["limit"].(float64); ok {
+	limit = int(v)
+}
+
+// Parse filters object
+var brand, category string
+var minPrice, maxPrice int
+attributes := make(map[string]string)
+
+if filters, ok := input["filters"].(map[string]interface{}); ok {
+	brand, _ = filters["brand"].(string)
+	category, _ = filters["category"].(string)
+	if v, ok := filters["min_price"].(float64); ok {
+		minPrice = int(v)
+	}
+	if v, ok := filters["max_price"].(float64); ok {
+		maxPrice = int(v)
+	}
+	// Collect JSONB attributes (everything that's not a known column filter)
+	knownFilters := map[string]bool{"brand": true, "category": true, "min_price": true, "max_price": true}
+	for key, val := range filters {
+		if !knownFilters[key] {
+			if strVal, ok := val.(string); ok {
+				attributes[key] = strVal
+			}
+		}
+	}
+}
+```
+
+2. **Price conversion** (рубли → копейки ×100)
+
+3. **Generate query embedding:**
 ```go
 var queryEmbedding []float32
-embedStart := time.Now()
-if t.embedding != nil {
-	// Build search text: query + brand for better semantic context
-	searchText := query
-	if normalizedBrand != "" {
-		searchText = query + " " + normalizedBrand
+if t.embedding != nil && vectorQuery != "" {
+	embedStart := time.Now()
+	searchText := vectorQuery
+	if brand != "" {
+		searchText = vectorQuery + " " + brand
 	}
 	embeddings, err := t.embedding.Embed(ctx, []string{searchText})
 	if err == nil && len(embeddings) > 0 {
 		queryEmbedding = embeddings[0]
 	}
-	// If embedding fails — fallback to keyword-only search (graceful degradation)
+	meta["embed_ms"] = time.Since(embedStart).Milliseconds()
 }
-embedMs := time.Since(embedStart).Milliseconds()
-meta["embed_ms"] = embedMs
 ```
 
-5. **Keyword search** (существующий код — build filter, `ListProducts`):
+4. **Keyword search:**
 ```go
 filter := ports.ProductFilter{
-	Search:    query,  // RAW query for ILIKE (not normalized — embeddings handle multilingual)
-	Brand:     normalizedBrand,
-	CategoryID: category,
-	MinPrice:  minPriceKopecks,
-	MaxPrice:  maxPriceKopecks,
-	SortField: sortBy,
-	SortOrder: sortOrder,
-	Limit:     limit * 2, // fetch more for RRF merge
+	Search:     vectorQuery, // also used for ILIKE fallback
+	Brand:      brand,
+	CategoryName: category, // agent passes category name/slug → ILIKE on c.name/c.slug
+	MinPrice:   minPriceKopecks,
+	MaxPrice:   maxPriceKopecks,
+	SortField:  sortBy,
+	SortOrder:  sortOrder,
+	Limit:      limit * 2,
+	Attributes: attributes, // JSONB filters
 }
-// Strip brand from search (existing logic)
-keywordProducts, keywordTotal, _ := t.catalogPort.ListProducts(ctx, tenant.ID, filter)
+
+// Strip brand from ILIKE search to avoid AND conflict
+if filter.Brand != "" && filter.Search != "" {
+	cleaned := strings.TrimSpace(removeSubstringIgnoreCase(filter.Search, filter.Brand))
+	if cleaned != "" {
+		filter.Search = cleaned
+	}
+}
+
+keywordProducts, _, _ := t.catalogPort.ListProducts(ctx, tenant.ID, filter)
 ```
 
-6. **Vector search** (NEW):
+5. **Vector search:**
 ```go
 var vectorProducts []domain.Product
 if queryEmbedding != nil {
@@ -455,31 +526,32 @@ meta["keyword_count"] = len(keywordProducts)
 meta["vector_count"] = len(vectorProducts)
 ```
 
-7. **RRF merge** (NEW):
+6. **RRF merge:**
 ```go
 merged := rrfMerge(keywordProducts, vectorProducts, limit)
 total := len(merged)
 meta["merged_count"] = total
-meta["search_type"] = "hybrid"
+if len(keywordProducts) > 0 && len(vectorProducts) > 0 {
+	meta["search_type"] = "hybrid"
+} else if len(vectorProducts) > 0 {
+	meta["search_type"] = "vector"
+} else {
+	meta["search_type"] = "keyword"
+}
 ```
 
-8. **State write** (существующий код — без изменений по логике, но `products = merged`)
+7. **State write** — без изменений по логике, `products = merged`
 
-9. **Fallback**: если `merged` пуст — вернуть "empty" (существующий код)
+8. **Empty** — если merged пуст → "empty: 0 results"
 
-**Удалить из Execute():**
-- Вызов `t.normalizer.Normalize(ctx, query, brand)`
-- Всё что связано с `normalizeResult` (Query, Brand, SourceLang, AliasResolved)
-- Трейс полей normalize_path, normalize_input, normalize_output
+**9e. Удалить:** `searchWithFallback()`, всё связанное с normalizer.
 
-**Новая функция `rrfMerge`** (в том же файле):
+**9f. Новая функция `rrfMerge`** (в том же файле):
 ```go
-// rrfMerge combines keyword and vector search results using Reciprocal Rank Fusion.
-// k=60 is the standard constant that prevents high-ranked items from dominating.
 func rrfMerge(keyword, vector []domain.Product, limit int) []domain.Product {
 	const k = 60
-	scores := make(map[string]float64)     // product ID → RRF score
-	products := make(map[string]domain.Product) // product ID → product data
+	scores := make(map[string]float64)
+	products := make(map[string]domain.Product)
 
 	for rank, p := range keyword {
 		scores[p.ID] += 1.0 / float64(k+rank+1)
@@ -492,7 +564,6 @@ func rrfMerge(keyword, vector []domain.Product, limit int) []domain.Product {
 		}
 	}
 
-	// Sort by RRF score descending
 	type scored struct {
 		id    string
 		score float64
@@ -516,27 +587,59 @@ func rrfMerge(keyword, vector []domain.Product, limit int) []domain.Product {
 }
 ```
 
-**Import:** добавить `"sort"` в imports.
+### 10. Обновить промпт Agent1
 
-### 10. Обновить Registry
+**Файл:** `project/backend/internal/prompts/prompt_analyze_query.go`
+
+Промпт объясняет split: filters (структурированное) vs vector_query (семантика).
+
+**Заменить** `Agent1SystemPrompt` на:
+```go
+const Agent1SystemPrompt = `You are Agent 1 - a data retrieval agent for an e-commerce chat.
+
+Your job: call catalog_search when user needs NEW data. If the user is asking about STYLE or DISPLAY (not new data), do nothing.
+
+Rules:
+1. If user asks for products/services → call catalog_search
+2. catalog_search has two inputs:
+   - filters: structured keyword filters. Write values in English.
+     Brand, category, color, material etc. — translate to English.
+     "Найк" → brand: "Nike". "чёрный" → color: "Black".
+   - vector_query: semantic search in user's ORIGINAL language. Do NOT translate.
+     This handles multilingual matching automatically via embeddings.
+3. Put everything you can match exactly into filters. Put the search intent into vector_query.
+4. Prices are in RUBLES. "дешевле 10000" → filters.max_price: 10000
+5. If user asks to CHANGE DISPLAY STYLE → DO NOT call any tool. Just stop.
+6. Do NOT explain what you're doing.
+7. Do NOT ask clarifying questions - make best guess.
+8. After getting "ok"/"empty", stop. Do not call more tools.
+
+Examples:
+- "покажи кроссы Найк" → catalog_search(vector_query="кроссы", filters={brand:"Nike"})
+- "чёрные худи Adidas" → catalog_search(vector_query="худи", filters={brand:"Adidas", color:"Black"})
+- "дешевые телефоны Samsung" → catalog_search(vector_query="телефоны", filters={brand:"Samsung"}, sort_by="price", sort_order="asc")
+- "ноутбуки дешевле 50000" → catalog_search(vector_query="ноутбуки", filters={max_price:50000})
+- "что-нибудь для бега" → catalog_search(vector_query="что-нибудь для бега")
+- "TWS наушники с шумодавом" → catalog_search(vector_query="наушники с шумодавом", filters={type:"TWS", anc:"true"})
+- "покажи с большими заголовками" → DO NOT call tool (style request)
+`
+```
+
+**Удалить из файла:** `NormalizeQueryPrompt`, `BuildNormalizeRequest`, все legacy промпты.
+
+### 11. Обновить Registry
 
 **Файл:** `project/backend/internal/tools/tool_registry.go`
 
-**Изменения:**
-
-В struct Registry — заменить `llmPort` на `embeddingPort`:
 ```go
 type Registry struct {
 	tools          map[string]ToolExecutor
 	statePort      ports.StatePort
 	catalogPort    ports.CatalogPort
 	presetRegistry *presets.PresetRegistry
-	embeddingPort  ports.EmbeddingPort // was: llmPort ports.LLMPort
+	embeddingPort  ports.EmbeddingPort // was: llmPort
 }
-```
 
-В `NewRegistry` — изменить сигнатуру и тело:
-```go
 func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry, embeddingPort ports.EmbeddingPort) *Registry {
 	r := &Registry{
 		tools:          make(map[string]ToolExecutor),
@@ -558,50 +661,38 @@ func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, prese
 }
 ```
 
-**Удалить:** создание `normalizer` в `NewRegistry()`.
+### 12. Обновить ВСЕ call sites NewRegistry
 
-### 11. Обновить ВСЕ call sites NewRegistry (3 штуки)
+**Breaking change:** `NewRegistry()` теперь принимает `EmbeddingPort` вместо `LLMPort`.
 
-**Breaking change:** `NewRegistry()` теперь принимает `EmbeddingPort` вместо `LLMPort` (4-й параметр меняет тип).
-
-**Call site 1:** `project/backend/cmd/server/main.go` (строка ~124)
+**Call site 1:** `project/backend/cmd/server/main.go` (~строка 124)
 ```go
-// Было:
-toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, llmClient)
-// Стало:
 toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, embeddingClient)
 ```
-`embeddingClient` создаётся в main.go (см. шаг 12).
 
-**Call site 2:** `project/backend/internal/usecases/agent1_execute_test.go`
+**Call site 2:** `project/backend/internal/usecases/agent1_execute_test.go` (~строка 71)
 ```go
-// Было:
-toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, llmClient)
-// Стало:
-toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, nil)
-```
-В тестах embedding = nil → hybrid search gracefully degrades to keyword-only. Тесты не ломаются.
-
-**Call site 3:** `project/backend/internal/usecases/cache_test.go`
-```go
-// Было:
-toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, llmClient)
-// Стало:
 toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, nil)
 ```
 
-### 12. Обновить main.go — wiring
+**Call site 3:** `project/backend/internal/usecases/cache_test.go` (~строка 76)
+```go
+toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, nil)
+```
+
+В тестах embedding=nil → keyword-only. Тесты не ломаются.
+
+### 13. Обновить main.go — wiring
 
 **Файл:** `project/backend/cmd/server/main.go`
 
-**12a. Добавить import:**
+**13a. Import:**
 ```go
 openaiAdapter "keepstar/internal/adapters/openai"
 ```
 
-**12b. Создать embedding client** (после `llmClient` создания, ~строка 92):
+**13b. Создать embedding client** (после `llmClient`, ~строка 92):
 ```go
-// Initialize embedding client (if OpenAI key configured)
 var embeddingClient ports.EmbeddingPort
 if cfg.HasEmbeddings() {
 	embeddingClient = openaiAdapter.NewEmbeddingClient(cfg.OpenAIAPIKey, cfg.EmbeddingModel, 384)
@@ -609,33 +700,34 @@ if cfg.HasEmbeddings() {
 }
 ```
 
-**12c. Seed embeddings** (после `SeedExtendedCatalog`, ~строка 85):
+**13c. Startup embed** (после seed):
 ```go
-// Seed embeddings for master products without them
-if embeddingClient != nil && catalogAdapter != nil {
+if embeddingClient != nil && dbClient != nil {
 	go func() {
 		embedCtx, embedCancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer embedCancel()
-		if err := seedEmbeddings(embedCtx, catalogAdapter, embeddingClient, appLog); err != nil {
-			appLog.Error("embedding_seed_failed", "error", err)
+		catalogForEmbed := postgres.NewCatalogAdapter(dbClient)
+		if err := runEmbedding(embedCtx, catalogForEmbed, embeddingClient, appLog); err != nil {
+			appLog.Error("embedding_failed", "error", err)
 		}
 	}()
 }
 ```
 
-**12d. seedEmbeddings function** (в том же файле main.go, внизу):
+**13d. Функция `runEmbedding`** (в том же файле, внизу):
 ```go
-func seedEmbeddings(ctx context.Context, catalog *postgres.CatalogAdapter, emb ports.EmbeddingPort, log *logger.Logger) error {
+func runEmbedding(ctx context.Context, catalog *postgres.CatalogAdapter, emb ports.EmbeddingPort, log *logger.Logger) error {
 	products, err := catalog.GetMasterProductsWithoutEmbedding(ctx)
 	if err != nil {
 		return fmt.Errorf("get products without embedding: %w", err)
 	}
 	if len(products) == 0 {
-		log.Info("embedding_seed_skipped", "reason", "all products have embeddings")
+		log.Info("embedding_skipped", "reason", "all products have embeddings")
 		return nil
 	}
 
-	// Build texts for embedding
+	log.Info("embedding_started", "count", len(products))
+
 	texts := make([]string, len(products))
 	for i, p := range products {
 		text := p.Name
@@ -648,7 +740,6 @@ func seedEmbeddings(ctx context.Context, catalog *postgres.CatalogAdapter, emb p
 		texts[i] = text
 	}
 
-	// Batch embed (OpenAI supports up to 2048 per request)
 	batchSize := 100
 	for i := 0; i < len(texts); i += batchSize {
 		end := i + batchSize
@@ -667,109 +758,71 @@ func seedEmbeddings(ctx context.Context, catalog *postgres.CatalogAdapter, emb p
 			}
 		}
 
-		log.Info("embedding_seed_progress", "done", end, "total", len(products))
+		log.Info("embedding_progress", "done", end, "total", len(products))
 	}
 
-	log.Info("embedding_seed_completed", "count", len(products))
+	log.Info("embedding_completed", "count", len(products))
 	return nil
 }
 ```
 
-**12e. Заменить `llmClient` на `embeddingClient`** в вызове `NewRegistry` (~строка 124):
+**13e. NewRegistry** (~строка 124):
 ```go
 toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, embeddingClient)
 ```
 
-### 13. Validation
-
-```bash
-cd project/backend && go build ./...
-cd project/frontend && npm run build
+**13f. Admin endpoint** (после debug routes):
+```go
+if embeddingClient != nil && dbClient != nil {
+	mux.HandleFunc("/admin/reindex-embeddings", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		catalogForEmbed := postgres.NewCatalogAdapter(dbClient)
+		go func() {
+			embedCtx, embedCancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer embedCancel()
+			if err := runEmbedding(embedCtx, catalogForEmbed, embeddingClient, appLog); err != nil {
+				appLog.Error("reindex_embedding_failed", "error", err)
+			}
+		}()
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprintf(w, "Embedding reindex started in background")
+	})
+	appLog.Info("admin_reindex_route_enabled", "url", "POST /admin/reindex-embeddings")
+}
 ```
 
-Frontend не меняется в этой фиче.
-
-## Validation Commands
+### 14. Validation
 
 ```bash
-# Backend build (required)
 cd project/backend && go build ./...
-
-# Backend tests (optional — some integration tests may need OPENAI_API_KEY)
 cd project/backend && go test ./...
-
-# Frontend build (required — verify no breakage)
 cd project/frontend && npm run build
 ```
 
 ## Acceptance Criteria
 
-- [ ] `EmbeddingPort` интерфейс создан: `Embed(ctx, texts) ([][]float32, error)`
-- [ ] OpenAI adapter создан: POST /v1/embeddings, model=text-embedding-3-small, dims=384
-- [ ] pgvector extension enabled: `CREATE EXTENSION IF NOT EXISTS vector`
-- [ ] `catalog.master_products.embedding` column vector(384) создан
-- [ ] HNSW индекс на embedding column создан
-- [ ] `CatalogPort.VectorSearch` метод добавлен и реализован
-- [ ] `CatalogPort.SeedEmbedding` метод добавлен и реализован
-- [ ] `CatalogPort.GetMasterProductsWithoutEmbedding` метод добавлен и реализован
-- [ ] LLM нормализатор заменён на `BrandNormalizer` (статическая карта, 0ms)
-- [ ] `CatalogSearchTool` делает hybrid search: keyword SQL + vector pgvector
-- [ ] RRF merge комбинирует результаты (k=60)
-- [ ] При отсутствии embedding (nil EmbeddingPort) — graceful degradation на keyword-only
-- [ ] Seed embeddings при старте сервера (горутина, не блокирует)
-- [ ] Trace metadata содержит: embed_ms, keyword_count, vector_count, merged_count, search_type
-- [ ] Все 3 call sites `NewRegistry` обновлены
-- [ ] `OPENAI_API_KEY` в config, `HasEmbeddings()` метод
-- [ ] `go build ./...` — OK
-- [ ] `npm run build` — OK
-- [ ] Тесты с `nil` EmbeddingPort не ломаются (keyword-only fallback)
+- [ ] Tool input: явный split `vector_query` + `filters` object (поля + типы, без enum-ов)
+- [ ] Agent1 промпт: объясняет filters (English) vs vector_query (user language)
+- [ ] `normalizer.go` и `prompt_normalize_query.go` удалены
+- [ ] `ProductFilter.Attributes` — JSONB фильтрация в SQL (`mp.attributes->>$N = $M`)
+- [ ] `EmbeddingPort` + OpenAI adapter (net/http, dims=384)
+- [ ] pgvector: extension + column vector(384) + HNSW index на master_products
+- [ ] `CatalogPort`: VectorSearch, SeedEmbedding, GetMasterProductsWithoutEmbedding
+- [ ] Hybrid search: keyword SQL + vector pgvector + RRF merge (k=60)
+- [ ] Graceful degradation: nil embedding → keyword-only
+- [ ] Startup embed + POST `/admin/reindex-embeddings`
+- [ ] Все call sites NewRegistry обновлены
+- [ ] `go build && go test && npm run build` — OK
 
-## Notes
+## Hexagonal Architecture Compliance
 
-### Gotcha: Embedding на master_products, не на products
-Semantic content (name, description, brand) живёт в `catalog.master_products`. Products = tenant-specific overlay (price, stock). Vector search JOIN-ит master_products → products для tenant filtering.
-
-### Gotcha: pgvector-go и pgx/v5
-`github.com/pgvector/pgvector-go` работает с pgx/v5 (уже используется). Для передачи vector как SQL parameter: `pgvector.NewVector(embedding)`.
-
-### Gotcha: Graceful degradation
-`EmbeddingPort` может быть `nil` (нет `OPENAI_API_KEY`). В этом случае:
-- Vector search пропускается
-- Работает только keyword search
-- Тесты без API ключа не ломаются
-- `NewRegistry` принимает `nil` — это ок
-
-### Gotcha: removeSubstringIgnoreCase
-Эта функция используется в текущем `tool_catalog_search.go` для strip brand из search query. Она остаётся — не является частью normalizer.
-
-### Gotcha: Agent1 промпт НЕ меняется
-Промпт уже говорит "pass text as-is" и "normalization is automatic". Vector search — деталь реализации мета-тула, Agent1 не знает про embeddings.
-
-### Gotcha: Price/sort filters в vector search
-Vector search НЕ фильтрует по цене/сорту — это делает keyword search. RRF merge комбинирует оба. Если нужна строгая фильтрация по цене — keyword search обеспечивает, vector search добавляет semantic relevance.
-
-### Gotcha: Embedding dimension consistency
-OpenAI API + pgvector column + HNSW index — все MUST use 384 dims. Если поменять dims — нужно пересоздать column и index + re-embed все товары.
-
-### Gotcha: Seed embeddings в горутине
-Seed embeddings запускается async (не блокирует старт сервера). Первые запросы до завершения seed будут keyword-only (embedding IS NULL → vector search вернёт пусто). Это ожидаемо и безопасно.
-
-### Gotcha: OpenAI pricing
-`text-embedding-3-small`: $0.02 per 1M tokens. 130 товаров seed ≈ 5000 tokens ≈ $0.0001. Каждый search query ≈ 20 tokens ≈ $0.0000004. Практически бесплатно.
-
-### Future: Swap embedding provider
-Чтобы перейти на собственный сервис:
-1. Создать `adapters/local/embedding_client.go` — HTTP POST к Python сервису, implements `EmbeddingPort`
-2. В `main.go` заменить: `embeddingClient = localAdapter.NewEmbeddingClient(url)` вместо `openaiAdapter.NewEmbeddingClient(...)`
-3. Re-embed товары (dimensions могут отличаться → обновить column + index)
-4. Всё остальное (tools, ports, SQL) — без изменений
-
-### Hexagonal Architecture Compliance
-- **Domain layer** — без изменений (embedding НЕ в domain)
-- **Ports layer** — новый `EmbeddingPort` (1 файл). `CatalogPort` += 3 метода.
-- **Adapters layer** — новый `adapters/openai/` (1 файл). `postgres_catalog.go` += 3 метода. Migration += 1 const.
-- **Tools layer** — `tool_catalog_search.go` модифицирован (hybrid search). `normalizer.go` упрощён (static map).
-- **Usecases layer** — без изменений
-- **main.go** — composition root: wiring embeddingPort + seed embeddings
-
-Стрелки зависимостей: Tools → Ports (interfaces). Adapters → Ports (implements). Domain ← все. Циклов нет.
+- **Domain** — без изменений
+- **Ports** — `EmbeddingPort` (new), `CatalogPort` += 3 метода, `ProductFilter` += Attributes
+- **Adapters** — `adapters/openai/` (new), `postgres_catalog.go` += 3 метода + JSONB filtering, migration += 1 const
+- **Tools** — `tool_catalog_search.go` переписан (static def + hybrid), `normalizer.go` удалён
+- **Prompts** — `prompt_analyze_query.go` обновлён, `prompt_normalize_query.go` удалён
+- **Usecases** — без изменений
+- **main.go** — wiring + startup embed + admin endpoint
