@@ -9,7 +9,7 @@
 - `postgres_events.go` — Реализация EventPort
 - `postgres_catalog.go` — Реализация CatalogPort с product merging + VectorSearch (pgvector cosine), SeedEmbedding, GetMasterProductsWithoutEmbedding
 - `postgres_state.go` — Реализация StatePort для two-agent pipeline
-- `postgres_trace.go` — Реализация TracePort: Record (DB + console printTrace), List, Get
+- `postgres_trace.go` — Реализация TracePort: Record (DB + console printTrace с WATERFALL секцией для span'ов), List, Get
 - `migrations.go` — Миграции для chat таблиц
 - `catalog_migrations.go` — Миграции для catalog схемы + pgvector extension, embedding vector(384) column, HNSW index
 - `state_migrations.go` — Миграции для state таблиц

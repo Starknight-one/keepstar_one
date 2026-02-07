@@ -64,6 +64,14 @@ func NewAgent2ExecuteUseCase(
 func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRequest) (*Agent2ExecuteResponse, error) {
 	start := time.Now()
 
+	// Span instrumentation
+	sc := domain.SpanFromContext(ctx)
+	if sc != nil {
+		endAgent := sc.Start("agent2")
+		defer endAgent()
+	}
+	ctx = domain.WithStage(ctx, "agent2")
+
 	// Get current state (must exist after Agent 1)
 	state, err := uc.statePort.GetState(ctx, req.SessionID)
 	if err != nil {
@@ -187,6 +195,10 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 			"actor", "agent2",
 		)
 
+		var endToolSpan func(...string)
+		if sc != nil {
+			endToolSpan = sc.Start("agent2.tool")
+		}
 		toolStart := time.Now()
 		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
 			SessionID: req.SessionID,
@@ -194,6 +206,9 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 			ActorID:   "agent2",
 		}, toolCall)
 		toolDuration := time.Since(toolStart).Milliseconds()
+		if endToolSpan != nil {
+			endToolSpan(toolCall.Name)
+		}
 
 		if err != nil {
 			uc.log.Error("tool_execution_failed", "error", err, "tool", toolCall.Name, "actor", "agent2")

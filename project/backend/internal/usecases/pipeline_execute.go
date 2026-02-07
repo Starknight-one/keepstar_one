@@ -79,6 +79,11 @@ func NewPipelineExecuteUseCase(
 func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecuteRequest) (*PipelineExecuteResponse, error) {
 	start := time.Now()
 
+	// Create SpanCollector for waterfall timeline
+	sc := domain.NewSpanCollector()
+	ctx = domain.WithSpanCollector(ctx, sc)
+	endPipeline := sc.Start("pipeline")
+
 	// Prepare trace
 	trace := &domain.PipelineTrace{
 		ID:        uuid.New().String(),
@@ -120,6 +125,8 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	})
 	if err != nil {
 		trace.Error = fmt.Sprintf("agent1: %v", err)
+		endPipeline()
+		trace.Spans = sc.Spans()
 		trace.TotalMs = int(time.Since(start).Milliseconds())
 		uc.recordTrace(ctx, trace)
 		return nil, fmt.Errorf("agent 1: %w", err)
@@ -186,6 +193,8 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	})
 	if err != nil {
 		trace.Error = fmt.Sprintf("agent2: %v", err)
+		endPipeline()
+		trace.Spans = sc.Spans()
 		trace.TotalMs = int(time.Since(start).Milliseconds())
 		trace.CostUSD = agent1Resp.Usage.CostUSD
 		uc.recordTrace(ctx, trace)
@@ -258,6 +267,8 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	}
 
 	// Finalize and record trace
+	endPipeline()
+	trace.Spans = sc.Spans()
 	trace.TotalMs = int(time.Since(start).Milliseconds())
 	trace.CostUSD = agent1Resp.Usage.CostUSD + agent2Resp.Usage.CostUSD
 	uc.recordTrace(ctx, trace)

@@ -25,10 +25,10 @@ The difference between a generic agent and an Agent Expert: **one executes and f
 |--------|-------|-------|
 | `backend-domain` | domain | Entities, types, errors |
 | `backend-ports` | ports | Interfaces (contracts) |
-| `backend-adapters` | adapters | PostgreSQL, Anthropic |
+| `backend-adapters` | adapters | PostgreSQL, Anthropic, OpenAI (embeddings), json_store, memory |
 | `backend-usecases` | usecases | Business logic |
 | `backend-handlers` | handlers | HTTP, middleware, routes |
-| `backend-pipeline` | tools/prompts | Agent tools, LLM prompts |
+| `backend-pipeline` | tools/prompts | Agent tools, LLM prompts, span/waterfall tracing |
 
 ### Frontend (Feature-Sliced Design)
 

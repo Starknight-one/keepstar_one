@@ -48,14 +48,16 @@ usecases:
       request: "{ SessionID, Query, TenantSlug, TurnID }"
       response: "{ Usage, LatencyMs, LLMCallMs, ToolExecuteMs, ToolName, ToolInput, ToolResult, ToolMetadata, ProductsFound, StopReason, SystemPrompt, SystemPromptChars, MessageCount, ToolDefCount }"
       flow:
+        - "Start 'agent1' span + set WithStage(ctx, 'agent1')"
         - "Get or create session state"
         - "Build messages from ConversationHistory + new query"
         - "Call LLM with ChatWithToolsCached (cache tools, system, conversation)"
-        - "Execute tool call via Registry"
+        - "Execute tool call via Registry (span: 'agent1.tool')"
         - "Re-read state after tool zone-write to get productsFound"
-        - "AppendConversation zone-write (user+assistant:tool_use+user:tool_result messages)"
-      tools: "getAgent1Tools() filters search_* and _internal_* tools from registry"
+        - "AppendConversation zone-write (span: 'agent1.state')"
+      tools: "getAgent1Tools() filters catalog_* and _internal_* tools from registry"
       exported: "GetToolDefs() — exported wrapper of getAgent1Tools() for testing"
+      test_file: "agent1_execute_test.go"
 
     agent2_execute:
       file: "agent2_execute.go"
@@ -64,14 +66,17 @@ usecases:
       request: "{ SessionID, TurnID, UserQuery }"
       response: "{ Template, Formation, Usage, LatencyMs, ToolCalled, ToolName, LLMCallMs, PromptSent, RawResponse, TemplateJSON, MetaCount, MetaFields }"
       flow:
+        - "Start 'agent2' span + set WithStage(ctx, 'agent2')"
         - "Get current state (must exist after Agent 1)"
         - "Return empty if no products/services"
         - "Look up data delta for current TurnID (for Agent2 context)"
         - "Build prompt with meta, view state, user query, and data delta (BuildAgent2ToolPrompt)"
-        - "Call LLM with ChatWithToolsCached (cache tools, system)"
-        - "Execute render tool call via Registry (tool writes formation to state)"
+        - "Include recent user queries from ConversationHistory (last 4 user messages, skip tool_use/tool_result)"
+        - "Call LLM with ChatWithToolsCached (cache tools, system, ToolChoice='any')"
+        - "Execute render tool call via Registry (span: 'agent2.tool', tool writes formation to state)"
         - "Get formation from state.Template['formation']"
       tools: "getAgent2Tools() filters render_* and freestyle tools from registry"
+      test_file: "agent2_execute_test.go"
 
     pipeline_execute:
       file: "pipeline_execute.go"
@@ -80,11 +85,17 @@ usecases:
       request: "{ SessionID, Query, TenantSlug, TurnID }"
       response: "{ Formation, Agent1Ms, Agent2Ms, TotalMs, Agent1Usage, Agent2Usage, Agent1LLMMs, Agent1ToolMs, ToolCalled, ToolInput, ToolResult, ProductsFound, Agent2LLMMs, Agent2Prompt, Agent2RawResp, TemplateJSON, MetaCount, MetaFields }"
       flow:
+        - "Create SpanCollector + attach to context via WithSpanCollector"
+        - "Start 'pipeline' span"
+        - "Prepare PipelineTrace"
         - "Ensure session exists (CachePort) for FK constraint"
         - "Generate TurnID for delta grouping"
         - "Step 1: Agent 1 (Tool Caller)"
+        - "Snapshot state after Agent1 (with turn deltas)"
         - "Step 2: Agent 2 (Template Builder via render tool)"
         - "Step 3: Get formation from state (built by render tool, fallback to ApplyTemplate)"
+        - "End 'pipeline' span, attach trace.Spans = sc.Spans()"
+        - "Record trace via TracePort"
 
     template_apply:
       file: "template_apply.go"
@@ -147,18 +158,30 @@ usecases:
         - "Zone-write UpdateView (view zone — restore previous)"
         - "Zone-write UpdateTemplate (template zone — rebuilt formation)"
 
+test_files:
+  - "agent1_execute_test.go - Agent1 execution tests"
+  - "agent2_execute_test.go - Agent2 execution tests"
+  - "cache_test.go - Cache/session tests"
+  - "navigation_test.go - Navigation expand/back tests"
+  - "state_rollback_test.go - State rollback tests"
+
 gotchas:
   - "Create session (CachePort) before creating state (StatePort)"
   - "Tools return 'ok'/'empty', not raw data"
   - "Agent1 stops after first tool call, doesn't see result"
   - "Agent2 receives meta, view state, user query, and data delta — never raw product data"
   - "Agent2 expects state to exist (run Agent1 first)"
+  - "Agent2 forces tool call via ToolChoice='any' in CacheConfig"
+  - "Agent2 includes last 4 user messages from ConversationHistory (filters out tool_use/tool_result)"
   - "LLM may wrap JSON in markdown code blocks, use extractJSON()"
   - "Agent1 uses AppendConversation zone-write (not UpdateState blob) after each call"
   - "AddDelta auto-assigns step — no manual state.Step++ needed"
-  - "Agent1 filters tools to search_* and _internal_* via getAgent1Tools()"
+  - "Agent1 filters tools to catalog_* and _internal_* via getAgent1Tools()"
   - "Agent2 filters tools to render_* and freestyle via getAgent2Tools()"
   - "Pipeline generates TurnID (uuid) for delta grouping if not provided"
   - "Navigation uses zone-writes (UpdateView, UpdateTemplate) not blob UpdateState"
+  - "Pipeline creates SpanCollector and attaches to context — all downstream agents/adapters emit spans"
+  - "Each agent sets WithStage(ctx, 'agent1'/'agent2') — Anthropic adapter uses stage for span naming"
+  - "Pipeline records trace.Spans = sc.Spans() before recording trace"
 
 naming: "{domain}_{action}.go"

@@ -10,7 +10,7 @@ HTTP слой. Только parse/validate/respond.
 - `handler_pipeline.go` — POST /api/v1/pipeline (two-agent pipeline)
 - `handler_navigation.go` — POST /api/v1/navigation/expand, /back (drill-down navigation)
 - `handler_debug.go` — Debug console for pipeline metrics + POST /debug/seed
-- `handler_trace.go` — Pipeline trace list/detail (HTML/JSON) + kill-session
+- `handler_trace.go` — Pipeline trace list/detail (HTML/JSON) + kill-session + waterfall visualization
 - `handler_health.go` — HealthHandler struct, GET /health, GET /ready
 - `routes.go` — SetupRoutes(), SetupNavigationRoutes(), SetupCatalogRoutes()
 - `middleware_cors.go` — CORS middleware
@@ -92,6 +92,16 @@ Response:
 `GET /debug/api?session={id}` — JSON API для дебага
 
 AgentMetrics включает cache поля: `CacheCreationInputTokens`, `CacheReadInputTokens`, `CacheHitRate`
+
+### Trace Handler (handler_trace.go)
+
+Trace list включает колонку **TTFB** (max LLM time-to-first-byte из span'ов).
+
+Trace detail содержит секцию **Waterfall** — интерактивная визуализация timeline span'ов:
+- Горизонтальные полосы показывают timing каждого span'а относительно pipeline start
+- Template funcs: `spanDepth` (indent по точкам), `spanLabel` (человекочитаемые названия), `spanColor` (цвет по типу операции), `spanPercent` (позиционирование), `maxTTFB`
+- Цветовая схема: ttfb=cyan, llm=blue, body=dark blue, tool=green, embed=bright green, sql=yellow, vector=magenta, state=gray, pipeline=purple
+- Легенда с перечислением всех типов span'ов
 
 ## Правила
 

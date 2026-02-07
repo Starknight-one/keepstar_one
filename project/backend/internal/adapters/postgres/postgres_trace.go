@@ -207,6 +207,24 @@ func printTrace(t *domain.PipelineTrace) {
 		fmt.Fprintf(w, "  FORMATION  nil (no widgets returned)\n")
 	}
 
+	// Waterfall
+	if len(t.Spans) > 0 {
+		fmt.Fprintf(w, "  WATERFALL\n")
+		for _, s := range t.Spans {
+			indent := "    "
+			depth := strings.Count(s.Name, ".")
+			for i := 0; i < depth; i++ {
+				indent += "  "
+			}
+			detail := ""
+			if s.Detail != "" {
+				detail = "  " + s.Detail
+			}
+			fmt.Fprintf(w, "%s%-24s %dms—%dms  (%dms)%s\n",
+				indent, s.Name, s.StartMs, s.EndMs, s.DurationMs, detail)
+		}
+	}
+
 	// Error
 	if t.Error != "" {
 		fmt.Fprintf(w, "  ERROR  %s\n", t.Error)

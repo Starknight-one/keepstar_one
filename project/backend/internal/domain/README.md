@@ -31,7 +31,8 @@
 - `preset_entity.go` — Preset, FieldConfig, SlotConfig (пресеты рендеринга)
 
 ### Tracing
-- `trace_entity.go` — PipelineTrace, AgentTrace, StateSnapshot, DeltaTrace, FormationTrace (трейсинг pipeline)
+- `trace_entity.go` — PipelineTrace (incl. Spans []Span), AgentTrace, StateSnapshot, DeltaTrace, FormationTrace (трейсинг pipeline)
+- `span.go` — Span, SpanCollector (thread-safe timed span collector для waterfall визуализации). Context helpers: WithSpanCollector, SpanFromContext, WithStage, StageFromContext. Имена span'ов используют dot-separated иерархию: `pipeline`, `agent1.llm.ttfb`, `agent1.tool.embed`
 
 ### Errors
 - `domain_errors.go` — Доменные ошибки

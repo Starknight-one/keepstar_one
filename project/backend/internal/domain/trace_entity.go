@@ -26,6 +26,9 @@ type PipelineTrace struct {
 	TotalMs int     `json:"totalMs"`
 	Error   string  `json:"error,omitempty"`
 	CostUSD float64 `json:"costUsd"`
+
+	// Span waterfall
+	Spans []Span `json:"spans,omitempty"`
 }
 
 // AgentTrace captures one agent's execution

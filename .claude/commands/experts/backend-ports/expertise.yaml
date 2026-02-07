@@ -18,7 +18,10 @@ interfaces:
       - "ChatWithUsage(ctx, systemPrompt, userMessage) (*ChatResponse, error)"
     types:
       - "ChatResponse: { Text string, Usage LLMUsage }"
-      - "CacheConfig: { CacheTools bool, CacheSystem bool, CacheConversation bool }"
+      - "CacheConfig: { CacheTools bool, CacheSystem bool, CacheConversation bool, ToolChoice string }"
+    cache_config_tool_choice:
+      description: "ToolChoice controls tool_choice parameter: 'auto' (default), 'any' (force tool use), or 'tool:name' (force specific tool)"
+      used_by: "Agent2 sets ToolChoice='any' to force render tool call"
 
   cache_port:
     file: "cache_port.go"

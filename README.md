@@ -81,7 +81,7 @@ Atoms → Widgets → Formations
 
 | Слой | Стек |
 |------|------|
-| Backend | Go 1.22+, Chi/Fiber, PostgreSQL |
+| Backend | Go 1.24+, Chi/Fiber, PostgreSQL |
 | Frontend | React 18, Tailwind CSS, shadcn/ui |
 | LLM | Claude Haiku (Anthropic) |
 | Infra | Hetzner, Cloudflare |
@@ -107,12 +107,16 @@ Keepstar_one_ultra/
 │   │       ├── presets/   # Widget/formation presets
 │   │       └── logger/    # Structured logging
 │   │
+│   │   Key domain files:
+│   │     span.go          # Span/waterfall tracing primitives (SpanCollector)
+│   │     trace_entity.go  # PipelineTrace with Spans []Span waterfall
+│   │
 │   └── frontend/          # React widget (iframe, FSD architecture)
 │       └── src/
 │           ├── app/           # App initialization
-│           ├── entities/      # Domain entities
-│           ├── features/      # Feature modules
-│           ├── shared/        # Shared utilities, API client
+│           ├── entities/      # Domain entities (atom, widget, formation, message)
+│           ├── features/      # Feature modules (chat, catalog, canvas, navigation, overlay)
+│           ├── shared/        # API client, hooks, lib, theme, ui
 │           └── styles/        # Global styles
 │
 ├── docs/                  # Документация
@@ -125,7 +129,13 @@ Keepstar_one_ultra/
 │   ├── agent-principles.md
 │   └── ARCHITECTURE_RULES.md
 │
-└── ADW/                   # SDLC оркестратор
+├── ADW/                   # SDLC оркестратор
+│   ├── sdlc.go            # Orchestrator entry point
+│   ├── adw.yaml           # Configuration
+│   ├── specs/             # Active specs + archive/
+│   └── dev-inspector/     # Element inspector proxy
+│
+└── architecture-map.jsx   # Visual architecture map
 ```
 
 ## LLM Pipeline
@@ -151,8 +161,14 @@ User Query
 └─────────────────────────┘
     │
     ▼
-Response JSON
+Response JSON + PipelineTrace
 ```
+
+### Span Waterfall Tracing
+
+Каждый pipeline execution собирает `Span`-ы через `SpanCollector` (thread-safe, context-propagated).
+Spans сортируются для waterfall-отображения (StartMs ASC, DurationMs DESC).
+Debug UI: `GET /debug/traces/` — список трейсов с визуальным waterfall.
 
 ## Быстрый старт
 

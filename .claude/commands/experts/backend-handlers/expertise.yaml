@@ -68,11 +68,25 @@ handlers:
     file: "handler_trace.go"
     struct: "TraceHandler"
     endpoints:
-      - "GET /debug/traces/ - list all traces (HTML table with status, timing, cost, session kill buttons)"
-      - "GET /debug/traces/{id} - trace detail (HTML with agent breakdown, tool input/output, deltas)"
+      - "GET /debug/traces/ - list all traces (HTML table with status, timing, cost, TTFB, session kill buttons)"
+      - "GET /debug/traces/{id} - trace detail (HTML with agent breakdown, tool input/output, deltas, waterfall)"
       - "GET /debug/traces/?format=json - all traces JSON"
       - "GET /debug/traces/{id}?format=json - single trace JSON"
       - "POST /debug/kill-session - kill a session (delete all data, redirect to traces)"
+    waterfall:
+      description: "Trace detail page renders an interactive waterfall timeline visualization of spans"
+      template_funcs:
+        - "shortID(s) — truncates to 8 chars"
+        - "statusColor(errStr) — green/red"
+        - "statusText(errStr) — OK/ERROR"
+        - "spanDepth(name) — counts dots for indentation"
+        - "spanLabel(name) — human-readable label (e.g. 'agent1.llm.ttfb' → 'LLM thinking')"
+        - "spanColor(name) — color by span type (ttfb=cyan, llm=blue, tool=green, embed=bright green, sql=yellow, vector=magenta, state=gray, pipeline=purple)"
+        - "spanPercent(ms, totalMs) — percentage for positioning bars"
+        - "maxTTFB(spans) — finds max TTFB span duration for list view"
+        - "mult(a, b) — integer multiply"
+        - "divInt(a, b) — integer divide"
+    list_columns: ["Time", "Status", "Query", "Agent1", "Normalize", "Agent2", "Formation", "TTFB", "Total", "Cost", "Session"]
 
   health:
     file: "handler_health.go"

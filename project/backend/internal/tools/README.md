@@ -60,9 +60,9 @@ Input schema:
 
 Flow:
 1. Parse input, convert prices (rubles → kopecks x100)
-2. Generate query embedding via EmbeddingPort (if available)
-3. Keyword search via catalogPort.ListProducts (SQL ILIKE)
-4. Vector search via catalogPort.VectorSearch (pgvector cosine)
+2. Generate query embedding via EmbeddingPort (span: `{stage}.tool.embed`)
+3. Keyword search via catalogPort.ListProducts (span: `{stage}.tool.sql`)
+4. Vector search via catalogPort.VectorSearch (span: `{stage}.tool.vector`)
 5. RRF merge: combine keyword + vector results (k=60)
 6. Write products to state via UpdateData zone-write
 

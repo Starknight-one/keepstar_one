@@ -12,7 +12,7 @@ adapters:
     directory: "anthropic/"
     files:
       - "anthropic_client.go - LLMPort implementation: Chat, ChatWithTools, ChatWithToolsCached, ChatWithUsage"
-      - "cache_types.go - Prompt caching types: cacheControl, contentBlockWithCache, contentBlockFullCache, anthropicToolWithCache, anthropicCachedRequest, anthropicCachedUsage, anthropicCachedResponse"
+      - "cache_types.go - Prompt caching types: cacheControl, contentBlockWithCache, contentBlockFullCache, anthropicToolWithCache, toolChoiceConfig, anthropicCachedRequest (with ToolChoice), anthropicCachedUsage, anthropicCachedResponse"
     implements: "LLMPort"
     status: "implemented"
     api: "POST https://api.anthropic.com/v1/messages"
@@ -27,6 +27,16 @@ adapters:
       cache_points: ["last tool (cache_control)", "system prompt block (cache_control)", "second-to-last message (cache_control)"]
       types_file: "cache_types.go"
       helpers: ["markMessageCacheControl(msg) — uses contentBlockFullCache to preserve all fields (id, name, input)", "convertToAnthropicMessage(msg)"]
+    tool_choice:
+      description: "ChatWithToolsCached supports ToolChoice via CacheConfig ('auto'/'any'/'tool:name')"
+      types: "toolChoiceConfig { Type, Name } in cache_types.go"
+    span_instrumentation:
+      description: "Both ChatWithTools and ChatWithToolsCached emit spans via domain.SpanFromContext/StageFromContext"
+      spans_emitted:
+        - "{stage}.llm — total LLM call time (detail: '{reqKB}KB→{respKB}KB')"
+        - "{stage}.llm.ttfb — time-to-first-byte via httptrace.GotFirstResponseByte"
+        - "{stage}.llm.body — response body read time"
+      slow_ttfb_warning: "Logs [WARN] if TTFB exceeds 10 seconds (ChatWithToolsCached only)"
 
   postgres:
     directory: "postgres/"
@@ -38,7 +48,7 @@ adapters:
       - "postgres_events.go - EventPort"
       - "postgres_catalog.go - CatalogPort with product merging + VectorSearch (pgvector cosine), SeedEmbedding, GetMasterProductsWithoutEmbedding"
       - "postgres_state.go - StatePort with JSONB"
-      - "postgres_trace.go - TracePort: Record (DB + console printTrace), List, Get"
+      - "postgres_trace.go - TracePort: Record (DB + console printTrace with WATERFALL), List, Get"
       - "migrations.go - Chat tables"
       - "catalog_migrations.go - Catalog schema + pgvector extension, embedding vector(384) column, HNSW index"
       - "state_migrations.go - State tables"

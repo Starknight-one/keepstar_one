@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
 
+	"keepstar/internal/domain"
 	"keepstar/internal/ports"
 )
 
@@ -135,6 +137,95 @@ var traceFuncs = template.FuncMap{
 		}
 		return "OK"
 	},
+	"spanDepth": func(name string) int {
+		return strings.Count(name, ".")
+	},
+	"spanLabel": func(name string) string {
+		// "agent1.llm.ttfb" → "LLM thinking", "agent1.tool" → "tool"
+		labels := map[string]string{
+			"pipeline": "pipeline",
+		}
+		if l, ok := labels[name]; ok {
+			return l
+		}
+		// Extract suffix for nice labels
+		parts := strings.Split(name, ".")
+		last := parts[len(parts)-1]
+		switch last {
+		case "llm":
+			return parts[0] + " → LLM call"
+		case "ttfb":
+			return "LLM thinking"
+		case "body":
+			return "reading response"
+		case "tool":
+			return parts[0] + " → tool"
+		case "embed":
+			return "embedding"
+		case "sql":
+			return "SQL keyword"
+		case "vector":
+			return "pgvector"
+		case "state":
+			return "state update"
+		}
+		// agent-level: "agent1", "agent2"
+		if len(parts) == 1 {
+			return name
+		}
+		return last
+	},
+	"spanColor": func(name string) string {
+		switch {
+		case strings.HasSuffix(name, ".ttfb"):
+			return "#7dcfff" // cyan
+		case strings.HasSuffix(name, ".body"):
+			return "#5a7abf" // dark blue
+		case strings.Contains(name, ".llm"):
+			return "#7aa2f7" // blue
+		case strings.HasSuffix(name, ".embed"):
+			return "#73c991" // bright green
+		case strings.HasSuffix(name, ".sql"):
+			return "#e0af68" // yellow
+		case strings.HasSuffix(name, ".vector"):
+			return "#b877db" // magenta
+		case strings.Contains(name, ".tool"):
+			return "#9ece6a" // green
+		case strings.Contains(name, ".state"):
+			return "#565680" // gray
+		case name == "pipeline":
+			return "#bb9af7" // purple
+		default:
+			return "#e0af68" // orange (agent-level)
+		}
+	},
+	"spanPercent": func(ms int64, totalMs int) float64 {
+		if totalMs <= 0 {
+			return 0
+		}
+		return float64(ms) / float64(totalMs) * 100
+	},
+	"maxTTFB": func(spans []domain.Span) string {
+		var max int64
+		for _, s := range spans {
+			if strings.HasSuffix(s.Name, ".ttfb") && s.DurationMs > max {
+				max = s.DurationMs
+			}
+		}
+		if max == 0 {
+			return "-"
+		}
+		return fmt.Sprintf("%dms", max)
+	},
+	"mult": func(a, b int) int {
+		return a * b
+	},
+	"divInt": func(a, b int) int {
+		if b == 0 {
+			return 0
+		}
+		return a / b
+	},
 }
 
 var traceListTpl = template.Must(template.New("traceList").Funcs(traceFuncs).Parse(`<!DOCTYPE html>
@@ -180,6 +271,7 @@ var traceListTpl = template.Must(template.New("traceList").Funcs(traceFuncs).Par
 	<th>Normalize</th>
 	<th>Agent2</th>
 	<th>Formation</th>
+	<th>TTFB</th>
 	<th>Total</th>
 	<th>Cost</th>
 	<th>Session</th>
@@ -212,6 +304,7 @@ var traceListTpl = template.Must(template.New("traceList").Funcs(traceFuncs).Par
 			{{.FormationResult.Mode}} / {{.FormationResult.WidgetCount}}w
 		{{else}}<span class="err">nil</span>{{end}}
 	</td>
+	<td class="ms">{{maxTTFB .Spans}}</td>
 	<td class="ms">{{.TotalMs}}ms</td>
 	<td class="cost">${{printf "%.4f" .CostUSD}}</td>
 	<td>
@@ -492,6 +585,48 @@ function toggle(id) {
 		<div class="cell"><div class="label">Widgets</div><div class="value">{{.Trace.FormationResult.WidgetCount}}</div></div>
 		{{if .Trace.FormationResult.Cols}}<div class="cell"><div class="label">Cols</div><div class="value">{{.Trace.FormationResult.Cols}}</div></div>{{end}}
 		{{if .Trace.FormationResult.FirstWidget}}<div class="cell"><div class="label">First Widget</div><div class="value">{{.Trace.FormationResult.FirstWidget}}</div></div>{{end}}
+	</div>
+</div>
+{{end}}
+
+<!-- Waterfall -->
+{{if .Trace.Spans}}
+<h2>Waterfall</h2>
+<div class="section" style="padding: 16px;">
+	<!-- Timeline ruler -->
+	<div style="display: flex; margin-bottom: 6px;">
+		<div style="width: 180px; flex-shrink: 0;"></div>
+		<div style="flex: 1; display: flex; justify-content: space-between; font-size: 10px; color: #444; padding: 0 2px; border-bottom: 1px solid #1a1a2e;">
+			<span>0ms</span>
+			<span>{{divInt .Trace.TotalMs 2}}ms</span>
+			<span>{{.Trace.TotalMs}}ms</span>
+		</div>
+		<div style="width: 180px; flex-shrink: 0;"></div>
+	</div>
+	{{range .Trace.Spans}}
+	<div style="display: flex; align-items: center; margin-bottom: 2px; height: 24px;">
+		<div style="width: 180px; flex-shrink: 0; font-size: 12px; text-align: right; padding-right: 12px; white-space: nowrap; padding-left: {{mult (spanDepth .Name) 12}}px;">
+			<span style="color: {{spanColor .Name}}">{{spanLabel .Name}}</span>
+		</div>
+		<div style="flex: 1; position: relative; height: 18px; background: #06060f; border-radius: 3px; border: 1px solid #1a1a2e;">
+			<div style="position: absolute; left: {{spanPercent .StartMs $.Trace.TotalMs}}%; width: {{spanPercent .DurationMs $.Trace.TotalMs}}%; min-width: 3px; height: 100%; background: {{spanColor .Name}}; border-radius: 2px; opacity: 0.8;" title="{{.Name}} {{.StartMs}}ms—{{.EndMs}}ms"></div>
+		</div>
+		<div style="width: 80px; flex-shrink: 0; font-size: 12px; color: #bb9af7; text-align: right; padding-left: 8px;">{{.DurationMs}}ms</div>
+		<div style="width: 100px; flex-shrink: 0; font-size: 11px; color: #666; padding-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{{.Detail}}">{{.Detail}}</div>
+	</div>
+	{{end}}
+	<!-- Legend -->
+	<div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid #1a1a2e; font-size: 11px; color: #555; display: flex; gap: 18px; flex-wrap: wrap;">
+		<span><span style="color: #e0af68;">&#9644;</span> agent</span>
+		<span><span style="color: #7aa2f7;">&#9644;</span> LLM call</span>
+		<span><span style="color: #7dcfff;">&#9644;</span> LLM thinking (TTFB)</span>
+		<span><span style="color: #5a7abf;">&#9644;</span> response body</span>
+		<span><span style="color: #9ece6a;">&#9644;</span> tool</span>
+		<span><span style="color: #73c991;">&#9644;</span> embedding</span>
+		<span><span style="color: #e0af68;">&#9644;</span> SQL</span>
+		<span><span style="color: #b877db;">&#9644;</span> pgvector</span>
+		<span><span style="color: #565680;">&#9644;</span> state</span>
+		<span><span style="color: #bb9af7;">&#9644;</span> pipeline</span>
 	</div>
 </div>
 {{end}}

@@ -69,6 +69,14 @@ func NewAgent1ExecuteUseCase(
 func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRequest) (*Agent1ExecuteResponse, error) {
 	start := time.Now()
 
+	// Span instrumentation
+	sc := domain.SpanFromContext(ctx)
+	if sc != nil {
+		endAgent := sc.Start("agent1")
+		defer endAgent()
+	}
+	ctx = domain.WithStage(ctx, "agent1")
+
 	uc.log.Info("agent1_started",
 		"session_id", req.SessionID,
 		"query", req.Query,
@@ -157,6 +165,10 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 			"session_id", req.SessionID,
 		)
 
+		var endToolSpan func(...string)
+		if sc != nil {
+			endToolSpan = sc.Start("agent1.tool")
+		}
 		toolStart := time.Now()
 		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
 			SessionID: req.SessionID,
@@ -164,6 +176,9 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 			ActorID:   "agent1",
 		}, toolCall)
 		toolDuration = time.Since(toolStart).Milliseconds()
+		if endToolSpan != nil {
+			endToolSpan(toolCall.Name)
+		}
 		toolResult = result.Content
 		toolMetadata = result.Metadata
 
@@ -185,6 +200,11 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		)
 	}
 
+	// State update span
+	var endState func(...string)
+	if sc != nil {
+		endState = sc.Start("agent1.state")
+	}
 	// Update conversation history via AppendConversation (zone-write, no blob UpdateState)
 	// Full sequence: user → assistant:tool_use → user:tool_result (required by Anthropic API)
 	newHistory := append(state.ConversationHistory,
@@ -204,6 +224,9 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	}
 	if err := uc.statePort.AppendConversation(ctx, req.SessionID, newHistory); err != nil {
 		uc.log.Error("append_conversation_failed", "error", err, "session_id", req.SessionID)
+	}
+	if endState != nil {
+		endState()
 	}
 
 	totalDuration := time.Since(start).Milliseconds()

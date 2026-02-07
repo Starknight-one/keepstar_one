@@ -114,11 +114,11 @@ tools:
       limit: "optional - max results (default 10)"
     flow:
       - "Parse input and convert prices (rubles→kopecks ×100)"
-      - "Generate query embedding via EmbeddingPort (if available)"
+      - "Generate query embedding via EmbeddingPort (span: '{stage}.tool.embed')"
       - "Strip brand from ILIKE search to avoid AND conflict"
       - "Resolve tenant slug → UUID from state aliases"
-      - "Keyword search via catalogPort.ListProducts (SQL ILIKE)"
-      - "Vector search via catalogPort.VectorSearch (pgvector cosine)"
+      - "Keyword search via catalogPort.ListProducts (span: '{stage}.tool.sql')"
+      - "Vector search via catalogPort.VectorSearch (span: '{stage}.tool.vector')"
       - "RRF merge: combine keyword + vector results with Reciprocal Rank Fusion (k=60)"
       - "Write products to state via UpdateData zone-write"
     search_modes: "hybrid (both), vector (embedding only), keyword (SQL only / embedding nil)"
@@ -194,14 +194,32 @@ prompts:
       - "Choose mode based on count (1→single, 2-6→grid, 7+→grid preferred, carousel only if asked)"
 
 pipeline_flow:
-  description: "User Query → Agent 1 → Agent 2 → Formation"
+  description: "User Query → Agent 1 → Agent 2 → Formation (with span waterfall)"
   steps:
-    1: "Agent 1 receives query, calls catalog_search (hybrid: keyword + vector)"
-    2: "catalog_search: embed query → SQL ILIKE + pgvector cosine → RRF merge → state write"
-    3: "Tool returns 'ok: found N products', Agent 1 stops"
-    4: "Agent 2 receives meta (count, fields), generates template JSON"
-    5: "ApplyTemplate merges template + data → FormationWithData"
-    6: "Frontend renders FormationWithData"
+    1: "Pipeline creates SpanCollector, starts 'pipeline' span"
+    2: "Agent 1 receives query (span: 'agent1'), calls catalog_search (hybrid: keyword + vector)"
+    3: "catalog_search: embed query (span: '.tool.embed') → SQL ILIKE (span: '.tool.sql') + pgvector cosine (span: '.tool.vector') → RRF merge → state write"
+    4: "Tool returns 'ok: found N products', Agent 1 stops"
+    5: "Agent 2 receives meta (count, fields) (span: 'agent2'), calls render tool"
+    6: "Render tool builds formation, writes to state"
+    7: "Pipeline ends 'pipeline' span, records trace with spans"
+    8: "Frontend renders FormationWithData"
+  span_hierarchy:
+    pipeline: "total pipeline time"
+    agent1: "total agent1 time"
+    agent1.llm: "LLM API call (detail: 'NKB→NKB')"
+    agent1.llm.ttfb: "time-to-first-byte (LLM thinking)"
+    agent1.llm.body: "response body read"
+    agent1.tool: "tool execution (detail: tool name)"
+    agent1.tool.embed: "embedding API call (detail: 'OpenAI embedding')"
+    agent1.tool.sql: "SQL keyword search (detail: 'keyword search')"
+    agent1.tool.vector: "pgvector cosine search (detail: 'pgvector')"
+    agent1.state: "conversation history append"
+    agent2: "total agent2 time"
+    agent2.llm: "LLM API call"
+    agent2.llm.ttfb: "time-to-first-byte"
+    agent2.llm.body: "response body read"
+    agent2.tool: "render tool execution"
 
 logger:
   path: "internal/logger/"
@@ -236,6 +254,8 @@ gotchas:
   - "filters.brand/color/material etc. must be in English — LLM translates from user's language"
   - "JSONB attribute filters (color, material, storage, ram, size) use ILIKE on p.attributes"
   - "normalizer.go and prompt_normalize_query.go are REMOVED — vector search replaces LLM normalization"
+  - "catalog_search emits spans via SpanFromContext/StageFromContext: embed, sql, vector"
+  - "Span names follow '{stage}.tool.{operation}' convention (e.g. 'agent1.tool.embed')"
 
 naming:
   tools: "tool_{name}.go"

@@ -73,12 +73,13 @@ func (uc *GetProductUseCase) Execute(ctx, req) (*Product, error)
 ## Agent1ExecuteUseCase
 
 Agent 1 (Tool Caller) для two-agent pipeline:
+- Стартует span `agent1` + устанавливает `WithStage(ctx, "agent1")`
 - Получает/создаёт state сессии
 - Строит messages из ConversationHistory + новый запрос
 - Вызывает LLM с ChatWithToolsCached (cache tools, system, conversation)
-- Выполняет tool call через Registry
+- Выполняет tool call через Registry (span: `agent1.tool`)
 - Создаёт и сохраняет delta через DeltaInfo.ToDelta()
-- AppendConversation zone-write (user+assistant messages)
+- AppendConversation zone-write (span: `agent1.state`)
 
 ```go
 type Agent1ExecuteUseCase struct {
@@ -94,10 +95,11 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx, req) (*Agent1ExecuteResponse, error
 ## Agent2ExecuteUseCase
 
 Agent 2 (Preset Selector) для two-agent pipeline:
+- Стартует span `agent2` + устанавливает `WithStage(ctx, "agent2")`
 - Получает состояние сессии (после Agent 1)
 - Проверяет наличие данных (count > 0), возвращает empty если нет
-- Вызывает LLM с ChatWithToolsCached (cache tools, system) и только render_* tools
-- LLM выбирает render tool, tool записывает formation в state
+- Вызывает LLM с ChatWithToolsCached (cache tools, system, ToolChoice='any') и только render_* tools
+- LLM выбирает render tool, tool записывает formation в state (span: `agent2.tool`)
 - Получает formation из state.Template["formation"]
 
 ```go
@@ -114,17 +116,24 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx, req) (*Agent2ExecuteResponse, error
 ## PipelineExecuteUseCase
 
 Оркестратор полного pipeline:
+- Создаёт SpanCollector и прикрепляет к контексту через `WithSpanCollector`
+- Стартует span `pipeline`
 - Ensure session exists (CachePort) для FK constraint
 - Генерирует TurnID для группировки дельт
 - Step 1: Agent 1 (Tool Caller) — query → tool call → state
+- Snapshot state after Agent1 (with turn deltas)
 - Step 2: Agent 2 (Template Builder via render tool) — meta → template → state
 - Step 3: Get formation from state (built by render tool, fallback to ApplyTemplate)
+- Завершает span `pipeline`, записывает `trace.Spans = sc.Spans()`
+- Записывает trace через TracePort
 
 ```go
 type PipelineExecuteUseCase struct {
     agent1UC  *Agent1ExecuteUseCase
     agent2UC  *Agent2ExecuteUseCase
     statePort ports.StatePort
+    cachePort ports.CachePort
+    tracePort ports.TracePort
     log       *logger.Logger
 }
 

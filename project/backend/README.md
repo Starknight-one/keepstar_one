@@ -95,19 +95,27 @@ User Query
     │
     ▼
 ┌─────────────────────────┐
+│  SpanCollector created   │  pipeline span started
+└─────────────────────────┘
+    │
+    ▼
+┌─────────────────────────┐
 │  Agent 1: Tool Caller   │  query → tool call → state.data
+│  spans: agent1, llm,    │  (llm.ttfb, llm.body, tool,
+│  tool.embed/sql/vector   │   tool.embed, tool.sql, tool.vector)
 └─────────────────────────┘
     │
     ▼
 ┌─────────────────────────┐
-│  Agent 2: Template      │  meta → template → state.template
+│  Agent 2: Template      │  meta → render tool → state.template
+│  spans: agent2, llm,    │  (llm.ttfb, llm.body, tool)
 └─────────────────────────┘
     │
     ▼
 ┌─────────────────────────┐
-│  ApplyTemplate          │  template + data → FormationWithData
+│  Formation + Trace       │  formation + waterfall spans → response
 └─────────────────────────┘
     │
     ▼
-Response JSON
+Response JSON (+ trace with spans at /debug/traces/)
 ```

@@ -120,10 +120,30 @@ entities:
     trace_entity:
       file: "trace_entity.go"
       types: ["PipelineTrace", "AgentTrace", "StateSnapshot", "DeltaTrace", "FormationTrace"]
-      pipeline_trace_fields: ["ID", "SessionID", "Query", "TurnID", "Timestamp", "Agent1", "StateAfterAgent1", "Agent2", "FormationResult", "TotalMs", "Error", "CostUSD"]
+      pipeline_trace_fields: ["ID", "SessionID", "Query", "TurnID", "Timestamp", "Agent1", "StateAfterAgent1", "Agent2", "FormationResult", "TotalMs", "Error", "CostUSD", "Spans"]
       agent_trace_fields: ["Name", "LLMMs", "ToolMs", "TotalMs", "StopReason", "Model", "InputTokens", "OutputTokens", "CacheRead", "CacheWrite", "CostUSD", "SystemPrompt", "SystemPromptChars", "MessageCount", "ToolDefCount", "ToolName", "ToolInput", "ToolResult", "ToolBreakdown", "PromptSent", "RawResponse"]
       state_snapshot_fields: ["ProductCount", "ServiceCount", "Fields", "Aliases", "HasTemplate", "DeltaCount", "Deltas"]
       formation_trace_fields: ["Mode", "WidgetCount", "Cols", "FirstWidget"]
+
+    span:
+      file: "span.go"
+      types: ["Span", "SpanCollector"]
+      span_fields: ["Name", "StartMs", "EndMs", "DurationMs", "Detail"]
+      span_collector:
+        purpose: "Thread-safe collector of timed spans for one pipeline execution"
+        constructor: "NewSpanCollector() — anchors to time.Now()"
+        methods:
+          - "Start(name) func(...string) — begins a named span, returns end function; end('detail') closes the span"
+          - "Spans() []Span — returns sorted copy: StartMs ASC, DurationMs DESC (parents before children)"
+      context_helpers:
+        - "WithSpanCollector(ctx, sc) — attaches SpanCollector to context"
+        - "SpanFromContext(ctx) *SpanCollector — retrieves SpanCollector from context (nil if absent)"
+        - "WithStage(ctx, stage) — attaches current agent stage name (e.g. 'agent1') to context"
+        - "StageFromContext(ctx) string — retrieves stage from context (empty if absent)"
+      naming_convention: "Span names use dot-separated hierarchy: 'agent1.llm.ttfb', 'agent1.tool.embed'"
+
+  test_files:
+    - "state_entity_test.go - DeltaInfo.ToDelta() tests: field transfer, empty TurnID, independent calls"
 
   errors:
     file: "domain_errors.go"
@@ -139,5 +159,8 @@ gotchas:
   - "Atom model: Type (6 types) + Subtype (data format) + Display (visual format)"
   - "Display can be set by preset, style alias, or explicitly by agent"
   - "Legacy atom types (price, badge, rating) mapped via LegacyTypeMapping"
+  - "SpanCollector is thread-safe (sync.Mutex) — safe for concurrent span creation"
+  - "Span names use dot hierarchy: pipeline, agent1, agent1.llm, agent1.llm.ttfb, agent1.tool.embed"
+  - "PipelineTrace.Spans []Span — waterfall timeline data recorded by SpanCollector"
 
 naming: "{entity}_entity.go"

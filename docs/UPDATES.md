@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-02-07 22:00
+
+### Pipeline Span Waterfall Tracing (feature/pipeline-span-waterfall)
+- **domain/span.go** (new): `Span` struct, `SpanCollector` (thread-safe), context helpers (`WithSpanCollector`, `SpanFromContext`, `WithStage`, `StageFromContext`), dot-separated naming convention
+- **PipelineTrace.Spans**: `[]Span` field for waterfall data
+- **Anthropic adapter**: span instrumentation — `{stage}.llm`, `{stage}.llm.ttfb` (via `httptrace.GotFirstResponseByte`), `{stage}.llm.body`, slow TTFB warning (>10s)
+- **CatalogSearchTool**: sub-operation spans — `{stage}.tool.embed`, `{stage}.tool.sql`, `{stage}.tool.vector`
+- **Agent1**: span `agent1` + `WithStage`, `agent1.tool`, `agent1.state`; tool filter changed `search_*` → `catalog_*`
+- **Agent2**: span `agent2` + `WithStage`, `agent2.tool`; `ToolChoice='any'` for forced tool calls
+- **Pipeline**: creates `SpanCollector`, `pipeline` span, records `trace.Spans = sc.Spans()`
+- **CacheConfig.ToolChoice**: `auto`/`any`/`tool:name` support
+- **Trace handler**: waterfall visualization with horizontal timeline bars, TTFB column in list; template funcs (spanDepth, spanLabel, spanColor, spanPercent, maxTTFB)
+- **postgres_trace**: WATERFALL section in console `printTrace`
+
+### Stone: Expert + README Sync
+- Expert sync: 6 of 9 updated (backend-domain, backend-ports, backend-adapters, backend-usecases, backend-handlers, backend-pipeline)
+- README sync: 10 updated (root, AI_docs, .claude/experts, backend×7), 18 unchanged
+
+---
+
 ## 2026-02-07 19:00
 
 ### Vector Search — Hybrid Keyword + Semantic (feature/vector-search)

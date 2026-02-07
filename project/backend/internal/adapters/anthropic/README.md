@@ -30,6 +30,15 @@ Env vars:
 - `ANTHROPIC_API_KEY` — API ключ
 - `LLM_MODEL` — Модель (default: claude-haiku-4-5-20251001)
 
+## Span Instrumentation
+
+`ChatWithTools` и `ChatWithToolsCached` эмитят span'ы через `domain.SpanFromContext`/`StageFromContext`:
+- `{stage}.llm` — полное время LLM вызова (detail: `{reqKB}KB→{respKB}KB`)
+- `{stage}.llm.ttfb` — time-to-first-byte через `httptrace.GotFirstResponseByte`
+- `{stage}.llm.body` — время чтения response body
+
+`ChatWithToolsCached` логирует `[WARN]` если TTFB превышает 10 секунд.
+
 ## Pricing
 
 | Model | Input | Output | Cache Write | Cache Read |

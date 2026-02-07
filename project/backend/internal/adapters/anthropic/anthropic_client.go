@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
+	"time"
 
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
@@ -27,7 +30,7 @@ func NewClient(apiKey, model string) *Client {
 	return &Client{
 		apiKey:     apiKey,
 		model:      model,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -272,15 +275,67 @@ func (c *Client) ChatWithTools(
 	req.Header.Set("x-api-key", c.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
+	// Span instrumentation via httptrace
+	sc := domain.SpanFromContext(ctx)
+	stage := domain.StageFromContext(ctx)
+	reqSize := len(jsonBody)
+
+	var endLLM func(...string)
+	var endTTFB func(...string)
+	if sc != nil && stage != "" {
+		endLLM = sc.Start(stage + ".llm")
+		endTTFB = sc.Start(stage + ".llm.ttfb")
+		trace := &httptrace.ClientTrace{
+			GotFirstResponseByte: func() {
+				if endTTFB != nil {
+					endTTFB()
+					endTTFB = nil
+				}
+			},
+		}
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if endTTFB != nil {
+			endTTFB()
+		}
+		if endLLM != nil {
+			endLLM()
+		}
 		return nil, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// Read body span
+	var endBody func(...string)
+	if sc != nil && stage != "" {
+		endBody = sc.Start(stage + ".llm.body")
+	}
+
 	var anthroResp anthropicToolResponse
 	if err := json.NewDecoder(resp.Body).Decode(&anthroResp); err != nil {
+		if endBody != nil {
+			endBody()
+		}
+		if endLLM != nil {
+			endLLM()
+		}
 		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	respSize := 0
+	if anthroResp.Usage.InputTokens > 0 {
+		respSize = anthroResp.Usage.OutputTokens * 4 // rough estimate
+	}
+
+	if endBody != nil {
+		endBody()
+	}
+	if endLLM != nil {
+		detail := fmt.Sprintf("%dKB→%dKB", reqSize/1024, respSize/1024)
+		endLLM(detail)
 	}
 
 	if anthroResp.Error != nil {
@@ -410,15 +465,72 @@ func (c *Client) ChatWithToolsCached(
 	req.Header.Set("x-api-key", c.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
+	// Span instrumentation via httptrace
+	sc := domain.SpanFromContext(ctx)
+	stage := domain.StageFromContext(ctx)
+	reqSize := len(jsonBody)
+	ttfbStart := time.Now()
+
+	var endLLM func(...string)
+	var endTTFB func(...string)
+	if sc != nil && stage != "" {
+		endLLM = sc.Start(stage + ".llm")
+		endTTFB = sc.Start(stage + ".llm.ttfb")
+		trace := &httptrace.ClientTrace{
+			GotFirstResponseByte: func() {
+				ttfbDuration := time.Since(ttfbStart)
+				if ttfbDuration > 10*time.Second {
+					log.Printf("[WARN] slow LLM TTFB: %s took %v", stage, ttfbDuration)
+				}
+				if endTTFB != nil {
+					endTTFB()
+					endTTFB = nil
+				}
+			},
+		}
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if endTTFB != nil {
+			endTTFB()
+		}
+		if endLLM != nil {
+			endLLM()
+		}
 		return nil, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// Read body span
+	var endBody func(...string)
+	if sc != nil && stage != "" {
+		endBody = sc.Start(stage + ".llm.body")
+	}
+
 	var anthroResp anthropicCachedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&anthroResp); err != nil {
+		if endBody != nil {
+			endBody()
+		}
+		if endLLM != nil {
+			endLLM()
+		}
 		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	respSize := 0
+	if anthroResp.Usage.OutputTokens > 0 {
+		respSize = anthroResp.Usage.OutputTokens * 4
+	}
+
+	if endBody != nil {
+		endBody()
+	}
+	if endLLM != nil {
+		detail := fmt.Sprintf("%dKB→%dKB", reqSize/1024, respSize/1024)
+		endLLM(detail)
 	}
 
 	if anthroResp.Error != nil {

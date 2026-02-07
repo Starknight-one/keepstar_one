@@ -144,9 +144,17 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		meta["price_conversion"] = fmt.Sprintf("%d/%d руб → %d/%d коп", minPrice, maxPrice, minPriceKopecks, maxPriceKopecks)
 	}
 
+	// Span instrumentation
+	sc := domain.SpanFromContext(ctx)
+	stage := domain.StageFromContext(ctx)
+
 	// Generate query embedding
 	var queryEmbedding []float32
 	if t.embedding != nil && vectorQuery != "" {
+		var endEmbed func(...string)
+		if sc != nil && stage != "" {
+			endEmbed = sc.Start(stage + ".tool.embed")
+		}
 		embedStart := time.Now()
 		searchText := vectorQuery
 		if brand != "" {
@@ -157,6 +165,9 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 			queryEmbedding = embeddings[0]
 		}
 		meta["embed_ms"] = time.Since(embedStart).Milliseconds()
+		if endEmbed != nil {
+			endEmbed("OpenAI embedding")
+		}
 	}
 
 	// Get state
@@ -203,16 +214,30 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		}
 	}
 
+	var endSQL func(...string)
+	if sc != nil && stage != "" {
+		endSQL = sc.Start(stage + ".tool.sql")
+	}
 	sqlStart := time.Now()
 	keywordProducts, _, _ := t.catalogPort.ListProducts(ctx, tenant.ID, filter)
 	meta["sql_ms"] = time.Since(sqlStart).Milliseconds()
+	if endSQL != nil {
+		endSQL("keyword search")
+	}
 
 	// Vector search
 	var vectorProducts []domain.Product
 	if queryEmbedding != nil {
+		var endVector func(...string)
+		if sc != nil && stage != "" {
+			endVector = sc.Start(stage + ".tool.vector")
+		}
 		vectorStart := time.Now()
 		vectorProducts, _ = t.catalogPort.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2)
 		meta["vector_ms"] = time.Since(vectorStart).Milliseconds()
+		if endVector != nil {
+			endVector("pgvector")
+		}
 	}
 	meta["keyword_count"] = len(keywordProducts)
 	meta["vector_count"] = len(vectorProducts)
