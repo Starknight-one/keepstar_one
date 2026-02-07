@@ -14,6 +14,9 @@ type CachePort interface {
 	// SaveSession saves a session
 	SaveSession(ctx context.Context, session *domain.Session) error
 
+	// DeleteSession removes a session and all related data (state, deltas, traces)
+	DeleteSession(ctx context.Context, id string) error
+
 	// CacheProducts caches products for a session
 	CacheProducts(ctx context.Context, sessionID string, products []domain.Product) error
 

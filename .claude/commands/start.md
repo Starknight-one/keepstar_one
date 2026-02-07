@@ -45,7 +45,7 @@ Start the project (backend + frontend + dev-inspector).
    - Frontend: http://localhost:5173
    - Frontend + Inspector: http://localhost:3457
    - Backend API: http://localhost:8080
-   - Debug Console: http://localhost:8080/debug/session/
+   - Pipeline Traces: http://localhost:8080/debug/traces/
 
 ## Output
 
@@ -55,7 +55,7 @@ Project started!
 Frontend: http://localhost:5173
 Frontend + Inspector: http://localhost:3457 (Ctrl+Shift+K to activate)
 Backend API: http://localhost:8080
-Debug Console: http://localhost:8080/debug/session/
+Pipeline Traces: http://localhost:8080/debug/traces/
 
 Logs:
 - Backend: /tmp/backend.log

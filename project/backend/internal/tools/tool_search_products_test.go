@@ -114,6 +114,32 @@ func (m *mockCatalogPort) GetProduct(ctx context.Context, tenantID string, produ
 	return nil, nil
 }
 
+// mockCatalogPortWithCapture captures the filter passed to ListProducts
+type mockCatalogPortWithCapture struct {
+	products      []domain.Product
+	total         int
+	captureFilter *ports.ProductFilter
+}
+
+func (m *mockCatalogPortWithCapture) GetTenantBySlug(ctx context.Context, slug string) (*domain.Tenant, error) {
+	return &domain.Tenant{ID: "t1", Slug: slug}, nil
+}
+func (m *mockCatalogPortWithCapture) GetCategories(ctx context.Context) ([]domain.Category, error) {
+	return nil, nil
+}
+func (m *mockCatalogPortWithCapture) GetMasterProduct(ctx context.Context, id string) (*domain.MasterProduct, error) {
+	return nil, nil
+}
+func (m *mockCatalogPortWithCapture) ListProducts(ctx context.Context, tenantID string, filter ports.ProductFilter) ([]domain.Product, int, error) {
+	if m.captureFilter != nil {
+		*m.captureFilter = filter
+	}
+	return m.products, m.total, nil
+}
+func (m *mockCatalogPortWithCapture) GetProduct(ctx context.Context, tenantID string, productID string) (*domain.Product, error) {
+	return nil, nil
+}
+
 func TestSearchProducts_SuccessUsesUpdateData(t *testing.T) {
 	state := &domain.SessionState{
 		ID: "s1", SessionID: "sess-1",
@@ -260,5 +286,83 @@ func TestSearchProducts_TurnIDInDelta(t *testing.T) {
 	}
 	if sp.LastDeltaInfo.TurnID != "test-turn-123" {
 		t.Errorf("expected TurnID=test-turn-123, got %s", sp.LastDeltaInfo.TurnID)
+	}
+}
+
+func TestSearchProducts_BrandPlusQuery(t *testing.T) {
+	state := &domain.SessionState{
+		ID: "s1", SessionID: "sess-1",
+		Current: domain.StateCurrent{
+			Meta: domain.StateMeta{Aliases: map[string]string{"tenant_slug": "nike"}},
+		},
+	}
+	sp := newMockStatePort(state)
+
+	var capturedFilter ports.ProductFilter
+	cp := &mockCatalogPortWithCapture{
+		products: []domain.Product{
+			{ID: "p1", Name: "Nike Pegasus 41", Price: 15990, Brand: "Nike"},
+		},
+		total:         1,
+		captureFilter: &capturedFilter,
+	}
+	tool := tools.NewSearchProductsTool(sp, cp)
+
+	ctx := context.Background()
+	toolCtx := tools.ToolContext{SessionID: "sess-1", TurnID: "turn-1", ActorID: "agent1"}
+
+	// Test: brand + query → query should have brand stripped
+	_, err := tool.Execute(ctx, toolCtx, map[string]interface{}{
+		"query": "Nike Pegasus",
+		"brand": "Nike",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if capturedFilter.Brand != "Nike" {
+		t.Errorf("expected Brand=Nike, got %s", capturedFilter.Brand)
+	}
+	if capturedFilter.Search != "Pegasus" {
+		t.Errorf("expected Search=Pegasus, got %q", capturedFilter.Search)
+	}
+}
+
+func TestSearchProducts_BrandEqualsQuery(t *testing.T) {
+	state := &domain.SessionState{
+		ID: "s1", SessionID: "sess-1",
+		Current: domain.StateCurrent{
+			Meta: domain.StateMeta{Aliases: map[string]string{"tenant_slug": "nike"}},
+		},
+	}
+	sp := newMockStatePort(state)
+
+	var capturedFilter ports.ProductFilter
+	cp := &mockCatalogPortWithCapture{
+		products: []domain.Product{
+			{ID: "p1", Name: "Nike Air Max", Price: 12990, Brand: "Nike"},
+		},
+		total:         1,
+		captureFilter: &capturedFilter,
+	}
+	tool := tools.NewSearchProductsTool(sp, cp)
+
+	ctx := context.Background()
+	toolCtx := tools.ToolContext{SessionID: "sess-1", TurnID: "turn-1", ActorID: "agent1"}
+
+	// Test: brand == query → Search should be empty (no redundant filtering)
+	_, err := tool.Execute(ctx, toolCtx, map[string]interface{}{
+		"query": "Nike",
+		"brand": "Nike",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if capturedFilter.Brand != "Nike" {
+		t.Errorf("expected Brand=Nike, got %s", capturedFilter.Brand)
+	}
+	if capturedFilter.Search != "" {
+		t.Errorf("expected Search empty, got %q", capturedFilter.Search)
 	}
 }

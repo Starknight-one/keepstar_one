@@ -40,7 +40,8 @@ type ChatResponse struct {
 
 // CacheConfig controls prompt caching behavior
 type CacheConfig struct {
-	CacheTools        bool // cache tool definitions
-	CacheSystem       bool // cache system prompt
-	CacheConversation bool // cache conversation history
+	CacheTools        bool   // cache tool definitions
+	CacheSystem       bool   // cache system prompt
+	CacheConversation bool   // cache conversation history
+	ToolChoice        string // "auto" (default), "any" (force tool use), or "tool:name" (force specific tool)
 }

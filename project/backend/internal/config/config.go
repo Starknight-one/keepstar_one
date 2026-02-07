@@ -10,6 +10,7 @@ type Config struct {
 	LLMModel        string
 	LogLevel        string
 	DatabaseURL     string
+	TenantSlug      string
 }
 
 // Load loads configuration from environment variables
@@ -21,6 +22,7 @@ func Load() *Config {
 		LLMModel:        getEnv("LLM_MODEL", "claude-haiku-4-5-20251001"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		DatabaseURL:     getEnv("DATABASE_URL", ""),
+		TenantSlug:      getEnv("TENANT_SLUG", "nike"),
 	}
 }
 

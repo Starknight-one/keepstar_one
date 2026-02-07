@@ -12,6 +12,8 @@ type ProductFilter struct {
 	MinPrice   int
 	MaxPrice   int
 	Search     string
+	SortField  string // "price", "rating", "name", "" (default: created_at)
+	SortOrder  string // "asc", "desc" (default: "desc")
 	Limit      int
 	Offset     int
 }

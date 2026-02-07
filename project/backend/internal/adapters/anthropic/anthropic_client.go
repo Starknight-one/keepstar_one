@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
@@ -381,6 +382,18 @@ func (c *Client) ChatWithToolsCached(
 		System:    systemBlocks,
 		Messages:  anthroMsgs,
 		Tools:     anthroTools,
+	}
+
+	// Set tool_choice if specified
+	if cacheConfig.ToolChoice != "" && cacheConfig.ToolChoice != "auto" {
+		if cacheConfig.ToolChoice == "any" {
+			reqBody.ToolChoice = &toolChoiceConfig{Type: "any"}
+		} else if strings.HasPrefix(cacheConfig.ToolChoice, "tool:") {
+			reqBody.ToolChoice = &toolChoiceConfig{
+				Type: "tool",
+				Name: strings.TrimPrefix(cacheConfig.ToolChoice, "tool:"),
+			}
+		}
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

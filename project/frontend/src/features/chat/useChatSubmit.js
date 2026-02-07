@@ -19,8 +19,12 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
+  const submittingRef = useRef(false);
+
   const submit = useCallback(async (text) => {
     if (!text.trim()) return;
+    if (submittingRef.current) return; // Prevent duplicate requests
+    submittingRef.current = true;
 
     // Add user message
     addMessage({
@@ -49,11 +53,13 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
       }
 
       // Add assistant message with formation
-      const widgetCount = response.formation?.widgets?.length || 0;
+      const widgets = response.formation?.widgets || [];
+      const widgetCount = widgets.length;
+      const isTextOnly = widgets.every(w => w.type === 'text_block');
       addMessage({
         id: (Date.now() + 1).toString(),
         role: MessageRole.ASSISTANT,
-        content: widgetCount > 0 ? `Нашёл ${widgetCount} ${getProductWord(widgetCount)}` : '',
+        content: (widgetCount > 0 && !isTextOnly) ? `Нашёл ${widgetCount} ${getProductWord(widgetCount)}` : '',
         formation: response.formation,
         timestamp: new Date(),
       });
@@ -68,6 +74,7 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
       });
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   }, [addMessage, setLoading, setError, setSessionId, onFormationReceived]);
 

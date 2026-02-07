@@ -1,13 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useChatMessages } from './useChatMessages';
 import { useChatSubmit } from './useChatSubmit';
 import { ChatHistory } from './ChatHistory';
 import { ChatInput } from './ChatInput';
-import { getSession, expandView, goBack } from '../../shared/api/apiClient';
-import { MessageRole } from '../../entities/message/messageModel';
+import { expandView, goBack, getSession } from '../../shared/api/apiClient';
+import { saveSessionCache, loadSessionCache, clearSessionCache } from './sessionCache';
 import './ChatPanel.css';
-
-const SESSION_STORAGE_KEY = 'chatSessionId';
 
 export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChange, hideFormation }) {
   const {
@@ -23,6 +21,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
   } = useChatMessages();
 
   const [canGoBack, setCanGoBack] = useState(false);
+  const lastFormationRef = useRef(null);
 
   const { submit } = useChatSubmit({
     sessionId,
@@ -30,7 +29,10 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     setLoading,
     setError,
     setSessionId,
-    onFormationReceived
+    onFormationReceived: useCallback((formation) => {
+      lastFormationRef.current = formation;
+      onFormationReceived?.(formation);
+    }, [onFormationReceived]),
   });
 
   // Navigation handlers
@@ -69,42 +71,39 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     });
   }, [canGoBack, handleExpand, handleBack, onNavigationStateChange]);
 
-  // Load session history on mount
+  // Restore session from browser cache instantly (no network call, no blocking)
   useEffect(() => {
-    const loadSession = async () => {
-      const savedSessionId = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (!savedSessionId) return;
+    const cached = loadSessionCache();
+    if (!cached) return;
+    setSessionId(cached.sessionId);
+    if (cached.messages?.length > 0) {
+      setMessages(cached.messages);
+    }
+    if (cached.formation) {
+      lastFormationRef.current = cached.formation;
+      onFormationReceived?.(cached.formation);
+    }
 
-      setLoading(true);
-      try {
-        const session = await getSession(savedSessionId);
-
-        if (session && session.status === 'active') {
-          setSessionId(session.id);
-
-          // Convert messages to frontend format
-          const loadedMessages = session.messages.map((msg) => ({
-            id: msg.id,
-            role: msg.role === 'user' ? MessageRole.USER : MessageRole.ASSISTANT,
-            content: msg.content,
-            timestamp: new Date(msg.sentAt),
-          }));
-
-          setMessages(loadedMessages);
-        } else {
-          // Session expired or not found, clear localStorage
-          localStorage.removeItem(SESSION_STORAGE_KEY);
-        }
-      } catch (err) {
-        console.error('Failed to load session:', err);
-        localStorage.removeItem(SESSION_STORAGE_KEY);
-      } finally {
-        setLoading(false);
+    // Async validate — if session is dead on backend, clear everything
+    getSession(cached.sessionId).then(session => {
+      if (!session || session.status !== 'active') {
+        clearSessionCache();
+        setSessionId(null);
+        setMessages([]);
+        lastFormationRef.current = null;
+        onFormationReceived?.(null);
       }
-    };
+    }).catch(() => {
+      // Network error — keep cache, don't block
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    loadSession();
-  }, [setLoading, setSessionId, setMessages]);
+  // Persist session cache after messages change
+  useEffect(() => {
+    if (sessionId && messages.length > 0) {
+      saveSessionCache({ sessionId, messages, formation: lastFormationRef.current });
+    }
+  }, [sessionId, messages]);
 
   return (
     <div className="chat-container">

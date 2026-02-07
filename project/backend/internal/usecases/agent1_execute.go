@@ -31,9 +31,15 @@ type Agent1ExecuteResponse struct {
 	ToolExecuteMs  int64  `json:"toolExecuteMs"`
 	ToolName       string `json:"toolName"`
 	ToolInput      string `json:"toolInput"`
-	ToolResult     string `json:"toolResult"`
-	ProductsFound  int    `json:"productsFound"`
-	StopReason     string `json:"stopReason"`
+	ToolResult     string                 `json:"toolResult"`
+	ToolMetadata   map[string]interface{} `json:"toolMetadata,omitempty"` // Internal breakdown from tool
+	ProductsFound  int                    `json:"productsFound"`
+	StopReason     string                 `json:"stopReason"`
+	// Prompt breakdown for trace
+	SystemPrompt      string `json:"systemPrompt"`
+	SystemPromptChars int    `json:"systemPromptChars"`
+	MessageCount      int    `json:"messageCount"`
+	ToolDefCount      int    `json:"toolDefCount"`
 }
 
 // Agent1ExecuteUseCase executes Agent 1 (Tool Caller)
@@ -132,6 +138,7 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	var toolName string
 	var toolInput string
 	var toolResult string
+	var toolMetadata map[string]interface{}
 	var toolDuration int64
 	var productsFound int
 
@@ -158,6 +165,7 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		}, toolCall)
 		toolDuration = time.Since(toolStart).Milliseconds()
 		toolResult = result.Content
+		toolMetadata = result.Metadata
 
 		if err != nil {
 			uc.log.Error("tool_execution_failed", "error", err, "tool", toolCall.Name)
@@ -211,24 +219,29 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	)
 
 	return &Agent1ExecuteResponse{
-		Usage:         llmResp.Usage,
-		LatencyMs:     int(totalDuration),
-		LLMCallMs:     llmDuration,
-		ToolExecuteMs: toolDuration,
-		ToolName:      toolName,
-		ToolInput:     toolInput,
-		ToolResult:    toolResult,
-		ProductsFound: productsFound,
-		StopReason:    llmResp.StopReason,
+		Usage:             llmResp.Usage,
+		LatencyMs:         int(totalDuration),
+		LLMCallMs:         llmDuration,
+		ToolExecuteMs:     toolDuration,
+		ToolName:          toolName,
+		ToolInput:         toolInput,
+		ToolResult:        toolResult,
+		ToolMetadata:      toolMetadata,
+		ProductsFound:     productsFound,
+		StopReason:        llmResp.StopReason,
+		SystemPrompt:      prompts.Agent1SystemPrompt,
+		SystemPromptChars: len(prompts.Agent1SystemPrompt),
+		MessageCount:      len(messages),
+		ToolDefCount:      len(toolDefs),
 	}, nil
 }
 
-// getAgent1Tools returns data tools only for Agent 1 (search_*)
+// getAgent1Tools returns data tools only for Agent 1 (catalog_*)
 func (uc *Agent1ExecuteUseCase) getAgent1Tools() []domain.ToolDefinition {
 	allTools := uc.toolRegistry.GetDefinitions()
 	var agent1Tools []domain.ToolDefinition
 	for _, t := range allTools {
-		if strings.HasPrefix(t.Name, "search_") || strings.HasPrefix(t.Name, "_internal_") {
+		if strings.HasPrefix(t.Name, "catalog_") || strings.HasPrefix(t.Name, "_internal_") {
 			agent1Tools = append(agent1Tools, t)
 		}
 	}

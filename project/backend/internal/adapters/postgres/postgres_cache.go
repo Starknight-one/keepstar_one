@@ -209,6 +209,18 @@ func (a *CacheAdapter) SaveSession(ctx context.Context, session *domain.Session)
 	return nil
 }
 
+// DeleteSession marks a session as closed (keeps traces and history for debug)
+func (a *CacheAdapter) DeleteSession(ctx context.Context, id string) error {
+	_, err := a.client.pool.Exec(ctx, `
+		UPDATE chat_sessions SET status = 'closed', ended_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("close session: %w", err)
+	}
+	return nil
+}
+
 // CacheProducts stores products in session metadata
 func (a *CacheAdapter) CacheProducts(ctx context.Context, sessionID string, products []domain.Product) error {
 	productsJSON, err := json.Marshal(products)
