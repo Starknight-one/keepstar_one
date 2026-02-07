@@ -17,6 +17,7 @@ src/
 │   ├── chat/          # Chat panel
 │   ├── catalog/       # Product catalog
 │   ├── overlay/       # Fullscreen overlay
+│   ├── navigation/    # Back button
 │   └── canvas/        # Widget canvas (future)
 ├── entities/          # Business entities
 │   ├── atom/          # Atomic UI elements
@@ -63,6 +64,8 @@ Located at `src/shared/api/apiClient.js`:
 | `getProducts(tenantSlug, filters)` | GET /api/v1/tenants/{slug}/products | List products |
 | `getProduct(tenantSlug, productId)` | GET /api/v1/tenants/{slug}/products/{id} | Get product |
 | `sendPipelineQuery(sessionId, query)` | POST /api/v1/pipeline | Two-agent pipeline |
+| `expandView(sessionId, entityType, entityId)` | POST /api/v1/navigation/expand | Drill-down to detail |
+| `goBack(sessionId)` | POST /api/v1/navigation/back | Navigate back |
 
 ## Features
 

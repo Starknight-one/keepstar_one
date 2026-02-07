@@ -15,6 +15,7 @@ features:
       - "chatModel.js - createInitialChatState()"
       - "useChatMessages.js - State management"
       - "useChatSubmit.js - API submission"
+      - "sessionCache.js - localStorage session cache (save/load/clear, 30min TTL)"
       - "ChatPanel.jsx - Main component"
       - "ChatHistory.jsx - Message list"
       - "ChatInput.jsx - Input field"
@@ -32,11 +33,16 @@ features:
     session_persistence:
       storage: "localStorage"
       key: "chatSessionId"
+      cache_key: "chatSessionCache"
       flow:
-        - "On mount: check localStorage, call getSession()"
+        - "On mount: check sessionCache (loadSessionCache), instant restore messages+formation"
+        - "If cache hit: restore instantly, then validate with getSession() in background"
+        - "If cache miss: check localStorage chatSessionId, call getSession()"
         - "If active: restore messages"
-        - "If expired: clear localStorage"
-        - "On message: save sessionId to localStorage"
+        - "If expired: clearSessionCache()"
+        - "On message: save sessionId + messages + formation to cache (saveSessionCache)"
+      cache_ttl: "30 minutes"
+      cache_format: "{ sessionId, messages (sans formation blobs), formation, savedAt }"
 
   catalog:
     path: "src/features/catalog/"

@@ -116,6 +116,15 @@ entities:
       field_config: ["Name", "Slot", "AtomType", "Subtype", "Display", "Priority", "Required"]
       preset_fields: ["Name", "EntityType", "Template", "Slots", "Fields", "DefaultMode", "DefaultSize", "Displays"]
 
+  tracing:
+    trace_entity:
+      file: "trace_entity.go"
+      types: ["PipelineTrace", "AgentTrace", "StateSnapshot", "DeltaTrace", "FormationTrace"]
+      pipeline_trace_fields: ["ID", "SessionID", "Query", "TurnID", "Timestamp", "Agent1", "StateAfterAgent1", "Agent2", "FormationResult", "TotalMs", "Error", "CostUSD"]
+      agent_trace_fields: ["Name", "LLMMs", "ToolMs", "TotalMs", "StopReason", "Model", "InputTokens", "OutputTokens", "CacheRead", "CacheWrite", "CostUSD", "SystemPrompt", "SystemPromptChars", "MessageCount", "ToolDefCount", "ToolName", "ToolInput", "ToolResult", "ToolBreakdown", "PromptSent", "RawResponse"]
+      state_snapshot_fields: ["ProductCount", "ServiceCount", "Fields", "Aliases", "HasTemplate", "DeltaCount", "Deltas"]
+      formation_trace_fields: ["Mode", "WidgetCount", "Cols", "FirstWidget"]
+
   errors:
     file: "domain_errors.go"
     errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound", "ErrRateLimitExceeded"]

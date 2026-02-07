@@ -83,6 +83,42 @@ tools:
       limit: "optional - max entities to render (default: all)"
     returns: "'ok: rendered N entity_types with freestyle style=X, formation=Y'"
 
+  catalog_search:
+    file: "tool_catalog_search.go"
+    struct: "CatalogSearchTool"
+    implements: "ToolExecutor"
+    purpose: "Meta-tool: normalize query → filter → SQL → fallback cascade → state write"
+    input_schema:
+      query: "required - search text in ANY language (normalized automatically)"
+      brand: "optional - brand in ANY language/transliteration (normalized automatically)"
+      category: "optional - category filter"
+      min_price: "optional - minimum price in RUBLES (converted to kopecks internally)"
+      max_price: "optional - maximum price in RUBLES (converted to kopecks internally)"
+      sort_by: "optional - price, rating, or name"
+      sort_order: "optional - asc or desc (default asc)"
+      limit: "optional - max results (default 10)"
+    flow:
+      - "Parse input and convert prices (rubles→kopecks ×100)"
+      - "Normalize query+brand via QueryNormalizer (fast path or LLM)"
+      - "Strip brand from search to avoid AND conflict"
+      - "Resolve tenant slug → UUID from state aliases"
+      - "Search with fallback cascade: full → brand-only → search-only → empty"
+      - "Write products to state via UpdateData zone-write"
+    fallback_cascade: "step 0=direct hit, 1=brand-only, 2=search-only, 3=empty"
+    returns: "'ok: found N products' or 'empty: 0 results, previous data preserved'"
+    metadata: "Includes normalize_ms, normalize_path (fast/llm), sql_ms, fallback_step, price_conversion, sql_filter, tenant"
+
+  normalizer:
+    file: "normalizer.go"
+    struct: "QueryNormalizer"
+    types: ["NormalizeResult { Query, Brand, SourceLang, AliasResolved }"]
+    purpose: "Normalize search queries via fast path (ASCII) or LLM (non-ASCII)"
+    methods:
+      - "Normalize(ctx, query, brand) (*NormalizeResult, error)"
+    fast_path: "ASCII-only input → return as-is, lang=en"
+    llm_path: "Non-ASCII → call LLM with NormalizeQueryPrompt, parse JSON"
+    helpers: ["isASCII(s)", "stripCodeFences(s)"]
+
   interface:
     name: "ToolExecutor"
     methods:
@@ -140,6 +176,16 @@ prompts:
       - "Choose widget size based on atom count"
       - "Choose mode based on count (1→single, 2-6→grid, 7+→grid preferred, carousel only if asked)"
 
+  normalize_query:
+    file: "prompt_normalize_query.go"
+    const: "NormalizeQueryPrompt"
+    function: "BuildNormalizeRequest(query, brand) string"
+    purpose: "System prompt for query normalization LLM call"
+    features:
+      - "Alias table: Russian slang → English (кроссы→sneakers, ноутбук→laptop, etc.)"
+      - "Brand transliteration table: Russian → English (Найк→Nike, Самсунг→Samsung, etc.)"
+      - "Returns structured JSON: { query, brand, source_lang, alias_resolved }"
+
 pipeline_flow:
   description: "User Query → Agent 1 → Agent 2 → Formation"
   steps:
@@ -173,6 +219,11 @@ gotchas:
   - "ToolExecutor.Execute receives ToolContext (SessionID+TurnID+ActorID), not bare sessionID"
   - "Freestyle tool uses domain.DisplayStyles map for style alias → slot/display mapping"
   - "Agent2ToolPrompt includes data_change=null when no data changed — signals Agent2 to use freestyle for restyle"
+  - "catalog_search is the preferred search tool (replaces search_products for Agent1)"
+  - "catalog_search normalizes non-ASCII queries via LLM, ASCII via fast path (no LLM cost)"
+  - "catalog_search converts prices rubles→kopecks (×100) before SQL filter"
+  - "catalog_search fallback cascade: full → brand-only → search-only → empty"
+  - "catalog_search metadata includes full tool breakdown for pipeline tracing"
 
 naming:
   tools: "tool_{name}.go"

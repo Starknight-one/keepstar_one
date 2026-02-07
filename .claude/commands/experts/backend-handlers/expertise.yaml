@@ -64,6 +64,16 @@ handlers:
     request_expand: "{ sessionId, entityType, entityId }"
     response: "{ success, formation, viewMode, focused, stackSize, canGoBack }"
 
+  trace:
+    file: "handler_trace.go"
+    struct: "TraceHandler"
+    endpoints:
+      - "GET /debug/traces/ - list all traces (HTML table with status, timing, cost, session kill buttons)"
+      - "GET /debug/traces/{id} - trace detail (HTML with agent breakdown, tool input/output, deltas)"
+      - "GET /debug/traces/?format=json - all traces JSON"
+      - "GET /debug/traces/{id}?format=json - single trace JSON"
+      - "POST /debug/kill-session - kill a session (delete all data, redirect to traces)"
+
   health:
     file: "handler_health.go"
     struct: "HealthHandler"
@@ -96,6 +106,9 @@ api_summary:
   - "POST /api/v1/navigation/back"
   - "GET /debug/session/"
   - "POST /debug/seed"
+  - "GET /debug/traces/"
+  - "GET /debug/traces/{id}"
+  - "POST /debug/kill-session"
   - "GET /health"
   - "GET /ready"
 

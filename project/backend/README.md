@@ -34,8 +34,13 @@ internal/
 | `/api/v1/tenants/{slug}/products` | GET | List products for tenant |
 | `/api/v1/tenants/{slug}/products/{id}` | GET | Get product details |
 | `/api/v1/pipeline` | POST | Two-agent pipeline → Formation |
+| `/api/v1/navigation/expand` | POST | Drill down to detail view |
+| `/api/v1/navigation/back` | POST | Navigate back from detail |
 | `/debug/session/` | GET | Debug console (all sessions) |
 | `/debug/session/{id}` | GET | Session detail (HTML/JSON) |
+| `/debug/traces/` | GET | Pipeline trace list (HTML/JSON) |
+| `/debug/traces/{id}` | GET | Trace detail (HTML/JSON) |
+| `/debug/kill-session` | POST | Kill session (delete all data) |
 | `/health` | GET | Health check |
 | `/ready` | GET | Readiness check |
 
@@ -77,6 +82,7 @@ go build -o server ./cmd/server/ && ./server
 | EventPort | Analytics tracking | postgres |
 | CatalogPort | Product catalog | postgres |
 | StatePort | Session state for agents | postgres |
+| TracePort | Pipeline execution traces | postgres |
 
 ## Two-Agent Pipeline
 

@@ -31,22 +31,32 @@ adapters:
   postgres:
     directory: "postgres/"
     status: "implemented"
-    implements: ["CachePort", "EventPort", "CatalogPort", "StatePort"]
+    implements: ["CachePort", "EventPort", "CatalogPort", "StatePort", "TracePort"]
     files:
       - "postgres_client.go - Connection pool (pgxpool)"
-      - "postgres_cache.go - CachePort"
+      - "postgres_cache.go - CachePort (incl. DeleteSession)"
       - "postgres_events.go - EventPort"
       - "postgres_catalog.go - CatalogPort with product merging"
       - "postgres_state.go - StatePort with JSONB"
+      - "postgres_trace.go - TracePort: Record (DB + console printTrace), List, Get"
       - "migrations.go - Chat tables"
       - "catalog_migrations.go - Catalog schema"
       - "state_migrations.go - State tables"
+      - "trace_migrations.go - pipeline_traces table"
       - "catalog_seed.go - Seed data"
+      - "retention.go - RetentionService: periodic cleanup (traces, dead sessions, conversation trim)"
       - "catalog_search_test.go - CatalogPort search tests"
       - "postgres_state_test.go - StatePort integration tests"
     schemas:
-      public: ["chat_users", "chat_sessions", "chat_messages", "chat_events", "chat_session_state", "chat_session_deltas"]
+      public: ["chat_users", "chat_sessions", "chat_messages", "chat_events", "chat_session_state", "chat_session_deltas", "pipeline_traces"]
       catalog: ["tenants", "categories", "master_products", "products"]
+    retention:
+      struct: "RetentionService"
+      config: "RetentionConfig { TraceMaxAge: 48h, DeadSessionMaxAge: 1h, ConversationMaxMsgs: 20, CleanupInterval: 30min }"
+      cleanup_tasks:
+        - "cleanupTraces — delete pipeline_traces older than TraceMaxAge"
+        - "cleanupDeadSessions — delete all data for closed sessions older than DeadSessionMaxAge (FK-safe order)"
+        - "trimConversationHistory — keep last N messages in conversation_history JSONB array"
     state_columns:
       chat_session_state: ["id", "session_id", "current_data", "current_meta", "current_template", "view_mode", "view_focused", "view_stack", "conversation_history", "step", "created_at", "updated_at"]
       chat_session_deltas: ["id", "session_id", "step", "trigger", "source", "actor_id", "delta_type", "path", "action", "result", "template", "turn_id", "created_at"]

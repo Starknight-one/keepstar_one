@@ -26,6 +26,7 @@ interfaces:
     methods:
       - "GetSession(ctx, id) (*Session, error)"
       - "SaveSession(ctx, session) error"
+      - "DeleteSession(ctx, id) error — removes session and all related data (state, deltas, traces)"
       - "CacheProducts(ctx, sessionID, products) error"
       - "GetCachedProducts(ctx, sessionID) ([]Product, error)"
 
@@ -66,6 +67,14 @@ interfaces:
       - "PushView(ctx, sessionID, snapshot) error"
       - "PopView(ctx, sessionID) (*ViewSnapshot, error)"
       - "GetViewStack(ctx, sessionID) ([]ViewSnapshot, error)"
+
+  trace_port:
+    file: "trace_port.go"
+    interface: "TracePort"
+    methods:
+      - "Record(ctx, trace *PipelineTrace) error — saves trace to DB and prints to console"
+      - "List(ctx, limit) ([]*PipelineTrace, error) — recent traces, newest first"
+      - "Get(ctx, traceID) (*PipelineTrace, error) — single trace by ID"
 
 gotchas:
   - "CatalogPort.ListProducts(tenantID) requires UUID, not slug"

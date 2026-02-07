@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-02-07 14:00
+
+### Housekeeping: Spec Archive + Expert Sync
+- Archived 25 completed/superseded spec files from `ADW/specs/` → `ADW/specs/archive/`
+- Added `project/backend/bin/server` (compiled binary)
+- Expert sync: 6 of 9 experts updated
+  - backend-domain: added PipelineTrace, AgentTrace, StateSnapshot, DeltaTrace, FormationTrace types
+  - backend-ports: added TracePort interface, CachePort.DeleteSession method
+  - backend-adapters: added TraceAdapter, RetentionService, trace_migrations, pipeline_traces table
+  - backend-handlers: added TraceHandler (debug traces list/detail, kill-session endpoint)
+  - backend-pipeline: added CatalogSearchTool (meta-tool with normalizer, fallback cascade), QueryNormalizer, NormalizeQueryPrompt
+  - frontend-features: added sessionCache.js (localStorage session cache with 30min TTL)
+- README sync: backend (added trace/navigation endpoints, TracePort), frontend (added navigation feature, expand/goBack API)
+- Changelog updated
+
+---
+
 ## 2026-02-06 20:00
 
 ### Design System Integration (UNSTABLE)

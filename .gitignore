@@ -21,3 +21,4 @@ node_modules/
 # Build
 dist/
 project/backend/server
+project/backend/bin/
