@@ -114,8 +114,18 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		}
 	}
 
-	// Build user message with view context, user query, and data delta
-	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta)
+	// Extract current RenderConfig from formation (what is on screen now)
+	var currentConfig *domain.RenderConfig
+	if state.Current.Template != nil {
+		if formationData, ok := state.Current.Template["formation"]; ok {
+			if f, ok := formationData.(*domain.FormationWithData); ok && f != nil && f.Config != nil {
+				currentConfig = f.Config
+			}
+		}
+	}
+
+	// Build user message with view context, user query, data delta, and current config
+	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig)
 
 	// Include recent user queries from conversation history for context (last 4 user messages max).
 	// Only take user messages with Content (skip assistant, tool_use, tool_result).

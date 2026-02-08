@@ -30,9 +30,26 @@ type FormationTemplate struct {
 	WidgetTemplate WidgetTemplate `json:"widgetTemplate"`
 }
 
+// FieldSpec describes a single field in RenderConfig (what Agent 2 decided to show)
+type FieldSpec struct {
+	Name    string `json:"name"`    // "images", "name", "price"
+	Slot    string `json:"slot"`    // "hero", "title", "price"
+	Display string `json:"display"` // "image-cover", "h2", "price-lg"
+}
+
+// RenderConfig captures how Agent 2 rendered this formation (for next-turn context)
+type RenderConfig struct {
+	EntityType string        `json:"entity_type"`
+	Preset     string        `json:"preset,omitempty"`
+	Mode       FormationType `json:"mode"`
+	Size       WidgetSize    `json:"size"`
+	Fields     []FieldSpec   `json:"fields,omitempty"`
+}
+
 // FormationWithData is the final result after applying template
 type FormationWithData struct {
 	Mode    FormationType `json:"mode"`
 	Grid    *GridConfig   `json:"grid,omitempty"`
 	Widgets []Widget      `json:"widgets"`
+	Config  *RenderConfig `json:"config,omitempty"`
 }

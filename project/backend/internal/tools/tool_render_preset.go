@@ -20,6 +20,103 @@ type CurrencyGetter func() string
 // IDGetter extracts entity ID
 type IDGetter func() string
 
+// fieldTypeEntry maps a field name to its AtomType and Subtype for dynamic field construction
+type fieldTypeEntry struct {
+	Type    domain.AtomType
+	Subtype domain.AtomSubtype
+}
+
+// fieldTypeMap resolves field name → AtomType/Subtype for fields[] construction
+var fieldTypeMap = map[string]fieldTypeEntry{
+	"name":          {domain.AtomTypeText, domain.SubtypeString},
+	"description":   {domain.AtomTypeText, domain.SubtypeString},
+	"brand":         {domain.AtomTypeText, domain.SubtypeString},
+	"category":      {domain.AtomTypeText, domain.SubtypeString},
+	"price":         {domain.AtomTypeNumber, domain.SubtypeCurrency},
+	"rating":        {domain.AtomTypeNumber, domain.SubtypeRating},
+	"images":        {domain.AtomTypeImage, domain.SubtypeImageURL},
+	"stockQuantity": {domain.AtomTypeNumber, domain.SubtypeInt},
+	"tags":          {domain.AtomTypeText, domain.SubtypeString},
+	"attributes":    {domain.AtomTypeText, domain.SubtypeString},
+	"duration":      {domain.AtomTypeText, domain.SubtypeString},
+	"provider":      {domain.AtomTypeText, domain.SubtypeString},
+	"availability":  {domain.AtomTypeText, domain.SubtypeString},
+}
+
+// parseFieldSpecs parses fields[] from tool input into []domain.FieldConfig
+func parseFieldSpecs(rawFields interface{}) ([]domain.FieldConfig, []domain.FieldSpec) {
+	fieldsArr, ok := rawFields.([]interface{})
+	if !ok || len(fieldsArr) == 0 {
+		return nil, nil
+	}
+
+	configs := make([]domain.FieldConfig, 0, len(fieldsArr))
+	specs := make([]domain.FieldSpec, 0, len(fieldsArr))
+
+	for i, f := range fieldsArr {
+		fm, ok := f.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := fm["name"].(string)
+		slot, _ := fm["slot"].(string)
+		display, _ := fm["display"].(string)
+
+		if name == "" || slot == "" {
+			continue
+		}
+
+		entry, known := fieldTypeMap[name]
+		if !known {
+			// Default to text/string for unknown fields
+			entry = fieldTypeEntry{domain.AtomTypeText, domain.SubtypeString}
+		}
+
+		configs = append(configs, domain.FieldConfig{
+			Name:     name,
+			Slot:     domain.AtomSlot(slot),
+			AtomType: entry.Type,
+			Subtype:  entry.Subtype,
+			Display:  domain.AtomDisplay(display),
+			Priority: i,
+		})
+		specs = append(specs, domain.FieldSpec{
+			Name:    name,
+			Slot:    slot,
+			Display: display,
+		})
+	}
+
+	return configs, specs
+}
+
+// buildRenderConfig creates a RenderConfig from preset and optional field overrides
+func buildRenderConfig(entityType string, preset domain.Preset, size domain.WidgetSize, fieldSpecs []domain.FieldSpec) *domain.RenderConfig {
+	cfg := &domain.RenderConfig{
+		EntityType: entityType,
+		Preset:     preset.Name,
+		Mode:       preset.DefaultMode,
+		Size:       size,
+	}
+
+	if len(fieldSpecs) > 0 {
+		cfg.Fields = fieldSpecs
+	} else {
+		// Build from preset defaults
+		specs := make([]domain.FieldSpec, 0, len(preset.Fields))
+		for _, f := range preset.Fields {
+			specs = append(specs, domain.FieldSpec{
+				Name:    f.Name,
+				Slot:    string(f.Slot),
+				Display: string(f.Display),
+			})
+		}
+		cfg.Fields = specs
+	}
+
+	return cfg
+}
+
 // RenderProductPresetTool renders products using a preset
 type RenderProductPresetTool struct {
 	statePort      ports.StatePort
@@ -47,6 +144,24 @@ func (t *RenderProductPresetTool) Definition() domain.ToolDefinition {
 					"enum":        []string{"product_grid", "product_card", "product_compact", "product_detail"},
 					"description": "Preset to use: product_grid (for multiple items), product_card (for single detail), product_compact (for list), product_detail (for full detail view)",
 				},
+				"fields": map[string]interface{}{
+					"type":        "array",
+					"description": "Optional: custom field configuration. Replaces default preset fields. Each item: {name, slot, display}.",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"name":    map[string]interface{}{"type": "string", "description": "Field name: images, name, price, rating, brand, category, description, tags, stockQuantity, attributes"},
+							"slot":    map[string]interface{}{"type": "string", "description": "Target slot: hero, badge, title, primary, price, secondary"},
+							"display": map[string]interface{}{"type": "string", "description": "Display style: h1, h2, h3, body, price, price-lg, rating, image-cover, badge, tag, etc."},
+						},
+						"required": []string{"name", "slot", "display"},
+					},
+				},
+				"size": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"tiny", "small", "medium", "large"},
+					"description": "Optional: override widget size from preset default",
+				},
 			},
 			"required": []string{"preset"},
 		},
@@ -72,11 +187,29 @@ func (t *RenderProductPresetTool) Execute(ctx context.Context, toolCtx ToolConte
 		return &domain.ToolResult{Content: "error: no products in state"}, nil
 	}
 
+	// Override fields if provided (user has display preferences)
+	var fieldSpecs []domain.FieldSpec
+	if rawFields, hasFields := input["fields"]; hasFields {
+		customFields, specs := parseFieldSpecs(rawFields)
+		if len(customFields) > 0 {
+			preset.Fields = customFields
+			fieldSpecs = specs
+		}
+	}
+
+	// Override size if provided
+	if sizeStr, ok := input["size"].(string); ok && sizeStr != "" {
+		preset.DefaultSize = domain.WidgetSize(sizeStr)
+	}
+
 	// Build formation using generic builder
 	formation := BuildFormation(preset, len(products), func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 		p := products[i]
 		return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 	})
+
+	// Write RenderConfig for next-turn context
+	formation.Config = buildRenderConfig("product", preset, preset.DefaultSize, fieldSpecs)
 
 	// Store formation in state template via zone-write
 	template := map[string]interface{}{
@@ -128,6 +261,24 @@ func (t *RenderServicePresetTool) Definition() domain.ToolDefinition {
 					"enum":        []string{"service_card", "service_list", "service_detail"},
 					"description": "Preset to use: service_card (for grid), service_list (for compact list), service_detail (for full detail view)",
 				},
+				"fields": map[string]interface{}{
+					"type":        "array",
+					"description": "Optional: custom field configuration. Replaces default preset fields. Each item: {name, slot, display}.",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"name":    map[string]interface{}{"type": "string", "description": "Field name: images, name, price, rating, duration, provider, availability, description, attributes"},
+							"slot":    map[string]interface{}{"type": "string", "description": "Target slot: hero, badge, title, primary, price, secondary"},
+							"display": map[string]interface{}{"type": "string", "description": "Display style: h1, h2, h3, body, price, price-lg, rating, image-cover, badge, tag, etc."},
+						},
+						"required": []string{"name", "slot", "display"},
+					},
+				},
+				"size": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"tiny", "small", "medium", "large"},
+					"description": "Optional: override widget size from preset default",
+				},
 			},
 			"required": []string{"preset"},
 		},
@@ -153,11 +304,29 @@ func (t *RenderServicePresetTool) Execute(ctx context.Context, toolCtx ToolConte
 		return &domain.ToolResult{Content: "error: no services in state"}, nil
 	}
 
+	// Override fields if provided (user has display preferences)
+	var fieldSpecs []domain.FieldSpec
+	if rawFields, hasFields := input["fields"]; hasFields {
+		customFields, specs := parseFieldSpecs(rawFields)
+		if len(customFields) > 0 {
+			preset.Fields = customFields
+			fieldSpecs = specs
+		}
+	}
+
+	// Override size if provided
+	if sizeStr, ok := input["size"].(string); ok && sizeStr != "" {
+		preset.DefaultSize = domain.WidgetSize(sizeStr)
+	}
+
 	// Build formation using generic builder
 	formation := BuildFormation(preset, len(services), func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 		s := services[i]
 		return serviceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
 	})
+
+	// Write RenderConfig for next-turn context
+	formation.Config = buildRenderConfig("service", preset, preset.DefaultSize, fieldSpecs)
 
 	// Merge with existing formation if products already rendered
 	if existing, ok := state.Current.Template["formation"].(*domain.FormationWithData); ok && existing != nil {

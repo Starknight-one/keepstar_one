@@ -50,6 +50,7 @@ type AgentTrace struct {
 	// Prompt breakdown
 	SystemPrompt      string `json:"systemPrompt,omitempty"`
 	SystemPromptChars int    `json:"systemPromptChars,omitempty"`
+	EnrichedQuery     string `json:"enrichedQuery,omitempty"` // User query with <state> context (Agent1)
 	MessageCount      int    `json:"messageCount,omitempty"`
 	ToolDefCount      int    `json:"toolDefCount,omitempty"`
 

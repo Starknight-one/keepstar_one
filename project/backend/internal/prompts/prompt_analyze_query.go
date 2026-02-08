@@ -1,5 +1,12 @@
 package prompts
 
+import (
+	"encoding/json"
+	"fmt"
+
+	"keepstar/internal/domain"
+)
+
 // Agent1SystemPrompt is the system prompt for Agent 1 (Data Retrieval)
 const Agent1SystemPrompt = `You are Agent 1 - a data retrieval agent for an e-commerce chat.
 
@@ -19,6 +26,13 @@ Rules:
 6. Do NOT explain what you're doing.
 7. Do NOT ask clarifying questions - make best guess.
 8. After getting "ok"/"empty", stop. Do not call more tools.
+9. You will receive a <state> block with current data. Use it:
+   - loaded_products/loaded_services > 0 means data is already loaded
+   - available_fields lists what fields exist (e.g. rating, price, images)
+   - current_display shows what's rendered now
+   - If user asks about fields ALREADY in available_fields → style request, DO NOT call tool
+   - If user asks for DIFFERENT data (new brand, category, search) → call catalog_search
+10. When <state> is absent, treat as new data request.
 
 Examples:
 - "покажи кроссы Найк" → catalog_search(vector_query="кроссы", filters={brand:"Nike"})
@@ -28,6 +42,8 @@ Examples:
 - "что-нибудь для бега" → catalog_search(vector_query="что-нибудь для бега")
 - "TWS наушники с шумодавом" → catalog_search(vector_query="наушники с шумодавом", filters={type:"TWS", anc:"true"})
 - "покажи с большими заголовками" → DO NOT call tool (style request)
+- "покажи крупнее с рейтингом" + state has rating in fields → DO NOT call (style)
+- "а теперь покажи Adidas" + state has Nike loaded → catalog_search (new data)
 `
 
 // Legacy prompts (kept for backward compatibility)
@@ -46,6 +62,40 @@ Extract:
 - search_params: relevant filters (category, price_range, brand, etc.)
 
 JSON response:`
+
+// BuildAgent1ContextPrompt enriches the user query with current state context.
+// If no data is loaded (ProductCount=0, ServiceCount=0), returns raw query unchanged.
+// Otherwise wraps state summary in <state> block before the query.
+func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.RenderConfig, userQuery string) string {
+	if meta.ProductCount == 0 && meta.ServiceCount == 0 {
+		return userQuery
+	}
+
+	stateInfo := map[string]interface{}{
+		"loaded_products":  meta.ProductCount,
+		"loaded_services":  meta.ServiceCount,
+		"available_fields": meta.Fields,
+	}
+
+	if currentConfig != nil {
+		stateInfo["current_display"] = map[string]interface{}{
+			"preset": currentConfig.Preset,
+			"mode":   currentConfig.Mode,
+			"size":   currentConfig.Size,
+		}
+		// Extract displayed field names
+		if len(currentConfig.Fields) > 0 {
+			displayed := make([]string, len(currentConfig.Fields))
+			for i, f := range currentConfig.Fields {
+				displayed[i] = f.Name
+			}
+			stateInfo["displayed_fields"] = displayed
+		}
+	}
+
+	jsonBytes, _ := json.Marshal(stateInfo)
+	return fmt.Sprintf("<state>\n%s\n</state>\n\n%s", string(jsonBytes), userQuery)
+}
 
 // BuildAnalyzeQueryPrompt builds the prompt for query analysis (legacy)
 func BuildAnalyzeQueryPrompt(query string) string {

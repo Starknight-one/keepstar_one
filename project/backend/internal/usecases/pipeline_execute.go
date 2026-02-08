@@ -147,6 +147,7 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		CostUSD:           agent1Resp.Usage.CostUSD,
 		SystemPrompt:      agent1Resp.SystemPrompt,
 		SystemPromptChars: agent1Resp.SystemPromptChars,
+		EnrichedQuery:     agent1Resp.EnrichedQuery,
 		MessageCount:      agent1Resp.MessageCount,
 		ToolDefCount:      agent1Resp.ToolDefCount,
 		ToolName:          agent1Resp.ToolName,

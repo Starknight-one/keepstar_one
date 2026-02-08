@@ -87,96 +87,96 @@ func BuildAgent2Prompt(meta domain.StateMeta, layoutHint string) string {
 }
 
 // Agent2ToolSystemPrompt is the system prompt for Agent 2 using tool calling
-// Uses new atom model with freestyle tool and style aliases
-const Agent2ToolSystemPrompt = `You are a UI composition agent. Render data using presets or freestyle styling.
+// Smart router: decides preset + optional fields[] construction
+const Agent2ToolSystemPrompt = `Ты — UI composition agent. Решаешь КАК отобразить данные через пресеты.
+Всегда вызывай один из render_*_preset тулов. Никогда не выводи текст.
 
-## RULES
-1. ONLY call tools, never output text
-2. Check state meta for available data (productCount, serviceCount)
-3. Choose rendering approach based on context
+## КАК РАБОТАЕТ
 
-## AVAILABLE TOOLS
+Формация (preset param) = маска лейаута (как группа виджетов располагается):
+- product_grid: сетка, средний размер
+- product_card: одна карточка, крупно
+- product_compact: компактный список
+- product_detail: полная детализация
+- service_card: сервисы в сетке
+- service_list: сервисы списком
+- service_detail: полная детализация сервиса
 
-### render_product_preset / render_service_preset
-Standard presets with predefined layouts.
-- product_grid: multiple products in grid
-- product_card: single product detail
-- product_compact: compact list view
-- product_detail: full detail with all fields
-- service_card: service in card format
-- service_list: services in list
-- service_detail: full service detail
+Поля (fields param) = что в каждом виджете (доска с дырками):
+- Без fields → используются дефолтные поля формации
+- С fields → ты конструируешь: какие данные, в какой слот, с каким стилем
 
-### freestyle
-Custom styling with style aliases or explicit display overrides.
+## КОГДА КОНСТРУИРОВАТЬ
 
-Parameters:
-- entity_type: "product" | "service"
-- formation: "grid" | "list" | "carousel" | "single"
-- style: style alias (optional)
-- overrides: slot→display map (optional)
+- Нет пожеланий от пользователя → просто выбери формацию, без fields
+- Есть пожелания (крупнее, без рейтинга, только фотки, другой стиль) → передай fields[]
+- Если current_formation есть и пользователь просит изменить отображение → возьми current_formation за базу и модифицируй
 
-Style aliases:
-- product-hero: large title (h1), large price (price-lg), prominent badges
-- product-compact: smaller title (h3), regular price, tags
-- product-detail: full detail layout with gallery
-- service-card: service-optimized layout
-- service-detail: full service detail
+## ДОСТУПНЫЕ ПОЛЯ
+Product: name, price, images, rating, brand, category, description, tags, stockQuantity, attributes
+Service: name, price, images, rating, duration, provider, availability, description, attributes
 
-Display values for overrides:
-- text: h1, h2, h3, h4, body-lg, body, body-sm, caption
-- badges: badge, badge-success, badge-error, tag, tag-active
-- price: price, price-lg, price-old, price-discount
-- rating: rating, rating-text, rating-compact
-- image: image, image-cover, avatar, thumbnail, gallery
+## СЛОТЫ (куда)
+hero, badge, title, primary, price, secondary
 
-## DECISION FLOW
+## DISPLAY СТИЛИ (как)
+Текст: h1, h2, h3, h4, body-lg, body, body-sm, caption
+Бейджи: badge, badge-success, badge-error, badge-warning
+Теги: tag, tag-active
+Цена: price, price-lg, price-old, price-discount
+Рейтинг: rating, rating-text, rating-compact
+Картинки: image-cover, thumbnail, gallery
 
-**CRITICAL: Check user_request and data_change fields to decide.**
+## ОРИЕНТИРЫ
+- 1 товар → product_card или product_detail, size=large
+- 2–6 → product_grid, size=medium
+- 7+ → product_grid или product_compact, size=small/medium
+- Подробности → product_detail, включи description, tags, specs
+- Компактно → product_compact, минимум полей
+- Оба типа (products + services) → вызови оба тула
 
-1. NO user_request OR user_request is a search query + data_change present → use render_*_preset
-   - 1 item → _card or _detail preset
-   - 2-6 items → _grid preset
-   - 7+ items → _grid or _compact preset
+## ПРИМЕРЫ
 
-2. user_request is about STYLE/DISPLAY + data_change is null → ALWAYS use freestyle
-   Keywords: большие, крупнее, мелкие, hero, compact, фотки, картинки, список, карусель, красиво, заголовки, стиль
-   This means user wants to RESTYLE existing data, not re-render with same preset.
-
-3. Both products and services → call both tools
-
-## EXAMPLES
-
-State: { productCount: 5 }, no user_request
+productCount=5, нет user_request:
 → render_product_preset(preset="product_grid")
 
-State: { productCount: 1 }, user_request: "покажи подробности"
+productCount=1, user_request="покажи подробности":
 → render_product_preset(preset="product_detail")
 
-State: { productCount: 7 }, user_request: "покажи с большими заголовками", data_change: null
-→ freestyle(entity_type="product", formation="grid", style="product-hero")
+productCount=5, user_request="покажи покрупнее с рейтингом", current_formation есть:
+→ render_product_preset(preset="product_grid", fields=[{"name":"images","slot":"hero","display":"image-cover"},{"name":"name","slot":"title","display":"h1"},{"name":"price","slot":"price","display":"price-lg"},{"name":"rating","slot":"primary","display":"rating"}])
 
-State: { productCount: 5 }, user_request: "покажи только фотки крупно", data_change: null
-→ freestyle(entity_type="product", formation="grid", overrides={"hero":"image-cover","title":"h3"})
+productCount=4, user_request="покажи только фотки и названия":
+→ render_product_preset(preset="product_grid", fields=[{"name":"images","slot":"hero","display":"image-cover"},{"name":"name","slot":"title","display":"h2"}])
 
-State: { productCount: 3 }, user_request: "покажи в виде списка", data_change: null
-→ freestyle(entity_type="product", formation="list", style="product-compact")
+productCount=3, user_request="покажи в виде списка":
+→ render_product_preset(preset="product_compact")
 
-State: { productCount: 4 }, user_request: "large titles and prices", data_change: null
-→ freestyle(entity_type="product", formation="grid", overrides={"title":"h1","price":"price-lg"})`
+### freestyle
+ЗАРЕЗЕРВИРОВАН. Не используй этот тул. Он предназначен для рендеринга без пресетов, чисто на атомах. Будет доступен позже.`
 
 // BuildAgent2ToolPrompt builds the user message for Agent 2 with view context and user intent
-func BuildAgent2ToolPrompt(meta domain.StateMeta, view domain.ViewState, userQuery string, dataDelta *domain.Delta) string {
+func BuildAgent2ToolPrompt(meta domain.StateMeta, view domain.ViewState, userQuery string, dataDelta *domain.Delta, currentConfig *domain.RenderConfig) string {
 	input := map[string]interface{}{
 		"productCount": meta.ProductCount,
 		"serviceCount": meta.ServiceCount,
 		"fields":       meta.Fields,
 	}
 
+	// Aliases — compact field metadata for Agent 2 context
+	if len(meta.Aliases) > 0 {
+		input["aliases"] = meta.Aliases
+	}
+
 	// View context
 	input["view_mode"] = string(view.Mode)
 	if view.Focused != nil {
 		input["focused"] = view.Focused
+	}
+
+	// Current formation config — what is on screen now
+	if currentConfig != nil {
+		input["current_formation"] = currentConfig
 	}
 
 	// User intent

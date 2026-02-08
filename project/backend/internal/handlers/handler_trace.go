@@ -430,6 +430,10 @@ function toggle(id) {
 	<span class="expandable" onclick="toggle('a1system')">&#9654; System Prompt</span>
 	<pre id="a1system" class="hidden">{{.Trace.Agent1.SystemPrompt}}</pre>
 	{{end}}
+	{{if .Trace.Agent1.EnrichedQuery}}
+	<span class="expandable" onclick="toggle('a1enriched')">&#9654; Enriched Query (with state)</span>
+	<pre id="a1enriched" class="hidden">{{.Trace.Agent1.EnrichedQuery}}</pre>
+	{{end}}
 	{{if .Trace.Agent1.ToolName}}
 	<div class="row" style="margin-top: 12px;">
 		<div class="cell"><div class="label">Tool Called</div><div class="value tool">{{.Trace.Agent1.ToolName}}</div></div>

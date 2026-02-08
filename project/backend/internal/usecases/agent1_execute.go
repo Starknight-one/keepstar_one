@@ -38,6 +38,7 @@ type Agent1ExecuteResponse struct {
 	// Prompt breakdown for trace
 	SystemPrompt      string `json:"systemPrompt"`
 	SystemPromptChars int    `json:"systemPromptChars"`
+	EnrichedQuery     string `json:"enrichedQuery,omitempty"` // User query with <state> context
 	MessageCount      int    `json:"messageCount"`
 	ToolDefCount      int    `json:"toolDefCount"`
 }
@@ -100,11 +101,28 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		state.Current.Meta.Aliases["tenant_slug"] = req.TenantSlug
 	}
 
+	// Update meta counts from actual data (pattern from agent2_execute.go)
+	state.Current.Meta.ProductCount = len(state.Current.Data.Products)
+	state.Current.Meta.ServiceCount = len(state.Current.Data.Services)
+
+	// Extract current RenderConfig from formation (what is on screen now)
+	var currentConfig *domain.RenderConfig
+	if state.Current.Template != nil {
+		if formationData, ok := state.Current.Template["formation"]; ok {
+			if f, ok := formationData.(*domain.FormationWithData); ok && f != nil && f.Config != nil {
+				currentConfig = f.Config
+			}
+		}
+	}
+
+	// Build enriched query with state context for LLM (ephemeral, not saved to history)
+	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, req.Query)
+
 	// Build messages with conversation history
 	messages := state.ConversationHistory
 	messages = append(messages, domain.LLMMessage{
 		Role:    "user",
-		Content: req.Query,
+		Content: enrichedQuery,
 	})
 
 	// Get data-only tool definitions (Agent1 = data layer, no render tools)
@@ -254,6 +272,7 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		StopReason:        llmResp.StopReason,
 		SystemPrompt:      prompts.Agent1SystemPrompt,
 		SystemPromptChars: len(prompts.Agent1SystemPrompt),
+		EnrichedQuery:     enrichedQuery,
 		MessageCount:      len(messages),
 		ToolDefCount:      len(toolDefs),
 	}, nil
