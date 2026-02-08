@@ -10,7 +10,7 @@ Tool executors for LLM tool calling.
 - `tool_render_preset.go` — Рендеринг с пресетами (Agent2). Exports: BuildFormation(), FieldGetter, CurrencyGetter, IDGetter
 - `tool_freestyle.go` — Freestyle рендеринг со стилевыми алиасами и кастомными display overrides (Agent2)
 - `mock_tools.go` — Padding tools для достижения порога кэширования (4096 tokens)
-- `tool_search_products_test.go` — Тесты SearchProductsTool
+- `tool_catalog_search_test.go` — Тесты CatalogSearchTool
 - `tool_render_preset_test.go` — Тесты RenderPresetTool
 
 ## Registry
@@ -63,7 +63,7 @@ Flow:
 2. Generate query embedding via EmbeddingPort (span: `{stage}.tool.embed`)
 3. Keyword search via catalogPort.ListProducts (span: `{stage}.tool.sql`)
 4. Vector search via catalogPort.VectorSearch (span: `{stage}.tool.vector`)
-5. RRF merge: combine keyword + vector results (k=60)
+5. RRF merge: combine keyword + vector results (k=60, keyword weight 1.5× default, 2.0× with filters)
 6. Write products to state via UpdateData zone-write
 
 Возвращает: `"ok: found N products"` / `"empty: 0 results, previous data preserved"`

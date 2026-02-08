@@ -4,13 +4,17 @@ LLM промпты. Отдельно от бизнес-логики.
 
 ## Файлы
 
-- `prompt_analyze_query.go` — Промпт для Agent 1 (Tool Caller)
+- `prompt_analyze_query.go` — Промпт для Agent 1 (Tool Caller) + BuildAgent1ContextPrompt
+- `prompt_analyze_query_test.go` — Тесты BuildAgent1ContextPrompt
 - `prompt_compose_widgets.go` — Промпт для Agent 2 (Template Builder)
 
 ## Agent 1 (prompt_analyze_query.go)
 
 ```go
-const Agent1SystemPrompt = `...`  // hybrid search with vector_query + filters
+const Agent1SystemPrompt = `...`  // hybrid search with vector_query + filters, catalog-aware
+
+// Enriches user query with <catalog> digest + <state> context blocks
+func BuildAgent1ContextPrompt(meta StateMeta, currentConfig *RenderConfig, userQuery string, digest *CatalogDigest) string
 ```
 
 Правила Agent 1:
@@ -21,6 +25,9 @@ const Agent1SystemPrompt = `...`  // hybrid search with vector_query + filters
 - Если пользователь просит изменить СТИЛЬ отображения → НЕ вызывает tool
 - Без объяснений и уточняющих вопросов
 - Останавливается после первого tool call
+- Использует `<catalog>` digest для точного формирования фильтров: exact category names, filter vs vector_query hints
+- Category strategy: конкретный запрос → exact filter, broad/activity → только vector_query + price
+- High-cardinality params (families) → vector_query, не filter
 
 ## Agent 2 (prompt_compose_widgets.go)
 

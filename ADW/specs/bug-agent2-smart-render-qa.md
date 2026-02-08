@@ -174,3 +174,12 @@
 - Кэш читается, ~$0.003-0.005 за запрос, ~$0.02 за полный круг
 - Pipeline стабилен, нет крашей
 - TTFB ~1.1-2.8 секунд — приемлемо
+
+---
+
+## TODO: Admin Catalog Import API
+
+**Приоритет:** follow-up
+**Контекст:** Сейчас каталог наполняется через hardcoded Go seed-файлы (`catalog_seed_large*.go`). Это dev-scaffolding, не масштабируется на реальных тенантов.
+
+**Нужно:** `POST /admin/import-catalog` — принимает JSON/CSV, парсит, вставляет master_products + listings, запускает embedding + digest generation. Production-ready импорт каталога для тенантов.

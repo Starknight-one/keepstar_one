@@ -118,15 +118,16 @@ tools:
       - "Strip brand from ILIKE search to avoid AND conflict"
       - "Resolve tenant slug → UUID from state aliases"
       - "Keyword search via catalogPort.ListProducts (span: '{stage}.tool.sql')"
-      - "Vector search via catalogPort.VectorSearch (span: '{stage}.tool.vector')"
-      - "RRF merge: combine keyword + vector results with Reciprocal Rank Fusion (k=60)"
+      - "Vector search via catalogPort.VectorSearch with optional VectorFilter (span: '{stage}.tool.vector')"
+      - "RRF merge: combine keyword + vector results with Reciprocal Rank Fusion (k=60, keyword weight 1.5× or 2.0× with filters)"
       - "Write products to state via UpdateData zone-write"
     search_modes: "hybrid (both), vector (embedding only), keyword (SQL only / embedding nil)"
     returns: "'ok: found N products' or 'empty: 0 results, previous data preserved'"
     metadata: "Includes embed_ms, sql_ms, vector_ms, keyword_count, vector_count, merged_count, search_type, price_conversion, tenant"
     helpers:
-      - "rrfMerge(keyword, vector []Product, limit) []Product — Reciprocal Rank Fusion merge"
+      - "rrfMerge(keyword, vector []Product, limit, hasFilters bool) []Product — Reciprocal Rank Fusion merge with keyword weight boost (1.5× default, 2.0× when filters present)"
       - "catalogExtractProductFields(p Product) []string — extract field names from product"
+    test_file: "tool_catalog_search_test.go"
 
   interface:
     name: "ToolExecutor"
@@ -163,10 +164,11 @@ prompts:
   agent1:
     file: "prompt_analyze_query.go"
     consts:
-      - "Agent1SystemPrompt — primary system prompt for Agent 1 (hybrid search with vector_query + filters)"
+      - "Agent1SystemPrompt — primary system prompt for Agent 1 (hybrid search with vector_query + filters, catalog-aware)"
       - "AnalyzeQuerySystemPrompt — legacy system prompt for query analysis (backward compat)"
       - "AnalyzeQueryUserTemplate — legacy user template (backward compat)"
     functions:
+      - "BuildAgent1ContextPrompt(meta StateMeta, currentConfig *RenderConfig, userQuery string, digest *CatalogDigest) string — enriches query with <catalog> + <state> blocks"
       - "BuildAnalyzeQueryPrompt(query string) string — legacy, returns empty (TODO)"
     purpose: "System prompt for Agent 1 (Data Retrieval via catalog_search)"
     rules:
@@ -177,6 +179,10 @@ prompts:
       - "If user asks to change display style → do NOT call any tool"
       - "No explanations or clarifying questions"
       - "Stop after getting tool result"
+      - "Use <catalog> digest for precise filter formation: exact category names, filter vs vector_query hints"
+      - "Category strategy: specific→exact filter, broad/activity→omit category, ambiguous→omit category"
+      - "High-cardinality params (families) → vector_query, not filter"
+    test_file: "prompt_analyze_query_test.go"
 
   agent2:
     file: "prompt_compose_widgets.go"
@@ -248,7 +254,8 @@ gotchas:
   - "catalog_search is the ONLY registered search tool (SearchProductsTool file exists but is not registered)"
   - "catalog_search uses vector embeddings via EmbeddingPort (nil = keyword-only fallback)"
   - "catalog_search converts prices rubles→kopecks (×100) before SQL filter"
-  - "catalog_search RRF merge combines keyword + vector results (k=60)"
+  - "catalog_search RRF merge combines keyword + vector results (k=60, keyword weight 1.5× default, 2.0× with structured filters)"
+  - "catalog_search passes VectorFilter (brand/category) to VectorSearch for pre-filtering"
   - "catalog_search metadata includes full tool breakdown for pipeline tracing (embed_ms, sql_ms, vector_ms, search_type)"
   - "vector_query is in user's ORIGINAL language — embeddings handle multilingual matching"
   - "filters.brand/color/material etc. must be in English — LLM translates from user's language"
@@ -256,6 +263,8 @@ gotchas:
   - "normalizer.go and prompt_normalize_query.go are REMOVED — vector search replaces LLM normalization"
   - "catalog_search emits spans via SpanFromContext/StageFromContext: embed, sql, vector"
   - "Span names follow '{stage}.tool.{operation}' convention (e.g. 'agent1.tool.embed')"
+  - "BuildAgent1ContextPrompt adds <catalog> block (from digest) + <state> block (from current meta/config) around user query"
+  - "Agent1SystemPrompt includes catalog-aware rules: category strategy, filter vs vector_query hints, high-cardinality handling"
 
 naming:
   tools: "tool_{name}.go"

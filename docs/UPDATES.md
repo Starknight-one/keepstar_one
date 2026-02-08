@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-02-08 16:00
+
+### Search Relevance: Catalog Digest + RRF Tuning (fix/bug1-vector-search-relevance)
+- **catalog_digest_entity.go** (new): `CatalogDigest`, `DigestCategory`, `DigestParam` — pre-computed meta-schema of tenant catalog for Agent1 system prompt. `ToPromptText()` generates compact text with search strategy hints (→ filter / → vector_query). `ComputeFamilies()` groups ~100 RU/EN color names into 11 families via `colorFamilyMap`
+- **CatalogPort extensions**: `GenerateCatalogDigest`, `GetCatalogDigest`, `SaveCatalogDigest`, `GetAllTenants`. `VectorSearch` now accepts optional `*VectorFilter` (brand/category pre-filtering)
+- **catalog_migrations**: `catalog_digest JSONB` column on `catalog.tenants` table
+- **Agent1 enriched context**: `BuildAgent1ContextPrompt(meta, currentConfig, query, digest)` prepends `<catalog>` block (from digest) + `<state>` block (with RenderConfig) around user query
+- **Agent1SystemPrompt**: catalog-aware rules — exact category names from digest, category strategy (specific→filter, broad→vector_query only), high-cardinality params (families) → vector_query not filter
+- **RRF merge tuning**: keyword weight boost 1.5× default, 2.0× when structured filters (brand/category) are present
+- **VectorFilter**: `VectorSearch` pre-filters by brand/category before cosine ranking
+- **Agent1ExecuteUseCase**: now depends on `CatalogPort`, loads digest, passes `EnrichedQuery` to response
+- **Large seed data**: 6 category-specific seed files (clothing, shoes, phones, audio, home electronics, services)
+- **Tests**: catalog_digest_test.go (domain), prompt_analyze_query_test.go, tool_catalog_search_test.go, catalog_search_relevance_test.go, catalog_digest_test.go (adapter)
+
+### Stone: Expert + README Sync
+- Expert sync: 5 of 9 updated (backend-domain, backend-ports, backend-adapters, backend-usecases, backend-pipeline)
+- README sync: 6 updated (domain, ports, adapters/postgres, usecases, tools, prompts)
+
+---
+
 ## 2026-02-07 22:00
 
 ### Pipeline Span Waterfall Tracing (feature/pipeline-span-waterfall)

@@ -49,11 +49,16 @@ interfaces:
       - "GetMasterProduct(ctx, id) (*MasterProduct, error)"
       - "ListProducts(ctx, tenantID, filter) ([]Product, int, error)"
       - "GetProduct(ctx, tenantID, productID) (*Product, error)"
-      - "VectorSearch(ctx, tenantID, embedding []float32, limit) ([]Product, error) — semantic similarity via pgvector"
+      - "VectorSearch(ctx, tenantID, embedding []float32, limit, filter *VectorFilter) ([]Product, error) — semantic similarity via pgvector, optional brand/category pre-filter"
       - "SeedEmbedding(ctx, masterProductID, embedding []float32) error — saves embedding for a master product"
       - "GetMasterProductsWithoutEmbedding(ctx) ([]MasterProduct, error) — returns master products that need embeddings"
+      - "GenerateCatalogDigest(ctx, tenantID) (*CatalogDigest, error) — computes compact catalog meta-schema (categories, brands, params, cardinality)"
+      - "GetCatalogDigest(ctx, tenantID) (*CatalogDigest, error) — returns pre-computed digest from tenants.catalog_digest"
+      - "SaveCatalogDigest(ctx, tenantID, digest) error — persists digest to tenants table"
+      - "GetAllTenants(ctx) ([]Tenant, error) — all tenants for batch operations"
     types:
       - "ProductFilter: CategoryID, CategoryName, Brand, MinPrice, MaxPrice, Search, SortField, SortOrder, Limit, Offset, Attributes map[string]string"
+      - "VectorFilter: Brand, CategoryName — optional pre-filters for VectorSearch"
 
   embedding_port:
     file: "embedding_port.go"
@@ -99,6 +104,9 @@ gotchas:
   - "ProductFilter.CategoryName uses ILIKE matching (agent passes name, not UUID)"
   - "ProductFilter.Attributes filters against JSONB attributes with ILIKE values"
   - "VectorSearch requires embeddings to be seeded first via SeedEmbedding"
+  - "VectorSearch accepts optional *VectorFilter for brand/category pre-filtering before cosine ranking"
   - "EmbeddingPort.Embed accepts a batch of texts and returns parallel [][]float32 vectors"
+  - "CatalogDigest methods (Generate/Get/Save) enable pre-computed catalog schema for Agent1 prompt"
+  - "GetAllTenants used for batch digest generation across all tenants"
 
 naming: "{name}_port.go"

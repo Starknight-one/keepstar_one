@@ -9,6 +9,7 @@ type MasterProduct struct {
 	Description   string         `json:"description"`
 	Brand         string         `json:"brand"`
 	CategoryID    string         `json:"categoryId"`
+	CategoryName  string         `json:"categoryName,omitempty"` // populated by JOIN in some queries
 	Images        []string       `json:"images"`
 	Attributes    map[string]any `json:"attributes"`
 	OwnerTenantID string         `json:"ownerTenantId"`

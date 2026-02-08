@@ -83,6 +83,32 @@ entities:
     master_product_entity:
       file: "master_product_entity.go"
       types: ["MasterProduct"]
+      fields: ["ID", "SKU", "Name", "Description", "Brand", "CategoryID", "CategoryName", "Images", "Attributes", "OwnerTenantID", "CreatedAt", "UpdatedAt"]
+    catalog_digest_entity:
+      file: "catalog_digest_entity.go"
+      types: ["CatalogDigest", "DigestCategory", "DigestParam"]
+      purpose: "Pre-computed meta-schema of tenant catalog for Agent1 system prompt"
+      digest_fields: ["GeneratedAt", "TotalProducts", "Categories"]
+      category_fields: ["Name", "Slug", "Count", "PriceRange [2]int (kopecks)", "Params"]
+      param_fields: ["Key", "Type (enum|range)", "Cardinality", "Values", "Top", "More", "Families", "Range"]
+      param_tiers:
+        low_cardinality: "cardinality <= 15 → Values (full list)"
+        medium_cardinality: "cardinality 16-50 → Top (top-N) + More (remaining count)"
+        high_cardinality: "cardinality 50+ → Families (grouped values)"
+        range: "numeric → Range string (e.g. '36-47')"
+      methods:
+        - "ToPromptText() string — compact text for LLM prompt with search hints (→ filter / → vector_query)"
+      helpers:
+        - "formatPriceRange(minKop, maxKop) — kopecks→rubles display"
+        - "formatParam(p) — param line with search hint"
+        - "ComputeFamilies(key, values) []string — groups colors into families, top-10 for non-color"
+        - "computeColorFamilies(values) — maps Russian/English color names to family names"
+      vars:
+        - "colorFamilyMap — maps ~100 color names (RU/EN) to 11 color families (Red, Blue, Green, Black, White, Gray, Yellow, Orange, Pink, Purple, Brown)"
+      search_hints:
+        filter: "low/medium cardinality enum, range → use in filters.{param}"
+        vector_query: "high cardinality families → include in vector_query text"
+      test_file: "catalog_digest_test.go"
 
   pipeline:
     tool_entity:
@@ -144,6 +170,7 @@ entities:
 
   test_files:
     - "state_entity_test.go - DeltaInfo.ToDelta() tests: field transfer, empty TurnID, independent calls"
+    - "catalog_digest_test.go - DigestParam format, ToPromptText (basic, empty, large categories, price formatting, brand handling, filter hints, services), ComputeFamilies color grouping"
 
   errors:
     file: "domain_errors.go"

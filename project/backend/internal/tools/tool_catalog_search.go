@@ -225,7 +225,7 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		endSQL("keyword search")
 	}
 
-	// Vector search
+	// Vector search (with brand/category filters for precision)
 	var vectorProducts []domain.Product
 	if queryEmbedding != nil {
 		var endVector func(...string)
@@ -233,7 +233,11 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 			endVector = sc.Start(stage + ".tool.vector")
 		}
 		vectorStart := time.Now()
-		vectorProducts, _ = t.catalogPort.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2)
+		var vf *ports.VectorFilter
+		if brand != "" || category != "" {
+			vf = &ports.VectorFilter{Brand: brand, CategoryName: category}
+		}
+		vectorProducts, _ = t.catalogPort.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2, vf)
 		meta["vector_ms"] = time.Since(vectorStart).Milliseconds()
 		if endVector != nil {
 			endVector("pgvector")
@@ -243,7 +247,8 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	meta["vector_count"] = len(vectorProducts)
 
 	// RRF merge
-	merged := rrfMerge(keywordProducts, vectorProducts, limit)
+	hasFilters := brand != "" || category != ""
+	merged := rrfMerge(keywordProducts, vectorProducts, limit, hasFilters)
 	total := len(merged)
 	meta["merged_count"] = total
 	if len(keywordProducts) > 0 && len(vectorProducts) > 0 {
@@ -307,13 +312,19 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 }
 
 // rrfMerge combines keyword and vector results using Reciprocal Rank Fusion (k=60).
-func rrfMerge(keyword, vector []domain.Product, limit int) []domain.Product {
+// Keyword results are weighted higher (1.5×, or 2.0× when structured filters are present).
+func rrfMerge(keyword, vector []domain.Product, limit int, hasFilters bool) []domain.Product {
 	const k = 60
 	scores := make(map[string]float64)
 	products := make(map[string]domain.Product)
 
+	keywordWeight := 1.5
+	if hasFilters {
+		keywordWeight = 2.0
+	}
+
 	for rank, p := range keyword {
-		scores[p.ID] += 1.0 / float64(k+rank+1)
+		scores[p.ID] += keywordWeight / float64(k+rank+1)
 		products[p.ID] = p
 	}
 	for rank, p := range vector {

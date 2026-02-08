@@ -16,6 +16,7 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		migrationCatalogIndexes,
 		migrationCatalogCategorySlugUnique,
 		migrationCatalogPgvector,
+		migrationCatalogDigest,
 	}
 
 	for i, migration := range migrations {
@@ -116,4 +117,8 @@ BEGIN
 END $$;
 CREATE INDEX IF NOT EXISTS idx_master_products_embedding
     ON catalog.master_products USING hnsw (embedding vector_cosine_ops);
+`
+
+const migrationCatalogDigest = `
+ALTER TABLE catalog.tenants ADD COLUMN IF NOT EXISTS catalog_digest JSONB DEFAULT NULL;
 `

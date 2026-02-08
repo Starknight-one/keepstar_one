@@ -62,11 +62,12 @@ func NewPipelineExecuteUseCase(
 	statePort ports.StatePort,
 	cachePort ports.CachePort,
 	tracePort ports.TracePort,
+	catalogPort ports.CatalogPort,
 	toolRegistry *tools.Registry,
 	log *logger.Logger,
 ) *PipelineExecuteUseCase {
 	return &PipelineExecuteUseCase{
-		agent1UC:  NewAgent1ExecuteUseCase(llm, statePort, toolRegistry, log),
+		agent1UC:  NewAgent1ExecuteUseCase(llm, statePort, catalogPort, toolRegistry, log),
 		agent2UC:  NewAgent2ExecuteUseCase(llm, statePort, toolRegistry, log),
 		statePort: statePort,
 		cachePort: cachePort,

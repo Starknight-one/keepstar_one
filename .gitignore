@@ -22,3 +22,4 @@ node_modules/
 dist/
 project/backend/server
 project/backend/bin/
+project/backend/bootstrap

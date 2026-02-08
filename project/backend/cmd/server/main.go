@@ -91,6 +91,11 @@ func main() {
 		} else {
 			appLog.Info("extended_catalog_seed_completed", "status", "ok")
 		}
+		if err := postgres.SeedLargeCatalog(seedCtx, dbClient); err != nil {
+			appLog.Error("large_catalog_seed_failed", "error", err)
+		} else {
+			appLog.Info("large_catalog_seed_completed", "status", "ok")
+		}
 		seedCancel()
 
 		// Startup embedding: embed products that don't have embeddings yet
@@ -154,7 +159,7 @@ func main() {
 	// Initialize Agent 1 use case (Two-Agent Pipeline)
 	var agent1UC *usecases.Agent1ExecuteUseCase
 	if toolRegistry != nil {
-		agent1UC = usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog)
+		agent1UC = usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, catalogAdapter, toolRegistry, appLog)
 		appLog.Info("agent1_usecase_initialized", "status", "ok")
 	}
 	_ = agent1UC // Available for direct Agent 1 calls
@@ -170,7 +175,7 @@ func main() {
 	// Initialize Pipeline orchestrator (Agent 1 → Agent 2 → Formation)
 	var pipelineUC *usecases.PipelineExecuteUseCase
 	if toolRegistry != nil && stateAdapter != nil && cacheAdapter != nil {
-		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, traceAdapter, toolRegistry, appLog)
+		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, traceAdapter, catalogAdapter, toolRegistry, appLog)
 		appLog.Info("pipeline_usecase_initialized", "status", "ok")
 	}
 	_ = pipelineUC // Pipeline is ready to be called from handlers
@@ -228,6 +233,27 @@ func main() {
 	// Setup debug routes
 	if debugHandler != nil {
 		mux.HandleFunc("/debug/seed", debugHandler.HandleSeedState)
+	}
+
+	// Admin: generate catalog digests endpoint
+	if dbClient != nil && catalogAdapter != nil {
+		mux.HandleFunc("/admin/generate-digests", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			catalogForDigest := postgres.NewCatalogAdapter(dbClient)
+			go func() {
+				digestCtx, digestCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer digestCancel()
+				if err := generateAllDigests(digestCtx, catalogForDigest, appLog); err != nil {
+					appLog.Error("digest_generation_failed", "error", err)
+				}
+			}()
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, "Digest generation started in background")
+		})
+		appLog.Info("admin_digest_route_enabled", "url", "POST /admin/generate-digests")
 	}
 
 	// Admin: reindex embeddings endpoint
@@ -337,6 +363,26 @@ func main() {
 	appLog.Info("server_stopped")
 }
 
+func generateAllDigests(ctx context.Context, catalog *postgres.CatalogAdapter, log *logger.Logger) error {
+	tenants, err := catalog.GetAllTenants(ctx)
+	if err != nil {
+		return fmt.Errorf("get tenants: %w", err)
+	}
+	for _, t := range tenants {
+		digest, err := catalog.GenerateCatalogDigest(ctx, t.ID)
+		if err != nil {
+			log.Error("digest_generate_failed", "tenant", t.Slug, "error", err)
+			continue
+		}
+		if err := catalog.SaveCatalogDigest(ctx, t.ID, digest); err != nil {
+			log.Error("digest_save_failed", "tenant", t.Slug, "error", err)
+			continue
+		}
+		log.Info("digest_generated", "tenant", t.Slug, "categories", len(digest.Categories), "total_products", digest.TotalProducts)
+	}
+	return nil
+}
+
 func runEmbedding(ctx context.Context, catalog *postgres.CatalogAdapter, emb ports.EmbeddingPort, log *logger.Logger) error {
 	products, err := catalog.GetMasterProductsWithoutEmbedding(ctx)
 	if err != nil {
@@ -357,6 +403,19 @@ func runEmbedding(ctx context.Context, catalog *postgres.CatalogAdapter, emb por
 		}
 		if p.Brand != "" {
 			text += " " + p.Brand
+		}
+		if p.CategoryName != "" {
+			text += " " + p.CategoryName
+		}
+		// Include key attributes for richer semantic signal
+		if p.Attributes != nil {
+			for _, key := range []string{"color", "material", "type", "size"} {
+				if v, ok := p.Attributes[key]; ok {
+					if s, ok := v.(string); ok && s != "" {
+						text += " " + s
+					}
+				}
+			}
 		}
 		texts[i] = text
 	}

@@ -76,7 +76,7 @@ func TestPromptCaching_Chain(t *testing.T) {
 	toolRegistry := tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, nil)
 
 	// Initialize use cases
-	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
+	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, catalogAdapter, toolRegistry, log)
 
 	// Create session
 	sessionID := uuid.New().String()

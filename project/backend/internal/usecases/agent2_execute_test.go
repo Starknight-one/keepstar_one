@@ -19,10 +19,10 @@ import (
 // 4. Each widget has atoms with real data (not empty)
 // 5. Delta created for template zone
 func TestAgent2Execute_Integration(t *testing.T) {
-	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 60*time.Second)
+	ctx, cancel, stateAdapter, catalogAdapter, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 60*time.Second)
 	defer cancel()
 
-	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
+	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, catalogAdapter, toolRegistry, log)
 	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
 
 	t.Run("Agent2 renders formation after Agent1 search", func(t *testing.T) {
@@ -174,10 +174,10 @@ func TestAgent2Execute_Integration(t *testing.T) {
 // 5. Follow-up query in same session gets same products
 // 6. Delta field NOT in response (removed in this patch)
 func TestPipelineExecute_Integration(t *testing.T) {
-	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 90*time.Second)
+	ctx, cancel, stateAdapter, catalogAdapter, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 90*time.Second)
 	defer cancel()
 
-	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, nil, toolRegistry, log)
+	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, nil, catalogAdapter, toolRegistry, log)
 
 	t.Run("Nike query returns formation with widgets", func(t *testing.T) {
 		sessionID := uuid.New().String()
@@ -324,12 +324,12 @@ func TestPipelineExecute_Integration(t *testing.T) {
 
 // TestPipelineExecute_CostReport prints detailed cost report for full pipeline
 func TestPipelineExecute_CostReport(t *testing.T) {
-	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 60*time.Second)
+	ctx, cancel, stateAdapter, catalogAdapter, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 60*time.Second)
 	defer cancel()
 
-	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
+	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, catalogAdapter, toolRegistry, log)
 	agent2UC := usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
-	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, nil, toolRegistry, log)
+	pipelineUC := usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, nil, catalogAdapter, toolRegistry, log)
 
 	sessionID := uuid.New().String()
 	createTestSession(t, ctx, cacheAdapter, sessionID)

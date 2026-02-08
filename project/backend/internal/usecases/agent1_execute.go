@@ -47,6 +47,7 @@ type Agent1ExecuteResponse struct {
 type Agent1ExecuteUseCase struct {
 	llm          ports.LLMPort
 	statePort    ports.StatePort
+	catalogPort  ports.CatalogPort
 	toolRegistry *tools.Registry
 	log          *logger.Logger
 }
@@ -55,12 +56,14 @@ type Agent1ExecuteUseCase struct {
 func NewAgent1ExecuteUseCase(
 	llm ports.LLMPort,
 	statePort ports.StatePort,
+	catalogPort ports.CatalogPort,
 	toolRegistry *tools.Registry,
 	log *logger.Logger,
 ) *Agent1ExecuteUseCase {
 	return &Agent1ExecuteUseCase{
 		llm:          llm,
 		statePort:    statePort,
+		catalogPort:  catalogPort,
 		toolRegistry: toolRegistry,
 		log:          log,
 	}
@@ -115,8 +118,18 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		}
 	}
 
+	// Load pre-computed catalog digest for tenant context
+	var digest *domain.CatalogDigest
+	if uc.catalogPort != nil && req.TenantSlug != "" {
+		tenant, tenantErr := uc.catalogPort.GetTenantBySlug(ctx, req.TenantSlug)
+		if tenantErr == nil && tenant != nil {
+			digest, _ = uc.catalogPort.GetCatalogDigest(ctx, tenant.ID)
+			// Error is not critical — Agent1 works without digest
+		}
+	}
+
 	// Build enriched query with state context for LLM (ephemeral, not saved to history)
-	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, req.Query)
+	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, req.Query, digest)
 
 	// Build messages with conversation history
 	messages := state.ConversationHistory

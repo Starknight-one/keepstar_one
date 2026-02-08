@@ -7,16 +7,19 @@
 - `postgres_client.go` — Connection pool (pgxpool)
 - `postgres_cache.go` — Реализация CachePort (incl. DeleteSession)
 - `postgres_events.go` — Реализация EventPort
-- `postgres_catalog.go` — Реализация CatalogPort с product merging + VectorSearch (pgvector cosine), SeedEmbedding, GetMasterProductsWithoutEmbedding
+- `postgres_catalog.go` — Реализация CatalogPort с product merging + VectorSearch (pgvector cosine, optional VectorFilter), SeedEmbedding, GetMasterProductsWithoutEmbedding, GenerateCatalogDigest, GetCatalogDigest, SaveCatalogDigest, GetAllTenants
 - `postgres_state.go` — Реализация StatePort для two-agent pipeline
 - `postgres_trace.go` — Реализация TracePort: Record (DB + console printTrace с WATERFALL секцией для span'ов), List, Get
 - `migrations.go` — Миграции для chat таблиц
-- `catalog_migrations.go` — Миграции для catalog схемы + pgvector extension, embedding vector(384) column, HNSW index
+- `catalog_migrations.go` — Миграции для catalog схемы + pgvector extension, embedding vector(384) column, HNSW index, catalog_digest JSONB column
 - `state_migrations.go` — Миграции для state таблиц
 - `trace_migrations.go` — Миграции для pipeline_traces таблицы
 - `catalog_seed.go` — Seed данные (tenants, categories, products)
 - `retention.go` — RetentionService: periodic cleanup (traces, dead sessions, conversation trim)
-- `catalog_search_test.go` — Тесты CatalogPort (search)
+- `catalog_search_relevance_test.go` — Тесты CatalogPort (search relevance)
+- `catalog_digest_test.go` — Тесты CatalogPort (digest generation)
+- `catalog_seed_large.go` — Large seed data loader (multi-category catalog)
+- `catalog_seed_large_*.go` — Category-specific seed data (clothing, shoes, electronics, services)
 - `postgres_state_test.go` — Интеграционные тесты StatePort (zone-write, deltas)
 
 ## Схемы и таблицы
@@ -37,7 +40,7 @@
 
 | Таблица | Назначение |
 |---------|------------|
-| tenants | Бренды, ритейлеры, реселлеры |
+| tenants | Бренды, ритейлеры, реселлеры (+ catalog_digest JSONB) |
 | categories | Категории товаров (дерево) |
 | master_products | Канонические товары |
 | products | Листинги товаров по тенантам |

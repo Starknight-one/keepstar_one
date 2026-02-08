@@ -23,6 +23,7 @@
 - `tenant_entity.go` — Tenant (бренд/ритейлер/реселлер)
 - `category_entity.go` — Category (категория товаров)
 - `master_product_entity.go` — MasterProduct (канонический товар)
+- `catalog_digest_entity.go` — CatalogDigest, DigestCategory, DigestParam (pre-computed мета-схема каталога для Agent1 промпта). ToPromptText() генерирует компактный текст с search strategy hints (→ filter / → vector_query). ComputeFamilies() группирует цвета в семейства (colorFamilyMap: ~100 названий RU/EN → 11 семейств)
 
 ### Pipeline
 - `state_entity.go` — SessionState, Delta, DeltaInfo, StateData, ViewState, ViewSnapshot (state для pipeline). Delta.TurnID для группировки дельт по Turn'ам. DeltaInfo — лёгкая структура для zone-write, конвертируется в Delta через ToDelta(). SessionState содержит ConversationHistory для prompt caching

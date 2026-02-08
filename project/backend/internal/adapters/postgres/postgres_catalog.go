@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	pgvector "github.com/pgvector/pgvector-go"
 	"keepstar/internal/domain"
@@ -439,7 +442,8 @@ func formatPrice(kopecks int, currency string) string {
 }
 
 // VectorSearch finds products by semantic similarity via pgvector cosine distance.
-func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int) ([]domain.Product, error) {
+// filter may be nil for unfiltered search.
+func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int, filter *ports.VectorFilter) ([]domain.Product, error) {
 	query := `
 		SELECT
 			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
@@ -453,11 +457,26 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		WHERE p.tenant_id = $1
 		  AND mp.embedding IS NOT NULL
-		ORDER BY mp.embedding <=> $2
-		LIMIT $3
 	`
 
-	args := []interface{}{tenantID, pgvector.NewVector(embedding), limit}
+	args := []interface{}{tenantID, pgvector.NewVector(embedding)}
+	argNum := 3
+
+	if filter != nil {
+		if filter.Brand != "" {
+			query += fmt.Sprintf(" AND mp.brand ILIKE $%d", argNum)
+			args = append(args, "%"+filter.Brand+"%")
+			argNum++
+		}
+		if filter.CategoryName != "" {
+			query += fmt.Sprintf(" AND (c.name ILIKE $%d OR c.slug ILIKE $%d)", argNum, argNum)
+			args = append(args, "%"+filter.CategoryName+"%")
+			argNum++
+		}
+	}
+
+	query += fmt.Sprintf(" ORDER BY mp.embedding <=> $2 LIMIT $%d", argNum)
+	args = append(args, limit)
 
 	rows, err := a.client.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -532,13 +551,16 @@ func (a *CatalogAdapter) SeedEmbedding(ctx context.Context, masterProductID stri
 }
 
 // GetMasterProductsWithoutEmbedding returns master products that need embeddings.
+// Includes CategoryName via JOIN for richer embedding text.
 func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context) ([]domain.MasterProduct, error) {
 	query := `
-		SELECT id, sku, name, COALESCE(description, '') as description, COALESCE(brand, '') as brand,
-		       COALESCE(category_id::text, '') as category_id
-		FROM catalog.master_products
-		WHERE embedding IS NULL
-		ORDER BY created_at
+		SELECT mp.id, mp.sku, mp.name, COALESCE(mp.description, '') as description,
+		       COALESCE(mp.brand, '') as brand, COALESCE(mp.category_id::text, '') as category_id,
+		       COALESCE(c.name, '') as category_name, COALESCE(mp.attributes::text, '{}') as attributes
+		FROM catalog.master_products mp
+		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		WHERE mp.embedding IS NULL
+		ORDER BY mp.created_at
 	`
 
 	rows, err := a.client.pool.Query(ctx, query)
@@ -550,11 +572,310 @@ func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context) 
 	var products []domain.MasterProduct
 	for rows.Next() {
 		var p domain.MasterProduct
-		if err := rows.Scan(&p.ID, &p.SKU, &p.Name, &p.Description, &p.Brand, &p.CategoryID); err != nil {
+		var attrsJSON string
+		if err := rows.Scan(&p.ID, &p.SKU, &p.Name, &p.Description, &p.Brand, &p.CategoryID, &p.CategoryName, &attrsJSON); err != nil {
 			return nil, fmt.Errorf("scan master product: %w", err)
+		}
+		if attrsJSON != "{}" && attrsJSON != "" {
+			_ = json.Unmarshal([]byte(attrsJSON), &p.Attributes)
 		}
 		products = append(products, p)
 	}
 
 	return products, nil
+}
+
+// GetAllTenants returns all tenants for batch operations (e.g. digest generation).
+func (a *CatalogAdapter) GetAllTenants(ctx context.Context) ([]domain.Tenant, error) {
+	query := `
+		SELECT id, slug, name, type, settings, created_at, updated_at
+		FROM catalog.tenants
+		ORDER BY slug
+	`
+
+	rows, err := a.client.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query all tenants: %w", err)
+	}
+	defer rows.Close()
+
+	var tenants []domain.Tenant
+	for rows.Next() {
+		var t domain.Tenant
+		var settingsJSON []byte
+		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Type, &settingsJSON, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan tenant: %w", err)
+		}
+		if len(settingsJSON) > 0 {
+			_ = json.Unmarshal(settingsJSON, &t.Settings)
+		}
+		tenants = append(tenants, t)
+	}
+
+	return tenants, nil
+}
+
+// GenerateCatalogDigest computes a compact catalog meta-schema for a tenant.
+func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID string) (*domain.CatalogDigest, error) {
+	// Query 1: categories + brands + prices
+	catQuery := `
+		SELECT
+			c.name AS category_name,
+			c.slug AS category_slug,
+			COUNT(DISTINCT mp.id) AS product_count,
+			ARRAY_AGG(DISTINCT mp.brand) FILTER (WHERE mp.brand IS NOT NULL AND mp.brand != '') AS brands,
+			MIN(p.price) AS min_price,
+			MAX(p.price) AS max_price
+		FROM catalog.products p
+		JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		JOIN catalog.categories c ON mp.category_id = c.id
+		WHERE p.tenant_id = $1
+		GROUP BY c.name, c.slug
+		ORDER BY product_count DESC
+	`
+
+	catRows, err := a.client.pool.Query(ctx, catQuery, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query categories for digest: %w", err)
+	}
+	defer catRows.Close()
+
+	type catInfo struct {
+		name     string
+		slug     string
+		count    int
+		brands   []string
+		minPrice int
+		maxPrice int
+	}
+	var catInfos []catInfo
+	totalProducts := 0
+
+	for catRows.Next() {
+		var ci catInfo
+		var brands []string
+		if err := catRows.Scan(&ci.name, &ci.slug, &ci.count, &brands, &ci.minPrice, &ci.maxPrice); err != nil {
+			return nil, fmt.Errorf("scan category digest: %w", err)
+		}
+		// Filter out empty brands
+		for _, b := range brands {
+			if b != "" {
+				ci.brands = append(ci.brands, b)
+			}
+		}
+		totalProducts += ci.count
+		catInfos = append(catInfos, ci)
+	}
+
+	if len(catInfos) == 0 {
+		return &domain.CatalogDigest{
+			GeneratedAt:   time.Now(),
+			TotalProducts: 0,
+			Categories:    []domain.DigestCategory{},
+		}, nil
+	}
+
+	// Query 2: attributes with cardinality per category
+	attrQuery := `
+		SELECT
+			c.name AS category_name,
+			attr.key AS attr_key,
+			COUNT(DISTINCT attr.value) AS cardinality,
+			ARRAY_AGG(DISTINCT attr.value ORDER BY attr.value) AS all_values
+		FROM catalog.products p
+		JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		JOIN catalog.categories c ON mp.category_id = c.id,
+		LATERAL jsonb_each_text(mp.attributes) AS attr(key, value)
+		WHERE p.tenant_id = $1
+		  AND attr.value IS NOT NULL AND attr.value != ''
+		GROUP BY c.name, attr.key
+		ORDER BY c.name, cardinality DESC
+	`
+
+	attrRows, err := a.client.pool.Query(ctx, attrQuery, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query attributes for digest: %w", err)
+	}
+	defer attrRows.Close()
+
+	// Build category → attrs map
+	type attrInfo struct {
+		key         string
+		cardinality int
+		values      []string
+	}
+	catAttrs := make(map[string][]attrInfo)
+
+	for attrRows.Next() {
+		var catName, attrKey string
+		var cardinality int
+		var values []string
+		if err := attrRows.Scan(&catName, &attrKey, &cardinality, &values); err != nil {
+			return nil, fmt.Errorf("scan attribute digest: %w", err)
+		}
+		catAttrs[catName] = append(catAttrs[catName], attrInfo{
+			key:         attrKey,
+			cardinality: cardinality,
+			values:      values,
+		})
+	}
+
+	// Build digest categories
+	categories := make([]domain.DigestCategory, 0, len(catInfos))
+	for _, ci := range catInfos {
+		dc := domain.DigestCategory{
+			Name:       ci.name,
+			Slug:       ci.slug,
+			Count:      ci.count,
+			PriceRange: [2]int{ci.minPrice, ci.maxPrice},
+		}
+
+		// Brand as first param
+		if len(ci.brands) > 0 {
+			dc.Params = append(dc.Params, buildDigestParam("brand", ci.brands))
+		}
+
+		// Attributes
+		if attrs, ok := catAttrs[ci.name]; ok {
+			for _, ai := range attrs {
+				dc.Params = append(dc.Params, buildDigestParam(ai.key, ai.values))
+			}
+		}
+
+		categories = append(categories, dc)
+	}
+
+	return &domain.CatalogDigest{
+		GeneratedAt:   time.Now(),
+		TotalProducts: totalProducts,
+		Categories:    categories,
+	}, nil
+}
+
+// buildDigestParam creates a DigestParam applying cardinality rules.
+func buildDigestParam(key string, values []string) domain.DigestParam {
+	cardinality := len(values)
+
+	// Check if values are numeric (for range params like size)
+	if isNumericValues(values) && cardinality > 1 {
+		minVal, maxVal := numericRange(values)
+		return domain.DigestParam{
+			Key:         key,
+			Type:        "range",
+			Cardinality: cardinality,
+			Range:       fmt.Sprintf("%s-%s", minVal, maxVal),
+		}
+	}
+
+	p := domain.DigestParam{
+		Key:         key,
+		Type:        "enum",
+		Cardinality: cardinality,
+	}
+
+	switch {
+	case cardinality <= 15:
+		p.Values = values
+	case cardinality <= 50:
+		top := 5
+		if top > cardinality {
+			top = cardinality
+		}
+		p.Top = values[:top]
+		p.More = cardinality - top
+	default:
+		// 50+ values → families
+		p.Families = domain.ComputeFamilies(key, values)
+		if len(p.Families) == 0 {
+			// Fallback: top 10 values
+			top := 10
+			if top > cardinality {
+				top = cardinality
+			}
+			p.Top = values[:top]
+			p.More = cardinality - top
+		}
+	}
+
+	return p
+}
+
+// stripNumericSuffix removes common unit suffixes for numeric parsing.
+func stripNumericSuffix(s string) string {
+	clean := strings.TrimSpace(s)
+	// Remove common unit suffixes
+	for _, suffix := range []string{"GB", "MB", "TB", "mm", "inch", "\"", " inch"} {
+		clean = strings.TrimSuffix(clean, suffix)
+	}
+	return strings.TrimSpace(clean)
+}
+
+// isNumericValues checks if all values are purely numeric (possibly with unit suffixes).
+func isNumericValues(values []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for _, v := range values {
+		clean := stripNumericSuffix(v)
+		if _, err := strconv.ParseFloat(clean, 64); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// numericRange returns min and max original string representations from numeric values.
+func numericRange(values []string) (string, string) {
+	if len(values) == 0 {
+		return "0", "0"
+	}
+	// Sort numerically using stripped values
+	sorted := make([]string, len(values))
+	copy(sorted, values)
+	sort.Slice(sorted, func(i, j int) bool {
+		ni, _ := strconv.ParseFloat(stripNumericSuffix(sorted[i]), 64)
+		nj, _ := strconv.ParseFloat(stripNumericSuffix(sorted[j]), 64)
+		return ni < nj
+	})
+	return sorted[0], sorted[len(sorted)-1]
+}
+
+// SaveCatalogDigest persists the computed digest to the tenants table.
+func (a *CatalogAdapter) SaveCatalogDigest(ctx context.Context, tenantID string, digest *domain.CatalogDigest) error {
+	digestJSON, err := json.Marshal(digest)
+	if err != nil {
+		return fmt.Errorf("marshal digest: %w", err)
+	}
+
+	query := `UPDATE catalog.tenants SET catalog_digest = $2, updated_at = NOW() WHERE id = $1`
+	_, err = a.client.pool.Exec(ctx, query, tenantID, digestJSON)
+	if err != nil {
+		return fmt.Errorf("save digest: %w", err)
+	}
+	return nil
+}
+
+// GetCatalogDigest returns the pre-computed digest from tenants.catalog_digest.
+func (a *CatalogAdapter) GetCatalogDigest(ctx context.Context, tenantID string) (*domain.CatalogDigest, error) {
+	query := `SELECT catalog_digest FROM catalog.tenants WHERE id = $1`
+
+	var digestJSON []byte
+	err := a.client.pool.QueryRow(ctx, query, tenantID).Scan(&digestJSON)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query digest: %w", err)
+	}
+
+	if len(digestJSON) == 0 {
+		return nil, nil
+	}
+
+	var digest domain.CatalogDigest
+	if err := json.Unmarshal(digestJSON, &digest); err != nil {
+		return nil, fmt.Errorf("unmarshal digest: %w", err)
+	}
+
+	return &digest, nil
 }

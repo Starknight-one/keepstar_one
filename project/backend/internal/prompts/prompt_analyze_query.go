@@ -33,6 +33,19 @@ Rules:
    - If user asks about fields ALREADY in available_fields → style request, DO NOT call tool
    - If user asks for DIFFERENT data (new brand, category, search) → call catalog_search
 10. When <state> is absent, treat as new data request.
+11. When <catalog> block is present, use it to form precise search filters:
+    - Params marked "→ filter": use EXACT values in filters.{param}
+    - Params marked "→ vector_query": include descriptive text in vector_query (semantic match)
+    - Use EXACT category names from the catalog tree
+    - Use price_range to validate min_price/max_price make sense
+    - Translate user terms to catalog terms: "Найк" → "Nike", "кроссы" → look at Running Shoes category
+12. Category strategy:
+    - Specific product request ("кроссовки Nike") → set category filter to exact name from catalog
+    - Broad/activity request ("для бега до 12000", "в подарок маме") → do NOT set category filter, use only vector_query + price filter
+    - Ambiguous ("обувь") → if multiple categories match, omit category filter
+13. High-cardinality attributes (colors, models, etc.):
+    - If a param shows "families" or cardinality > 15, do NOT try exact filter — put it in vector_query
+    - Example: user says "салатовые" → vector_query: "салатовые зелёные кроссовки", NOT filter.color: "салатовый"
 
 Examples:
 - "покажи кроссы Найк" → catalog_search(vector_query="кроссы", filters={brand:"Nike"})
@@ -64,11 +77,22 @@ Extract:
 JSON response:`
 
 // BuildAgent1ContextPrompt enriches the user query with current state context.
-// If no data is loaded (ProductCount=0, ServiceCount=0), returns raw query unchanged.
+// If digest is non-nil, prepends a <catalog> block with the digest text.
+// If no data is loaded (ProductCount=0, ServiceCount=0), returns raw query (with optional catalog).
 // Otherwise wraps state summary in <state> block before the query.
-func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.RenderConfig, userQuery string) string {
+func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.RenderConfig, userQuery string, digest *domain.CatalogDigest) string {
+	var prefix string
+
+	// Add catalog digest if available
+	if digest != nil {
+		digestText := digest.ToPromptText()
+		if digestText != "" {
+			prefix = "<catalog>\n" + digestText + "</catalog>\n\n"
+		}
+	}
+
 	if meta.ProductCount == 0 && meta.ServiceCount == 0 {
-		return userQuery
+		return prefix + userQuery
 	}
 
 	stateInfo := map[string]interface{}{
@@ -94,7 +118,7 @@ func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.Rende
 	}
 
 	jsonBytes, _ := json.Marshal(stateInfo)
-	return fmt.Sprintf("<state>\n%s\n</state>\n\n%s", string(jsonBytes), userQuery)
+	return prefix + fmt.Sprintf("<state>\n%s\n</state>\n\n%s", string(jsonBytes), userQuery)
 }
 
 // BuildAnalyzeQueryPrompt builds the prompt for query analysis (legacy)

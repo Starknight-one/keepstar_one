@@ -93,10 +93,10 @@ func createTestSession(t *testing.T, ctx context.Context, cacheAdapter *postgres
 // 4. Preserves Aliases (tenant_slug)
 // 5. Saves conversation history
 func TestAgent1Execute_Integration(t *testing.T) {
-	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 60*time.Second)
+	ctx, cancel, stateAdapter, catalogAdapter, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 60*time.Second)
 	defer cancel()
 
-	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
+	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, catalogAdapter, toolRegistry, log)
 
 	t.Run("Nike query produces products in state", func(t *testing.T) {
 		sessionID := uuid.New().String()
@@ -201,11 +201,11 @@ func TestAgent1Execute_Integration(t *testing.T) {
 
 // TestAgent1_OnlyGetsDataTools verifies Agent1 tool filter excludes render tools
 func TestAgent1_OnlyGetsDataTools(t *testing.T) {
-	ctx, cancel, stateAdapter, _, _, toolRegistry, llmClient, log := setupIntegration(t, 10*time.Second)
+	ctx, cancel, stateAdapter, catalogAdapter, _, toolRegistry, llmClient, log := setupIntegration(t, 10*time.Second)
 	defer cancel()
 	_ = ctx
 
-	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
+	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, catalogAdapter, toolRegistry, log)
 	toolDefs := agent1UC.GetToolDefs()
 
 	var hasSearch, hasRender, hasFreestyle bool
@@ -251,10 +251,10 @@ func TestAgent1_OnlyGetsDataTools(t *testing.T) {
 
 // TestAgent1Execute_CostEstimate runs a single query and prints detailed cost info
 func TestAgent1Execute_CostEstimate(t *testing.T) {
-	ctx, cancel, stateAdapter, _, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 30*time.Second)
+	ctx, cancel, stateAdapter, catalogAdapter, cacheAdapter, toolRegistry, llmClient, log := setupIntegration(t, 30*time.Second)
 	defer cancel()
 
-	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, toolRegistry, log)
+	agent1UC := usecases.NewAgent1ExecuteUseCase(llmClient, stateAdapter, catalogAdapter, toolRegistry, log)
 	sessionID := uuid.New().String()
 	createTestSession(t, ctx, cacheAdapter, sessionID)
 

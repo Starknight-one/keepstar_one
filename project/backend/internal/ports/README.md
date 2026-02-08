@@ -60,9 +60,15 @@ ListProducts(ctx, tenantID, filter) ([]Product, int, error)
 GetProduct(ctx, tenantID, productID) (*Product, error)
 
 // Vector search (pgvector)
-VectorSearch(ctx, tenantID, embedding []float32, limit) ([]Product, error)
+VectorSearch(ctx, tenantID, embedding []float32, limit, filter *VectorFilter) ([]Product, error)
 SeedEmbedding(ctx, masterProductID, embedding []float32) error
 GetMasterProductsWithoutEmbedding(ctx) ([]MasterProduct, error)
+
+// Catalog digest (pre-computed meta-schema)
+GenerateCatalogDigest(ctx, tenantID) (*CatalogDigest, error)
+GetCatalogDigest(ctx, tenantID) (*CatalogDigest, error)
+SaveCatalogDigest(ctx, tenantID, digest) error
+GetAllTenants(ctx) ([]Tenant, error)
 ```
 
 Types:
@@ -79,6 +85,11 @@ type ProductFilter struct {
     Limit        int
     Offset       int
     Attributes   map[string]string // JSONB attribute filters (key → ILIKE value)
+}
+
+type VectorFilter struct {
+    Brand        string
+    CategoryName string
 }
 ```
 

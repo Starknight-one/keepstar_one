@@ -75,16 +75,20 @@ func (uc *GetProductUseCase) Execute(ctx, req) (*Product, error)
 Agent 1 (Tool Caller) для two-agent pipeline:
 - Стартует span `agent1` + устанавливает `WithStage(ctx, "agent1")`
 - Получает/создаёт state сессии
-- Строит messages из ConversationHistory + новый запрос
+- Устанавливает tenant_slug в state aliases
+- Извлекает текущий RenderConfig из formation (для context prompt)
+- Загружает pre-computed CatalogDigest для тенанта (GetCatalogDigest)
+- Строит enriched query через `BuildAgent1ContextPrompt(meta, currentConfig, query, digest)` — добавляет `<catalog>` + `<state>` блоки
+- Строит messages из ConversationHistory + enriched query
 - Вызывает LLM с ChatWithToolsCached (cache tools, system, conversation)
 - Выполняет tool call через Registry (span: `agent1.tool`)
-- Создаёт и сохраняет delta через DeltaInfo.ToDelta()
-- AppendConversation zone-write (span: `agent1.state`)
+- AppendConversation zone-write (span: `agent1.state`) — сохраняет raw query (не enriched)
 
 ```go
 type Agent1ExecuteUseCase struct {
     llm          ports.LLMPort
     statePort    ports.StatePort
+    catalogPort  ports.CatalogPort
     toolRegistry *tools.Registry
     log          *logger.Logger
 }
