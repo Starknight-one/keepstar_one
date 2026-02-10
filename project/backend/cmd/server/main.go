@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -293,6 +294,21 @@ func main() {
 		catalogHandler := handlers.NewCatalogHandler(listProductsUC, getProductUC, appLog)
 		handlers.SetupCatalogRoutes(mux, catalogHandler, tenantMiddleware)
 		appLog.Info("catalog_routes_enabled", "status", "ok")
+	}
+
+	// SPA file server: serve React frontend from ./static
+	staticDir := "./static"
+	if _, err := os.Stat(staticDir); err == nil {
+		fs := http.FileServer(http.Dir(staticDir))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			path := filepath.Join(staticDir, r.URL.Path)
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				fs.ServeHTTP(w, r)
+				return
+			}
+			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
+		})
+		appLog.Info("spa_file_server_enabled", "dir", staticDir)
 	}
 
 	// Apply middleware
