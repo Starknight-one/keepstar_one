@@ -16,17 +16,22 @@
 ## Домены и сервисы
 
 ```
-keepstar.one              → Основной продукт (Amvera + Vercel)
-                            ├── Go backend (API + widget.js статика)
-                            ├── Админка (React SPA, project_admin/)
-                            └── Всё в одном месте: API, виджет, админка
+keepstar.one              → Hetzner VPS (~€4/мес), один сервер
+                            Go backend отдаёт:
+                            ├── /api/v1/*      — API (pipeline, session, navigation, catalog)
+                            ├── /widget.js     — JS-бандл виджета (статика)
+                            └── /admin/*       — Админка (собранный React SPA, статика)
 
-swarm-engineer.ru         → Демо-клиент #1 (имитация сайта клиента)
-                            HTML/React страница + <script src="keepstar.one/widget.js" data-tenant="...">
+swarm-engineer.ru         → Демо-клиент #1 (Amvera, имитация сайта клиента)
+                            React-приложение + <script src="https://keepstar.one/widget.js" data-tenant="...">
 
-swarmengineer.ru          → Демо-клиент #2 (имитация сайта клиента)
-                            Простая HTML-страница + <script src="keepstar.one/widget.js" data-tenant="...">
+swarmengineer.ru          → Демо-клиент #2 (Amvera, имитация сайта клиента)
+                            HTML-страница + <script src="https://keepstar.one/widget.js" data-tenant="...">
 ```
+
+Hetzner выбран потому что LLM API (Anthropic, OpenAI) доступны без блокировок.
+Amvera блокирует внешние API — не подходит для основного сервера, только для демо-сайтов.
+Альтернативы если Hetzner не получится: Railway.app ($5 кредитов/мес), Fly.io ($5/мес), Render.com (free tier).
 
 ## Архитектура
 
@@ -151,10 +156,12 @@ Widget.js раздаётся прямо с Go backend на keepstar.one. Для 
 - Тест: запрос → карточки появляются в overlay
 
 ### Этап 3: Deploy на keepstar.one (1 сессия)
-- Go backend раздаёт widget.js как static file
-- Деплой на Amvera (keepstar.one)
+- Hetzner VPS: Docker или бинарник Go
+- Go backend раздаёт widget.js как static file + API + админку
+- keepstar.one DNS → Hetzner IP
+- Let's Encrypt SSL (certbot)
 - CORS настроен для любого origin (уже `*`)
-- Тест: keepstar.one/widget.js доступен
+- Тест: keepstar.one/widget.js доступен, API отвечает
 
 ### Этап 4: Демо-клиенты (1 сессия)
 - swarm-engineer.ru → React-приложение + `<script>` виджета
