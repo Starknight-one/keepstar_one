@@ -14,7 +14,7 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		Port:           getEnv("ADMIN_PORT", "8081"),
+		Port:           getEnv("PORT", getEnv("ADMIN_PORT", "8081")),
 		Environment:    getEnv("ENVIRONMENT", "development"),
 		DatabaseURL:    getEnv("DATABASE_URL", ""),
 		JWTSecret:      getEnv("JWT_SECRET", "keepstar-admin-secret-change-me"),
