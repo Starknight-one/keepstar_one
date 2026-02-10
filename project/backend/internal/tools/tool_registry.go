@@ -68,9 +68,6 @@ func (r *Registry) GetDefinitions() []domain.ToolDefinition {
 		defs = append(defs, tool.Definition())
 	}
 
-	// Add padding tools for cache threshold (temporary)
-	defs = append(defs, GetCachePaddingTools()...)
-
 	return defs
 }
 

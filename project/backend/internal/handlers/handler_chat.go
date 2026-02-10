@@ -2,21 +2,23 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
+	"keepstar/internal/logger"
 	"keepstar/internal/usecases"
 )
 
 // ChatHandler handles chat endpoints
 type ChatHandler struct {
 	sendMessage *usecases.SendMessageUseCase
+	log         *logger.Logger
 }
 
 // NewChatHandler creates a new chat handler
-func NewChatHandler(sendMessage *usecases.SendMessageUseCase) *ChatHandler {
+func NewChatHandler(sendMessage *usecases.SendMessageUseCase, log *logger.Logger) *ChatHandler {
 	return &ChatHandler{
 		sendMessage: sendMessage,
+		log:         log,
 	}
 }
 
@@ -63,7 +65,7 @@ func (h *ChatHandler) HandleChat(w http.ResponseWriter, r *http.Request) {
 		Message:   req.Message,
 	})
 	if err != nil {
-		log.Printf("Chat error: %v", err)
+		h.log.Error("chat_error", "error", err)
 		http.Error(w, "Failed to get AI response", http.StatusInternalServerError)
 		return
 	}

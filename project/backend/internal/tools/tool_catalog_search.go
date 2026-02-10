@@ -237,7 +237,11 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		if brand != "" || category != "" {
 			vf = &ports.VectorFilter{Brand: brand, CategoryName: category}
 		}
-		vectorProducts, _ = t.catalogPort.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2, vf)
+		var vectorErr error
+		vectorProducts, vectorErr = t.catalogPort.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2, vf)
+		if vectorErr != nil {
+			meta["vector_error"] = vectorErr.Error()
+		}
 		meta["vector_ms"] = time.Since(vectorStart).Milliseconds()
 		if endVector != nil {
 			endVector("pgvector")

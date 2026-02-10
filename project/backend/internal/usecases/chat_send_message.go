@@ -2,32 +2,30 @@ package usecases
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 	"keepstar/internal/ports"
 )
-
-// DefaultSessionTTL is the default session timeout
-// Deprecated: use domain.SessionTTL instead
-const DefaultSessionTTL = 5 * time.Minute
 
 // SendMessageUseCase handles simple chat message sending
 type SendMessageUseCase struct {
 	llm        ports.LLMPort
 	cache      ports.CachePort
 	events     ports.EventPort
+	log        *logger.Logger
 	sessionTTL time.Duration
 }
 
 // NewSendMessageUseCase creates a new use case
-func NewSendMessageUseCase(llm ports.LLMPort, cache ports.CachePort, events ports.EventPort) *SendMessageUseCase {
+func NewSendMessageUseCase(llm ports.LLMPort, cache ports.CachePort, events ports.EventPort, log *logger.Logger) *SendMessageUseCase {
 	return &SendMessageUseCase{
 		llm:        llm,
 		cache:      cache,
 		events:     events,
+		log:        log,
 		sessionTTL: domain.SessionTTL,
 	}
 }
@@ -74,7 +72,7 @@ func (uc *SendMessageUseCase) Execute(ctx context.Context, req SendMessageReques
 			session.EndedAt = &now
 			session.UpdatedAt = now
 			if err := uc.cache.SaveSession(ctx, session); err != nil {
-				log.Printf("Failed to close expired session: %v", err)
+				uc.log.Warn("failed to close expired session", "error", err)
 			}
 
 			// Track timeout event
@@ -150,7 +148,7 @@ func (uc *SendMessageUseCase) Execute(ctx context.Context, req SendMessageReques
 	// Save session first (before tracking events due to foreign key)
 	if uc.cache != nil {
 		if err := uc.cache.SaveSession(ctx, session); err != nil {
-			log.Printf("Failed to save session: %v", err)
+			uc.log.Warn("failed to save session", "error", err)
 		}
 	}
 
@@ -162,7 +160,7 @@ func (uc *SendMessageUseCase) Execute(ctx context.Context, req SendMessageReques
 				EventType: domain.EventChatOpened,
 				CreatedAt: now,
 			}); err != nil {
-				log.Printf("Failed to track chat_opened event: %v", err)
+				uc.log.Warn("failed to track chat_opened event", "error", err)
 			}
 		}
 
@@ -172,7 +170,7 @@ func (uc *SendMessageUseCase) Execute(ctx context.Context, req SendMessageReques
 			EventData: map[string]any{"message_id": userMsg.ID},
 			CreatedAt: now,
 		}); err != nil {
-			log.Printf("Failed to track message_sent event: %v", err)
+			uc.log.Warn("failed to track message_sent event", "error", err)
 		}
 
 		if err := uc.events.TrackEvent(ctx, &domain.ChatEvent{
@@ -184,7 +182,7 @@ func (uc *SendMessageUseCase) Execute(ctx context.Context, req SendMessageReques
 			},
 			CreatedAt: receivedAt,
 		}); err != nil {
-			log.Printf("Failed to track message_received event: %v", err)
+			uc.log.Warn("failed to track message_received event", "error", err)
 		}
 	}
 

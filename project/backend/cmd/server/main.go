@@ -181,10 +181,10 @@ func main() {
 	_ = pipelineUC // Pipeline is ready to be called from handlers
 
 	// Initialize use cases
-	sendMessage := usecases.NewSendMessageUseCase(llmClient, cacheAdapter, eventAdapter)
+	sendMessage := usecases.NewSendMessageUseCase(llmClient, cacheAdapter, eventAdapter, appLog)
 
 	// Initialize handlers
-	chatHandler := handlers.NewChatHandler(sendMessage)
+	chatHandler := handlers.NewChatHandler(sendMessage, appLog)
 	sessionHandler := handlers.NewSessionHandler(cacheAdapter)
 	healthHandler := handlers.NewHealthHandler()
 
@@ -290,7 +290,7 @@ func main() {
 	if catalogAdapter != nil {
 		listProductsUC := usecases.NewListProductsUseCase(catalogAdapter)
 		getProductUC := usecases.NewGetProductUseCase(catalogAdapter)
-		catalogHandler := handlers.NewCatalogHandler(listProductsUC, getProductUC)
+		catalogHandler := handlers.NewCatalogHandler(listProductsUC, getProductUC, appLog)
 		handlers.SetupCatalogRoutes(mux, catalogHandler, tenantMiddleware)
 		appLog.Info("catalog_routes_enabled", "status", "ok")
 	}

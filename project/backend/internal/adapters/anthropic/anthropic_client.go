@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
@@ -480,7 +480,7 @@ func (c *Client) ChatWithToolsCached(
 			GotFirstResponseByte: func() {
 				ttfbDuration := time.Since(ttfbStart)
 				if ttfbDuration > 10*time.Second {
-					log.Printf("[WARN] slow LLM TTFB: %s took %v", stage, ttfbDuration)
+					slog.Warn("slow LLM TTFB", "stage", stage, "duration", ttfbDuration)
 				}
 				if endTTFB != nil {
 					endTTFB()

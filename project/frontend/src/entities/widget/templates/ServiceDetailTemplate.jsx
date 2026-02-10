@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AtomRenderer } from '../../atom/AtomRenderer';
+import { groupAtomsBySlot, normalizeImages } from './templateUtils';
 import './ServiceDetailTemplate.css';
 
 // Slot names match backend domain.AtomSlot
@@ -91,26 +92,6 @@ export function ServiceDetailTemplate({ atoms = [] }) {
       </div>
     </div>
   );
-}
-
-// Group atoms by their slot field
-function groupAtomsBySlot(atoms) {
-  const slots = {};
-  for (const atom of atoms) {
-    const slot = atom.slot || 'primary';
-    if (!slots[slot]) {
-      slots[slot] = [];
-    }
-    slots[slot].push(atom);
-  }
-  return slots;
-}
-
-// Normalize image value to array
-function normalizeImages(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string') return [value];
-  return [];
 }
 
 function ImageGallery({ images, currentIndex, onIndexChange }) {

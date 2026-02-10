@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { AtomRenderer } from '../../atom/AtomRenderer';
+import { groupAtomsBySlot, normalizeImages } from './templateUtils';
+import { ImageCarousel } from './ImageCarousel';
 import './ServiceCardTemplate.css';
 
 // Slot names match backend domain.AtomSlot
@@ -104,60 +106,6 @@ export function ServiceCardTemplate({ atoms = [], size = 'medium' }) {
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-// Group atoms by their slot field
-function groupAtomsBySlot(atoms) {
-  const slots = {};
-  for (const atom of atoms) {
-    const slot = atom.slot || 'primary'; // Default to primary if no slot
-    if (!slots[slot]) {
-      slots[slot] = [];
-    }
-    slots[slot].push(atom);
-  }
-  return slots;
-}
-
-// Normalize image value to array
-function normalizeImages(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string') return [value];
-  return [];
-}
-
-function ImageCarousel({ images, currentIndex, onIndexChange }) {
-  if (!images || images.length === 0) return null;
-
-  const handleDotClick = (index) => {
-    onIndexChange(index);
-  };
-
-  const handleImageClick = () => {
-    onIndexChange((currentIndex + 1) % images.length);
-  };
-
-  return (
-    <div className="image-carousel">
-      <img
-        src={images[currentIndex]}
-        alt=""
-        className="carousel-image"
-        onClick={handleImageClick}
-      />
-      {images.length > 1 && (
-        <div className="carousel-dots">
-          {images.map((_, index) => (
-            <button
-              key={index}
-              className={`carousel-dot ${index === currentIndex ? 'active' : ''}`}
-              onClick={() => handleDotClick(index)}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }

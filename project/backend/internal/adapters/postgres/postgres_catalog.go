@@ -3,12 +3,15 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	pgvector "github.com/pgvector/pgvector-go"
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
@@ -46,7 +49,7 @@ func (a *CatalogAdapter) GetTenantBySlug(ctx context.Context, slug string) (*dom
 	)
 
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrTenantNotFound
 		}
 		return nil, fmt.Errorf("query tenant: %w", err)
@@ -113,7 +116,7 @@ func (a *CatalogAdapter) GetMasterProduct(ctx context.Context, id string) (*doma
 	)
 
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrProductNotFound
 		}
 		return nil, fmt.Errorf("query master product: %w", err)
@@ -289,42 +292,16 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		}
 
 		// Merge with master product data
-		if masterProductID != nil && *masterProductID != "" {
-			p.MasterProductID = *masterProductID
-
-			// Use master name if product name is empty
-			if p.Name == "" && mpName != nil {
-				p.Name = *mpName
-			}
-
-			// Use master description if product description is empty
-			if p.Description == "" && mpDesc != nil {
-				p.Description = *mpDesc
-			}
-
-			// Set brand from master
-			if mpBrand != nil {
-				p.Brand = *mpBrand
-			}
-
-			// Set category from master
-			if categoryName != nil {
-				p.Category = *categoryName
-			}
-
-			// Merge images: if product has no images, use master's
-			if len(p.Images) == 0 && len(mpImagesJSON) > 0 {
-				if err := json.Unmarshal(mpImagesJSON, &p.Images); err != nil {
-					return nil, 0, fmt.Errorf("unmarshal master images: %w", err)
-				}
-			}
-
-			// Parse attributes from master
-			if len(attributesJSON) > 0 {
-				if err := json.Unmarshal(attributesJSON, &p.Attributes); err != nil {
-					return nil, 0, fmt.Errorf("unmarshal attributes: %w", err)
-				}
-			}
+		if err := mergeProductWithMaster(&p, masterProductRow{
+			MasterProductID: masterProductID,
+			Name:            mpName,
+			Description:     mpDesc,
+			Brand:           mpBrand,
+			CategoryName:    categoryName,
+			ImagesJSON:      mpImagesJSON,
+			AttributesJSON:  attributesJSON,
+		}); err != nil {
+			return nil, 0, err
 		}
 
 		// Format price (kopecks to rubles with formatting)
@@ -365,7 +342,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 	)
 
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrProductNotFound
 		}
 		return nil, fmt.Errorf("query product: %w", err)
@@ -379,36 +356,16 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 	}
 
 	// Merge with master product data
-	if masterProductID != nil && *masterProductID != "" {
-		p.MasterProductID = *masterProductID
-
-		if p.Name == "" && mpName != nil {
-			p.Name = *mpName
-		}
-
-		if p.Description == "" && mpDesc != nil {
-			p.Description = *mpDesc
-		}
-
-		if mpBrand != nil {
-			p.Brand = *mpBrand
-		}
-
-		if categoryName != nil {
-			p.Category = *categoryName
-		}
-
-		if len(p.Images) == 0 && len(mpImagesJSON) > 0 {
-			if err := json.Unmarshal(mpImagesJSON, &p.Images); err != nil {
-				return nil, fmt.Errorf("unmarshal master images: %w", err)
-			}
-		}
-
-		if len(attributesJSON) > 0 {
-			if err := json.Unmarshal(attributesJSON, &p.Attributes); err != nil {
-				return nil, fmt.Errorf("unmarshal attributes: %w", err)
-			}
-		}
+	if err := mergeProductWithMaster(&p, masterProductRow{
+		MasterProductID: masterProductID,
+		Name:            mpName,
+		Description:     mpDesc,
+		Brand:           mpBrand,
+		CategoryName:    categoryName,
+		ImagesJSON:      mpImagesJSON,
+		AttributesJSON:  attributesJSON,
+	}); err != nil {
+		return nil, err
 	}
 
 	p.PriceFormatted = formatPrice(p.Price, p.Currency)
@@ -439,6 +396,49 @@ func formatPrice(kopecks int, currency string) string {
 	}
 
 	return result.String() + " " + symbol
+}
+
+// masterProductRow holds scanned master-product join columns.
+type masterProductRow struct {
+	MasterProductID *string
+	Name            *string
+	Description     *string
+	Brand           *string
+	CategoryName    *string
+	ImagesJSON      []byte
+	AttributesJSON  []byte
+}
+
+// mergeProductWithMaster fills product fields from a master-product row.
+func mergeProductWithMaster(p *domain.Product, mp masterProductRow) error {
+	if mp.MasterProductID == nil || *mp.MasterProductID == "" {
+		return nil
+	}
+	p.MasterProductID = *mp.MasterProductID
+
+	if p.Name == "" && mp.Name != nil {
+		p.Name = *mp.Name
+	}
+	if p.Description == "" && mp.Description != nil {
+		p.Description = *mp.Description
+	}
+	if mp.Brand != nil {
+		p.Brand = *mp.Brand
+	}
+	if mp.CategoryName != nil {
+		p.Category = *mp.CategoryName
+	}
+	if len(p.Images) == 0 && len(mp.ImagesJSON) > 0 {
+		if err := json.Unmarshal(mp.ImagesJSON, &p.Images); err != nil {
+			return fmt.Errorf("unmarshal master images: %w", err)
+		}
+	}
+	if len(mp.AttributesJSON) > 0 {
+		if err := json.Unmarshal(mp.AttributesJSON, &p.Attributes); err != nil {
+			return fmt.Errorf("unmarshal attributes: %w", err)
+		}
+	}
+	return nil
 }
 
 // VectorSearch finds products by semantic similarity via pgvector cosine distance.
@@ -507,30 +507,16 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			}
 		}
 
-		if masterProductID != nil && *masterProductID != "" {
-			p.MasterProductID = *masterProductID
-			if p.Name == "" && mpName != nil {
-				p.Name = *mpName
-			}
-			if p.Description == "" && mpDesc != nil {
-				p.Description = *mpDesc
-			}
-			if mpBrand != nil {
-				p.Brand = *mpBrand
-			}
-			if categoryName != nil {
-				p.Category = *categoryName
-			}
-			if len(p.Images) == 0 && len(mpImagesJSON) > 0 {
-				if err := json.Unmarshal(mpImagesJSON, &p.Images); err != nil {
-					return nil, fmt.Errorf("unmarshal master images: %w", err)
-				}
-			}
-			if len(attributesJSON) > 0 {
-				if err := json.Unmarshal(attributesJSON, &p.Attributes); err != nil {
-					return nil, fmt.Errorf("unmarshal attributes: %w", err)
-				}
-			}
+		if err := mergeProductWithMaster(&p, masterProductRow{
+			MasterProductID: masterProductID,
+			Name:            mpName,
+			Description:     mpDesc,
+			Brand:           mpBrand,
+			CategoryName:    categoryName,
+			ImagesJSON:      mpImagesJSON,
+			AttributesJSON:  attributesJSON,
+		}); err != nil {
+			return nil, err
 		}
 
 		p.PriceFormatted = formatPrice(p.Price, p.Currency)
@@ -577,7 +563,9 @@ func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context) 
 			return nil, fmt.Errorf("scan master product: %w", err)
 		}
 		if attrsJSON != "{}" && attrsJSON != "" {
-			_ = json.Unmarshal([]byte(attrsJSON), &p.Attributes)
+			if err := json.Unmarshal([]byte(attrsJSON), &p.Attributes); err != nil {
+				slog.Warn("unmarshal master product attributes", "id", p.ID, "error", err)
+			}
 		}
 		products = append(products, p)
 	}
@@ -607,7 +595,9 @@ func (a *CatalogAdapter) GetAllTenants(ctx context.Context) ([]domain.Tenant, er
 			return nil, fmt.Errorf("scan tenant: %w", err)
 		}
 		if len(settingsJSON) > 0 {
-			_ = json.Unmarshal(settingsJSON, &t.Settings)
+			if err := json.Unmarshal(settingsJSON, &t.Settings); err != nil {
+				slog.Warn("unmarshal tenant settings", "tenant", t.Slug, "error", err)
+			}
 		}
 		tenants = append(tenants, t)
 	}
@@ -862,7 +852,7 @@ func (a *CatalogAdapter) GetCatalogDigest(ctx context.Context, tenantID string) 
 	var digestJSON []byte
 	err := a.client.pool.QueryRow(ctx, query, tenantID).Scan(&digestJSON)
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("query digest: %w", err)

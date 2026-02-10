@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -41,12 +42,24 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 		UpdatedAt: time.Now(),
 	}
 
-	dataJSON, _ := json.Marshal(state.Current.Data)
-	metaJSON, _ := json.Marshal(state.Current.Meta)
-	viewStackJSON, _ := json.Marshal(state.ViewStack)
-	conversationHistoryJSON, _ := json.Marshal(state.ConversationHistory)
+	dataJSON, err := json.Marshal(state.Current.Data)
+	if err != nil {
+		return nil, fmt.Errorf("marshal data: %w", err)
+	}
+	metaJSON, err := json.Marshal(state.Current.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("marshal meta: %w", err)
+	}
+	viewStackJSON, err := json.Marshal(state.ViewStack)
+	if err != nil {
+		return nil, fmt.Errorf("marshal view stack: %w", err)
+	}
+	conversationHistoryJSON, err := json.Marshal(state.ConversationHistory)
+	if err != nil {
+		return nil, fmt.Errorf("marshal conversation history: %w", err)
+	}
 
-	err := a.client.pool.QueryRow(ctx, `
+	err = a.client.pool.QueryRow(ctx, `
 		INSERT INTO chat_session_state (session_id, current_data, current_meta, step, view_mode, view_stack, conversation_history)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at
@@ -84,13 +97,19 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 	}
 
 	if len(dataJSON) > 0 {
-		json.Unmarshal(dataJSON, &state.Current.Data)
+		if err := json.Unmarshal(dataJSON, &state.Current.Data); err != nil {
+			slog.Warn("unmarshal state data", "session_id", sessionID, "error", err)
+		}
 	}
 	if len(metaJSON) > 0 {
-		json.Unmarshal(metaJSON, &state.Current.Meta)
+		if err := json.Unmarshal(metaJSON, &state.Current.Meta); err != nil {
+			slog.Warn("unmarshal state meta", "session_id", sessionID, "error", err)
+		}
 	}
 	if len(templateJSON) > 0 {
-		json.Unmarshal(templateJSON, &state.Current.Template)
+		if err := json.Unmarshal(templateJSON, &state.Current.Template); err != nil {
+			slog.Warn("unmarshal state template", "session_id", sessionID, "error", err)
+		}
 	}
 
 	// Parse view state
@@ -100,13 +119,19 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 		state.View.Mode = domain.ViewModeGrid
 	}
 	if len(viewFocusedJSON) > 0 {
-		json.Unmarshal(viewFocusedJSON, &state.View.Focused)
+		if err := json.Unmarshal(viewFocusedJSON, &state.View.Focused); err != nil {
+			slog.Warn("unmarshal view focused", "session_id", sessionID, "error", err)
+		}
 	}
 	if len(viewStackJSON) > 0 {
-		json.Unmarshal(viewStackJSON, &state.ViewStack)
+		if err := json.Unmarshal(viewStackJSON, &state.ViewStack); err != nil {
+			slog.Warn("unmarshal view stack", "session_id", sessionID, "error", err)
+		}
 	}
 	if len(conversationHistoryJSON) > 0 {
-		json.Unmarshal(conversationHistoryJSON, &state.ConversationHistory)
+		if err := json.Unmarshal(conversationHistoryJSON, &state.ConversationHistory); err != nil {
+			slog.Warn("unmarshal conversation history", "session_id", sessionID, "error", err)
+		}
 	}
 
 	return &state, nil
@@ -114,14 +139,32 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 
 // UpdateState updates the current materialized state
 func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionState) error {
-	dataJSON, _ := json.Marshal(state.Current.Data)
-	metaJSON, _ := json.Marshal(state.Current.Meta)
-	templateJSON, _ := json.Marshal(state.Current.Template)
-	viewFocusedJSON, _ := json.Marshal(state.View.Focused)
-	viewStackJSON, _ := json.Marshal(state.ViewStack)
-	conversationHistoryJSON, _ := json.Marshal(state.ConversationHistory)
+	dataJSON, err := json.Marshal(state.Current.Data)
+	if err != nil {
+		return fmt.Errorf("marshal data: %w", err)
+	}
+	metaJSON, err := json.Marshal(state.Current.Meta)
+	if err != nil {
+		return fmt.Errorf("marshal meta: %w", err)
+	}
+	templateJSON, err := json.Marshal(state.Current.Template)
+	if err != nil {
+		return fmt.Errorf("marshal template: %w", err)
+	}
+	viewFocusedJSON, err := json.Marshal(state.View.Focused)
+	if err != nil {
+		return fmt.Errorf("marshal view focused: %w", err)
+	}
+	viewStackJSON, err := json.Marshal(state.ViewStack)
+	if err != nil {
+		return fmt.Errorf("marshal view stack: %w", err)
+	}
+	conversationHistoryJSON, err := json.Marshal(state.ConversationHistory)
+	if err != nil {
+		return fmt.Errorf("marshal conversation history: %w", err)
+	}
 
-	_, err := a.client.pool.Exec(ctx, `
+	_, err = a.client.pool.Exec(ctx, `
 		UPDATE chat_session_state
 		SET current_data = $1, current_meta = $2, current_template = $3,
 		    view_mode = $4, view_focused = $5, view_stack = $6,
@@ -142,11 +185,21 @@ func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionSta
 // Also updates chat_session_state.step to keep it in sync.
 // Returns the assigned step number.
 func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *domain.Delta) (int, error) {
-	actionJSON, _ := json.Marshal(delta.Action)
-	resultJSON, _ := json.Marshal(delta.Result)
+	actionJSON, err := json.Marshal(delta.Action)
+	if err != nil {
+		return 0, fmt.Errorf("marshal action: %w", err)
+	}
+	resultJSON, err := json.Marshal(delta.Result)
+	if err != nil {
+		return 0, fmt.Errorf("marshal result: %w", err)
+	}
 	var templateJSON []byte
 	if delta.Template != nil {
-		templateJSON, _ = json.Marshal(delta.Template)
+		var tErr error
+		templateJSON, tErr = json.Marshal(delta.Template)
+		if tErr != nil {
+			return 0, fmt.Errorf("marshal template: %w", tErr)
+		}
 	}
 
 	// Use default values for new fields if not set
@@ -161,7 +214,7 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 
 	// Auto-assign step and update state.step atomically
 	var assignedStep int
-	err := a.client.pool.QueryRow(ctx, `
+	err = a.client.pool.QueryRow(ctx, `
 		WITH next_step AS (
 			SELECT COALESCE(MAX(step), 0) + 1 AS step
 			FROM chat_session_deltas
@@ -183,10 +236,12 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 	}
 
 	// Update state.step to stay in sync
-	_, _ = a.client.pool.Exec(ctx, `
+	if _, syncErr := a.client.pool.Exec(ctx, `
 		UPDATE chat_session_state SET step = $1, updated_at = NOW()
 		WHERE session_id = $2
-	`, assignedStep, sessionID)
+	`, assignedStep, sessionID); syncErr != nil {
+		slog.Warn("sync state step", "session_id", sessionID, "step", assignedStep, "error", syncErr)
+	}
 
 	// Write back to delta struct so caller can see the assigned step
 	delta.Step = assignedStep
@@ -196,8 +251,14 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 
 // UpdateData updates the data zone (products/services + meta) and creates a delta
 func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data domain.StateData, meta domain.StateMeta, info domain.DeltaInfo) (int, error) {
-	dataJSON, _ := json.Marshal(data)
-	metaJSON, _ := json.Marshal(meta)
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		return 0, fmt.Errorf("marshal data: %w", err)
+	}
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return 0, fmt.Errorf("marshal meta: %w", err)
+	}
 	delta := info.ToDelta()
 	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
 		UPDATE chat_session_state
@@ -208,7 +269,10 @@ func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data do
 
 // UpdateTemplate updates the template zone and creates a delta
 func (a *StateAdapter) UpdateTemplate(ctx context.Context, sessionID string, template map[string]interface{}, info domain.DeltaInfo) (int, error) {
-	templateJSON, _ := json.Marshal(template)
+	templateJSON, err := json.Marshal(template)
+	if err != nil {
+		return 0, fmt.Errorf("marshal template: %w", err)
+	}
 	delta := info.ToDelta()
 	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
 		UPDATE chat_session_state
@@ -219,8 +283,14 @@ func (a *StateAdapter) UpdateTemplate(ctx context.Context, sessionID string, tem
 
 // UpdateView updates the view zone (mode, focused, stack) and creates a delta
 func (a *StateAdapter) UpdateView(ctx context.Context, sessionID string, view domain.ViewState, stack []domain.ViewSnapshot, info domain.DeltaInfo) (int, error) {
-	viewFocusedJSON, _ := json.Marshal(view.Focused)
-	viewStackJSON, _ := json.Marshal(stack)
+	viewFocusedJSON, err := json.Marshal(view.Focused)
+	if err != nil {
+		return 0, fmt.Errorf("marshal view focused: %w", err)
+	}
+	viewStackJSON, err := json.Marshal(stack)
+	if err != nil {
+		return 0, fmt.Errorf("marshal view stack: %w", err)
+	}
 	delta := info.ToDelta()
 	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
 		UPDATE chat_session_state
@@ -231,8 +301,11 @@ func (a *StateAdapter) UpdateView(ctx context.Context, sessionID string, view do
 
 // AppendConversation updates conversation history (no delta — append-only for LLM cache)
 func (a *StateAdapter) AppendConversation(ctx context.Context, sessionID string, messages []domain.LLMMessage) error {
-	historyJSON, _ := json.Marshal(messages)
-	_, err := a.client.pool.Exec(ctx, `
+	historyJSON, err := json.Marshal(messages)
+	if err != nil {
+		return fmt.Errorf("marshal conversation: %w", err)
+	}
+	_, err = a.client.pool.Exec(ctx, `
 		UPDATE chat_session_state
 		SET conversation_history = $1, updated_at = NOW()
 		WHERE session_id = $2
@@ -327,10 +400,16 @@ func (a *StateAdapter) scanDeltas(rows pgx.Rows) ([]domain.Delta, error) {
 		if turnID != nil {
 			d.TurnID = *turnID
 		}
-		json.Unmarshal(actionJSON, &d.Action)
-		json.Unmarshal(resultJSON, &d.Result)
+		if err := json.Unmarshal(actionJSON, &d.Action); err != nil {
+			slog.Warn("unmarshal delta action", "step", d.Step, "error", err)
+		}
+		if err := json.Unmarshal(resultJSON, &d.Result); err != nil {
+			slog.Warn("unmarshal delta result", "step", d.Step, "error", err)
+		}
 		if len(templateJSON) > 0 {
-			json.Unmarshal(templateJSON, &d.Template)
+			if err := json.Unmarshal(templateJSON, &d.Template); err != nil {
+				slog.Warn("unmarshal delta template", "step", d.Step, "error", err)
+			}
 		}
 
 		deltas = append(deltas, d)
@@ -378,7 +457,9 @@ func (a *StateAdapter) PopView(ctx context.Context, sessionID string) (*domain.V
 
 	var viewStack []domain.ViewSnapshot
 	if len(viewStackJSON) > 0 {
-		json.Unmarshal(viewStackJSON, &viewStack)
+		if err := json.Unmarshal(viewStackJSON, &viewStack); err != nil {
+			slog.Warn("unmarshal view stack in pop", "session_id", sessionID, "error", err)
+		}
 	}
 
 	if len(viewStack) == 0 {
@@ -390,7 +471,10 @@ func (a *StateAdapter) PopView(ctx context.Context, sessionID string) (*domain.V
 	viewStack = viewStack[:len(viewStack)-1]
 
 	// Update the stack
-	newStackJSON, _ := json.Marshal(viewStack)
+	newStackJSON, err := json.Marshal(viewStack)
+	if err != nil {
+		return nil, fmt.Errorf("marshal view stack: %w", err)
+	}
 	_, err = a.client.pool.Exec(ctx, `
 		UPDATE chat_session_state
 		SET view_stack = $1,
@@ -422,7 +506,9 @@ func (a *StateAdapter) GetViewStack(ctx context.Context, sessionID string) ([]do
 
 	var viewStack []domain.ViewSnapshot
 	if len(viewStackJSON) > 0 {
-		json.Unmarshal(viewStackJSON, &viewStack)
+		if err := json.Unmarshal(viewStackJSON, &viewStack); err != nil {
+			slog.Warn("unmarshal view stack", "session_id", sessionID, "error", err)
+		}
 	}
 
 	return viewStack, nil

@@ -1,12 +1,12 @@
 package handlers
 
 import (
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 	"keepstar/internal/ports"
 	"keepstar/internal/usecases"
 )
@@ -15,13 +15,15 @@ import (
 type CatalogHandler struct {
 	listProducts *usecases.ListProductsUseCase
 	getProduct   *usecases.GetProductUseCase
+	log          *logger.Logger
 }
 
 // NewCatalogHandler creates a new CatalogHandler
-func NewCatalogHandler(listProducts *usecases.ListProductsUseCase, getProduct *usecases.GetProductUseCase) *CatalogHandler {
+func NewCatalogHandler(listProducts *usecases.ListProductsUseCase, getProduct *usecases.GetProductUseCase, log *logger.Logger) *CatalogHandler {
 	return &CatalogHandler{
 		listProducts: listProducts,
 		getProduct:   getProduct,
+		log:          log,
 	}
 }
 
@@ -104,7 +106,7 @@ func (h *CatalogHandler) HandleListProducts(w http.ResponseWriter, r *http.Reque
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 			return
 		}
-		log.Printf("ListProducts error: %v", err)
+		h.log.Error("list_products_error", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
