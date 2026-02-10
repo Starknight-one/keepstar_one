@@ -149,6 +149,19 @@ func printTrace(t *domain.PipelineTrace) {
 				if v, ok := a.ToolBreakdown["price_conversion"]; ok {
 					fmt.Fprintf(w, "    prices: %s\n", v)
 				}
+				if v, ok := a.ToolBreakdown["embed_ms"]; ok {
+					fmt.Fprintf(w, "    embed: %vms", v)
+					if e, ok := a.ToolBreakdown["embed_error"]; ok {
+						fmt.Fprintf(w, "  ERROR: %v", e)
+					}
+					fmt.Fprintln(w)
+				}
+				if kc, ok := a.ToolBreakdown["keyword_count"]; ok {
+					vc, _ := a.ToolBreakdown["vector_count"]
+					mc, _ := a.ToolBreakdown["merged_count"]
+					st, _ := a.ToolBreakdown["search_type"]
+					fmt.Fprintf(w, "    results: keyword=%v vector=%v merged=%v type=%v\n", kc, vc, mc, st)
+				}
 			}
 		} else {
 			fmt.Fprintf(w, "    NO TOOL CALLED  stop=%s\n", a.StopReason)
