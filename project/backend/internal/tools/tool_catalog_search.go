@@ -160,8 +160,10 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		if brand != "" {
 			searchText = vectorQuery + " " + brand
 		}
-		embeddings, err := t.embedding.Embed(ctx, []string{searchText})
-		if err == nil && len(embeddings) > 0 {
+		embeddings, embErr := t.embedding.Embed(ctx, []string{searchText})
+		if embErr != nil {
+			meta["embed_error"] = embErr.Error()
+		} else if len(embeddings) > 0 {
 			queryEmbedding = embeddings[0]
 		}
 		meta["embed_ms"] = time.Since(embedStart).Milliseconds()
