@@ -4,7 +4,27 @@
 
 ---
 
-## 2026-02-10
+## 2026-02-10 19:30
+
+### Session Init + Tenant Seed (feat/session-init)
+
+При открытии чата — лёгкий init запрос создаёт сессию, резолвит тенант, сидит его в state, возвращает greeting. Убирает fallback на hardcoded "nike" при первом pipeline запросе.
+
+**Backend (4 файла):**
+- `handler_session.go`: `HandleInitSession` (POST /api/v1/session/init) — создаёт state + session, seeds tenant_slug в Aliases, возвращает `{ sessionId, tenant, greeting }`
+- `routes.go`: роут `/api/v1/session/init` с `ResolveFromHeader` tenant middleware
+- `middleware_cors.go`: `X-Tenant-Slug` в allowed headers
+- `main.go`: `NewSessionHandler(cache, statePort)` — передан stateAdapter
+
+**Frontend (2 файла):**
+- `apiClient.js`: `initSession()` → POST /session/init
+- `ChatPanel.jsx`: на mount без кэша → `initSession()` → показывает greeting как assistant message. Graceful fallback если init упал.
+
+**Дубликации нет:** Pipeline и Agent1 используют get-or-create паттерн — если state/session уже есть, создание пропускается. Tenant seeding идемпотентен.
+
+**Specs:** `ADW/specs/done/done-session-init.md`
+
+---
 
 ### Admin Panel MVP (feat/admin-panel-mvp)
 

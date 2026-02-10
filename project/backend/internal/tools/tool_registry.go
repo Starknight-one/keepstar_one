@@ -11,9 +11,10 @@ import (
 
 // ToolContext provides session/turn context to tools for zone-write deltas
 type ToolContext struct {
-	SessionID string
-	TurnID    string
-	ActorID   string
+	SessionID  string
+	TurnID     string
+	ActorID    string
+	TenantSlug string
 }
 
 // ToolExecutor executes a tool and writes results to state

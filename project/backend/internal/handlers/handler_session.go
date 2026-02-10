@@ -6,18 +6,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
 )
 
 // SessionHandler handles session endpoints
 type SessionHandler struct {
-	cache ports.CachePort
+	cache    ports.CachePort
+	statePort ports.StatePort
 }
 
 // NewSessionHandler creates a new session handler
-func NewSessionHandler(cache ports.CachePort) *SessionHandler {
-	return &SessionHandler{cache: cache}
+func NewSessionHandler(cache ports.CachePort, statePort ports.StatePort) *SessionHandler {
+	return &SessionHandler{cache: cache, statePort: statePort}
 }
 
 // SessionResponse is the response for GET /api/v1/session/{id}
@@ -101,4 +103,83 @@ func (h *SessionHandler) HandleGetSession(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// InitSessionResponse is the response for POST /api/v1/session/init
+type InitSessionResponse struct {
+	SessionID string              `json:"sessionId"`
+	Tenant    *InitTenantResponse `json:"tenant"`
+	Greeting  string              `json:"greeting"`
+}
+
+// InitTenantResponse is the tenant info in init response
+type InitTenantResponse struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+// HandleInitSession handles POST /api/v1/session/init
+// Creates a new session, seeds tenant in state, returns greeting.
+func (h *SessionHandler) HandleInitSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.statePort == nil {
+		http.Error(w, "State storage not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Resolve tenant from context (set by middleware)
+	tenant := GetTenantFromContext(r.Context())
+
+	// Generate session ID
+	sessionID := uuid.New().String()
+
+	// Create session state
+	state, err := h.statePort.CreateState(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	// Seed tenant_slug in state aliases
+	if tenant != nil {
+		if state.Current.Meta.Aliases == nil {
+			state.Current.Meta.Aliases = make(map[string]string)
+		}
+		state.Current.Meta.Aliases["tenant_slug"] = tenant.Slug
+		if err := h.statePort.UpdateState(r.Context(), state); err != nil {
+			http.Error(w, "Failed to save session state", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Create session record
+	if h.cache != nil {
+		now := time.Now()
+		session := &domain.Session{
+			ID:             sessionID,
+			Status:         domain.SessionStatusActive,
+			StartedAt:      now,
+			LastActivityAt: now,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+		_ = h.cache.SaveSession(r.Context(), session)
+	}
+
+	resp := InitSessionResponse{
+		SessionID: sessionID,
+		Greeting:  "Привет! Чем могу помочь?",
+	}
+	if tenant != nil {
+		resp.Tenant = &InitTenantResponse{
+			Slug: tenant.Slug,
+			Name: tenant.Name,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

@@ -185,7 +185,7 @@ func main() {
 
 	// Initialize handlers
 	chatHandler := handlers.NewChatHandler(sendMessage, appLog)
-	sessionHandler := handlers.NewSessionHandler(cacheAdapter)
+	sessionHandler := handlers.NewSessionHandler(cacheAdapter, stateAdapter)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Create metrics store for debug page

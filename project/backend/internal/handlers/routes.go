@@ -12,6 +12,13 @@ func SetupRoutes(mux *http.ServeMux, chat *ChatHandler, session *SessionHandler,
 	mux.HandleFunc("/api/v1/chat", chat.HandleChat)
 	mux.HandleFunc("/api/v1/session/", session.HandleGetSession)
 
+	// Session init (creates session + seeds tenant)
+	if tenantMw != nil {
+		mux.Handle("/api/v1/session/init", tenantMw.ResolveFromHeader(defaultTenant)(http.HandlerFunc(session.HandleInitSession)))
+	} else {
+		mux.HandleFunc("/api/v1/session/init", session.HandleInitSession)
+	}
+
 	// Pipeline API (Two-Agent system) with tenant from header
 	if pipeline != nil {
 		handler := http.HandlerFunc(pipeline.HandlePipeline)

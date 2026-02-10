@@ -88,6 +88,23 @@ export async function getProduct(tenantSlug, productId) {
   return response.json();
 }
 
+// Session init - creates session, resolves tenant, returns greeting
+export async function initSession() {
+  const response = await fetch(`${API_BASE_URL}/session/init`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  // Response: { sessionId, tenant: { slug, name }, greeting }
+  return response.json();
+}
+
 // Pipeline API - sends query through Agent 1 -> Agent 2 -> Formation
 export async function sendPipelineQuery(sessionId, query) {
   const body = { query };

@@ -180,11 +180,16 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	}
 
 	// Resolve tenant (slug → UUID)
-	tenantSlug := "nike"
-	if state.Current.Meta.Aliases != nil {
-		if slug, ok := state.Current.Meta.Aliases["tenant_slug"]; ok && slug != "" {
-			tenantSlug = slug
+	tenantSlug := toolCtx.TenantSlug
+	if tenantSlug == "" {
+		if state.Current.Meta.Aliases != nil {
+			if slug, ok := state.Current.Meta.Aliases["tenant_slug"]; ok && slug != "" {
+				tenantSlug = slug
+			}
 		}
+	}
+	if tenantSlug == "" {
+		tenantSlug = "nike" // last resort fallback
 	}
 	meta["tenant"] = tenantSlug
 

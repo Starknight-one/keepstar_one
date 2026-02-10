@@ -3,8 +3,9 @@ import { useChatMessages } from './useChatMessages';
 import { useChatSubmit } from './useChatSubmit';
 import { ChatHistory } from './ChatHistory';
 import { ChatInput } from './ChatInput';
-import { expandView, goBack, getSession } from '../../shared/api/apiClient';
+import { expandView, goBack, getSession, initSession } from '../../shared/api/apiClient';
 import { saveSessionCache, loadSessionCache, clearSessionCache } from './sessionCache';
+import { MessageRole } from '../../entities/message/messageModel';
 import './ChatPanel.css';
 
 export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChange, hideFormation }) {
@@ -71,30 +72,45 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     });
   }, [canGoBack, handleExpand, handleBack, onNavigationStateChange]);
 
-  // Restore session from browser cache instantly (no network call, no blocking)
+  // Restore session from browser cache instantly, or init new session
   useEffect(() => {
     const cached = loadSessionCache();
-    if (!cached) return;
-    setSessionId(cached.sessionId);
-    if (cached.messages?.length > 0) {
-      setMessages(cached.messages);
-    }
-    if (cached.formation) {
-      lastFormationRef.current = cached.formation;
-      onFormationReceived?.(cached.formation);
+    if (cached) {
+      setSessionId(cached.sessionId);
+      if (cached.messages?.length > 0) {
+        setMessages(cached.messages);
+      }
+      if (cached.formation) {
+        lastFormationRef.current = cached.formation;
+        onFormationReceived?.(cached.formation);
+      }
+
+      // Async validate — if session is dead on backend, clear everything
+      getSession(cached.sessionId).then(session => {
+        if (!session || session.status !== 'active') {
+          clearSessionCache();
+          setSessionId(null);
+          setMessages([]);
+          lastFormationRef.current = null;
+          onFormationReceived?.(null);
+        }
+      }).catch(() => {
+        // Network error — keep cache, don't block
+      });
+      return;
     }
 
-    // Async validate — if session is dead on backend, clear everything
-    getSession(cached.sessionId).then(session => {
-      if (!session || session.status !== 'active') {
-        clearSessionCache();
-        setSessionId(null);
-        setMessages([]);
-        lastFormationRef.current = null;
-        onFormationReceived?.(null);
-      }
+    // No cached session — init a new one with greeting
+    initSession().then(data => {
+      setSessionId(data.sessionId);
+      addMessage({
+        id: 'greeting',
+        role: MessageRole.ASSISTANT,
+        content: data.greeting,
+        timestamp: new Date(),
+      });
     }).catch(() => {
-      // Network error — keep cache, don't block
+      // Init failed — chat still works, session will be created on first query
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

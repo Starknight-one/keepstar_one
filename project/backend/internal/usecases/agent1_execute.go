@@ -202,9 +202,10 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		}
 		toolStart := time.Now()
 		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
-			SessionID: req.SessionID,
-			TurnID:    req.TurnID,
-			ActorID:   "agent1",
+			SessionID:  req.SessionID,
+			TurnID:     req.TurnID,
+			ActorID:    "agent1",
+			TenantSlug: req.TenantSlug,
 		}, toolCall)
 		toolDuration = time.Since(toolStart).Milliseconds()
 		if endToolSpan != nil {
