@@ -4,6 +4,64 @@
 
 ---
 
+## 2026-02-10
+
+### Admin Panel MVP (feat/admin-panel-mvp)
+
+Отдельный проект в `project_admin/` — админка для самостоятельной загрузки каталогов клиентами. Go backend (порт 8081) + React frontend (порт 5174), своя гексагоналка, общая Postgres БД.
+
+**Backend (34 файла):**
+- **Auth**: signup (email+password+companyName → tenant + user + JWT), login, JWT middleware (24h, HS256), bcrypt
+- **Catalog CRUD**: ListProducts (search/filter/pagination/merge master→product), GetProduct, UpdateProduct (partial), GetCategories
+- **Import**: JSON upload → async background goroutine (GetOrCreateCategory → UpsertMasterProduct ON CONFLICT sku → UpsertProductListing ON CONFLICT tenant+master) → embedding generation (batch 100, pgvector) → catalog digest regeneration. Progress polling
+- **Settings**: TenantSettings в catalog.tenants.settings JSONB (geoCountry, geoRegion, enrichCrossData)
+- **DB**: admin.admin_users, admin.import_jobs + unique index catalog.products(tenant_id, master_product_id)
+
+**Frontend (25 src файлов):**
+- Login/Signup → JWT localStorage → AuthProvider
+- Dashboard: sidebar (Catalog, Import, Settings) + protected routes
+- PIM: таблица товаров (image, name, brand, category, price, stock) + search + category filter + pagination 25/page + detail/edit page
+- Import: file input (.json) → preview 5 items → upload → progress bar (polling 2s) → history table
+- Settings: country dropdown, region input, enrichment toggle
+- UI kit: Button, Input, Table, Pagination, Badge, Spinner, Tabs
+
+**DevOps:**
+- Claude commands: `/start_admin`, `/stop_admin`, `/start_all`, `/stop_all`
+- Shell scripts: `scripts/start_admin.sh`, `scripts/stop_admin.sh`, `scripts/start_all.sh`, `scripts/stop_all.sh`
+
+**Порты:** chat :8080/:5173, admin :8081/:5174 — без конфликтов
+
+**Specs:** `ADW/specs/done/done-admin-panel-mvp.md`
+
+---
+
+### Technical Debt Cleanup (chore/technical-debt-cleanup)
+
+**Reliability:**
+- `postgres_catalog.go`: 4× `err.Error() == "no rows..."` → `errors.Is(err, pgx.ErrNoRows)` (robust error matching)
+- `postgres_catalog.go`: extracted `mergeProductWithMaster()` helper — deduplicated ~70 lines across ListProducts, GetProduct, VectorSearch
+- `postgres_state.go`: all 16 `json.Marshal` calls now return errors; all 12 `json.Unmarshal` calls now `slog.Warn` + continue; AddDelta step sync uses `slog.Warn`
+- `postgres_catalog.go`: 2 additional `_ = json.Unmarshal` → `slog.Warn` (GetMasterProductsWithoutEmbedding, GetAllTenants)
+
+**Logging unification:**
+- `tool_catalog_search.go`: VectorSearch error captured in `meta["vector_error"]` instead of silently dropped
+- 8× `log.Printf` → structured logger: handler_chat, handler_catalog, chat_send_message get `*logger.Logger` field; anthropic_client uses `slog.Warn`; main.go passes `appLog` to all constructors
+
+**Frontend deduplication:**
+- Extracted `templateUtils.js` (groupAtomsBySlot + normalizeImages) — shared by 4 template files
+- Extracted `ImageCarousel.jsx` — shared by ProductCard + ServiceCard templates
+- Detail templates keep local ImageGallery (different UI with thumbnails)
+
+**Dead code removal (−891 lines):**
+- Deleted `mock_tools.go` (414 lines of cache padding tools) + removed `GetCachePaddingTools()` call from registry
+- Deleted `adapters/json_store/` directory (legacy MVP stub)
+- Removed deprecated `DefaultSessionTTL` constant
+- Deleted empty FE directories: `src/app/`, `src/styles/`, `src/entities/atom/atoms/`
+
+**Specs:** `ADW/specs/done/done-technical-debt-cleanup.md`, reorganized specs into `done/` and `todo/` subdirectories
+
+---
+
 ## 2026-02-08 16:00
 
 ### Search Relevance: Catalog Digest + RRF Tuning (fix/bug1-vector-search-relevance)
