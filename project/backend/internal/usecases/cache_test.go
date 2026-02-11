@@ -65,7 +65,6 @@ func TestPromptCaching_Chain(t *testing.T) {
 	_ = dbClient.RunMigrations(ctx)
 	_ = dbClient.RunStateMigrations(ctx)
 	_ = dbClient.RunCatalogMigrations(ctx)
-	_ = postgres.SeedCatalogData(ctx, dbClient)
 
 	// Initialize adapters
 	llmClient := anthropic.NewClient(apiKey, model)

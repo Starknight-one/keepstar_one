@@ -61,7 +61,6 @@ func setupIntegration(t *testing.T, timeout time.Duration) (
 	_ = dbClient.RunMigrations(ctx)
 	_ = dbClient.RunStateMigrations(ctx)
 	_ = dbClient.RunCatalogMigrations(ctx)
-	_ = postgres.SeedCatalogData(ctx, dbClient)
 
 	llmClient := anthropic.NewClient(apiKey, model)
 	stateAdapter := postgres.NewStateAdapter(dbClient)

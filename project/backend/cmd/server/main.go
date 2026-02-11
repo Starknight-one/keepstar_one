@@ -79,26 +79,6 @@ func main() {
 		}
 		appLog.Info("state_migrations_completed", "status", "ok")
 
-		// Seed catalog data (with extended timeout)
-		seedCtx, seedCancel := context.WithTimeout(context.Background(), 60*time.Second)
-		if err := postgres.SeedCatalogData(seedCtx, dbClient); err != nil {
-			appLog.Error("catalog_seed_failed", "error", err)
-			// Non-fatal: continue even if seed fails
-		} else {
-			appLog.Info("catalog_seed_completed", "status", "ok")
-		}
-		if err := postgres.SeedExtendedCatalog(seedCtx, dbClient); err != nil {
-			appLog.Error("extended_catalog_seed_failed", "error", err)
-		} else {
-			appLog.Info("extended_catalog_seed_completed", "status", "ok")
-		}
-		if err := postgres.SeedLargeCatalog(seedCtx, dbClient); err != nil {
-			appLog.Error("large_catalog_seed_failed", "error", err)
-		} else {
-			appLog.Info("large_catalog_seed_completed", "status", "ok")
-		}
-		seedCancel()
-
 		// Startup embedding: embed products that don't have embeddings yet
 		if embeddingClient != nil {
 			go func() {

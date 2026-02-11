@@ -4,6 +4,31 @@
 
 ---
 
+## Alpha 0.0.2 — 2026-02-11
+
+### Widget Auto-Detection Fix + Admin Widget Page
+
+**Баг-фикс:** Виджет не работал при кросс-доменном встраивании — `document.currentScript` = null для динамически вставленных скриптов, API запросы шли на хост-сайт вместо бэкенда.
+
+**Фикс** (`widget.jsx`): Fallback поиск `<script>` по `src*="widget.js"`, автоматическое вычисление API URL из origin скрипта. Цепочка: `data-api` attr → origin из `src` + `/api/v1` → `window.__KEEPSTAR_WIDGET__`.
+
+**Админка — раздел "Widget":**
+- Новая страница `/widget` с готовым embed code и кнопкой Copy
+- Информация о tenant (slug, name)
+- Инструкция "How It Works" для клиентов
+- Иконка `<Code>` в sidebar
+
+**Backend (admin):**
+- `GET /admin/api/tenant` — возвращает tenant info (slug, name, type, settings)
+- `GET /admin/api/widget-config` — возвращает `{ widgetUrl }` из env `WIDGET_BASE_URL`
+- `WIDGET_BASE_URL` в config — указывает на chat-сервис для генерации embed code
+
+**Новые файлы:**
+- `project_admin/frontend/src/features/widget/WidgetPage.jsx`
+- `project_admin/frontend/src/features/widget/widget.css`
+
+---
+
 ## Alpha 0.0.1 — 2026-02-11
 
 ### Embeddable Chat Widget — Shadow DOM (feat/embeddable-widget)
