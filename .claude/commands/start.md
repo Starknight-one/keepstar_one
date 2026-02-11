@@ -1,6 +1,6 @@
 # Start
 
-Start the project (backend + frontend + dev-inspector).
+Start the project (backend + widget dev server + inspector).
 
 ## Instructions
 
@@ -21,7 +21,7 @@ Start the project (backend + frontend + dev-inspector).
    cd /Users/starknight/Keepstar_one_ultra/project/backend && go build -o server ./cmd/server/ && ./server > /tmp/backend.log 2>&1 &
    ```
 
-4. Start the React frontend in background:
+4. Start the widget dev server in background:
    ```bash
    cd /Users/starknight/Keepstar_one_ultra/project/frontend && npm run dev > /tmp/frontend.log 2>&1 &
    ```
@@ -42,8 +42,8 @@ Start the project (backend + frontend + dev-inspector).
    ```
 
 8. Report the URLs:
-   - Frontend: http://localhost:5173
-   - Frontend + Inspector: http://localhost:3457
+   - Widget (test page): http://localhost:5173
+   - Widget + Inspector: http://localhost:3457
    - Backend API: http://localhost:8080
    - Pipeline Traces: http://localhost:8080/debug/traces/
 
@@ -52,14 +52,14 @@ Start the project (backend + frontend + dev-inspector).
 ```
 Project started!
 
-Frontend: http://localhost:5173
-Frontend + Inspector: http://localhost:3457 (Ctrl+Shift+K to activate)
+Widget (test page): http://localhost:5173
+Widget + Inspector: http://localhost:3457 (Ctrl+Shift+K to activate)
 Backend API: http://localhost:8080
 Pipeline Traces: http://localhost:8080/debug/traces/
 
 Logs:
 - Backend: /tmp/backend.log
-- Frontend: /tmp/frontend.log
+- Widget: /tmp/frontend.log
 
 Use /stop to shut down servers.
 ```

@@ -1,6 +1,6 @@
 # Start All
 
-Start both the chat project and admin panel.
+Start both the chat widget and admin panel.
 
 ## Instructions
 
@@ -23,7 +23,7 @@ Start both the chat project and admin panel.
    cd /Users/starknight/Keepstar_one_ultra/project/backend && go build -o server ./cmd/server/ && ./server > /tmp/backend.log 2>&1 &
    ```
 
-4. Start the chat React frontend:
+4. Start the widget dev server:
    ```bash
    cd /Users/starknight/Keepstar_one_ultra/project/frontend && npm run dev > /tmp/frontend.log 2>&1 &
    ```
@@ -61,9 +61,9 @@ Start both the chat project and admin panel.
 ```
 All services started!
 
-Chat:
-  Frontend: http://localhost:5173
-  Frontend + Inspector: http://localhost:3457 (Ctrl+Shift+K to activate)
+Chat Widget:
+  Widget (test page): http://localhost:5173
+  Widget + Inspector: http://localhost:3457 (Ctrl+Shift+K to activate)
   Backend API: http://localhost:8080
   Pipeline Traces: http://localhost:8080/debug/traces/
 
@@ -73,7 +73,7 @@ Admin:
 
 Logs:
 - Chat Backend: /tmp/backend.log
-- Chat Frontend: /tmp/frontend.log
+- Widget: /tmp/frontend.log
 - Admin Backend: /tmp/admin-backend.log
 - Admin Frontend: /tmp/admin-frontend.log
 

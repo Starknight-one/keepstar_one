@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stop chat
+# Stop chat widget dev
 lsof -ti:8080 | xargs kill -9 2>/dev/null || true
 lsof -ti:5173 | xargs kill -9 2>/dev/null || true
 lsof -ti:3457 | xargs kill -9 2>/dev/null || true

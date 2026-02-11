@@ -1,4 +1,21 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+let _apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+let _tenantSlug = null;
+
+export function setTenantSlug(slug) {
+  _tenantSlug = slug;
+}
+
+export function setApiBaseUrl(url) {
+  _apiBaseUrl = url;
+}
+
+function getHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (_tenantSlug) {
+    headers['X-Tenant-Slug'] = _tenantSlug;
+  }
+  return headers;
+}
 
 export async function sendChatMessage(message, sessionId = null) {
   const body = { message };
@@ -6,11 +23,9 @@ export async function sendChatMessage(message, sessionId = null) {
     body.sessionId = sessionId;
   }
 
-  const response = await fetch(`${API_BASE_URL}/chat`, {
+  const response = await fetch(`${_apiBaseUrl}/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -22,11 +37,9 @@ export async function sendChatMessage(message, sessionId = null) {
 }
 
 export async function getSession(sessionId) {
-  const response = await fetch(`${API_BASE_URL}/session/${sessionId}`, {
+  const response = await fetch(`${_apiBaseUrl}/session/${sessionId}`, {
     method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
   });
 
   if (response.status === 404) {
@@ -53,13 +66,11 @@ export async function getProducts(tenantSlug, filters = {}) {
   if (filters.offset) params.set('offset', filters.offset);
 
   const queryString = params.toString();
-  const url = `${API_BASE_URL}/tenants/${tenantSlug}/products${queryString ? '?' + queryString : ''}`;
+  const url = `${_apiBaseUrl}/tenants/${tenantSlug}/products${queryString ? '?' + queryString : ''}`;
 
   const response = await fetch(url, {
     method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
   });
 
   if (!response.ok) {
@@ -70,11 +81,9 @@ export async function getProducts(tenantSlug, filters = {}) {
 }
 
 export async function getProduct(tenantSlug, productId) {
-  const response = await fetch(`${API_BASE_URL}/tenants/${tenantSlug}/products/${productId}`, {
+  const response = await fetch(`${_apiBaseUrl}/tenants/${tenantSlug}/products/${productId}`, {
     method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
   });
 
   if (response.status === 404) {
@@ -90,11 +99,9 @@ export async function getProduct(tenantSlug, productId) {
 
 // Session init - creates session, resolves tenant, returns greeting
 export async function initSession() {
-  const response = await fetch(`${API_BASE_URL}/session/init`, {
+  const response = await fetch(`${_apiBaseUrl}/session/init`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
   });
 
   if (!response.ok) {
@@ -112,11 +119,9 @@ export async function sendPipelineQuery(sessionId, query) {
     body.sessionId = sessionId;
   }
 
-  const response = await fetch(`${API_BASE_URL}/pipeline`, {
+  const response = await fetch(`${_apiBaseUrl}/pipeline`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -130,11 +135,9 @@ export async function sendPipelineQuery(sessionId, query) {
 
 // Navigation API - expand widget to detail view
 export async function expandView(sessionId, entityType, entityId) {
-  const response = await fetch(`${API_BASE_URL}/navigation/expand`, {
+  const response = await fetch(`${_apiBaseUrl}/navigation/expand`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
     body: JSON.stringify({ sessionId, entityType, entityId }),
   });
 
@@ -148,11 +151,9 @@ export async function expandView(sessionId, entityType, entityId) {
 
 // Navigation API - go back to previous view
 export async function goBack(sessionId) {
-  const response = await fetch(`${API_BASE_URL}/navigation/back`, {
+  const response = await fetch(`${_apiBaseUrl}/navigation/back`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
     body: JSON.stringify({ sessionId }),
   });
 

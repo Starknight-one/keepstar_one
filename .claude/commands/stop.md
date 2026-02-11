@@ -9,7 +9,7 @@ Stop the project servers.
    lsof -ti:8080 | xargs kill -9 2>/dev/null || true
    ```
 
-2. Kill the frontend dev server (port 5173):
+2. Kill the widget dev server (port 5173):
    ```bash
    lsof -ti:5173 | xargs kill -9 2>/dev/null || true
    ```
@@ -32,6 +32,6 @@ Project stopped.
 
 Killed:
 - Backend (port 8080)
-- Frontend (port 5173)
+- Widget dev server (port 5173)
 - Dev Inspector (port 3457)
 ```

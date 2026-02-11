@@ -2,16 +2,29 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
-    <!-- Fonts from Pencil Design System -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+    <title>Keepstar Widget — Dev</title>
+    <style>
+      body { font-family: sans-serif; margin: 40px; color: #333; }
+      h1 { margin-bottom: 16px; }
+      p { color: #666; max-width: 600px; line-height: 1.6; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <h1>Client Website (Test Page)</h1>
+    <p>
+      This page simulates a client's website. The Keepstar chat widget is loaded
+      below as an embedded script — exactly how real customers will use it.
+    </p>
+    <p>Scroll down or click the chat button in the bottom-right corner.</p>
+
+    <script>
+      // Dev config — in production these come from data-tenant / data-api on the script tag
+      window.__KEEPSTAR_WIDGET__ = {
+        tenant: 'nike',
+        api: 'http://localhost:8080/api/v1'
+      };
+    </script>
+    <script type="module" src="/src/widget.jsx"></script>
   </body>
 </html>

@@ -4,6 +4,60 @@
 
 ---
 
+## Alpha 0.0.1 — 2026-02-11
+
+### Embeddable Chat Widget — Shadow DOM (feat/embeddable-widget)
+
+Фронтенд превращён из React SPA в встраиваемый виджет. Один `<script>` тег на сайте клиента → AI-чат с каталогом товаров. Shadow DOM, полная изоляция стилей.
+
+**Использование:** `<script src="https://keepstar.one/widget.js" data-tenant="nike"></script>`
+
+**Новые файлы:**
+- `widget.jsx`: entry point — Shadow DOM shell, CSS injection, React mount
+- `WidgetApp.jsx`: UI — trigger button + overlay + chat + formations
+- `WidgetConfigContext.jsx`: React Context для `tenantSlug` + `apiBaseUrl`
+- `widget.css`: Shadow DOM scoped стили (`:host` вместо `:root`)
+
+**API Client — мультитенантность:**
+- `setTenantSlug()` / `setApiBaseUrl()` — setter-функции
+- `X-Tenant-Slug` header во всех fetch-запросах
+- Backward compatible: без slug header не шлётся
+
+**Build:**
+- Один `npm run build` → `dist/widget.js` (IIFE, 72KB gzip)
+- `shadowDomCss()` Vite plugin — глушит обычные CSS imports, всё через `?inline`
+- Dev/prod parity: Shadow DOM в обоих режимах
+
+**Удалено:** `App.jsx`, `App.css`, `main.jsx`, `index.css`, `vite.widget.config.js` — SPA больше не нужен
+
+**Specs:** `ADW/specs/done/done-embeddable-widget.md`
+
+---
+
+## 2026-02-11 00:30
+
+### Railway Deploy — Chat + Admin (main)
+
+Два Railway service из одного GitHub repo. Каждый Go-сервер раздаёт свой React SPA + API.
+
+**Backend (2 файла изменены):**
+- `cmd/server/main.go` (chat + admin): SPA file server — catch-all `/` handler отдаёт static files из `./static/`, fallback на `index.html` для React Router
+- `config/config.go` (admin): `PORT` → `getEnv("PORT", getEnv("ADMIN_PORT", "8081"))` для Railway
+
+**DevOps (2 новых файла):**
+- `project/Dockerfile`: multi-stage build (Node 22 frontend → Go 1.24 backend → Alpine 3.21 runtime), `VITE_API_URL=/api/v1`
+- `project_admin/Dockerfile`: тот же паттерн, без VITE_API_URL
+
+**Bugfix — silent embed error (2 файла):**
+- `tool_catalog_search.go`: embedding ошибка глоталась молча → теперь `meta["embed_error"]`
+- `postgres_trace.go`: добавлен вывод `embed: {ms}ms ERROR: {err}` и `results: keyword={n} vector={n} merged={n} type={type}` в pipeline trace logs
+
+**Проблемы при деплое:** Railpack build fail (root directory), Admin 502 (порт), search 0 results (неверный OpenAI ключ в Railway), DATABASE_URL split на `&` (вставлять через JSON tab)
+
+**Specs:** `ADW/specs/done/done-railway-deploy.md`
+
+---
+
 ## 2026-02-10 19:30
 
 ### Session Init + Tenant Seed (feat/session-init)
