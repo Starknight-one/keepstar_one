@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Package, Upload, Settings, LogOut } from 'lucide-react'
+import { Package, Upload, Code, Settings, LogOut } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider.jsx'
 import './layout.css'
 
@@ -22,6 +22,9 @@ export default function DashboardLayout() {
           </NavLink>
           <NavLink to="/import" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Upload size={18} /> Import
+          </NavLink>
+          <NavLink to="/widget" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+            <Code size={18} /> Widget
           </NavLink>
           <NavLink to="/settings" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Settings size={18} /> Settings

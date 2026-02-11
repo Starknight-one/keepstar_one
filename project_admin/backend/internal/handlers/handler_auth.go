@@ -82,3 +82,19 @@ func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, user)
 }
+
+func (h *AuthHandler) HandleGetTenant(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+
+	tid := TenantID(r.Context())
+	tenant, err := h.auth.GetTenant(r.Context(), tid)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, tenant)
+}

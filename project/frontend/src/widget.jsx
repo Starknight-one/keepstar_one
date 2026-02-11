@@ -34,12 +34,27 @@ const ALL_CSS = [
 ].join('\n')
 
 ;(function () {
-  // Production: read from data attributes (IIFE, document.currentScript works)
-  // Dev: module scripts don't set currentScript, fall back to window.__KEEPSTAR_WIDGET__
+  // Find our script element:
+  // 1. document.currentScript (works for static <script> tags, IIFE)
+  // 2. Fallback: query by src attribute (for dynamically inserted scripts)
   const script = document.currentScript
+    || document.querySelector('script[src*="widget.js"]')
+
   const devConfig = window.__KEEPSTAR_WIDGET__
+
   const tenantSlug = script?.getAttribute('data-tenant') || devConfig?.tenant || null
-  const apiBaseUrl = script?.getAttribute('data-api') || devConfig?.api || null
+
+  // API URL priority: data-api attr → derive from script src origin → dev config → default
+  let apiBaseUrl = script?.getAttribute('data-api') || null
+  if (!apiBaseUrl && script?.src) {
+    try {
+      const scriptOrigin = new URL(script.src).origin
+      apiBaseUrl = scriptOrigin + '/api/v1'
+    } catch (_) { /* invalid URL, skip */ }
+  }
+  if (!apiBaseUrl) {
+    apiBaseUrl = devConfig?.api || null
+  }
 
   // Create host element
   const host = document.createElement('div')

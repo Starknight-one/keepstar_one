@@ -102,6 +102,15 @@ func main() {
 	// Protected routes
 	protected := http.NewServeMux()
 	protected.HandleFunc("/admin/api/auth/me", authHandler.HandleMe)
+	protected.HandleFunc("/admin/api/tenant", authHandler.HandleGetTenant)
+	protected.HandleFunc("/admin/api/widget-config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"GET only"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"widgetUrl":"%s"}`, cfg.WidgetBaseURL)
+	})
 	protected.HandleFunc("/admin/api/products", productsHandler.HandleList)
 	protected.HandleFunc("/admin/api/products/", func(w http.ResponseWriter, r *http.Request) {
 		// Route to get or update based on method
@@ -135,6 +144,8 @@ func main() {
 	})
 
 	mux.Handle("/admin/api/auth/me", authMW(protected))
+	mux.Handle("/admin/api/tenant", authMW(protected))
+	mux.Handle("/admin/api/widget-config", authMW(protected))
 	mux.Handle("/admin/api/products", authMW(protected))
 	mux.Handle("/admin/api/products/", authMW(protected))
 	mux.Handle("/admin/api/categories", authMW(protected))

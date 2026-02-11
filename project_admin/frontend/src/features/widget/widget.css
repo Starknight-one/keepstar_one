@@ -1,0 +1,109 @@
+.widget-subtitle {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.widget-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+  max-width: 640px;
+}
+
+.widget-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.widget-hint {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+}
+.widget-hint code {
+  background: var(--color-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.widget-code-block {
+  position: relative;
+  background: #1e293b;
+  border-radius: 6px;
+  padding: 16px;
+  overflow-x: auto;
+}
+.widget-code-block pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.widget-code-block code {
+  color: #e2e8f0;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.widget-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.widget-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #e2e8f0;
+}
+
+.widget-info-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 14px;
+}
+.widget-info-row + .widget-info-row {
+  border-top: 1px solid var(--color-border);
+}
+.widget-info-label {
+  color: var(--color-text-secondary);
+  min-width: 60px;
+}
+.widget-info-value {
+  font-weight: 500;
+}
+code.widget-info-value {
+  background: var(--color-bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.widget-steps {
+  padding-left: 20px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+.widget-steps li {
+  padding: 4px 0;
+}

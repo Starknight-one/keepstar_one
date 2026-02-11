@@ -10,6 +10,7 @@ type Config struct {
 	OpenAIAPIKey   string
 	EmbeddingModel string
 	LogLevel       string
+	WidgetBaseURL  string
 }
 
 func Load() *Config {
@@ -21,6 +22,7 @@ func Load() *Config {
 		OpenAIAPIKey:   getEnv("OPENAI_API_KEY", ""),
 		EmbeddingModel: getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
 		LogLevel:       getEnv("LOG_LEVEL", "info"),
+		WidgetBaseURL:  getEnv("WIDGET_BASE_URL", ""),
 	}
 }
 

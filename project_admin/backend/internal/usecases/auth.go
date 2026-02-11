@@ -120,6 +120,10 @@ func (uc *AuthUseCase) GetMe(ctx context.Context, userID string) (*domain.AdminU
 	return uc.auth.GetUserByID(ctx, userID)
 }
 
+func (uc *AuthUseCase) GetTenant(ctx context.Context, tenantID string) (*domain.Tenant, error) {
+	return uc.catalog.GetTenantByID(ctx, tenantID)
+}
+
 func (uc *AuthUseCase) generateToken(user *domain.AdminUser) (string, error) {
 	claims := jwt.MapClaims{
 		"uid":  user.ID,
