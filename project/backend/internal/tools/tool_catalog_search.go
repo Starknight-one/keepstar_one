@@ -31,13 +31,18 @@ func NewCatalogSearchTool(statePort ports.StatePort, catalogPort ports.CatalogPo
 func (t *CatalogSearchTool) Definition() domain.ToolDefinition {
 	return domain.ToolDefinition{
 		Name:        "catalog_search",
-		Description: "Hybrid product search. Put structured/exact filters in 'filters'. Put semantic search intent in 'vector_query' in user's original language.",
+		Description: "Hybrid catalog search for products and services. Put structured/exact filters in 'filters'. Put semantic search intent in 'vector_query' in user's original language.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"vector_query": map[string]interface{}{
 					"type":        "string",
 					"description": "Semantic search in user's original language. Vector search handles multilingual matching. Example: 'кроссы для бега', 'lightweight laptop for work'.",
+				},
+				"entity_type": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"product", "service", "all"},
+					"description": "Type of catalog entity to search. Default 'all' searches both products and services.",
 				},
 				"filters": map[string]interface{}{
 					"type":        "object",
@@ -107,6 +112,10 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	vectorQuery, _ := input["vector_query"].(string)
 	sortBy, _ := input["sort_by"].(string)
 	sortOrder, _ := input["sort_order"].(string)
+	entityType, _ := input["entity_type"].(string)
+	if entityType == "" {
+		entityType = "all"
+	}
 	limit := 10
 	if v, ok := input["limit"].(float64); ok {
 		limit = int(v)
@@ -257,10 +266,51 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	meta["keyword_count"] = len(keywordProducts)
 	meta["vector_count"] = len(vectorProducts)
 
-	// RRF merge
+	// Service search (when entity_type is "service" or "all")
+	var keywordServices []domain.Service
+	var vectorServices []domain.Service
+	if entityType == "service" || entityType == "all" {
+		svcFilter := ports.ProductFilter{
+			Search:       vectorQuery,
+			Brand:        brand,
+			CategoryName: category,
+			MinPrice:     minPriceKopecks,
+			MaxPrice:     maxPriceKopecks,
+			SortField:    sortBy,
+			SortOrder:    sortOrder,
+			Limit:        limit * 2,
+			Attributes:   attributes,
+		}
+		if svcFilter.Brand != "" && svcFilter.Search != "" {
+			cleaned := strings.TrimSpace(removeSubstringIgnoreCase(svcFilter.Search, svcFilter.Brand))
+			if cleaned != "" {
+				svcFilter.Search = cleaned
+			}
+		}
+		keywordServices, _, _ = t.catalogPort.ListServices(ctx, tenant.ID, svcFilter)
+
+		if queryEmbedding != nil {
+			var vf *ports.VectorFilter
+			if brand != "" || category != "" {
+				vf = &ports.VectorFilter{Brand: brand, CategoryName: category}
+			}
+			vectorServices, _ = t.catalogPort.VectorSearchServices(ctx, tenant.ID, queryEmbedding, limit*2, vf)
+		}
+		meta["service_keyword_count"] = len(keywordServices)
+		meta["service_vector_count"] = len(vectorServices)
+	}
+
+	// RRF merge for products
 	hasFilters := brand != "" || category != ""
-	merged := rrfMerge(keywordProducts, vectorProducts, limit, hasFilters)
-	total := len(merged)
+	var merged []domain.Product
+	if entityType != "service" {
+		merged = rrfMerge(keywordProducts, vectorProducts, limit, hasFilters)
+	}
+
+	// RRF merge for services
+	mergedServices := rrfMergeServices(keywordServices, vectorServices, limit, hasFilters)
+
+	total := len(merged) + len(mergedServices)
 	meta["merged_count"] = total
 	if len(keywordProducts) > 0 && len(vectorProducts) > 0 {
 		meta["search_type"] = "hybrid"
@@ -291,11 +341,16 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		}, nil
 	}
 
-	// Extract fields from first product
-	fields := catalogExtractProductFields(merged[0])
+	// Extract fields from first product or service
+	var fields []string
+	if len(merged) > 0 {
+		fields = catalogExtractProductFields(merged[0])
+	} else if len(mergedServices) > 0 {
+		fields = catalogExtractServiceFields(mergedServices[0])
+	}
 
 	// UpdateData zone-write: atomic data + delta
-	data := domain.StateData{Products: merged}
+	data := domain.StateData{Products: merged, Services: mergedServices}
 	stateMeta := domain.StateMeta{
 		Count:   total,
 		Fields:  fields,
@@ -316,8 +371,13 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		return nil, fmt.Errorf("update data: %w", err)
 	}
 
+	resultMsg := fmt.Sprintf("ok: found %d products", len(merged))
+	if len(mergedServices) > 0 {
+		resultMsg += fmt.Sprintf(", %d services", len(mergedServices))
+	}
+
 	return &domain.ToolResult{
-		Content:  fmt.Sprintf("ok: found %d products", total),
+		Content:  resultMsg,
 		Metadata: meta,
 	}, nil
 }
@@ -365,6 +425,78 @@ func rrfMerge(keyword, vector []domain.Product, limit int, hasFilters bool) []do
 		result = append(result, products[s.id])
 	}
 	return result
+}
+
+// rrfMergeServices combines keyword and vector service results using RRF (k=60).
+func rrfMergeServices(keyword, vector []domain.Service, limit int, hasFilters bool) []domain.Service {
+	if len(keyword) == 0 && len(vector) == 0 {
+		return nil
+	}
+
+	const k = 60
+	scores := make(map[string]float64)
+	services := make(map[string]domain.Service)
+
+	keywordWeight := 1.5
+	if hasFilters {
+		keywordWeight = 2.0
+	}
+
+	for rank, s := range keyword {
+		scores[s.ID] += keywordWeight / float64(k+rank+1)
+		services[s.ID] = s
+	}
+	for rank, s := range vector {
+		scores[s.ID] += 1.0 / float64(k+rank+1)
+		if _, exists := services[s.ID]; !exists {
+			services[s.ID] = s
+		}
+	}
+
+	type scored struct {
+		id    string
+		score float64
+	}
+	var sorted []scored
+	for id, score := range scores {
+		sorted = append(sorted, scored{id, score})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].score > sorted[j].score
+	})
+
+	var result []domain.Service
+	for i, s := range sorted {
+		if i >= limit {
+			break
+		}
+		result = append(result, services[s.id])
+	}
+	return result
+}
+
+// catalogExtractServiceFields gets field names from a service
+func catalogExtractServiceFields(s domain.Service) []string {
+	fields := []string{"id", "name", "price"}
+	if s.Description != "" {
+		fields = append(fields, "description")
+	}
+	if s.Category != "" {
+		fields = append(fields, "category")
+	}
+	if s.Duration != "" {
+		fields = append(fields, "duration")
+	}
+	if s.Provider != "" {
+		fields = append(fields, "provider")
+	}
+	if s.Rating > 0 {
+		fields = append(fields, "rating")
+	}
+	if len(s.Images) > 0 {
+		fields = append(fields, "images")
+	}
+	return fields
 }
 
 // catalogExtractProductFields gets field names from a product

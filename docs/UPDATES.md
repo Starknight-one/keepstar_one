@@ -4,6 +4,91 @@
 
 ---
 
+## Catalog Evolution — 2026-02-12 (feature/catalog-evolution)
+
+Три структурных изменения в каталоге для подготовки к пилоту.
+
+### 1. Stock Table — изоляция стоков
+
+Отдельная таблица `catalog.stock` с PK `(tenant_id, product_id)`. Stock больше не колонка в products.
+
+**Chat backend:** `ListProducts`, `GetProduct`, `VectorSearch` переведены на `LEFT JOIN catalog.stock` → `COALESCE(s.quantity, 0)`. Новый метод `GetStock`.
+
+**Admin backend:** `POST /admin/api/stock/bulk` — массовое обновление стоков по SKU. `StockUseCase` + `StockHandler` + `BulkUpdateStock` в адаптере.
+
+Seed-миграция переносит существующие `stock_quantity` из products в stock. Колонка не удалена (backward compat).
+
+### 2. Services Tables — услуги в БД
+
+`catalog.master_services` + `catalog.services` — полный аналог products.
+
+**Chat backend:** `ListServices`, `GetService`, `VectorSearchServices`, `SeedServiceEmbedding`. RRF merge для hybrid search. `tool_catalog_search` расширен полем `entity_type` (product/service/all).
+
+**Admin backend:** Full CRUD (UpsertMasterService, UpsertServiceListing, ListServices, GetService, UpdateService). Import расширен: поле `type` = "product"/"service", отдельные `processProductItem` / `processServiceItem`. Post-import `embedServices`.
+
+### 3. Tags — JSONB + GIN
+
+`tags JSONB DEFAULT '[]'` на `products` и `services` с GIN индексами. Чтение/запись в адаптерах, поддержка в импорте.
+
+**Файлы:** 7 изменённых + 3 новых (chat), 7 изменённых + 4 новых (admin).
+
+**Specs:** `ADW/specs/done/done-catalog-evolution.md`
+
+---
+
+## Plan — 2026-02-12 (Pre-Pilot Sprint)
+
+Цель дня: подготовка к пилоту. Три направления, работа параллельная.
+
+### 1. Каталог — архитектура мультитенантной БД
+
+**Проблема:** Текущий каталог рабочий (master_products + products per tenant), но нужно продумать архитектуру под пилот: как загружать каталоги клиентов, как работает shared master data, как это масштабируется.
+
+**Ключевые вопросы:**
+- Формат импорта каталога для пилот-клиента (JSON/CSV через админку уже есть)
+- Master products как shared knowledge base (ультрамного инфо → лучший vector search)
+- Tenant overlay — клиент дополняет/переопределяет данные мастера
+- Мультитенантность: изоляция данных, но shared catalog benefits для МСБ
+
+**Результат:** Архитектурное решение + готовый каталог для пилота. → **Реализовано** в "Catalog Evolution" выше.
+
+### 2. Кейсы фронта — UX и бизнес-сценарии
+
+**А) Навигационная панель:**
+- История ходов (forward/back по turns)
+- Лайки / сохранение товаров
+- Возможно: share, compare
+
+**Б) Мгновенная отрисовка:**
+- Предгенерация дефолтных пресетов (instant transitions)
+- Кэш готовых formations на клиенте
+- Спека: `feature-instant-navigation.md`
+
+**В) Бизнес-кейсы:**
+- Поиск товаров/услуг (core)
+- "Покажи похожие" / рекомендации
+- Триггеры от контрагента (промо, рекомендации)
+- Элементарная поддержка (FAQ, ответы по товару)
+
+**Г) Пресеты и freestyle:**
+- Больше пресетов для разных сценариев
+- Freestyle mode — кастомный рендеринг по запросу пользователя
+
+### 3. Логирование — полное покрытие
+
+**Цель:** Видеть всё что происходит в системе, отлавливать плохое поведение.
+
+**Что логировать:**
+- Pipeline flow (уже есть traces, нужно расширить)
+- LLM quality metrics (relevance, latency, cost per query)
+- User behavior (что ищут, что кликают, где бросают)
+- Errors и anomalies
+- Tenant-level aggregation
+
+**Результат:** Можно открыть логи и понять "система работает хорошо/плохо" без угадывания.
+
+---
+
 ## Alpha 0.0.2 — 2026-02-11
 
 ### Widget Auto-Detection Fix + Admin Widget Page

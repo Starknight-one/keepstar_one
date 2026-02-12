@@ -40,12 +40,24 @@ type CatalogPort interface {
 	ListProducts(ctx context.Context, tenantID string, filter ProductFilter) ([]domain.Product, int, error)
 	GetProduct(ctx context.Context, tenantID string, productID string) (*domain.Product, error)
 
+	// Stock operations
+	GetStock(ctx context.Context, tenantID string, productID string) (*domain.Stock, error)
+
+	// Service operations
+	ListServices(ctx context.Context, tenantID string, filter ProductFilter) ([]domain.Service, int, error)
+	GetService(ctx context.Context, tenantID string, serviceID string) (*domain.Service, error)
+	VectorSearchServices(ctx context.Context, tenantID string, embedding []float32, limit int, filter *VectorFilter) ([]domain.Service, error)
+	GetMasterServicesWithoutEmbedding(ctx context.Context) ([]domain.MasterService, error)
+
 	// VectorSearch finds products by semantic similarity via pgvector.
 	// filter may be nil for unfiltered search.
 	VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int, filter *VectorFilter) ([]domain.Product, error)
 
 	// SeedEmbedding saves embedding for a master product.
 	SeedEmbedding(ctx context.Context, masterProductID string, embedding []float32) error
+
+	// SeedServiceEmbedding saves embedding for a master service.
+	SeedServiceEmbedding(ctx context.Context, masterServiceID string, embedding []float32) error
 
 	// GetMasterProductsWithoutEmbedding returns master products that need embeddings.
 	GetMasterProductsWithoutEmbedding(ctx context.Context) ([]domain.MasterProduct, error)

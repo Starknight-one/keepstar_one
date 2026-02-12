@@ -2,27 +2,30 @@ package domain
 
 import "time"
 
-type Product struct {
+// Service represents a tenant-scoped service listing.
+type Service struct {
 	ID              string         `json:"id"`
 	TenantID        string         `json:"tenantId"`
-	MasterProductID string         `json:"masterProductId,omitempty"`
+	MasterServiceID string         `json:"masterServiceId,omitempty"`
 	Name            string         `json:"name"`
 	Description     string         `json:"description,omitempty"`
 	Price           int            `json:"price"`
 	PriceFormatted  string         `json:"priceFormatted,omitempty"`
 	Currency        string         `json:"currency,omitempty"`
+	Duration        string         `json:"duration,omitempty"`
 	Images          []string       `json:"images,omitempty"`
 	Rating          float64        `json:"rating,omitempty"`
-	StockQuantity   int            `json:"stockQuantity"`
-	Brand           string         `json:"brand,omitempty"`
 	Category        string         `json:"category,omitempty"`
+	Provider        string         `json:"provider,omitempty"`
+	Availability    string         `json:"availability,omitempty"`
 	Tags            []string       `json:"tags,omitempty"`
 	Attributes      map[string]any `json:"attributes,omitempty"`
 	CreatedAt       time.Time      `json:"createdAt"`
 	UpdatedAt       time.Time      `json:"updatedAt"`
 }
 
-type MasterProduct struct {
+// MasterService is the shared catalog entity for services.
+type MasterService struct {
 	ID            string         `json:"id"`
 	SKU           string         `json:"sku"`
 	Name          string         `json:"name"`
@@ -32,22 +35,9 @@ type MasterProduct struct {
 	CategoryName  string         `json:"categoryName,omitempty"`
 	Images        []string       `json:"images"`
 	Attributes    map[string]any `json:"attributes"`
+	Duration      string         `json:"duration,omitempty"`
+	Provider      string         `json:"provider,omitempty"`
 	OwnerTenantID string         `json:"ownerTenantId"`
 	CreatedAt     time.Time      `json:"createdAt"`
 	UpdatedAt     time.Time      `json:"updatedAt"`
-}
-
-type AdminProductFilter struct {
-	Search     string `json:"search,omitempty"`
-	CategoryID string `json:"categoryId,omitempty"`
-	Limit      int    `json:"limit"`
-	Offset     int    `json:"offset"`
-}
-
-type ProductUpdate struct {
-	Name        *string  `json:"name,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	Price       *int     `json:"price,omitempty"`
-	Stock       *int     `json:"stock,omitempty"`
-	Rating      *float64 `json:"rating,omitempty"`
 }

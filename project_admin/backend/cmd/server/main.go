@@ -78,12 +78,14 @@ func main() {
 	productsUC := usecases.NewProductsUseCase(catalogAdapter)
 	importUC := usecases.NewImportUseCase(catalogAdapter, importAdapter, embeddingClient, log)
 	settingsUC := usecases.NewSettingsUseCase(catalogAdapter)
+	stockUC := usecases.NewStockUseCase(catalogAdapter)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authUC)
 	productsHandler := handlers.NewProductsHandler(productsUC)
 	importHandler := handlers.NewImportHandler(importUC)
 	settingsHandler := handlers.NewSettingsHandler(settingsUC)
+	stockHandler := handlers.NewStockHandler(stockUC)
 
 	// Setup routes
 	mux := http.NewServeMux()
@@ -142,6 +144,7 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+	protected.HandleFunc("/admin/api/stock/bulk", stockHandler.HandleBulkUpdate)
 
 	mux.Handle("/admin/api/auth/me", authMW(protected))
 	mux.Handle("/admin/api/tenant", authMW(protected))
@@ -153,6 +156,7 @@ func main() {
 	mux.Handle("/admin/api/catalog/import/", authMW(protected))
 	mux.Handle("/admin/api/catalog/imports", authMW(protected))
 	mux.Handle("/admin/api/settings", authMW(protected))
+	mux.Handle("/admin/api/stock/bulk", authMW(protected))
 
 	// SPA file server: serve React frontend from ./static
 	staticDir := "./static"

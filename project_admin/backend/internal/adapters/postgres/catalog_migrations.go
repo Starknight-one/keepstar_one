@@ -72,6 +72,69 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_master_products_embedding
 			ON catalog.master_products USING hnsw (embedding vector_cosine_ops);`,
 		`ALTER TABLE catalog.tenants ADD COLUMN IF NOT EXISTS catalog_digest JSONB DEFAULT NULL;`,
+
+		// Stock table
+		`CREATE TABLE IF NOT EXISTS catalog.stock (
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id),
+			product_id UUID NOT NULL REFERENCES catalog.products(id) ON DELETE CASCADE,
+			quantity INTEGER NOT NULL DEFAULT 0,
+			reserved INTEGER NOT NULL DEFAULT 0,
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			PRIMARY KEY (tenant_id, product_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_stock_tenant ON catalog.stock(tenant_id);`,
+
+		// Seed stock from existing products
+		`INSERT INTO catalog.stock (tenant_id, product_id, quantity)
+		SELECT tenant_id, id, stock_quantity FROM catalog.products
+		WHERE stock_quantity > 0
+		ON CONFLICT DO NOTHING;`,
+
+		// Services tables
+		`CREATE TABLE IF NOT EXISTS catalog.master_services (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			sku VARCHAR(100) NOT NULL UNIQUE,
+			name VARCHAR(500) NOT NULL,
+			description TEXT,
+			brand VARCHAR(255),
+			category_id UUID REFERENCES catalog.categories(id),
+			images JSONB DEFAULT '[]',
+			attributes JSONB DEFAULT '{}',
+			duration VARCHAR(100),
+			provider VARCHAR(255),
+			owner_tenant_id UUID REFERENCES catalog.tenants(id),
+			embedding vector(384),
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		);`,
+		`CREATE TABLE IF NOT EXISTS catalog.services (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id),
+			master_service_id UUID REFERENCES catalog.master_services(id),
+			name VARCHAR(500),
+			description TEXT,
+			price INTEGER NOT NULL DEFAULT 0,
+			currency VARCHAR(10) DEFAULT 'RUB',
+			rating NUMERIC(2,1) DEFAULT 0,
+			images JSONB DEFAULT '[]',
+			availability VARCHAR(50) DEFAULT 'available',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_services_tenant ON catalog.services(tenant_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_services_master ON catalog.services(master_service_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_master_services_category ON catalog.master_services(category_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_master_services_sku ON catalog.master_services(sku);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_master_services_embedding
+			ON catalog.master_services USING hnsw (embedding vector_cosine_ops);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_services_tenant_master
+			ON catalog.services(tenant_id, master_service_id);`,
+
+		// Tags
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';`,
+		`ALTER TABLE catalog.services ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_products_tags ON catalog.products USING gin(tags);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_services_tags ON catalog.services USING gin(tags);`,
 	}
 
 	for i, m := range migrations {

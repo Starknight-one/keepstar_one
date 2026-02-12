@@ -23,16 +23,21 @@ func NewImportUseCase(catalog ports.AdminCatalogPort, importDB ports.ImportPort,
 }
 
 type ImportItem struct {
-	SKU        string         `json:"sku"`
-	Name       string         `json:"name"`
-	Brand      string         `json:"brand"`
-	Category   string         `json:"category"`
-	Price      int            `json:"price"`
-	Currency   string         `json:"currency"`
-	Stock      int            `json:"stock"`
-	Rating     float64        `json:"rating"`
-	Images     []string       `json:"images"`
-	Attributes map[string]any `json:"attributes"`
+	Type         string         `json:"type"`         // "product" (default) or "service"
+	SKU          string         `json:"sku"`
+	Name         string         `json:"name"`
+	Brand        string         `json:"brand"`
+	Category     string         `json:"category"`
+	Price        int            `json:"price"`
+	Currency     string         `json:"currency"`
+	Stock        int            `json:"stock"`
+	Rating       float64        `json:"rating"`
+	Images       []string       `json:"images"`
+	Attributes   map[string]any `json:"attributes"`
+	Tags         []string       `json:"tags"`
+	Duration     string         `json:"duration"`     // service-specific
+	Provider     string         `json:"provider"`     // service-specific
+	Availability string         `json:"availability"` // service-specific
 }
 
 type ImportRequest struct {
@@ -125,7 +130,19 @@ func (uc *ImportUseCase) processItem(ctx context.Context, tenantID string, item 
 		return fmt.Errorf("category: %w", err)
 	}
 
-	// Master product
+	currency := item.Currency
+	if currency == "" {
+		currency = "RUB"
+	}
+
+	// Branch by type
+	if item.Type == "service" {
+		return uc.processServiceItem(ctx, tenantID, item, categoryID, currency)
+	}
+	return uc.processProductItem(ctx, tenantID, item, categoryID, currency)
+}
+
+func (uc *ImportUseCase) processProductItem(ctx context.Context, tenantID string, item ImportItem, categoryID, currency string) error {
 	mp := &domain.MasterProduct{
 		SKU:           item.SKU,
 		Name:          item.Name,
@@ -140,11 +157,6 @@ func (uc *ImportUseCase) processItem(ctx context.Context, tenantID string, item 
 		return fmt.Errorf("master product: %w", err)
 	}
 
-	// Product listing
-	currency := item.Currency
-	if currency == "" {
-		currency = "RUB"
-	}
 	p := &domain.Product{
 		TenantID:        tenantID,
 		MasterProductID: mpID,
@@ -154,6 +166,7 @@ func (uc *ImportUseCase) processItem(ctx context.Context, tenantID string, item 
 		StockQuantity:   item.Stock,
 		Rating:          item.Rating,
 		Images:          item.Images,
+		Tags:            item.Tags,
 	}
 	_, err = uc.catalog.UpsertProductListing(ctx, p)
 	if err != nil {
@@ -163,60 +176,57 @@ func (uc *ImportUseCase) processItem(ctx context.Context, tenantID string, item 
 	return nil
 }
 
+func (uc *ImportUseCase) processServiceItem(ctx context.Context, tenantID string, item ImportItem, categoryID, currency string) error {
+	ms := &domain.MasterService{
+		SKU:           item.SKU,
+		Name:          item.Name,
+		Brand:         item.Brand,
+		CategoryID:    categoryID,
+		Images:        item.Images,
+		Attributes:    item.Attributes,
+		Duration:      item.Duration,
+		Provider:      item.Provider,
+		OwnerTenantID: tenantID,
+	}
+	msID, err := uc.catalog.UpsertMasterService(ctx, ms)
+	if err != nil {
+		return fmt.Errorf("master service: %w", err)
+	}
+
+	availability := item.Availability
+	if availability == "" {
+		availability = "available"
+	}
+
+	s := &domain.Service{
+		TenantID:        tenantID,
+		MasterServiceID: msID,
+		Name:            item.Name,
+		Price:           item.Price,
+		Currency:        currency,
+		Rating:          item.Rating,
+		Images:          item.Images,
+		Tags:            item.Tags,
+		Availability:    availability,
+	}
+	_, err = uc.catalog.UpsertServiceListing(ctx, s)
+	if err != nil {
+		return fmt.Errorf("service listing: %w", err)
+	}
+
+	return nil
+}
+
 func (uc *ImportUseCase) postImport(tenantID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Embeddings
 	if uc.embedding != nil {
-		products, err := uc.catalog.GetMasterProductsWithoutEmbedding(ctx, tenantID)
-		if err != nil {
-			uc.log.Error("post_import_get_products_failed", "error", err)
-			return
-		}
-		if len(products) > 0 {
-			uc.log.Info("post_import_embedding_started", "count", len(products))
-			texts := make([]string, len(products))
-			for i, p := range products {
-				text := p.Name
-				if p.Description != "" {
-					text += " " + p.Description
-				}
-				if p.Brand != "" {
-					text += " " + p.Brand
-				}
-				if p.CategoryName != "" {
-					text += " " + p.CategoryName
-				}
-				if p.Attributes != nil {
-					for _, key := range []string{"color", "material", "type", "size"} {
-						if v, ok := p.Attributes[key]; ok {
-							if s, ok := v.(string); ok && s != "" {
-								text += " " + s
-							}
-						}
-					}
-				}
-				texts[i] = text
-			}
+		// Product embeddings
+		uc.embedProducts(ctx, tenantID)
 
-			batchSize := 100
-			for i := 0; i < len(texts); i += batchSize {
-				end := i + batchSize
-				if end > len(texts) {
-					end = len(texts)
-				}
-				embeddings, err := uc.embedding.Embed(ctx, texts[i:end])
-				if err != nil {
-					uc.log.Error("post_import_embed_failed", "error", err)
-					break
-				}
-				for j, emb := range embeddings {
-					uc.catalog.SeedEmbedding(ctx, products[i+j].ID, emb)
-				}
-			}
-			uc.log.Info("post_import_embedding_completed", "count", len(products))
-		}
+		// Service embeddings
+		uc.embedServices(ctx, tenantID)
 	}
 
 	// Digest
@@ -225,6 +235,109 @@ func (uc *ImportUseCase) postImport(tenantID string) {
 	} else {
 		uc.log.Info("post_import_digest_completed", "tenant_id", tenantID)
 	}
+}
+
+func (uc *ImportUseCase) embedProducts(ctx context.Context, tenantID string) {
+	products, err := uc.catalog.GetMasterProductsWithoutEmbedding(ctx, tenantID)
+	if err != nil {
+		uc.log.Error("post_import_get_products_failed", "error", err)
+		return
+	}
+	if len(products) == 0 {
+		return
+	}
+
+	uc.log.Info("post_import_product_embedding_started", "count", len(products))
+	texts := make([]string, len(products))
+	for i, p := range products {
+		text := p.Name
+		if p.Description != "" {
+			text += " " + p.Description
+		}
+		if p.Brand != "" {
+			text += " " + p.Brand
+		}
+		if p.CategoryName != "" {
+			text += " " + p.CategoryName
+		}
+		if p.Attributes != nil {
+			for _, key := range []string{"color", "material", "type", "size"} {
+				if v, ok := p.Attributes[key]; ok {
+					if s, ok := v.(string); ok && s != "" {
+						text += " " + s
+					}
+				}
+			}
+		}
+		texts[i] = text
+	}
+
+	batchSize := 100
+	for i := 0; i < len(texts); i += batchSize {
+		end := i + batchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		embeddings, err := uc.embedding.Embed(ctx, texts[i:end])
+		if err != nil {
+			uc.log.Error("post_import_embed_failed", "error", err)
+			break
+		}
+		for j, emb := range embeddings {
+			uc.catalog.SeedEmbedding(ctx, products[i+j].ID, emb)
+		}
+	}
+	uc.log.Info("post_import_product_embedding_completed", "count", len(products))
+}
+
+func (uc *ImportUseCase) embedServices(ctx context.Context, tenantID string) {
+	services, err := uc.catalog.GetMasterServicesWithoutEmbedding(ctx, tenantID)
+	if err != nil {
+		uc.log.Error("post_import_get_services_failed", "error", err)
+		return
+	}
+	if len(services) == 0 {
+		return
+	}
+
+	uc.log.Info("post_import_service_embedding_started", "count", len(services))
+	texts := make([]string, len(services))
+	for i, s := range services {
+		text := s.Name
+		if s.Description != "" {
+			text += " " + s.Description
+		}
+		if s.Brand != "" {
+			text += " " + s.Brand
+		}
+		if s.CategoryName != "" {
+			text += " " + s.CategoryName
+		}
+		if s.Duration != "" {
+			text += " " + s.Duration
+		}
+		if s.Provider != "" {
+			text += " " + s.Provider
+		}
+		texts[i] = text
+	}
+
+	batchSize := 100
+	for i := 0; i < len(texts); i += batchSize {
+		end := i + batchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		embeddings, err := uc.embedding.Embed(ctx, texts[i:end])
+		if err != nil {
+			uc.log.Error("post_import_service_embed_failed", "error", err)
+			break
+		}
+		for j, emb := range embeddings {
+			uc.catalog.SeedServiceEmbedding(ctx, services[i+j].ID, emb)
+		}
+	}
+	uc.log.Info("post_import_service_embedding_completed", "count", len(services))
 }
 
 // slugify reused from auth.go — simple version

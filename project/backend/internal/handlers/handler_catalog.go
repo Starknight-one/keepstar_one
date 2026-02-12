@@ -40,6 +40,7 @@ type ProductResponse struct {
 	StockQuantity  int            `json:"stockQuantity"`
 	Brand          string         `json:"brand"`
 	Category       string         `json:"category"`
+	Tags           []string       `json:"tags,omitempty"`
 	Attributes     map[string]any `json:"attributes,omitempty"`
 }
 
@@ -209,6 +210,7 @@ func mapProductToResponse(p domain.Product) ProductResponse {
 		StockQuantity:  p.StockQuantity,
 		Brand:          p.Brand,
 		Category:       p.Category,
+		Tags:           p.Tags,
 		Attributes:     attrs,
 	}
 }

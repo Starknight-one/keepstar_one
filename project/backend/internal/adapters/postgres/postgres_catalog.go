@@ -144,13 +144,15 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		SELECT
 			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
 			COALESCE(p.name, '') as name, COALESCE(p.description, '') as description,
-			p.price, p.currency, p.stock_quantity, COALESCE(p.rating, 0) as rating, COALESCE(p.images, '[]') as images,
+			p.price, p.currency, COALESCE(s.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
+			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
 			mp.brand, mp.category_id, mp.images as mp_images, mp.attributes,
 			c.name as category_name
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
 		WHERE p.tenant_id = $1
 	`
 
@@ -271,11 +273,11 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	for rows.Next() {
 		var p domain.Product
 		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-		var productImagesJSON, mpImagesJSON, attributesJSON []byte
+		var productImagesJSON, tagsJSON, mpImagesJSON, attributesJSON []byte
 
 		err := rows.Scan(
 			&p.ID, &p.TenantID, &masterProductID,
-			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON,
+			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 			&mpID, &mpSKU, &mpName, &mpDesc,
 			&mpBrand, &mpCategoryID, &mpImagesJSON, &attributesJSON,
 			&categoryName,
@@ -289,6 +291,11 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			if err := json.Unmarshal(productImagesJSON, &p.Images); err != nil {
 				return nil, 0, fmt.Errorf("unmarshal product images: %w", err)
 			}
+		}
+
+		// Parse tags
+		if len(tagsJSON) > 0 {
+			json.Unmarshal(tagsJSON, &p.Tags)
 		}
 
 		// Merge with master product data
@@ -319,23 +326,25 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		SELECT
 			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
 			COALESCE(p.name, '') as name, COALESCE(p.description, '') as description,
-			p.price, p.currency, p.stock_quantity, COALESCE(p.rating, 0) as rating, COALESCE(p.images, '[]') as images,
+			p.price, p.currency, COALESCE(s.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
+			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
 			mp.brand, mp.category_id, mp.images as mp_images, mp.attributes,
 			c.name as category_name
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
 		WHERE p.tenant_id = $1 AND p.id = $2
 	`
 
 	var p domain.Product
 	var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-	var productImagesJSON, mpImagesJSON, attributesJSON []byte
+	var productImagesJSON, tagsJSON, mpImagesJSON, attributesJSON []byte
 
 	err := a.client.pool.QueryRow(ctx, query, tenantID, productID).Scan(
 		&p.ID, &p.TenantID, &masterProductID,
-		&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON,
+		&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 		&mpID, &mpSKU, &mpName, &mpDesc,
 		&mpBrand, &mpCategoryID, &mpImagesJSON, &attributesJSON,
 		&categoryName,
@@ -353,6 +362,11 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		if err := json.Unmarshal(productImagesJSON, &p.Images); err != nil {
 			return nil, fmt.Errorf("unmarshal product images: %w", err)
 		}
+	}
+
+	// Parse tags
+	if len(tagsJSON) > 0 {
+		json.Unmarshal(tagsJSON, &p.Tags)
 	}
 
 	// Merge with master product data
@@ -448,13 +462,15 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 		SELECT
 			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
 			COALESCE(p.name, '') as name, COALESCE(p.description, '') as description,
-			p.price, p.currency, p.stock_quantity, COALESCE(p.rating, 0) as rating, COALESCE(p.images, '[]') as images,
+			p.price, p.currency, COALESCE(st.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
+			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
 			mp.brand, mp.category_id, mp.images as mp_images, mp.attributes,
 			c.name as category_name
 		FROM catalog.products p
 		JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN catalog.stock st ON st.product_id = p.id AND st.tenant_id = p.tenant_id
 		WHERE p.tenant_id = $1
 		  AND mp.embedding IS NOT NULL
 	`
@@ -488,11 +504,11 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 	for rows.Next() {
 		var p domain.Product
 		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-		var productImagesJSON, mpImagesJSON, attributesJSON []byte
+		var productImagesJSON, tagsJSON, mpImagesJSON, attributesJSON []byte
 
 		err := rows.Scan(
 			&p.ID, &p.TenantID, &masterProductID,
-			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON,
+			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 			&mpID, &mpSKU, &mpName, &mpDesc,
 			&mpBrand, &mpCategoryID, &mpImagesJSON, &attributesJSON,
 			&categoryName,
@@ -505,6 +521,10 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			if err := json.Unmarshal(productImagesJSON, &p.Images); err != nil {
 				return nil, fmt.Errorf("unmarshal product images: %w", err)
 			}
+		}
+
+		if len(tagsJSON) > 0 {
+			json.Unmarshal(tagsJSON, &p.Tags)
 		}
 
 		if err := mergeProductWithMaster(&p, masterProductRow{
@@ -868,4 +888,449 @@ func (a *CatalogAdapter) GetCatalogDigest(ctx context.Context, tenantID string) 
 	}
 
 	return &digest, nil
+}
+
+// --- Stock ---
+
+// GetStock retrieves stock for a specific product.
+func (a *CatalogAdapter) GetStock(ctx context.Context, tenantID string, productID string) (*domain.Stock, error) {
+	query := `SELECT tenant_id, product_id, quantity, reserved, updated_at
+		FROM catalog.stock WHERE tenant_id = $1 AND product_id = $2`
+
+	var s domain.Stock
+	err := a.client.pool.QueryRow(ctx, query, tenantID, productID).Scan(
+		&s.TenantID, &s.ProductID, &s.Quantity, &s.Reserved, &s.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &domain.Stock{TenantID: tenantID, ProductID: productID}, nil
+		}
+		return nil, fmt.Errorf("query stock: %w", err)
+	}
+	return &s, nil
+}
+
+// --- Services ---
+
+// masterServiceRow holds scanned master-service join columns.
+type masterServiceRow struct {
+	MasterServiceID *string
+	Name            *string
+	Description     *string
+	Brand           *string
+	Duration        *string
+	Provider        *string
+	CategoryName    *string
+	ImagesJSON      []byte
+	AttributesJSON  []byte
+}
+
+// mergeServiceWithMaster fills service fields from a master-service row.
+func mergeServiceWithMaster(s *domain.Service, ms masterServiceRow) error {
+	if ms.MasterServiceID == nil || *ms.MasterServiceID == "" {
+		return nil
+	}
+	s.MasterServiceID = *ms.MasterServiceID
+
+	if s.Name == "" && ms.Name != nil {
+		s.Name = *ms.Name
+	}
+	if s.Description == "" && ms.Description != nil {
+		s.Description = *ms.Description
+	}
+	if ms.Brand != nil {
+		// Services don't have Brand field, but Provider can come from master
+	}
+	if ms.Duration != nil && s.Duration == "" {
+		s.Duration = *ms.Duration
+	}
+	if ms.Provider != nil && s.Provider == "" {
+		s.Provider = *ms.Provider
+	}
+	if ms.CategoryName != nil {
+		s.Category = *ms.CategoryName
+	}
+	if len(s.Images) == 0 && len(ms.ImagesJSON) > 0 {
+		if err := json.Unmarshal(ms.ImagesJSON, &s.Images); err != nil {
+			return fmt.Errorf("unmarshal master service images: %w", err)
+		}
+	}
+	if len(ms.AttributesJSON) > 0 {
+		if err := json.Unmarshal(ms.AttributesJSON, &s.Attributes); err != nil {
+			return fmt.Errorf("unmarshal service attributes: %w", err)
+		}
+	}
+	return nil
+}
+
+// ListServices retrieves services for a tenant with filtering.
+func (a *CatalogAdapter) ListServices(ctx context.Context, tenantID string, filter ports.ProductFilter) ([]domain.Service, int, error) {
+	baseQuery := `
+		SELECT
+			sv.id, sv.tenant_id, COALESCE(sv.master_service_id::text, '') as master_service_id,
+			COALESCE(sv.name, '') as name, COALESCE(sv.description, '') as description,
+			sv.price, sv.currency, COALESCE(sv.rating, 0) as rating,
+			COALESCE(sv.images, '[]') as images, COALESCE(sv.tags, '[]') as tags,
+			sv.availability,
+			ms.id as ms_id, ms.name as ms_name, ms.description as ms_description,
+			ms.brand, ms.duration, ms.provider,
+			ms.images as ms_images, ms.attributes,
+			c.name as category_name
+		FROM catalog.services sv
+		LEFT JOIN catalog.master_services ms ON sv.master_service_id = ms.id
+		LEFT JOIN catalog.categories c ON ms.category_id = c.id
+		WHERE sv.tenant_id = $1
+	`
+
+	countQuery := `
+		SELECT COUNT(*)
+		FROM catalog.services sv
+		LEFT JOIN catalog.master_services ms ON sv.master_service_id = ms.id
+		LEFT JOIN catalog.categories c ON ms.category_id = c.id
+		WHERE sv.tenant_id = $1
+	`
+
+	args := []interface{}{tenantID}
+	argNum := 2
+	var conditions []string
+
+	if filter.CategoryName != "" {
+		conditions = append(conditions, fmt.Sprintf("(c.name ILIKE $%d OR c.slug ILIKE $%d)", argNum, argNum))
+		args = append(args, "%"+filter.CategoryName+"%")
+		argNum++
+	}
+
+	if filter.Brand != "" {
+		conditions = append(conditions, fmt.Sprintf("ms.brand ILIKE $%d", argNum))
+		args = append(args, "%"+filter.Brand+"%")
+		argNum++
+	}
+
+	if filter.MinPrice > 0 {
+		conditions = append(conditions, fmt.Sprintf("sv.price >= $%d", argNum))
+		args = append(args, filter.MinPrice)
+		argNum++
+	}
+
+	if filter.MaxPrice > 0 {
+		conditions = append(conditions, fmt.Sprintf("sv.price <= $%d", argNum))
+		args = append(args, filter.MaxPrice)
+		argNum++
+	}
+
+	if filter.Search != "" {
+		words := strings.Fields(filter.Search)
+		if len(words) == 1 {
+			conditions = append(conditions, fmt.Sprintf("(sv.name ILIKE $%d OR ms.name ILIKE $%d OR ms.brand ILIKE $%d)", argNum, argNum, argNum))
+			args = append(args, "%"+words[0]+"%")
+			argNum++
+		} else if len(words) > 1 {
+			var wordConds []string
+			for _, word := range words {
+				wordConds = append(wordConds, fmt.Sprintf("(sv.name ILIKE $%d OR ms.name ILIKE $%d OR ms.brand ILIKE $%d)", argNum, argNum, argNum))
+				args = append(args, "%"+word+"%")
+				argNum++
+			}
+			conditions = append(conditions, "("+strings.Join(wordConds, " OR ")+")")
+		}
+	}
+
+	if len(conditions) > 0 {
+		condStr := " AND " + strings.Join(conditions, " AND ")
+		baseQuery += condStr
+		countQuery += condStr
+	}
+
+	var total int
+	if err := a.client.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count services: %w", err)
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	orderClause := "sv.created_at DESC"
+	if filter.SortField != "" {
+		sortOrder := "ASC"
+		if strings.ToUpper(filter.SortOrder) == "DESC" {
+			sortOrder = "DESC"
+		}
+		switch filter.SortField {
+		case "price":
+			orderClause = fmt.Sprintf("sv.price %s", sortOrder)
+		case "rating":
+			orderClause = fmt.Sprintf("sv.rating %s", sortOrder)
+		case "name":
+			orderClause = fmt.Sprintf("COALESCE(sv.name, ms.name) %s", sortOrder)
+		}
+	}
+	baseQuery += fmt.Sprintf(" ORDER BY %s LIMIT $%d OFFSET $%d", orderClause, argNum, argNum+1)
+	args = append(args, limit, offset)
+
+	rows, err := a.client.pool.Query(ctx, baseQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query services: %w", err)
+	}
+	defer rows.Close()
+
+	var services []domain.Service
+	for rows.Next() {
+		var s domain.Service
+		var masterServiceID, msID, msName, msDesc, msBrand, msDuration, msProvider, categoryName *string
+		var serviceImagesJSON, tagsJSON, msImagesJSON, attributesJSON []byte
+
+		err := rows.Scan(
+			&s.ID, &s.TenantID, &masterServiceID,
+			&s.Name, &s.Description,
+			&s.Price, &s.Currency, &s.Rating,
+			&serviceImagesJSON, &tagsJSON,
+			&s.Availability,
+			&msID, &msName, &msDesc,
+			&msBrand, &msDuration, &msProvider,
+			&msImagesJSON, &attributesJSON,
+			&categoryName,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan service: %w", err)
+		}
+
+		if len(serviceImagesJSON) > 0 {
+			json.Unmarshal(serviceImagesJSON, &s.Images)
+		}
+		if len(tagsJSON) > 0 {
+			json.Unmarshal(tagsJSON, &s.Tags)
+		}
+
+		if err := mergeServiceWithMaster(&s, masterServiceRow{
+			MasterServiceID: masterServiceID,
+			Name:            msName,
+			Description:     msDesc,
+			Brand:           msBrand,
+			Duration:        msDuration,
+			Provider:        msProvider,
+			CategoryName:    categoryName,
+			ImagesJSON:      msImagesJSON,
+			AttributesJSON:  attributesJSON,
+		}); err != nil {
+			return nil, 0, err
+		}
+
+		s.PriceFormatted = formatPrice(s.Price, s.Currency)
+		services = append(services, s)
+	}
+
+	return services, total, nil
+}
+
+// GetService retrieves a single service by ID with master data merging.
+func (a *CatalogAdapter) GetService(ctx context.Context, tenantID string, serviceID string) (*domain.Service, error) {
+	query := `
+		SELECT
+			sv.id, sv.tenant_id, COALESCE(sv.master_service_id::text, '') as master_service_id,
+			COALESCE(sv.name, '') as name, COALESCE(sv.description, '') as description,
+			sv.price, sv.currency, COALESCE(sv.rating, 0) as rating,
+			COALESCE(sv.images, '[]') as images, COALESCE(sv.tags, '[]') as tags,
+			sv.availability,
+			ms.id as ms_id, ms.name as ms_name, ms.description as ms_description,
+			ms.brand, ms.duration, ms.provider,
+			ms.images as ms_images, ms.attributes,
+			c.name as category_name
+		FROM catalog.services sv
+		LEFT JOIN catalog.master_services ms ON sv.master_service_id = ms.id
+		LEFT JOIN catalog.categories c ON ms.category_id = c.id
+		WHERE sv.tenant_id = $1 AND sv.id = $2
+	`
+
+	var s domain.Service
+	var masterServiceID, msID, msName, msDesc, msBrand, msDuration, msProvider, categoryName *string
+	var serviceImagesJSON, tagsJSON, msImagesJSON, attributesJSON []byte
+
+	err := a.client.pool.QueryRow(ctx, query, tenantID, serviceID).Scan(
+		&s.ID, &s.TenantID, &masterServiceID,
+		&s.Name, &s.Description,
+		&s.Price, &s.Currency, &s.Rating,
+		&serviceImagesJSON, &tagsJSON,
+		&s.Availability,
+		&msID, &msName, &msDesc,
+		&msBrand, &msDuration, &msProvider,
+		&msImagesJSON, &attributesJSON,
+		&categoryName,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrProductNotFound
+		}
+		return nil, fmt.Errorf("query service: %w", err)
+	}
+
+	if len(serviceImagesJSON) > 0 {
+		json.Unmarshal(serviceImagesJSON, &s.Images)
+	}
+	if len(tagsJSON) > 0 {
+		json.Unmarshal(tagsJSON, &s.Tags)
+	}
+
+	if err := mergeServiceWithMaster(&s, masterServiceRow{
+		MasterServiceID: masterServiceID,
+		Name:            msName,
+		Description:     msDesc,
+		Brand:           msBrand,
+		Duration:        msDuration,
+		Provider:        msProvider,
+		CategoryName:    categoryName,
+		ImagesJSON:      msImagesJSON,
+		AttributesJSON:  attributesJSON,
+	}); err != nil {
+		return nil, err
+	}
+
+	s.PriceFormatted = formatPrice(s.Price, s.Currency)
+	return &s, nil
+}
+
+// VectorSearchServices finds services by semantic similarity via pgvector.
+func (a *CatalogAdapter) VectorSearchServices(ctx context.Context, tenantID string, embedding []float32, limit int, filter *ports.VectorFilter) ([]domain.Service, error) {
+	query := `
+		SELECT
+			sv.id, sv.tenant_id, COALESCE(sv.master_service_id::text, '') as master_service_id,
+			COALESCE(sv.name, '') as name, COALESCE(sv.description, '') as description,
+			sv.price, sv.currency, COALESCE(sv.rating, 0) as rating,
+			COALESCE(sv.images, '[]') as images, COALESCE(sv.tags, '[]') as tags,
+			sv.availability,
+			ms.id as ms_id, ms.name as ms_name, ms.description as ms_description,
+			ms.brand, ms.duration, ms.provider,
+			ms.images as ms_images, ms.attributes,
+			c.name as category_name
+		FROM catalog.services sv
+		JOIN catalog.master_services ms ON sv.master_service_id = ms.id
+		LEFT JOIN catalog.categories c ON ms.category_id = c.id
+		WHERE sv.tenant_id = $1
+		  AND ms.embedding IS NOT NULL
+	`
+
+	args := []interface{}{tenantID, pgvector.NewVector(embedding)}
+	argNum := 3
+
+	if filter != nil {
+		if filter.Brand != "" {
+			query += fmt.Sprintf(" AND ms.brand ILIKE $%d", argNum)
+			args = append(args, "%"+filter.Brand+"%")
+			argNum++
+		}
+		if filter.CategoryName != "" {
+			query += fmt.Sprintf(" AND (c.name ILIKE $%d OR c.slug ILIKE $%d)", argNum, argNum)
+			args = append(args, "%"+filter.CategoryName+"%")
+			argNum++
+		}
+	}
+
+	query += fmt.Sprintf(" ORDER BY ms.embedding <=> $2 LIMIT $%d", argNum)
+	args = append(args, limit)
+
+	rows, err := a.client.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("vector search services: %w", err)
+	}
+	defer rows.Close()
+
+	var services []domain.Service
+	for rows.Next() {
+		var s domain.Service
+		var masterServiceID, msID, msName, msDesc, msBrand, msDuration, msProvider, categoryName *string
+		var serviceImagesJSON, tagsJSON, msImagesJSON, attributesJSON []byte
+
+		err := rows.Scan(
+			&s.ID, &s.TenantID, &masterServiceID,
+			&s.Name, &s.Description,
+			&s.Price, &s.Currency, &s.Rating,
+			&serviceImagesJSON, &tagsJSON,
+			&s.Availability,
+			&msID, &msName, &msDesc,
+			&msBrand, &msDuration, &msProvider,
+			&msImagesJSON, &attributesJSON,
+			&categoryName,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan vector service: %w", err)
+		}
+
+		if len(serviceImagesJSON) > 0 {
+			json.Unmarshal(serviceImagesJSON, &s.Images)
+		}
+		if len(tagsJSON) > 0 {
+			json.Unmarshal(tagsJSON, &s.Tags)
+		}
+
+		if err := mergeServiceWithMaster(&s, masterServiceRow{
+			MasterServiceID: masterServiceID,
+			Name:            msName,
+			Description:     msDesc,
+			Brand:           msBrand,
+			Duration:        msDuration,
+			Provider:        msProvider,
+			CategoryName:    categoryName,
+			ImagesJSON:      msImagesJSON,
+			AttributesJSON:  attributesJSON,
+		}); err != nil {
+			return nil, err
+		}
+
+		s.PriceFormatted = formatPrice(s.Price, s.Currency)
+		services = append(services, s)
+	}
+
+	return services, nil
+}
+
+// SeedServiceEmbedding saves embedding for a master service.
+func (a *CatalogAdapter) SeedServiceEmbedding(ctx context.Context, masterServiceID string, embedding []float32) error {
+	query := `UPDATE catalog.master_services SET embedding = $2 WHERE id = $1`
+	_, err := a.client.pool.Exec(ctx, query, masterServiceID, pgvector.NewVector(embedding))
+	if err != nil {
+		return fmt.Errorf("seed service embedding: %w", err)
+	}
+	return nil
+}
+
+// GetMasterServicesWithoutEmbedding returns master services that need embeddings.
+func (a *CatalogAdapter) GetMasterServicesWithoutEmbedding(ctx context.Context) ([]domain.MasterService, error) {
+	query := `
+		SELECT ms.id, ms.sku, ms.name, COALESCE(ms.description, '') as description,
+		       COALESCE(ms.brand, '') as brand, COALESCE(ms.category_id::text, '') as category_id,
+		       COALESCE(c.name, '') as category_name, COALESCE(ms.attributes::text, '{}') as attributes,
+		       COALESCE(ms.duration, '') as duration, COALESCE(ms.provider, '') as provider
+		FROM catalog.master_services ms
+		LEFT JOIN catalog.categories c ON ms.category_id = c.id
+		WHERE ms.embedding IS NULL
+		ORDER BY ms.created_at
+	`
+
+	rows, err := a.client.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query services without embedding: %w", err)
+	}
+	defer rows.Close()
+
+	var services []domain.MasterService
+	for rows.Next() {
+		var s domain.MasterService
+		var attrsJSON string
+		if err := rows.Scan(&s.ID, &s.SKU, &s.Name, &s.Description, &s.Brand, &s.CategoryID, &s.CategoryName, &attrsJSON, &s.Duration, &s.Provider); err != nil {
+			return nil, fmt.Errorf("scan master service: %w", err)
+		}
+		if attrsJSON != "{}" && attrsJSON != "" {
+			if err := json.Unmarshal([]byte(attrsJSON), &s.Attributes); err != nil {
+				slog.Warn("unmarshal master service attributes", "id", s.ID, "error", err)
+			}
+		}
+		services = append(services, s)
+	}
+
+	return services, nil
 }
