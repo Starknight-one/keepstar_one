@@ -32,6 +32,12 @@ Seed-миграция переносит существующие `stock_quantit
 
 **Файлы:** 7 изменённых + 3 новых (chat), 7 изменённых + 4 новых (admin).
 
+**Верификация на живой БД** — найдено и исправлено 4 бага:
+1. Admin `ListProducts`/`GetProduct` читали `stock_quantity` из products вместо stock таблицы — добавлен `LEFT JOIN catalog.stock`
+2. `UpsertProductListing` не писал в stock таблицу при импорте — добавлен upsert
+3. `UpdateProduct` не синхронизировал stock таблицу — добавлен upsert
+4. Chat `ProductResponse` не содержал поле `Tags` — добавлено
+
 **Specs:** `ADW/specs/done/done-catalog-evolution.md`
 
 ---
