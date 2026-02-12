@@ -1,3 +1,5 @@
+import { log } from '../logger'
+
 const BASE = '/admin/api'
 
 function getToken() {
@@ -13,25 +15,35 @@ export function clearToken() {
 }
 
 async function request(method, path, body) {
+  const start = performance.now()
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let status = 0
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    status = res.status
 
-  if (res.status === 401) {
-    clearToken()
-    window.location.href = '/login'
-    throw new Error('Unauthorized')
+    if (res.status === 401) {
+      clearToken()
+      window.location.href = '/login'
+      throw new Error('Unauthorized')
+    }
+
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Request failed')
+    return data
+  } catch (err) {
+    if (!status) log.api(method, path, 0, Math.round(performance.now() - start), err)
+    throw err
+  } finally {
+    if (status) log.api(method, path, status, Math.round(performance.now() - start))
   }
-
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'Request failed')
-  return data
 }
 
 export const api = {

@@ -107,7 +107,7 @@ func main() {
 		cacheAdapter = postgres.NewCacheAdapter(dbClient)
 		eventAdapter = postgres.NewEventAdapter(dbClient)
 		catalogAdapter = postgres.NewCatalogAdapter(dbClient)
-		stateAdapter = postgres.NewStateAdapter(dbClient)
+		stateAdapter = postgres.NewStateAdapter(dbClient, appLog)
 		traceAdapter = postgres.NewTraceAdapter(dbClient)
 
 		// Run trace migrations
@@ -118,6 +118,15 @@ func main() {
 			appLog.Info("trace_migrations_completed", "status", "ok")
 		}
 		traceCancel()
+
+		// Run log migrations
+		logCtx, logCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := dbClient.RunLogMigrations(logCtx); err != nil {
+			appLog.Error("log_migrations_failed", "error", err)
+		} else {
+			appLog.Info("log_migrations_completed", "status", "ok")
+		}
+		logCancel()
 	}
 
 	// Initialize preset registry
@@ -166,7 +175,7 @@ func main() {
 
 	// Initialize handlers
 	chatHandler := handlers.NewChatHandler(sendMessage, appLog)
-	sessionHandler := handlers.NewSessionHandler(cacheAdapter, stateAdapter)
+	sessionHandler := handlers.NewSessionHandler(cacheAdapter, stateAdapter, appLog)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Create metrics store for debug page
@@ -175,7 +184,7 @@ func main() {
 	// Initialize Pipeline handler (if pipeline use case is available)
 	var pipelineHandler *handlers.PipelineHandler
 	if pipelineUC != nil {
-		pipelineHandler = handlers.NewPipelineHandler(pipelineUC, metricsStore)
+		pipelineHandler = handlers.NewPipelineHandler(pipelineUC, metricsStore, appLog)
 		appLog.Info("pipeline_handler_initialized", "status", "ok")
 	}
 
@@ -184,7 +193,7 @@ func main() {
 	if stateAdapter != nil && presetRegistry != nil {
 		expandUC := usecases.NewExpandUseCase(stateAdapter, presetRegistry)
 		backUC := usecases.NewBackUseCase(stateAdapter, presetRegistry)
-		navigationHandler = handlers.NewNavigationHandler(expandUC, backUC)
+		navigationHandler = handlers.NewNavigationHandler(expandUC, backUC, appLog)
 		appLog.Info("navigation_handler_initialized", "status", "ok")
 	}
 
@@ -292,7 +301,11 @@ func main() {
 	}
 
 	// Apply middleware
-	handler := handlers.CORSMiddleware(mux)
+	var logAdapter *postgres.LogAdapter
+	if dbClient != nil {
+		logAdapter = postgres.NewLogAdapter(dbClient)
+	}
+	handler := handlers.LoggingMiddleware(appLog, logAdapter)(handlers.CORSMiddleware(mux))
 
 	// Create server
 	addr := fmt.Sprintf(":%s", cfg.Port)
@@ -317,6 +330,7 @@ func main() {
 			"trace_ttl", "48h",
 			"dead_session_ttl", "1h",
 			"conversation_limit", 20,
+			"request_log_ttl", "72h",
 			"interval", "30min",
 		)
 	}

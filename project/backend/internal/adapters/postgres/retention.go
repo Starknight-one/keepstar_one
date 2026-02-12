@@ -18,6 +18,7 @@ type RetentionConfig struct {
 	DeadSessionMaxAge   time.Duration // Delete dead session data older than this (default: 1h)
 	ConversationMaxMsgs int           // Keep last N messages in conversation_history (default: 20)
 	CleanupInterval     time.Duration // How often to run cleanup (default: 30min)
+	RequestLogMaxAge    time.Duration // Delete request_logs older than this (default: 72h)
 }
 
 // DefaultRetentionConfig returns sensible defaults
@@ -27,6 +28,7 @@ func DefaultRetentionConfig() RetentionConfig {
 		DeadSessionMaxAge:   1 * time.Hour,
 		ConversationMaxMsgs: 20,
 		CleanupInterval:     30 * time.Minute,
+		RequestLogMaxAge:    72 * time.Hour,
 	}
 }
 
@@ -76,6 +78,13 @@ func (s *RetentionService) runCleanup(ctx context.Context, logFn func(string, ..
 		logFn("retention_history_error", "error", err)
 	} else if trimmed > 0 {
 		logFn("retention_history_trimmed", "sessions", trimmed)
+	}
+
+	logsDeleted, err := s.cleanupRequestLogs(ctx)
+	if err != nil {
+		logFn("retention_request_logs_error", "error", err)
+	} else if logsDeleted > 0 {
+		logFn("retention_request_logs_cleaned", "deleted", logsDeleted)
 	}
 }
 
@@ -136,6 +145,17 @@ func (s *RetentionService) cleanupDeadSessions(ctx context.Context) (int64, erro
 	}
 
 	return int64(len(sessionIDs)), nil
+}
+
+// cleanupRequestLogs deletes request_logs older than RequestLogMaxAge
+func (s *RetentionService) cleanupRequestLogs(ctx context.Context) (int64, error) {
+	cutoff := time.Now().Add(-s.config.RequestLogMaxAge)
+	result, err := s.client.pool.Exec(ctx,
+		`DELETE FROM request_logs WHERE timestamp < $1`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete old request logs: %w", err)
+	}
+	return result.RowsAffected(), nil
 }
 
 // trimConversationHistory keeps only the last N messages for sessions with oversized history.

@@ -1,4 +1,5 @@
 import { AtomType, AtomSubtype, LEGACY_TYPE_TO_DISPLAY } from './atomModel';
+import { log } from '../../shared/logger';
 import './Atom.css';
 
 export function AtomRenderer({ atom, onClick }) {
@@ -203,5 +204,5 @@ function renderImage(atom, display) {
 
 function handleAction(action) {
   // TODO: dispatch action to parent via context or callback
-  console.log('Widget action:', action);
+  log.debug('Widget action:', action);
 }

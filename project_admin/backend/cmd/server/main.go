@@ -61,6 +61,12 @@ func main() {
 	}
 	log.Info("admin_migrations_completed")
 
+	if err := dbClient.RunLogMigrations(ctx); err != nil {
+		log.Error("log_migrations_failed", "error", err)
+	} else {
+		log.Info("log_migrations_completed")
+	}
+
 	// Initialize embedding client
 	var embeddingClient ports.EmbeddingPort
 	if cfg.HasEmbeddings() {
@@ -70,7 +76,7 @@ func main() {
 
 	// Initialize adapters
 	authAdapter := postgres.NewAuthAdapter(dbClient)
-	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
+	catalogAdapter := postgres.NewCatalogAdapter(dbClient, log)
 	importAdapter := postgres.NewImportAdapter(dbClient)
 
 	// Initialize use cases
@@ -81,11 +87,11 @@ func main() {
 	stockUC := usecases.NewStockUseCase(catalogAdapter)
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authUC)
-	productsHandler := handlers.NewProductsHandler(productsUC)
-	importHandler := handlers.NewImportHandler(importUC)
-	settingsHandler := handlers.NewSettingsHandler(settingsUC)
-	stockHandler := handlers.NewStockHandler(stockUC)
+	authHandler := handlers.NewAuthHandler(authUC, log)
+	productsHandler := handlers.NewProductsHandler(productsUC, log)
+	importHandler := handlers.NewImportHandler(importUC, log)
+	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
+	stockHandler := handlers.NewStockHandler(stockUC, log)
 
 	// Setup routes
 	mux := http.NewServeMux()
@@ -173,8 +179,9 @@ func main() {
 		log.Info("spa_file_server_enabled", "dir", staticDir)
 	}
 
-	// Apply CORS
-	handler := handlers.CORSMiddleware(mux)
+	// Apply CORS + Logging middleware
+	logAdapter := postgres.NewLogAdapter(dbClient)
+	handler := handlers.LoggingMiddleware(log, logAdapter)(handlers.CORSMiddleware(mux))
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	server := &http.Server{

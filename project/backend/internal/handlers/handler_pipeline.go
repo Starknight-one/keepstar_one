@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 	"keepstar/internal/usecases"
 )
 
@@ -14,13 +15,15 @@ import (
 type PipelineHandler struct {
 	pipelineUC   *usecases.PipelineExecuteUseCase
 	metricsStore *MetricsStore
+	log          *logger.Logger
 }
 
 // NewPipelineHandler creates a pipeline handler
-func NewPipelineHandler(pipelineUC *usecases.PipelineExecuteUseCase, metricsStore *MetricsStore) *PipelineHandler {
+func NewPipelineHandler(pipelineUC *usecases.PipelineExecuteUseCase, metricsStore *MetricsStore, log *logger.Logger) *PipelineHandler {
 	return &PipelineHandler{
 		pipelineUC:   pipelineUC,
 		metricsStore: metricsStore,
+		log:          log,
 	}
 }
 
@@ -50,6 +53,12 @@ type FormationResponse struct {
 
 // HandlePipeline handles POST /api/v1/pipeline
 func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.pipeline")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -72,11 +81,18 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 		sessionID = generateSessionID()
 	}
 
+	// Set session_id in context for logging
+	ctx = logger.WithSessionID(ctx, sessionID)
+	r = r.WithContext(ctx)
+
 	// Get tenant from context (set by middleware)
 	var tenantSlug string
 	if tenant := GetTenantFromContext(r.Context()); tenant != nil {
 		tenantSlug = tenant.Slug
 	}
+
+	reqLog := h.log.FromContext(ctx)
+	reqLog.Info("pipeline_start", "query", req.Query)
 
 	turnID := uuid.New().String()
 	result, err := h.pipelineUC.Execute(r.Context(), usecases.PipelineExecuteRequest{

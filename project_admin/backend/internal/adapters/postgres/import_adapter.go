@@ -19,6 +19,10 @@ func NewImportAdapter(client *Client) *ImportAdapter {
 }
 
 func (a *ImportAdapter) CreateImportJob(ctx context.Context, job *domain.ImportJob) (*domain.ImportJob, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.create_import_job")
+		defer endSpan()
+	}
 	errorsJSON, _ := json.Marshal(job.Errors)
 	query := `INSERT INTO admin.import_jobs (tenant_id, file_name, status, total_items, errors)
 		VALUES ($1, $2, $3, $4, $5)
@@ -34,6 +38,10 @@ func (a *ImportAdapter) CreateImportJob(ctx context.Context, job *domain.ImportJ
 }
 
 func (a *ImportAdapter) GetImportJob(ctx context.Context, tenantID string, jobID string) (*domain.ImportJob, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.get_import_job")
+		defer endSpan()
+	}
 	query := `SELECT id, tenant_id, file_name, status, total_items, processed_items, error_count, errors, created_at, completed_at
 		FROM admin.import_jobs WHERE id = $1 AND tenant_id = $2`
 
@@ -57,6 +65,10 @@ func (a *ImportAdapter) GetImportJob(ctx context.Context, tenantID string, jobID
 }
 
 func (a *ImportAdapter) ListImportJobs(ctx context.Context, tenantID string, limit int, offset int) ([]domain.ImportJob, int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.list_import_jobs")
+		defer endSpan()
+	}
 	if limit <= 0 {
 		limit = 20
 	}
@@ -116,6 +128,10 @@ func (a *ImportAdapter) AppendImportError(ctx context.Context, jobID string, err
 }
 
 func (a *ImportAdapter) CompleteImportJob(ctx context.Context, jobID string, status domain.ImportStatus, processed int, errorCount int) error {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.complete_import_job")
+		defer endSpan()
+	}
 	_, err := a.client.pool.Exec(ctx,
 		`UPDATE admin.import_jobs SET status = $1, processed_items = $2, error_count = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $4`,
 		status, processed, errorCount, jobID)

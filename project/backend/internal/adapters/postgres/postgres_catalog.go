@@ -20,15 +20,20 @@ import (
 // CatalogAdapter implements CatalogPort for PostgreSQL
 type CatalogAdapter struct {
 	client *Client
+	log    *slog.Logger
 }
 
 // NewCatalogAdapter creates a new CatalogAdapter
 func NewCatalogAdapter(client *Client) *CatalogAdapter {
-	return &CatalogAdapter{client: client}
+	return &CatalogAdapter{client: client, log: slog.Default()}
 }
 
 // GetTenantBySlug retrieves a tenant by its slug
 func (a *CatalogAdapter) GetTenantBySlug(ctx context.Context, slug string) (*domain.Tenant, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.get_tenant")
+		defer endSpan()
+	}
 	query := `
 		SELECT id, slug, name, type, settings, created_at, updated_at
 		FROM catalog.tenants
@@ -139,6 +144,10 @@ func (a *CatalogAdapter) GetMasterProduct(ctx context.Context, id string) (*doma
 
 // ListProducts retrieves products for a tenant with optional filtering and merging with master products
 func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filter ports.ProductFilter) ([]domain.Product, int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.list_products")
+		defer endSpan()
+	}
 	// Build query with filters
 	baseQuery := `
 		SELECT
@@ -322,6 +331,10 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 
 // GetProduct retrieves a single product by ID with master data merging
 func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, productID string) (*domain.Product, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.get_product")
+		defer endSpan()
+	}
 	query := `
 		SELECT
 			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
@@ -458,6 +471,10 @@ func mergeProductWithMaster(p *domain.Product, mp masterProductRow) error {
 // VectorSearch finds products by semantic similarity via pgvector cosine distance.
 // filter may be nil for unfiltered search.
 func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int, filter *ports.VectorFilter) ([]domain.Product, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.vector_search")
+		defer endSpan()
+	}
 	query := `
 		SELECT
 			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
@@ -584,7 +601,7 @@ func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context) 
 		}
 		if attrsJSON != "{}" && attrsJSON != "" {
 			if err := json.Unmarshal([]byte(attrsJSON), &p.Attributes); err != nil {
-				slog.Warn("unmarshal master product attributes", "id", p.ID, "error", err)
+				a.log.Warn("unmarshal master product attributes", "id", p.ID, "error", err)
 			}
 		}
 		products = append(products, p)
@@ -616,7 +633,7 @@ func (a *CatalogAdapter) GetAllTenants(ctx context.Context) ([]domain.Tenant, er
 		}
 		if len(settingsJSON) > 0 {
 			if err := json.Unmarshal(settingsJSON, &t.Settings); err != nil {
-				slog.Warn("unmarshal tenant settings", "tenant", t.Slug, "error", err)
+				a.log.Warn("unmarshal tenant settings", "tenant", t.Slug, "error", err)
 			}
 		}
 		tenants = append(tenants, t)
@@ -867,6 +884,10 @@ func (a *CatalogAdapter) SaveCatalogDigest(ctx context.Context, tenantID string,
 
 // GetCatalogDigest returns the pre-computed digest from tenants.catalog_digest.
 func (a *CatalogAdapter) GetCatalogDigest(ctx context.Context, tenantID string) (*domain.CatalogDigest, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.get_catalog_digest")
+		defer endSpan()
+	}
 	query := `SELECT catalog_digest FROM catalog.tenants WHERE id = $1`
 
 	var digestJSON []byte
@@ -965,6 +986,10 @@ func mergeServiceWithMaster(s *domain.Service, ms masterServiceRow) error {
 
 // ListServices retrieves services for a tenant with filtering.
 func (a *CatalogAdapter) ListServices(ctx context.Context, tenantID string, filter ports.ProductFilter) ([]domain.Service, int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.list_services")
+		defer endSpan()
+	}
 	baseQuery := `
 		SELECT
 			sv.id, sv.tenant_id, COALESCE(sv.master_service_id::text, '') as master_service_id,
@@ -1130,6 +1155,10 @@ func (a *CatalogAdapter) ListServices(ctx context.Context, tenantID string, filt
 
 // GetService retrieves a single service by ID with master data merging.
 func (a *CatalogAdapter) GetService(ctx context.Context, tenantID string, serviceID string) (*domain.Service, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.get_service")
+		defer endSpan()
+	}
 	query := `
 		SELECT
 			sv.id, sv.tenant_id, COALESCE(sv.master_service_id::text, '') as master_service_id,
@@ -1196,6 +1225,10 @@ func (a *CatalogAdapter) GetService(ctx context.Context, tenantID string, servic
 
 // VectorSearchServices finds services by semantic similarity via pgvector.
 func (a *CatalogAdapter) VectorSearchServices(ctx context.Context, tenantID string, embedding []float32, limit int, filter *ports.VectorFilter) ([]domain.Service, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.vector_search_services")
+		defer endSpan()
+	}
 	query := `
 		SELECT
 			sv.id, sv.tenant_id, COALESCE(sv.master_service_id::text, '') as master_service_id,
@@ -1326,7 +1359,7 @@ func (a *CatalogAdapter) GetMasterServicesWithoutEmbedding(ctx context.Context) 
 		}
 		if attrsJSON != "{}" && attrsJSON != "" {
 			if err := json.Unmarshal([]byte(attrsJSON), &s.Attributes); err != nil {
-				slog.Warn("unmarshal master service attributes", "id", s.ID, "error", err)
+				a.log.Warn("unmarshal master service attributes", "id", s.ID, "error", err)
 			}
 		}
 		services = append(services, s)

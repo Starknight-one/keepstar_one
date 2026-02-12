@@ -44,6 +44,11 @@ func NewExpandUseCase(statePort ports.StatePort, presetRegistry *presets.PresetR
 
 // Execute expands a widget to detail view
 func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*ExpandResponse, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("usecase.expand")
+		defer endSpan()
+	}
+
 	// 1. Get current state
 	state, err := uc.statePort.GetState(ctx, req.SessionID)
 	if err != nil {

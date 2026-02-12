@@ -6,24 +6,33 @@ import (
 	"strconv"
 	"strings"
 
+	"keepstar-admin/internal/domain"
+	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/usecases"
 )
 
 type ImportHandler struct {
 	importUC *usecases.ImportUseCase
+	log      *logger.Logger
 }
 
-func NewImportHandler(importUC *usecases.ImportUseCase) *ImportHandler {
-	return &ImportHandler{importUC: importUC}
+func NewImportHandler(importUC *usecases.ImportUseCase, log *logger.Logger) *ImportHandler {
+	return &ImportHandler{importUC: importUC, log: log}
 }
 
 func (h *ImportHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.import_upload")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "POST only")
 		return
 	}
 
-	tenantID := TenantID(r.Context())
+	tenantID := TenantID(ctx)
 
 	var req usecases.ImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -31,12 +40,16 @@ func (h *ImportHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.importUC.Upload(r.Context(), tenantID, req)
+	reqLog := h.log.FromContext(ctx)
+
+	job, err := h.importUC.Upload(ctx, tenantID, req)
 	if err != nil {
+		reqLog.Error("import_upload_failed", "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	reqLog.Info("import_upload_started", "job_id", job.ID, "total_items", job.TotalItems)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"jobId":      job.ID,
 		"status":     job.Status,
@@ -45,16 +58,22 @@ func (h *ImportHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ImportHandler) HandleGetJob(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.import_get_job")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
 
-	tenantID := TenantID(r.Context())
+	tenantID := TenantID(ctx)
 	jobID := strings.TrimPrefix(r.URL.Path, "/admin/api/catalog/import/")
 	jobID = strings.TrimSuffix(jobID, "/")
 
-	job, err := h.importUC.GetJob(r.Context(), tenantID, jobID)
+	job, err := h.importUC.GetJob(ctx, tenantID, jobID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "import job not found")
 		return
@@ -64,12 +83,18 @@ func (h *ImportHandler) HandleGetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ImportHandler) HandleListJobs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.import_list_jobs")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
 
-	tenantID := TenantID(r.Context())
+	tenantID := TenantID(ctx)
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
@@ -77,7 +102,7 @@ func (h *ImportHandler) HandleListJobs(w http.ResponseWriter, r *http.Request) {
 		limit = 20
 	}
 
-	jobs, total, err := h.importUC.ListJobs(r.Context(), tenantID, limit, offset)
+	jobs, total, err := h.importUC.ListJobs(ctx, tenantID, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list imports")
 		return

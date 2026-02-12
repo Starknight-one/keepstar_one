@@ -1,3 +1,5 @@
+import { log } from '../logger';
+
 let _apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
 let _tenantSlug = null;
 
@@ -17,17 +19,28 @@ export function getHeaders() {
   return headers;
 }
 
+async function timedFetch(method, path, options = {}) {
+  const start = performance.now();
+  let status = 0;
+  try {
+    const response = await fetch(`${_apiBaseUrl}${path}`, { method, headers: getHeaders(), ...options });
+    status = response.status;
+    return response;
+  } catch (err) {
+    log.api(method, path, 0, Math.round(performance.now() - start), err);
+    throw err;
+  } finally {
+    if (status) log.api(method, path, status, Math.round(performance.now() - start));
+  }
+}
+
 export async function sendChatMessage(message, sessionId = null) {
   const body = { message };
   if (sessionId) {
     body.sessionId = sessionId;
   }
 
-  const response = await fetch(`${_apiBaseUrl}/chat`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify(body),
-  });
+  const response = await timedFetch('POST', '/chat', { body: JSON.stringify(body) });
 
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);
@@ -37,10 +50,7 @@ export async function sendChatMessage(message, sessionId = null) {
 }
 
 export async function getSession(sessionId) {
-  const response = await fetch(`${_apiBaseUrl}/session/${sessionId}`, {
-    method: 'GET',
-    headers: getHeaders(),
-  });
+  const response = await timedFetch('GET', `/session/${sessionId}`);
 
   if (response.status === 404) {
     return null; // Session not found or expired
@@ -66,12 +76,9 @@ export async function getProducts(tenantSlug, filters = {}) {
   if (filters.offset) params.set('offset', filters.offset);
 
   const queryString = params.toString();
-  const url = `${_apiBaseUrl}/tenants/${tenantSlug}/products${queryString ? '?' + queryString : ''}`;
+  const path = `/tenants/${tenantSlug}/products${queryString ? '?' + queryString : ''}`;
 
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: getHeaders(),
-  });
+  const response = await timedFetch('GET', path);
 
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);
@@ -81,10 +88,7 @@ export async function getProducts(tenantSlug, filters = {}) {
 }
 
 export async function getProduct(tenantSlug, productId) {
-  const response = await fetch(`${_apiBaseUrl}/tenants/${tenantSlug}/products/${productId}`, {
-    method: 'GET',
-    headers: getHeaders(),
-  });
+  const response = await timedFetch('GET', `/tenants/${tenantSlug}/products/${productId}`);
 
   if (response.status === 404) {
     return null;
@@ -99,10 +103,7 @@ export async function getProduct(tenantSlug, productId) {
 
 // Session init - creates session, resolves tenant, returns greeting
 export async function initSession() {
-  const response = await fetch(`${_apiBaseUrl}/session/init`, {
-    method: 'POST',
-    headers: getHeaders(),
-  });
+  const response = await timedFetch('POST', '/session/init');
 
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);
@@ -119,11 +120,7 @@ export async function sendPipelineQuery(sessionId, query) {
     body.sessionId = sessionId;
   }
 
-  const response = await fetch(`${_apiBaseUrl}/pipeline`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify(body),
-  });
+  const response = await timedFetch('POST', '/pipeline', { body: JSON.stringify(body) });
 
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);
@@ -135,9 +132,7 @@ export async function sendPipelineQuery(sessionId, query) {
 
 // Navigation API - expand widget to detail view
 export async function expandView(sessionId, entityType, entityId) {
-  const response = await fetch(`${_apiBaseUrl}/navigation/expand`, {
-    method: 'POST',
-    headers: getHeaders(),
+  const response = await timedFetch('POST', '/navigation/expand', {
     body: JSON.stringify({ sessionId, entityType, entityId }),
   });
 
@@ -151,9 +146,7 @@ export async function expandView(sessionId, entityType, entityId) {
 
 // Navigation API - go back to previous view
 export async function goBack(sessionId) {
-  const response = await fetch(`${_apiBaseUrl}/navigation/back`, {
-    method: 'POST',
-    headers: getHeaders(),
+  const response = await timedFetch('POST', '/navigation/back', {
     body: JSON.stringify({ sessionId }),
   });
 

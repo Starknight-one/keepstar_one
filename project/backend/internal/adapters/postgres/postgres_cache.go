@@ -22,6 +22,10 @@ func NewCacheAdapter(client *Client) *CacheAdapter {
 
 // GetSession returns a session by ID with all its messages
 func (a *CacheAdapter) GetSession(ctx context.Context, id string) (*domain.Session, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.get_session")
+		defer endSpan()
+	}
 	// Get session
 	var session domain.Session
 	var userID *string
@@ -131,6 +135,10 @@ func (a *CacheAdapter) GetSession(ctx context.Context, id string) (*domain.Sessi
 
 // SaveSession saves or updates a session and its messages
 func (a *CacheAdapter) SaveSession(ctx context.Context, session *domain.Session) error {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.save_session")
+		defer endSpan()
+	}
 	tx, err := a.client.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)

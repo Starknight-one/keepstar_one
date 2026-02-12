@@ -4,25 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 )
 
 // StateAdapter implements ports.StatePort
 type StateAdapter struct {
 	client *Client
+	log    *logger.Logger
 }
 
 // NewStateAdapter creates a new StateAdapter
-func NewStateAdapter(client *Client) *StateAdapter {
-	return &StateAdapter{client: client}
+func NewStateAdapter(client *Client, log *logger.Logger) *StateAdapter {
+	return &StateAdapter{client: client, log: log}
 }
 
 // CreateState creates a new state for a session
 func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*domain.SessionState, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.create_state")
+		defer endSpan()
+	}
 	state := &domain.SessionState{
 		SessionID: sessionID,
 		Current: domain.StateCurrent{
@@ -75,6 +80,10 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 
 // GetState retrieves the current state for a session
 func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.SessionState, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.get_state")
+		defer endSpan()
+	}
 	var state domain.SessionState
 	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON []byte
 	var viewMode *string
@@ -98,17 +107,17 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 
 	if len(dataJSON) > 0 {
 		if err := json.Unmarshal(dataJSON, &state.Current.Data); err != nil {
-			slog.Warn("unmarshal state data", "session_id", sessionID, "error", err)
+			a.log.Warn("unmarshal state data", "session_id", sessionID, "error", err)
 		}
 	}
 	if len(metaJSON) > 0 {
 		if err := json.Unmarshal(metaJSON, &state.Current.Meta); err != nil {
-			slog.Warn("unmarshal state meta", "session_id", sessionID, "error", err)
+			a.log.Warn("unmarshal state meta", "session_id", sessionID, "error", err)
 		}
 	}
 	if len(templateJSON) > 0 {
 		if err := json.Unmarshal(templateJSON, &state.Current.Template); err != nil {
-			slog.Warn("unmarshal state template", "session_id", sessionID, "error", err)
+			a.log.Warn("unmarshal state template", "session_id", sessionID, "error", err)
 		}
 	}
 
@@ -120,17 +129,17 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 	}
 	if len(viewFocusedJSON) > 0 {
 		if err := json.Unmarshal(viewFocusedJSON, &state.View.Focused); err != nil {
-			slog.Warn("unmarshal view focused", "session_id", sessionID, "error", err)
+			a.log.Warn("unmarshal view focused", "session_id", sessionID, "error", err)
 		}
 	}
 	if len(viewStackJSON) > 0 {
 		if err := json.Unmarshal(viewStackJSON, &state.ViewStack); err != nil {
-			slog.Warn("unmarshal view stack", "session_id", sessionID, "error", err)
+			a.log.Warn("unmarshal view stack", "session_id", sessionID, "error", err)
 		}
 	}
 	if len(conversationHistoryJSON) > 0 {
 		if err := json.Unmarshal(conversationHistoryJSON, &state.ConversationHistory); err != nil {
-			slog.Warn("unmarshal conversation history", "session_id", sessionID, "error", err)
+			a.log.Warn("unmarshal conversation history", "session_id", sessionID, "error", err)
 		}
 	}
 
@@ -139,6 +148,10 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 
 // UpdateState updates the current materialized state
 func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionState) error {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.update_state")
+		defer endSpan()
+	}
 	dataJSON, err := json.Marshal(state.Current.Data)
 	if err != nil {
 		return fmt.Errorf("marshal data: %w", err)
@@ -240,7 +253,7 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 		UPDATE chat_session_state SET step = $1, updated_at = NOW()
 		WHERE session_id = $2
 	`, assignedStep, sessionID); syncErr != nil {
-		slog.Warn("sync state step", "session_id", sessionID, "step", assignedStep, "error", syncErr)
+		a.log.Warn("sync state step", "session_id", sessionID, "step", assignedStep, "error", syncErr)
 	}
 
 	// Write back to delta struct so caller can see the assigned step
@@ -251,6 +264,10 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 
 // UpdateData updates the data zone (products/services + meta) and creates a delta
 func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data domain.StateData, meta domain.StateMeta, info domain.DeltaInfo) (int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.update_data")
+		defer endSpan()
+	}
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return 0, fmt.Errorf("marshal data: %w", err)
@@ -269,6 +286,10 @@ func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data do
 
 // UpdateTemplate updates the template zone and creates a delta
 func (a *StateAdapter) UpdateTemplate(ctx context.Context, sessionID string, template map[string]interface{}, info domain.DeltaInfo) (int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.update_template")
+		defer endSpan()
+	}
 	templateJSON, err := json.Marshal(template)
 	if err != nil {
 		return 0, fmt.Errorf("marshal template: %w", err)
@@ -283,6 +304,10 @@ func (a *StateAdapter) UpdateTemplate(ctx context.Context, sessionID string, tem
 
 // UpdateView updates the view zone (mode, focused, stack) and creates a delta
 func (a *StateAdapter) UpdateView(ctx context.Context, sessionID string, view domain.ViewState, stack []domain.ViewSnapshot, info domain.DeltaInfo) (int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.update_view")
+		defer endSpan()
+	}
 	viewFocusedJSON, err := json.Marshal(view.Focused)
 	if err != nil {
 		return 0, fmt.Errorf("marshal view focused: %w", err)
@@ -401,14 +426,14 @@ func (a *StateAdapter) scanDeltas(rows pgx.Rows) ([]domain.Delta, error) {
 			d.TurnID = *turnID
 		}
 		if err := json.Unmarshal(actionJSON, &d.Action); err != nil {
-			slog.Warn("unmarshal delta action", "step", d.Step, "error", err)
+			a.log.Warn("unmarshal delta action", "step", d.Step, "error", err)
 		}
 		if err := json.Unmarshal(resultJSON, &d.Result); err != nil {
-			slog.Warn("unmarshal delta result", "step", d.Step, "error", err)
+			a.log.Warn("unmarshal delta result", "step", d.Step, "error", err)
 		}
 		if len(templateJSON) > 0 {
 			if err := json.Unmarshal(templateJSON, &d.Template); err != nil {
-				slog.Warn("unmarshal delta template", "step", d.Step, "error", err)
+				a.log.Warn("unmarshal delta template", "step", d.Step, "error", err)
 			}
 		}
 
@@ -420,6 +445,10 @@ func (a *StateAdapter) scanDeltas(rows pgx.Rows) ([]domain.Delta, error) {
 
 // PushView pushes a view snapshot onto the navigation stack
 func (a *StateAdapter) PushView(ctx context.Context, sessionID string, snapshot *domain.ViewSnapshot) error {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.push_view")
+		defer endSpan()
+	}
 	snapshotJSON, err := json.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("marshal snapshot: %w", err)
@@ -440,6 +469,10 @@ func (a *StateAdapter) PushView(ctx context.Context, sessionID string, snapshot 
 
 // PopView pops and returns the last view snapshot from the navigation stack
 func (a *StateAdapter) PopView(ctx context.Context, sessionID string) (*domain.ViewSnapshot, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.pop_view")
+		defer endSpan()
+	}
 	var viewStackJSON []byte
 
 	// Get current view stack
@@ -458,7 +491,7 @@ func (a *StateAdapter) PopView(ctx context.Context, sessionID string) (*domain.V
 	var viewStack []domain.ViewSnapshot
 	if len(viewStackJSON) > 0 {
 		if err := json.Unmarshal(viewStackJSON, &viewStack); err != nil {
-			slog.Warn("unmarshal view stack in pop", "session_id", sessionID, "error", err)
+			a.log.Warn("unmarshal view stack in pop", "session_id", sessionID, "error", err)
 		}
 	}
 
@@ -507,7 +540,7 @@ func (a *StateAdapter) GetViewStack(ctx context.Context, sessionID string) ([]do
 	var viewStack []domain.ViewSnapshot
 	if len(viewStackJSON) > 0 {
 		if err := json.Unmarshal(viewStackJSON, &viewStack); err != nil {
-			slog.Warn("unmarshal view stack", "session_id", sessionID, "error", err)
+			a.log.Warn("unmarshal view stack", "session_id", sessionID, "error", err)
 		}
 	}
 

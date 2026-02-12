@@ -8,18 +8,20 @@ import (
 
 	"github.com/google/uuid"
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 	"keepstar/internal/ports"
 )
 
 // SessionHandler handles session endpoints
 type SessionHandler struct {
-	cache    ports.CachePort
+	cache     ports.CachePort
 	statePort ports.StatePort
+	log       *logger.Logger
 }
 
 // NewSessionHandler creates a new session handler
-func NewSessionHandler(cache ports.CachePort, statePort ports.StatePort) *SessionHandler {
-	return &SessionHandler{cache: cache, statePort: statePort}
+func NewSessionHandler(cache ports.CachePort, statePort ports.StatePort, log *logger.Logger) *SessionHandler {
+	return &SessionHandler{cache: cache, statePort: statePort, log: log}
 }
 
 // SessionResponse is the response for GET /api/v1/session/{id}
@@ -42,6 +44,11 @@ type MessageResponse struct {
 
 // HandleGetSession handles GET /api/v1/session/{id}
 func (h *SessionHandler) HandleGetSession(w http.ResponseWriter, r *http.Request) {
+	if sc := domain.SpanFromContext(r.Context()); sc != nil {
+		endSpan := sc.Start("handler.session_get")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -121,6 +128,11 @@ type InitTenantResponse struct {
 // HandleInitSession handles POST /api/v1/session/init
 // Creates a new session, seeds tenant in state, returns greeting.
 func (h *SessionHandler) HandleInitSession(w http.ResponseWriter, r *http.Request) {
+	if sc := domain.SpanFromContext(r.Context()); sc != nil {
+		endSpan := sc.Start("handler.session_init")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

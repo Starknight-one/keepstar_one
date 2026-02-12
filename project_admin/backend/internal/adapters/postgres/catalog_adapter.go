@@ -10,14 +10,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	pgvector "github.com/pgvector/pgvector-go"
 	"keepstar-admin/internal/domain"
+	"keepstar-admin/internal/logger"
 )
 
 type CatalogAdapter struct {
 	client *Client
+	log    *logger.Logger
 }
 
-func NewCatalogAdapter(client *Client) *CatalogAdapter {
-	return &CatalogAdapter{client: client}
+func NewCatalogAdapter(client *Client, log *logger.Logger) *CatalogAdapter {
+	return &CatalogAdapter{client: client, log: log}
 }
 
 // --- Tenant ---
@@ -59,6 +61,10 @@ func (a *CatalogAdapter) CreateTenant(ctx context.Context, tenant *domain.Tenant
 }
 
 func (a *CatalogAdapter) UpdateTenantSettings(ctx context.Context, tenantID string, settings domain.TenantSettings) error {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.update_tenant_settings")
+		defer endSpan()
+	}
 	settingsJSON, err := json.Marshal(settings)
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
@@ -77,6 +83,10 @@ func (a *CatalogAdapter) UpdateTenantSettings(ctx context.Context, tenantID stri
 // --- Products ---
 
 func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filter domain.AdminProductFilter) ([]domain.Product, int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.list_products")
+		defer endSpan()
+	}
 	if filter.Limit <= 0 {
 		filter.Limit = 25
 	}
@@ -182,6 +192,10 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 }
 
 func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, productID string) (*domain.Product, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.get_product")
+		defer endSpan()
+	}
 	query := `SELECT
 		p.id, p.tenant_id, p.master_product_id, p.name, p.description,
 		p.price, p.currency, COALESCE(st.quantity, p.stock_quantity) as stock_quantity, p.rating, p.images, COALESCE(p.tags, '[]') as tags,
@@ -243,6 +257,10 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 }
 
 func (a *CatalogAdapter) UpdateProduct(ctx context.Context, tenantID string, productID string, update domain.ProductUpdate) error {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.update_product")
+		defer endSpan()
+	}
 	sets := []string{}
 	args := []any{}
 	argIdx := 1
@@ -349,6 +367,10 @@ func (a *CatalogAdapter) GetOrCreateCategory(ctx context.Context, name string, s
 // --- Import upserts ---
 
 func (a *CatalogAdapter) UpsertMasterProduct(ctx context.Context, mp *domain.MasterProduct) (string, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.upsert_master_product")
+		defer endSpan()
+	}
 	imagesJSON, _ := json.Marshal(mp.Images)
 	attrsJSON, _ := json.Marshal(mp.Attributes)
 
@@ -374,6 +396,10 @@ func (a *CatalogAdapter) UpsertMasterProduct(ctx context.Context, mp *domain.Mas
 }
 
 func (a *CatalogAdapter) UpsertProductListing(ctx context.Context, p *domain.Product) (string, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.upsert_product_listing")
+		defer endSpan()
+	}
 	imagesJSON, _ := json.Marshal(p.Images)
 	tagsJSON, _ := json.Marshal(p.Tags)
 
@@ -460,6 +486,10 @@ func (a *CatalogAdapter) SeedEmbedding(ctx context.Context, masterProductID stri
 }
 
 func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID string) error {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.generate_catalog_digest")
+		defer endSpan()
+	}
 	// Build a compact digest of the tenant's catalog
 	query := `
 		WITH tenant_products AS (
@@ -771,6 +801,10 @@ func (a *CatalogAdapter) UpsertServiceListing(ctx context.Context, s *domain.Ser
 // --- Stock ---
 
 func (a *CatalogAdapter) BulkUpdateStock(ctx context.Context, tenantID string, items []domain.StockUpdate) (int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.bulk_update_stock")
+		defer endSpan()
+	}
 	updated := 0
 	for _, item := range items {
 		// Upsert stock row: resolve SKU → product_id via master_products

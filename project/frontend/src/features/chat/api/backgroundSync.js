@@ -1,4 +1,5 @@
 import { getHeaders } from '../../../shared/api/apiClient';
+import { log } from '../../../shared/logger';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
 
@@ -13,7 +14,7 @@ export function syncExpand(sessionId, entityType, entityId) {
     headers: getHeaders(),
     body: JSON.stringify({ sessionId, entityType, entityId }),
     keepalive: true,
-  }).catch(() => {});
+  }).catch((err) => log.warn('syncExpand failed:', err));
 }
 
 /**
@@ -27,5 +28,5 @@ export function syncBack(sessionId) {
     headers: getHeaders(),
     body: JSON.stringify({ sessionId }),
     keepalive: true,
-  }).catch(() => {});
+  }).catch((err) => log.warn('syncBack failed:', err));
 }

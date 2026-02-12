@@ -7,6 +7,7 @@ import { useFormationStack } from './model/useFormationStack';
 import { fillFormation } from './model/fillFormation';
 import { syncExpand, syncBack } from './api/backgroundSync';
 import { expandView, getSession, initSession } from '../../shared/api/apiClient';
+import { log } from '../../shared/logger';
 import { saveSessionCache, loadSessionCache, clearSessionCache } from './sessionCache';
 import { MessageRole } from '../../entities/message/messageModel';
 import './ChatPanel.css';
@@ -85,7 +86,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     } catch (err) {
       // Rollback: pop from stack on failure
       stackPop();
-      console.error('Expand failed:', err);
+      log.error('Expand failed:', err);
     }
   }, [sessionId, onFormationReceived, stackPush, stackPop]);
 
@@ -144,8 +145,8 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
           stackClear();
           onFormationReceived?.(null);
         }
-      }).catch(() => {
-        // Network error — keep cache, don't block
+      }).catch((err) => {
+        log.warn('Session validation failed:', err);
       });
       return;
     }
@@ -159,8 +160,8 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
         content: data.greeting,
         timestamp: new Date(),
       });
-    }).catch(() => {
-      // Init failed — chat still works, session will be created on first query
+    }).catch((err) => {
+      log.warn('Session init failed:', err);
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

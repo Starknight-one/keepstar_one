@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"log/slog"
 	"os"
 )
@@ -26,6 +27,71 @@ func New(level string) *Logger {
 
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
 	return &Logger{slog.New(handler)}
+}
+
+// With returns a child logger with additional fields
+func (l *Logger) With(args ...any) *Logger {
+	return &Logger{l.Logger.With(args...)}
+}
+
+// Context keys for request-scoped data
+type ctxKey string
+
+const (
+	ctxKeyRequestID  ctxKey = "request_id"
+	ctxKeySessionID  ctxKey = "session_id"
+	ctxKeyTenantSlug ctxKey = "tenant_slug"
+)
+
+// WithRequestID attaches a request ID to the context
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, ctxKeyRequestID, id)
+}
+
+// WithSessionID attaches a session ID to the context
+func WithSessionID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, ctxKeySessionID, id)
+}
+
+// WithTenantSlug attaches a tenant slug to the context
+func WithTenantSlug(ctx context.Context, slug string) context.Context {
+	return context.WithValue(ctx, ctxKeyTenantSlug, slug)
+}
+
+// RequestIDFrom retrieves the request ID from context
+func RequestIDFrom(ctx context.Context) string {
+	v, _ := ctx.Value(ctxKeyRequestID).(string)
+	return v
+}
+
+// SessionIDFrom retrieves the session ID from context
+func SessionIDFrom(ctx context.Context) string {
+	v, _ := ctx.Value(ctxKeySessionID).(string)
+	return v
+}
+
+// TenantSlugFrom retrieves the tenant slug from context
+func TenantSlugFrom(ctx context.Context) string {
+	v, _ := ctx.Value(ctxKeyTenantSlug).(string)
+	return v
+}
+
+// FromContext returns a logger enriched with fields from the context
+func (l *Logger) FromContext(ctx context.Context) *Logger {
+	args := make([]any, 0, 6)
+	if rid := RequestIDFrom(ctx); rid != "" {
+		args = append(args, "request_id", rid)
+	}
+	if sid := SessionIDFrom(ctx); sid != "" {
+		args = append(args, "session_id", sid)
+	}
+	if ts := TenantSlugFrom(ctx); ts != "" {
+		args = append(args, "tenant_slug", ts)
+	}
+	if len(args) == 0 {
+		return l
+	}
+	return l.With(args...)
 }
 
 // ChatMessageReceived logs incoming chat message

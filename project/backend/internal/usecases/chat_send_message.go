@@ -52,6 +52,11 @@ type SendMessageResponse struct {
 
 // Execute sends a message and returns the response, saving to database
 func (uc *SendMessageUseCase) Execute(ctx context.Context, req SendMessageRequest) (*SendMessageResponse, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("usecase.send_message")
+		defer endSpan()
+	}
+
 	now := time.Now()
 	isNewSession := false
 

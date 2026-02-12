@@ -52,6 +52,11 @@ type ListProductsResponse struct {
 
 // HandleListProducts handles GET /api/v1/tenants/{slug}/products
 func (h *CatalogHandler) HandleListProducts(w http.ResponseWriter, r *http.Request) {
+	if sc := domain.SpanFromContext(r.Context()); sc != nil {
+		endSpan := sc.Start("handler.catalog_list")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return

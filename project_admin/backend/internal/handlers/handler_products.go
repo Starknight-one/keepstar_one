@@ -7,24 +7,32 @@ import (
 	"strings"
 
 	"keepstar-admin/internal/domain"
+	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/usecases"
 )
 
 type ProductsHandler struct {
 	products *usecases.ProductsUseCase
+	log      *logger.Logger
 }
 
-func NewProductsHandler(products *usecases.ProductsUseCase) *ProductsHandler {
-	return &ProductsHandler{products: products}
+func NewProductsHandler(products *usecases.ProductsUseCase, log *logger.Logger) *ProductsHandler {
+	return &ProductsHandler{products: products, log: log}
 }
 
 func (h *ProductsHandler) HandleList(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.products_list")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
 
-	tenantID := TenantID(r.Context())
+	tenantID := TenantID(ctx)
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
@@ -39,8 +47,9 @@ func (h *ProductsHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 		Offset:     offset,
 	}
 
-	products, total, err := h.products.List(r.Context(), tenantID, filter)
+	products, total, err := h.products.List(ctx, tenantID, filter)
 	if err != nil {
+		h.log.FromContext(ctx).Error("products_list_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list products")
 		return
 	}
@@ -52,15 +61,21 @@ func (h *ProductsHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProductsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.products_get")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
 
-	tenantID := TenantID(r.Context())
+	tenantID := TenantID(ctx)
 	productID := extractID(r.URL.Path, "/admin/api/products/")
 
-	product, err := h.products.Get(r.Context(), tenantID, productID)
+	product, err := h.products.Get(ctx, tenantID, productID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "product not found")
 		return
@@ -70,12 +85,18 @@ func (h *ProductsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProductsHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.products_update")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodPut {
 		writeError(w, http.StatusMethodNotAllowed, "PUT only")
 		return
 	}
 
-	tenantID := TenantID(r.Context())
+	tenantID := TenantID(ctx)
 	productID := extractID(r.URL.Path, "/admin/api/products/")
 
 	var update domain.ProductUpdate
@@ -84,7 +105,8 @@ func (h *ProductsHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.products.Update(r.Context(), tenantID, productID, update); err != nil {
+	if err := h.products.Update(ctx, tenantID, productID, update); err != nil {
+		h.log.FromContext(ctx).Error("product_update_failed", "product_id", productID, "error", err)
 		writeError(w, http.StatusNotFound, "product not found")
 		return
 	}
@@ -93,13 +115,20 @@ func (h *ProductsHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProductsHandler) HandleCategories(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.categories_list")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
 
-	cats, err := h.products.GetCategories(r.Context())
+	cats, err := h.products.GetCategories(ctx)
 	if err != nil {
+		h.log.FromContext(ctx).Error("categories_list_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list categories")
 		return
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 	"keepstar/internal/usecases"
 )
 
@@ -13,13 +14,15 @@ import (
 type NavigationHandler struct {
 	expandUC *usecases.ExpandUseCase
 	backUC   *usecases.BackUseCase
+	log      *logger.Logger
 }
 
 // NewNavigationHandler creates a navigation handler
-func NewNavigationHandler(expandUC *usecases.ExpandUseCase, backUC *usecases.BackUseCase) *NavigationHandler {
+func NewNavigationHandler(expandUC *usecases.ExpandUseCase, backUC *usecases.BackUseCase, log *logger.Logger) *NavigationHandler {
 	return &NavigationHandler{
 		expandUC: expandUC,
 		backUC:   backUC,
+		log:      log,
 	}
 }
 
@@ -47,6 +50,12 @@ type BackRequest struct {
 
 // HandleExpand handles POST /api/v1/navigation/expand
 func (h *NavigationHandler) HandleExpand(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.expand")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -70,6 +79,9 @@ func (h *NavigationHandler) HandleExpand(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "entityId is required", http.StatusBadRequest)
 		return
 	}
+
+	ctx = logger.WithSessionID(ctx, req.SessionID)
+	r = r.WithContext(ctx)
 
 	turnID := uuid.New().String()
 	result, err := h.expandUC.Execute(r.Context(), usecases.ExpandRequest{
@@ -110,6 +122,12 @@ func (h *NavigationHandler) HandleExpand(w http.ResponseWriter, r *http.Request)
 
 // HandleBack handles POST /api/v1/navigation/back
 func (h *NavigationHandler) HandleBack(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("handler.back")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -125,6 +143,9 @@ func (h *NavigationHandler) HandleBack(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "sessionId is required", http.StatusBadRequest)
 		return
 	}
+
+	ctx = logger.WithSessionID(ctx, req.SessionID)
+	r = r.WithContext(ctx)
 
 	backTurnID := uuid.New().String()
 	result, err := h.backUC.Execute(r.Context(), usecases.BackRequest{

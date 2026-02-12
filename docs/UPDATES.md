@@ -4,6 +4,36 @@
 
 ---
 
+## Logging — Full Project Coverage — 2026-02-12
+
+Полное покрытие логами всего проекта: chat backend, admin backend, оба фронтенда. Каждый HTTP запрос = waterfall trace с таймингами на каждом стыке. Логи хранятся в Postgres, чистятся раз в 3 дня.
+
+### Что реализовано (7 фаз)
+
+1. **Postgres `request_logs`** — таблица для персистентного хранения логов запросов. Оба бэкенда пишут в одну таблицу, различаясь полем `service` (chat/admin). Индексы на timestamp, session_id, errors, service.
+
+2. **Logger extension** — `With()`, `FromContext()`, context keys (`request_id`, `session_id`, `tenant_slug`). Автоматическое обогащение логов полями из context.
+
+3. **HTTP Middleware** — каждый запрос получает UUID `request_id`, `SpanCollector`, response capture. По завершении: JSON stdout log + async persist в Postgres. Health → Debug, errors → Error, rest → Info.
+
+4. **Span инструментация всех слоёв** — 7 handler spans, 3 usecase spans, ~20 adapter spans (DB, LLM). Полный waterfall для любого запроса — от HTTP до каждого DB query. 16 raw `slog.Warn()` → injected logger.
+
+5. **Retention** — `RequestLogMaxAge: 72h` в RetentionConfig. Автоматическая чистка в cleanup loop.
+
+6. **Admin backend** — logger + spans в 5 handlers (auth, products, import, settings, stock) + 2 adapters (catalog, import). Логирование: signup/login, import start, settings update, stock bulk update.
+
+7. **Frontend** — `logger.js` с localStorage debug toggle, API timing через `performance.now()`. Замена `console.log/error` и silent catches.
+
+### Naming Convention
+
+Spans: `http` → `handler.pipeline` → `usecase.expand` → `db.get_state`. Admin: `db.admin.list_products`.
+
+**Файлы:** 8 новых + ~24 изменённых = ~32 файла.
+
+**Specs:** `ADW/specs/done/done-logging-full-coverage.md`
+
+---
+
 ## Adjacent Templates — 2026-02-12 (feature/instant-navigation)
 
 Оптимизация instant expand: N formations → 1 template + raw entities. ~68% payload reduction, меньше CPU на бэке.

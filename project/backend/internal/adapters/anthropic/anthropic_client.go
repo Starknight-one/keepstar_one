@@ -23,6 +23,7 @@ type Client struct {
 	apiKey     string
 	model      string
 	httpClient *http.Client
+	log        *slog.Logger
 }
 
 // NewClient creates a new Anthropic client
@@ -31,6 +32,7 @@ func NewClient(apiKey, model string) *Client {
 		apiKey:     apiKey,
 		model:      model,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
+		log:        slog.Default(),
 	}
 }
 
@@ -480,7 +482,7 @@ func (c *Client) ChatWithToolsCached(
 			GotFirstResponseByte: func() {
 				ttfbDuration := time.Since(ttfbStart)
 				if ttfbDuration > 10*time.Second {
-					slog.Warn("slow LLM TTFB", "stage", stage, "duration", ttfbDuration)
+					c.log.Warn("slow LLM TTFB", "stage", stage, "duration", ttfbDuration)
 				}
 				if endTTFB != nil {
 					endTTFB()

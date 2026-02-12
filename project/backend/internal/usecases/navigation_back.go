@@ -42,6 +42,11 @@ func NewBackUseCase(statePort ports.StatePort, presetRegistry *presets.PresetReg
 
 // Execute goes back to the previous view
 func (uc *BackUseCase) Execute(ctx context.Context, req BackRequest) (*BackResponse, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("usecase.back")
+		defer endSpan()
+	}
+
 	// 1. Pop from stack
 	snapshot, err := uc.statePort.PopView(ctx, req.SessionID)
 	if err != nil {

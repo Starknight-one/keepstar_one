@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"keepstar/internal/domain"
 	"keepstar/internal/logger"
 	"keepstar/internal/usecases"
 )
@@ -38,6 +39,11 @@ type ChatResponse struct {
 
 // HandleChat handles POST /api/v1/chat
 func (h *ChatHandler) HandleChat(w http.ResponseWriter, r *http.Request) {
+	if sc := domain.SpanFromContext(r.Context()); sc != nil {
+		endSpan := sc.Start("handler.chat")
+		defer endSpan()
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
