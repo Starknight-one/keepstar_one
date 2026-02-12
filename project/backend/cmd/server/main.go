@@ -156,7 +156,7 @@ func main() {
 	// Initialize Pipeline orchestrator (Agent 1 → Agent 2 → Formation)
 	var pipelineUC *usecases.PipelineExecuteUseCase
 	if toolRegistry != nil && stateAdapter != nil && cacheAdapter != nil {
-		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, traceAdapter, catalogAdapter, toolRegistry, appLog)
+		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, traceAdapter, catalogAdapter, toolRegistry, presetRegistry, appLog)
 		appLog.Info("pipeline_usecase_initialized", "status", "ok")
 	}
 	_ = pipelineUC // Pipeline is ready to be called from handlers

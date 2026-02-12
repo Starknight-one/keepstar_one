@@ -93,11 +93,8 @@ MVP реализован: JSONB `tags` на `products` + `services`, GIN инд�
 **Как:** FE: turn history в state, liked items в localStorage/session.
 **Бизнес-ценность:** Engagement, конверсия.
 
-### Instant Navigation (мгновенные переходы)
-**Что:** Back < 16ms, Expand < 16ms без round-trip на сервер.
-**Зачем:** Ощущение мгновенности. 200ms задержка чувствуется.
-**Как:** Спека есть: `feature-instant-navigation.md`. Phase 1 (formation stack, FE only) + Phase 2 (eager detail formations, BE+FE).
-**Бизнес-ценность:** "Вау-эффект" при навигации.
+### ~~Instant Navigation (мгновенные переходы)~~ DONE
+Back < 16ms, Expand < 16ms. Formation stack (instant back) + adjacent formations (instant expand) + background sync. См. `done-instant-navigation.md`.
 
 ### Бизнес-кейсы: триггеры и рекомендации
 **Что:** Контрагент настраивает: "при поиске обуви — показывать средства ухода", "при заходе — промо баннер".

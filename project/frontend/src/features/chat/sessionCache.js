@@ -4,7 +4,7 @@ const CACHE_KEY = 'chatSessionCache';
  * Save session state to localStorage for instant restore on next visit.
  * Stores: sessionId, messages (without formation blobs), last formation.
  */
-export function saveSessionCache({ sessionId, messages, formation }) {
+export function saveSessionCache({ sessionId, messages, formation, formationStack }) {
   if (!sessionId) return;
   try {
     // Strip formation from messages to save space — we store last formation separately
@@ -14,6 +14,7 @@ export function saveSessionCache({ sessionId, messages, formation }) {
       sessionId,
       messages: lightMessages,
       formation: formation || null,
+      formationStack: formationStack || [],
       savedAt: Date.now(),
     };
     localStorage.setItem(CACHE_KEY, JSON.stringify(data));

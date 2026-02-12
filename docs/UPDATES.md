@@ -4,6 +4,35 @@
 
 ---
 
+## Instant Navigation — 2026-02-12 (feature/instant-navigation)
+
+Back и Expand без round-trip к серверу. Decision tree: каждый ответ бэкенда = узел с предсобранными потомками.
+
+### Phase 1: Formation Stack (Back = instant, FE only)
+
+- **useFormationStack hook** (NEW): React hook — `push/pop/clear/canGoBack/stack`. Хранит предыдущие formations для instant back.
+- **backgroundSync module** (NEW): `syncExpand()` + `syncBack()` — fire-and-forget POST с `keepalive: true` для sync backend state.
+- **ChatPanel rewrite**: handleBack = `stack.pop()` → render → syncBack (убран `await goBack()`). handleExpand = push перед API + rollback при ошибке. canGoBack из стека, не из backend.
+- **sessionCache**: `formationStack` персистируется в localStorage — переживает F5.
+- **apiClient**: `getHeaders()` экспортирован для backgroundSync.
+
+### Phase 2: Adjacent Formations (Expand = instant, BE + FE)
+
+- **buildAdjacentFormations** (pipeline_execute.go): для каждого entity (products + services) строит detail formation через preset. Ключ `"entityType:entityId"`, лимит 15 entities. Переиспользует `productFieldGetter`/`serviceFieldGetter` + `tools.BuildFormation`.
+- **PipelineExecuteUseCase**: новое поле `presetRegistry`, `AdjacentFormations` в response.
+- **Pipeline handler**: `adjacentFormations` сериализуется в `PipelineResponse`.
+- **Navigation handlers**: `?sync=true` → `{"ok": true}` без formation (экономия сериализации).
+- **ChatPanel**: `adjacentFormationsRef` — instant expand через lookup. Fallback на API если entity нет в adjacent.
+- **useChatSubmit**: передаёт `adjacentFormations` вторым аргументом в `onFormationReceived`.
+
+**Метрики:** Back 100-300ms → <16ms. Expand 100-300ms → <16ms. Response +2KB gzip.
+
+**Файлы:** 2 новых (FE), 10 изменённых (5 FE + 5 BE).
+
+**Specs:** `ADW/specs/done/done-instant-navigation.md`
+
+---
+
 ## Catalog Evolution — 2026-02-12 (feature/catalog-evolution)
 
 Три структурных изменения в каталоге для подготовки к пилоту.

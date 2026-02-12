@@ -137,10 +137,27 @@ func (h *SessionHandler) HandleInitSession(w http.ResponseWriter, r *http.Reques
 	// Generate session ID
 	sessionID := uuid.New().String()
 
+	// Create session record FIRST (FK: chat_session_state.session_id → chat_sessions.id)
+	if h.cache != nil {
+		now := time.Now()
+		session := &domain.Session{
+			ID:             sessionID,
+			Status:         domain.SessionStatusActive,
+			StartedAt:      now,
+			LastActivityAt: now,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+		if err := h.cache.SaveSession(r.Context(), session); err != nil {
+			http.Error(w, "Failed to create session", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	// Create session state
 	state, err := h.statePort.CreateState(r.Context(), sessionID)
 	if err != nil {
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		http.Error(w, "Failed to create session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -154,20 +171,6 @@ func (h *SessionHandler) HandleInitSession(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "Failed to save session state", http.StatusInternalServerError)
 			return
 		}
-	}
-
-	// Create session record
-	if h.cache != nil {
-		now := time.Now()
-		session := &domain.Session{
-			ID:             sessionID,
-			Status:         domain.SessionStatusActive,
-			StartedAt:      now,
-			LastActivityAt: now,
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		}
-		_ = h.cache.SaveSession(r.Context(), session)
 	}
 
 	resp := InitSessionResponse{

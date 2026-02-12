@@ -9,7 +9,7 @@ export function setApiBaseUrl(url) {
   _apiBaseUrl = url;
 }
 
-function getHeaders() {
+export function getHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   if (_tenantSlug) {
     headers['X-Tenant-Slug'] = _tenantSlug;

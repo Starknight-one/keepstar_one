@@ -1,9 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useChatMessages } from './useChatMessages';
 import { useChatSubmit } from './useChatSubmit';
 import { ChatHistory } from './ChatHistory';
 import { ChatInput } from './ChatInput';
-import { expandView, goBack, getSession, initSession } from '../../shared/api/apiClient';
+import { useFormationStack } from './model/useFormationStack';
+import { syncExpand, syncBack } from './api/backgroundSync';
+import { expandView, getSession, initSession } from '../../shared/api/apiClient';
 import { saveSessionCache, loadSessionCache, clearSessionCache } from './sessionCache';
 import { MessageRole } from '../../entities/message/messageModel';
 import './ChatPanel.css';
@@ -21,8 +23,12 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     setSessionId
   } = useChatMessages();
 
-  const [canGoBack, setCanGoBack] = useState(false);
   const lastFormationRef = useRef(null);
+  const adjacentFormationsRef = useRef(null);
+
+  // Formation stack for instant back navigation
+  // Destructure to get stable function refs (push/pop/clear have [] deps)
+  const { push: stackPush, pop: stackPop, clear: stackClear, canGoBack, stack: formationStackArray } = useFormationStack();
 
   const { submit } = useChatSubmit({
     sessionId,
@@ -30,38 +36,63 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     setLoading,
     setError,
     setSessionId,
-    onFormationReceived: useCallback((formation) => {
+    onFormationReceived: useCallback((formation, adjacentFormations) => {
+      // Push current formation to stack before replacing (new branch of decision tree)
+      if (lastFormationRef.current) {
+        stackPush(lastFormationRef.current);
+      }
       lastFormationRef.current = formation;
+      // Store adjacent formations for instant expand (Phase 2)
+      adjacentFormationsRef.current = adjacentFormations || null;
       onFormationReceived?.(formation);
-    }, [onFormationReceived]),
+    }, [onFormationReceived, stackPush]),
   });
 
   // Navigation handlers
   const handleExpand = useCallback(async (entityType, entityId) => {
     if (!sessionId) return;
+
+    // Phase 2: Check adjacentFormations cache for instant expand
+    const key = `${entityType}:${entityId}`;
+    const cached = adjacentFormationsRef.current?.[key];
+    if (cached) {
+      // Instant: push current formation, render cached detail
+      stackPush(lastFormationRef.current);
+      lastFormationRef.current = cached;
+      onFormationReceived?.(cached);
+      // Fire-and-forget sync to keep backend in sync
+      syncExpand(sessionId, entityType, entityId);
+      return;
+    }
+
+    // Fallback: API call (no cached adjacent formation)
+    stackPush(lastFormationRef.current);
     try {
       const result = await expandView(sessionId, entityType, entityId);
       if (result.formation) {
+        lastFormationRef.current = result.formation;
         onFormationReceived?.(result.formation);
       }
-      setCanGoBack(result.stackSize > 0);
     } catch (err) {
+      // Rollback: pop from stack on failure
+      stackPop();
       console.error('Expand failed:', err);
     }
-  }, [sessionId, onFormationReceived]);
+  }, [sessionId, onFormationReceived, stackPush, stackPop]);
 
-  const handleBack = useCallback(async () => {
-    if (!sessionId) return;
-    try {
-      const result = await goBack(sessionId);
-      if (result.formation) {
-        onFormationReceived?.(result.formation);
-      }
-      setCanGoBack(result.canGoBack);
-    } catch (err) {
-      console.error('Back navigation failed:', err);
+  const handleBack = useCallback(() => {
+    if (!canGoBack) return;
+    // Instant: pop from stack, no await
+    const prev = stackPop();
+    if (prev) {
+      lastFormationRef.current = prev;
+      onFormationReceived?.(prev);
     }
-  }, [sessionId, onFormationReceived]);
+    // Fire-and-forget sync to keep backend in sync
+    if (sessionId) {
+      syncBack(sessionId);
+    }
+  }, [sessionId, onFormationReceived, canGoBack, stackPop]);
 
   // Expose navigation functions to parent
   useEffect(() => {
@@ -84,6 +115,10 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
         lastFormationRef.current = cached.formation;
         onFormationReceived?.(cached.formation);
       }
+      // Restore formation stack from cache
+      if (cached.formationStack?.length > 0) {
+        cached.formationStack.forEach((f) => stackPush(f));
+      }
 
       // Async validate — if session is dead on backend, clear everything
       getSession(cached.sessionId).then(session => {
@@ -92,6 +127,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
           setSessionId(null);
           setMessages([]);
           lastFormationRef.current = null;
+          stackClear();
           onFormationReceived?.(null);
         }
       }).catch(() => {
@@ -117,9 +153,14 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
   // Persist session cache after messages change
   useEffect(() => {
     if (sessionId && messages.length > 0) {
-      saveSessionCache({ sessionId, messages, formation: lastFormationRef.current });
+      saveSessionCache({
+        sessionId,
+        messages,
+        formation: lastFormationRef.current,
+        formationStack: formationStackArray,
+      });
     }
-  }, [sessionId, messages]);
+  }, [sessionId, messages, formationStackArray]);
 
   return (
     <div className="chat-container">

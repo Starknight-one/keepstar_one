@@ -83,6 +83,12 @@ func (h *NavigationHandler) HandleExpand(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// sync=true: frontend already has the formation, just sync backend state
+	if r.URL.Query().Get("sync") == "true" {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+
 	resp := NavigationResponse{
 		Success:   result.Success,
 		ViewMode:  string(result.ViewMode),
@@ -127,6 +133,12 @@ func (h *NavigationHandler) HandleBack(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// sync=true: frontend already has the formation from stack, just sync backend state
+	if r.URL.Query().Get("sync") == "true" {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
 

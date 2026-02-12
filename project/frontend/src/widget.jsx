@@ -45,11 +45,15 @@ const ALL_CSS = [
   const tenantSlug = script?.getAttribute('data-tenant') || devConfig?.tenant || null
 
   // API URL priority: data-api attr → derive from script src origin → dev config → default
+  // In dev mode (Vite), script detection is unreliable — fall through to apiClient default
   let apiBaseUrl = script?.getAttribute('data-api') || null
   if (!apiBaseUrl && script?.src) {
     try {
-      const scriptOrigin = new URL(script.src).origin
-      apiBaseUrl = scriptOrigin + '/api/v1'
+      const scriptUrl = new URL(script.src)
+      // Only use script origin in production (real widget.js, not Vite dev server)
+      if (scriptUrl.port !== '5173' && !script.src.includes('/src/')) {
+        apiBaseUrl = scriptUrl.origin + '/api/v1'
+      }
     } catch (_) { /* invalid URL, skip */ }
   }
   if (!apiBaseUrl) {
