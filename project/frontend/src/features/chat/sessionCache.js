@@ -2,9 +2,10 @@ const CACHE_KEY = 'chatSessionCache';
 
 /**
  * Save session state to localStorage for instant restore on next visit.
- * Stores: sessionId, messages (without formation blobs), last formation.
+ * Stores: sessionId, messages (without formation blobs), last formation,
+ * adjacent templates + entities for instant expand after F5.
  */
-export function saveSessionCache({ sessionId, messages, formation, formationStack }) {
+export function saveSessionCache({ sessionId, messages, formation, formationStack, adjacentTemplates, entities }) {
   if (!sessionId) return;
   try {
     // Strip formation from messages to save space — we store last formation separately
@@ -15,6 +16,8 @@ export function saveSessionCache({ sessionId, messages, formation, formationStac
       messages: lightMessages,
       formation: formation || null,
       formationStack: formationStack || [],
+      adjacentTemplates: adjacentTemplates || null,
+      entities: entities || null,
       savedAt: Date.now(),
     };
     localStorage.setItem(CACHE_KEY, JSON.stringify(data));

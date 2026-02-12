@@ -47,10 +47,9 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
         setSessionId(response.sessionId);
       }
 
-      // Notify parent about formation (for external rendering)
-      // Pass adjacentFormations as second arg for instant expand (Phase 2)
+      // Notify parent about formation + adjacent templates + entities for instant expand
       if (response.formation && onFormationReceived) {
-        onFormationReceived(response.formation, response.adjacentFormations || null);
+        onFormationReceived(response.formation, response.adjacentTemplates || null, response.entities || null);
       }
 
       // Add assistant message with formation

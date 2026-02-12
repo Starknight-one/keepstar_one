@@ -24,9 +24,10 @@ type PipelineExecuteRequest struct {
 
 // PipelineExecuteResponse is the output from the full pipeline
 type PipelineExecuteResponse struct {
-	Formation           *domain.FormationWithData
-	AdjacentFormations  map[string]*domain.FormationWithData // key = "entityType:entityId"
-	Agent1Ms            int
+	Formation          *domain.FormationWithData
+	AdjacentTemplates  map[string]*domain.FormationWithData // key = entityType ("product"/"service"), 1 template per type
+	Entities           *domain.StateData                    // raw entity data for frontend template filling
+	Agent1Ms           int
 	Agent2Ms            int
 	TotalMs             int
 	Agent1Usage         domain.LLMUsage
@@ -251,10 +252,11 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		}
 	}
 
-	// Build adjacent formations for instant expand (decision tree pre-built nodes)
-	var adjacentFormations map[string]*domain.FormationWithData
+	// Build adjacent templates for instant expand (1 template per entity type + raw entities)
+	var adjacentTemplates map[string]*domain.FormationWithData
+	var entities *domain.StateData
 	if formation != nil && formation.Mode != domain.FormationTypeSingle && uc.presetRegistry != nil {
-		adjacentFormations = uc.buildAdjacentFormations(state)
+		adjacentTemplates, entities = uc.buildAdjacentTemplates(state)
 	}
 
 	// Fill formation trace
@@ -287,9 +289,10 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	uc.recordTrace(ctx, trace)
 
 	return &PipelineExecuteResponse{
-		Formation:          formation,
-		AdjacentFormations: adjacentFormations,
-		Agent1Ms:           agent1Resp.LatencyMs,
+		Formation:         formation,
+		AdjacentTemplates: adjacentTemplates,
+		Entities:          entities,
+		Agent1Ms:          agent1Resp.LatencyMs,
 		Agent2Ms:      agent2Resp.LatencyMs,
 		TotalMs:       int(time.Since(start).Milliseconds()),
 		Agent1Usage:   agent1Resp.Usage,
@@ -319,49 +322,35 @@ func (uc *PipelineExecuteUseCase) recordTrace(ctx context.Context, trace *domain
 	}
 }
 
-// buildAdjacentFormations pre-builds detail formations for entities in current state.
-// This enables instant expand on the frontend (decision tree: one level ahead).
-// Reuses productFieldGetter/serviceFieldGetter from navigation_expand.go.
-func (uc *PipelineExecuteUseCase) buildAdjacentFormations(state *domain.SessionState) map[string]*domain.FormationWithData {
-	result := make(map[string]*domain.FormationWithData)
-	const maxEntities = 15
+// buildAdjacentTemplates builds 1 template per entity type + returns raw entity data.
+// Frontend fills templates with entity data at click time (instant, no round-trip).
+func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionState) (map[string]*domain.FormationWithData, *domain.StateData) {
+	templates := make(map[string]*domain.FormationWithData)
 
-	count := 0
-
-	// Products → product_detail preset
-	if preset, found := uc.presetRegistry.Get(domain.PresetProductDetail); found {
-		for _, p := range state.Current.Data.Products {
-			if count >= maxEntities {
-				break
-			}
-			p := p // capture loop variable
-			key := string(domain.EntityTypeProduct) + ":" + p.ID
-			result[key] = tools.BuildFormation(preset, 1, func(i int) (tools.FieldGetter, tools.CurrencyGetter, tools.IDGetter) {
-				return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
-			})
-			count++
+	// Product template
+	if len(state.Current.Data.Products) > 0 {
+		if preset, found := uc.presetRegistry.Get(domain.PresetProductDetail); found {
+			templates[string(domain.EntityTypeProduct)] = tools.BuildTemplateFormation(preset)
 		}
 	}
 
-	// Services → service_detail preset
-	if preset, found := uc.presetRegistry.Get(domain.PresetServiceDetail); found {
-		for _, s := range state.Current.Data.Services {
-			if count >= maxEntities {
-				break
-			}
-			s := s // capture loop variable
-			key := string(domain.EntityTypeService) + ":" + s.ID
-			result[key] = tools.BuildFormation(preset, 1, func(i int) (tools.FieldGetter, tools.CurrencyGetter, tools.IDGetter) {
-				return serviceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
-			})
-			count++
+	// Service template
+	if len(state.Current.Data.Services) > 0 {
+		if preset, found := uc.presetRegistry.Get(domain.PresetServiceDetail); found {
+			templates[string(domain.EntityTypeService)] = tools.BuildTemplateFormation(preset)
 		}
 	}
 
-	if len(result) == 0 {
-		return nil
+	if len(templates) == 0 {
+		return nil, nil
 	}
-	return result
+
+	entities := &domain.StateData{
+		Products: state.Current.Data.Products,
+		Services: state.Current.Data.Services,
+	}
+
+	return templates, entities
 }
 
 // convertToFormation converts map[string]interface{} to FormationWithData

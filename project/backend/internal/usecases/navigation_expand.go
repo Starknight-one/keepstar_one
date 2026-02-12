@@ -95,8 +95,24 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 		return nil, fmt.Errorf("push view: %w", err)
 	}
 
-	// 5. Build detail formation
+	// 5. Build detail formation (with RenderConfig so Agent1 knows we're on detail view)
 	formation := uc.buildDetailFormation(preset, entity, req.EntityType)
+	// Build FieldSpecs from preset for Agent1 context (displayed_fields)
+	fieldSpecs := make([]domain.FieldSpec, 0, len(preset.Fields))
+	for _, f := range preset.Fields {
+		fieldSpecs = append(fieldSpecs, domain.FieldSpec{
+			Name:    f.Name,
+			Slot:    string(f.Slot),
+			Display: string(f.Display),
+		})
+	}
+	formation.Config = &domain.RenderConfig{
+		EntityType: string(req.EntityType),
+		Preset:     string(preset.Name),
+		Mode:       preset.DefaultMode,
+		Size:       preset.DefaultSize,
+		Fields:     fieldSpecs,
+	}
 
 	// 6. Zone-write: UpdateView (view zone)
 	stack, _ := uc.statePort.GetViewStack(ctx, req.SessionID)

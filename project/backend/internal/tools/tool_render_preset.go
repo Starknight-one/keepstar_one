@@ -396,6 +396,52 @@ func BuildFormation(preset domain.Preset, count int, getEntity EntityGetterFunc)
 	}
 }
 
+// BuildTemplateFormation creates a template formation with all fields from the preset.
+// Each atom has FieldName set and Value=nil — the frontend fills values from entity data at render time.
+// This is used for adjacent templates: 1 template per entity type instead of N formations per entity.
+func BuildTemplateFormation(preset domain.Preset) *domain.FormationWithData {
+	fields := make([]domain.FieldConfig, len(preset.Fields))
+	copy(fields, preset.Fields)
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].Priority < fields[j].Priority
+	})
+
+	atoms := make([]domain.Atom, 0, len(fields))
+	for _, field := range fields {
+		atom := domain.Atom{
+			Type:      field.AtomType,
+			Subtype:   field.Subtype,
+			Display:   string(field.Display),
+			Value:     nil,
+			FieldName: field.Name,
+			Slot:      field.Slot,
+		}
+		// Add meta hints for special types
+		switch field.AtomType {
+		case domain.AtomTypeImage:
+			atom.Meta = map[string]interface{}{"size": "large"}
+		case domain.AtomTypeNumber:
+			if field.Subtype == domain.SubtypeCurrency {
+				// Sentinel — frontend replaces with entity.currency
+				atom.Meta = map[string]interface{}{"currency": "__ENTITY_CURRENCY__"}
+			}
+		}
+		atoms = append(atoms, atom)
+	}
+
+	widget := domain.Widget{
+		ID:       "template",
+		Template: preset.Template,
+		Size:     preset.DefaultSize,
+		Atoms:    atoms,
+	}
+
+	return &domain.FormationWithData{
+		Mode:    preset.DefaultMode,
+		Widgets: []domain.Widget{widget},
+	}
+}
+
 // buildAtoms creates atoms from fields using generic field getter
 // Now uses the new atom model with Type, Subtype, Display
 func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency CurrencyGetter) []domain.Atom {

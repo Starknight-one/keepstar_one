@@ -9,7 +9,7 @@
 
 **Keepstar** — встраиваемый AI-чат-виджет для e-commerce. Один `<script>` тег на сайте клиента даёт AI-ассистента, который отвечает не текстом, а интерактивными виджетами: карточки товаров, галереи, сравнения, произвольные компоновки.
 
-**Ключевой принцип: Backend-First.** Фронтенд = тупая рендерилка. Вся логика, LLM, компоновка, state — на бэкенде. Фронт получает готовый JSON и рисует.
+**Ключевой принцип: Backend-First.** Фронтенд = тупая рендерилка. Вся логика, LLM, компоновка, state — на бэкенде. Фронт получает готовый JSON и рисует. Единственное исключение: `fillFormation` — механическая подстановка значений в template при instant expand (preset-логика остаётся на бэке).
 
 ---
 
@@ -435,10 +435,11 @@ AppendConversation(messages)         →  conversation_history   +  БЕЗ де�
 
 ```
 [Pipeline response] = Node A (Grid 6 товаров)
-│   adjacentFormations: Detail 1..6 [PRE-BUILT]
+│   adjacentTemplates: { "product": template }  ← 1 шаблон на тип
+│   entities: { products: [...6 raw entities] }  ← сырые данные
 │   formationStack: [...previous formations]
 │
-├── Click карточка 3 → instant (из adjacent)
+├── Click карточка 3 → instant (fillFormation на клиенте)
 ├── Back → instant (из стека)
 └── Chat "другое" → round-trip → Node B (новая ветка)
 ```
@@ -447,20 +448,30 @@ AppendConversation(messages)         →  conversation_history   +  БЕЗ де�
 
 | Действие | Стоимость | Механизм |
 |----------|-----------|----------|
-| Клик / Back | ~0ms | Formation stack + adjacentFormations (кэш на FE) |
+| Клик / Back | ~0ms | Formation stack + adjacentTemplates + fillFormation (кэш на FE) |
 | Чат (данные меняются) | Round-trip | Pipeline → Agent1 → Agent2 → Formation |
 | Чат (отображение меняется) | Round-trip (быстрее) | Pipeline → Agent2 → Formation |
+
+### Adjacent Templates (шаблоны для instant expand)
+
+Оптимизация payload: вместо N готовых formations (одинаковая структура, разные значения) бэкенд шлёт:
+- **1 template** на тип entity — FormationWithData с `value: null` и `fieldName` на каждом атоме
+- **Raw entities** — сырые данные из стейта (products[], services[])
+
+Фронт заполняет template при клике через `fillFormation(template, entity, entityType)`. Preset configs остаются на бэкенде — фронт не знает что такое preset, только подставляет значения по fieldName.
+
+**Sentinel:** Currency meta содержит `"__ENTITY_CURRENCY__"` — фронт заменяет на `entity.currency`.
 
 ### Expand (раскрытие)
 
 Клик на виджет → переход к детализации.
 
 **Реализация (instant navigation):**
-1. Бэкенд в pipeline response предгенерирует `adjacentFormations` — detail-формации для каждого entity в текущей grid/list
-2. Expand на фронте: lookup `adjacentFormations["entityType:entityId"]` → мгновенный рендер (<16ms)
+1. Бэкенд в pipeline response шлёт `adjacentTemplates` (1 template per entity type) + `entities` (raw data)
+2. Expand на фронте: lookup template по `entityType` → find entity по `entityId` → `fillFormation()` → мгновенный рендер (<16ms)
 3. Push текущей формации в formation stack (для back)
 4. Fire-and-forget POST `/navigation/expand?sync=true` для синхронизации backend state
-5. Fallback: если entity нет в adjacent (edge case) — обычный blocking POST
+5. Fallback: если template или entity нет — обычный blocking POST
 
 ### Back (назад)
 

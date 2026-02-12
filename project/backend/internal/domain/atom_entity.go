@@ -60,12 +60,13 @@ const (
 
 // Atom is the smallest UI building block with type, subtype, and display
 type Atom struct {
-	Type    AtomType               `json:"type"`
-	Subtype AtomSubtype            `json:"subtype,omitempty"`
-	Display string                 `json:"display,omitempty"` // Visual format (e.g., "h1", "price-lg", "badge-success")
-	Value   interface{}            `json:"value"`
-	Slot    AtomSlot               `json:"slot,omitempty"` // Template slot hint
-	Meta    map[string]interface{} `json:"meta,omitempty"`
+	Type      AtomType               `json:"type"`
+	Subtype   AtomSubtype            `json:"subtype,omitempty"`
+	Display   string                 `json:"display,omitempty"`   // Visual format (e.g., "h1", "price-lg", "badge-success")
+	Value     interface{}            `json:"value"`
+	FieldName string                 `json:"fieldName,omitempty"` // Source field name (only in template atoms)
+	Slot      AtomSlot               `json:"slot,omitempty"`      // Template slot hint
+	Meta      map[string]interface{} `json:"meta,omitempty"`
 }
 
 // Legacy type mappings for backward compatibility

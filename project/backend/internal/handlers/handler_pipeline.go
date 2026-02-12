@@ -32,12 +32,13 @@ type PipelineRequest struct {
 
 // PipelineResponse is the response body
 type PipelineResponse struct {
-	SessionID           string                         `json:"sessionId"`
-	Formation           *FormationResponse             `json:"formation,omitempty"`
-	AdjacentFormations  map[string]*FormationResponse  `json:"adjacentFormations,omitempty"`
-	Agent1Ms            int                            `json:"agent1Ms"`
-	Agent2Ms            int                            `json:"agent2Ms"`
-	TotalMs             int                            `json:"totalMs"`
+	SessionID          string                         `json:"sessionId"`
+	Formation          *FormationResponse             `json:"formation,omitempty"`
+	AdjacentTemplates  map[string]*FormationResponse  `json:"adjacentTemplates,omitempty"`
+	Entities           *domain.StateData              `json:"entities,omitempty"`
+	Agent1Ms           int                            `json:"agent1Ms"`
+	Agent2Ms           int                            `json:"agent2Ms"`
+	TotalMs            int                            `json:"totalMs"`
 }
 
 // FormationResponse is the JSON-friendly formation for HTTP response
@@ -158,16 +159,19 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// Serialize adjacent formations for instant expand
-	if len(result.AdjacentFormations) > 0 {
-		resp.AdjacentFormations = make(map[string]*FormationResponse, len(result.AdjacentFormations))
-		for key, f := range result.AdjacentFormations {
-			resp.AdjacentFormations[key] = &FormationResponse{
+	// Serialize adjacent templates for instant expand (1 template per entity type)
+	if len(result.AdjacentTemplates) > 0 {
+		resp.AdjacentTemplates = make(map[string]*FormationResponse, len(result.AdjacentTemplates))
+		for key, f := range result.AdjacentTemplates {
+			resp.AdjacentTemplates[key] = &FormationResponse{
 				Mode:    string(f.Mode),
 				Grid:    f.Grid,
 				Widgets: f.Widgets,
 			}
 		}
+	}
+	if result.Entities != nil {
+		resp.Entities = result.Entities
 	}
 
 	writeJSON(w, http.StatusOK, resp)

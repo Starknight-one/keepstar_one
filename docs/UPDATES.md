@@ -4,6 +4,31 @@
 
 ---
 
+## Adjacent Templates — 2026-02-12 (feature/instant-navigation)
+
+Оптимизация instant expand: N formations → 1 template + raw entities. ~68% payload reduction, меньше CPU на бэке.
+
+### Механика
+
+- **BuildTemplateFormation** (tool_render_preset.go): новая функция — создаёт FormationWithData-шаблон с `value: null` и `fieldName` на каждом атоме. Currency sentinel `__ENTITY_CURRENCY__`. 1 вызов на тип entity вместо N вызовов `BuildFormation`.
+- **Atom.FieldName** (atom_entity.go): новое поле `FieldName string` в Atom struct (`omitempty` — backward compatible).
+- **fillFormation.js** (NEW): фронт-утилита — заполняет template данными entity при клике. Зеркалит Go field getters. ~90 строк.
+- **Pipeline response**: `adjacentFormations` → `adjacentTemplates` (1 per entity type) + `entities` (raw StateData).
+- **ChatPanel**: expand lookup по entityType → find entity → `fillFormation()` → instant render. Templates + entities в sessionCache (переживает F5).
+
+### Bugfix: Expand → RenderConfig
+
+- `navigation_expand.go`: `buildDetailFormation` не ставил `Config` на formation → Agent1 не видел что мы на detail view → запускал поиск заново вместо передачи Agent2.
+- Фикс: добавлен `formation.Config` с Preset, Mode, Size, Fields после expand.
+
+**Payload:** 6 products: ~7.2KB → ~2.3KB. Backend CPU: 6x BuildFormation → 1x BuildTemplateFormation.
+
+**Файлы:** 1 новый (FE), 8 изменённых (5 BE + 3 FE).
+
+**Specs:** `ADW/specs/done/done-adjacent-templates.md`
+
+---
+
 ## Instant Navigation — 2026-02-12 (feature/instant-navigation)
 
 Back и Expand без round-trip к серверу. Decision tree: каждый ответ бэкенда = узел с предсобранными потомками.
@@ -16,16 +41,12 @@ Back и Expand без round-trip к серверу. Decision tree: каждый 
 - **sessionCache**: `formationStack` персистируется в localStorage — переживает F5.
 - **apiClient**: `getHeaders()` экспортирован для backgroundSync.
 
-### Phase 2: Adjacent Formations (Expand = instant, BE + FE)
+### Phase 2: Adjacent Formations (Expand = instant, BE + FE) — replaced by Adjacent Templates
 
-- **buildAdjacentFormations** (pipeline_execute.go): для каждого entity (products + services) строит detail formation через preset. Ключ `"entityType:entityId"`, лимит 15 entities. Переиспользует `productFieldGetter`/`serviceFieldGetter` + `tools.BuildFormation`.
-- **PipelineExecuteUseCase**: новое поле `presetRegistry`, `AdjacentFormations` в response.
-- **Pipeline handler**: `adjacentFormations` сериализуется в `PipelineResponse`.
+- ~~buildAdjacentFormations~~ → см. "Adjacent Templates" выше.
 - **Navigation handlers**: `?sync=true` → `{"ok": true}` без formation (экономия сериализации).
-- **ChatPanel**: `adjacentFormationsRef` — instant expand через lookup. Fallback на API если entity нет в adjacent.
-- **useChatSubmit**: передаёт `adjacentFormations` вторым аргументом в `onFormationReceived`.
 
-**Метрики:** Back 100-300ms → <16ms. Expand 100-300ms → <16ms. Response +2KB gzip.
+**Метрики:** Back 100-300ms → <16ms. Expand 100-300ms → <16ms.
 
 **Файлы:** 2 новых (FE), 10 изменённых (5 FE + 5 BE).
 

@@ -4,6 +4,7 @@ import { useChatSubmit } from './useChatSubmit';
 import { ChatHistory } from './ChatHistory';
 import { ChatInput } from './ChatInput';
 import { useFormationStack } from './model/useFormationStack';
+import { fillFormation } from './model/fillFormation';
 import { syncExpand, syncBack } from './api/backgroundSync';
 import { expandView, getSession, initSession } from '../../shared/api/apiClient';
 import { saveSessionCache, loadSessionCache, clearSessionCache } from './sessionCache';
@@ -24,7 +25,8 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
   } = useChatMessages();
 
   const lastFormationRef = useRef(null);
-  const adjacentFormationsRef = useRef(null);
+  const adjacentTemplatesRef = useRef(null);
+  const entitiesRef = useRef(null);
 
   // Formation stack for instant back navigation
   // Destructure to get stable function refs (push/pop/clear have [] deps)
@@ -36,14 +38,15 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     setLoading,
     setError,
     setSessionId,
-    onFormationReceived: useCallback((formation, adjacentFormations) => {
+    onFormationReceived: useCallback((formation, adjacentTemplates, entities) => {
       // Push current formation to stack before replacing (new branch of decision tree)
       if (lastFormationRef.current) {
         stackPush(lastFormationRef.current);
       }
       lastFormationRef.current = formation;
-      // Store adjacent formations for instant expand (Phase 2)
-      adjacentFormationsRef.current = adjacentFormations || null;
+      // Store adjacent templates + entities for instant expand
+      adjacentTemplatesRef.current = adjacentTemplates || null;
+      entitiesRef.current = entities || null;
       onFormationReceived?.(formation);
     }, [onFormationReceived, stackPush]),
   });
@@ -52,20 +55,26 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
   const handleExpand = useCallback(async (entityType, entityId) => {
     if (!sessionId) return;
 
-    // Phase 2: Check adjacentFormations cache for instant expand
-    const key = `${entityType}:${entityId}`;
-    const cached = adjacentFormationsRef.current?.[key];
-    if (cached) {
-      // Instant: push current formation, render cached detail
-      stackPush(lastFormationRef.current);
-      lastFormationRef.current = cached;
-      onFormationReceived?.(cached);
-      // Fire-and-forget sync to keep backend in sync
-      syncExpand(sessionId, entityType, entityId);
-      return;
+    // Instant path: fill template with entity data on the client
+    const template = adjacentTemplatesRef.current?.[entityType];
+    const entitiesData = entitiesRef.current;
+    if (template && entitiesData) {
+      const list = entityType === 'product' ? entitiesData.products : entitiesData.services;
+      const entity = list?.find(e => e.id === entityId);
+      if (entity) {
+        const filled = fillFormation(template, entity, entityType);
+        if (filled) {
+          stackPush(lastFormationRef.current);
+          lastFormationRef.current = filled;
+          onFormationReceived?.(filled);
+          // Fire-and-forget sync to keep backend in sync
+          syncExpand(sessionId, entityType, entityId);
+          return;
+        }
+      }
     }
 
-    // Fallback: API call (no cached adjacent formation)
+    // Fallback: API call (no template or entity not found)
     stackPush(lastFormationRef.current);
     try {
       const result = await expandView(sessionId, entityType, entityId);
@@ -119,6 +128,9 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
       if (cached.formationStack?.length > 0) {
         cached.formationStack.forEach((f) => stackPush(f));
       }
+      // Restore adjacent templates + entities for instant expand after F5
+      adjacentTemplatesRef.current = cached.adjacentTemplates || null;
+      entitiesRef.current = cached.entities || null;
 
       // Async validate — if session is dead on backend, clear everything
       getSession(cached.sessionId).then(session => {
@@ -127,6 +139,8 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
           setSessionId(null);
           setMessages([]);
           lastFormationRef.current = null;
+          adjacentTemplatesRef.current = null;
+          entitiesRef.current = null;
           stackClear();
           onFormationReceived?.(null);
         }
@@ -158,6 +172,8 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
         messages,
         formation: lastFormationRef.current,
         formationStack: formationStackArray,
+        adjacentTemplates: adjacentTemplatesRef.current,
+        entities: entitiesRef.current,
       });
     }
   }, [sessionId, messages, formationStackArray]);

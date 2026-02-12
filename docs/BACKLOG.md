@@ -94,7 +94,7 @@ MVP реализован: JSONB `tags` на `products` + `services`, GIN инд�
 **Бизнес-ценность:** Engagement, конверсия.
 
 ### ~~Instant Navigation (мгновенные переходы)~~ DONE
-Back < 16ms, Expand < 16ms. Formation stack (instant back) + adjacent formations (instant expand) + background sync. См. `done-instant-navigation.md`.
+Back < 16ms, Expand < 16ms. Formation stack (instant back) + adjacent templates (instant expand) + background sync. Phase 1: formation stack. Phase 2: adjacent formations (N formations per entity). Phase 3: adjacent templates (1 template + raw entities, ~68% payload reduction). См. `done-instant-navigation.md`, `done-adjacent-templates.md`.
 
 ### Бизнес-кейсы: триггеры и рекомендации
 **Что:** Контрагент настраивает: "при поиске обуви — показывать средства ухода", "при заходе — промо баннер".
