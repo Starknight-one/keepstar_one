@@ -68,7 +68,7 @@ func TestPromptCaching_Chain(t *testing.T) {
 
 	// Initialize adapters
 	llmClient := anthropic.NewClient(apiKey, model)
-	stateAdapter := postgres.NewStateAdapter(dbClient)
+	stateAdapter := postgres.NewStateAdapter(dbClient, log)
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient)
 	cacheAdapter := postgres.NewCacheAdapter(dbClient)
 	presetRegistry := presets.NewPresetRegistry()

@@ -27,7 +27,7 @@ func DefaultRetentionConfig() RetentionConfig {
 		TraceMaxAge:         48 * time.Hour,
 		DeadSessionMaxAge:   1 * time.Hour,
 		ConversationMaxMsgs: 20,
-		CleanupInterval:     30 * time.Minute,
+		CleanupInterval:     6 * time.Hour,
 		RequestLogMaxAge:    72 * time.Hour,
 	}
 }

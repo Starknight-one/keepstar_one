@@ -8,10 +8,13 @@ import (
 
 	"keepstar/internal/adapters/postgres"
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 	"keepstar/internal/usecases"
 
 	"github.com/google/uuid"
 )
+
+var rollbackTestLog = logger.New("error")
 
 func testDatabaseURL() string {
 	return os.Getenv("DATABASE_URL")
@@ -65,7 +68,7 @@ func TestRollbackUseCase_UserRollbackAfterFilter(t *testing.T) {
 		t.Fatalf("State migrations failed: %v", err)
 	}
 
-	stateAdapter := postgres.NewStateAdapter(client)
+	stateAdapter := postgres.NewStateAdapter(client, rollbackTestLog)
 	sessionID := setupTestSession(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
@@ -205,7 +208,7 @@ func TestReconstructStateUseCase_ReplayToSpecificStep(t *testing.T) {
 		t.Fatalf("State migrations failed: %v", err)
 	}
 
-	stateAdapter := postgres.NewStateAdapter(client)
+	stateAdapter := postgres.NewStateAdapter(client, rollbackTestLog)
 	sessionID := setupTestSession(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
@@ -293,7 +296,7 @@ func TestRollbackUseCase_ViewStackNavigation(t *testing.T) {
 		t.Fatalf("State migrations failed: %v", err)
 	}
 
-	stateAdapter := postgres.NewStateAdapter(client)
+	stateAdapter := postgres.NewStateAdapter(client, rollbackTestLog)
 	sessionID := setupTestSession(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
@@ -437,7 +440,7 @@ func TestRollbackUseCase_CannotRollbackForward(t *testing.T) {
 		t.Fatalf("State migrations failed: %v", err)
 	}
 
-	stateAdapter := postgres.NewStateAdapter(client)
+	stateAdapter := postgres.NewStateAdapter(client, rollbackTestLog)
 	sessionID := setupTestSession(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
@@ -492,7 +495,7 @@ func TestRollbackUseCase_CannotRollbackToNegativeStep(t *testing.T) {
 		t.Fatalf("State migrations failed: %v", err)
 	}
 
-	stateAdapter := postgres.NewStateAdapter(client)
+	stateAdapter := postgres.NewStateAdapter(client, rollbackTestLog)
 	sessionID := setupTestSession(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 

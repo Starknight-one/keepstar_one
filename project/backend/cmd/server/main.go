@@ -300,10 +300,11 @@ func main() {
 		appLog.Info("spa_file_server_enabled", "dir", staticDir)
 	}
 
-	// Apply middleware
+	// Apply middleware (stdout logging always on; DB persist opt-in via PERSIST_LOGS=true)
 	var logAdapter *postgres.LogAdapter
-	if dbClient != nil {
+	if dbClient != nil && os.Getenv("PERSIST_LOGS") == "true" {
 		logAdapter = postgres.NewLogAdapter(dbClient)
+		appLog.Info("request_log_persist_enabled", "storage", "postgres")
 	}
 	handler := handlers.LoggingMiddleware(appLog, logAdapter)(handlers.CORSMiddleware(mux))
 

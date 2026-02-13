@@ -2,19 +2,17 @@ package postgres_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"keepstar/internal/adapters/postgres"
 	"keepstar/internal/domain"
+	"keepstar/internal/logger"
 
 	"github.com/google/uuid"
 )
 
-func testDatabaseURL() string {
-	return os.Getenv("DATABASE_URL")
-}
+var testLog = logger.New("error")
 
 func testSessionID(t *testing.T, client *postgres.Client) string {
 	ctx := context.Background()
@@ -35,32 +33,16 @@ func testSessionID(t *testing.T, client *postgres.Client) string {
 
 func cleanupTestSession(t *testing.T, client *postgres.Client, sessionID string) {
 	ctx := context.Background()
+	_, _ = client.Pool().Exec(ctx, `DELETE FROM chat_session_deltas WHERE session_id = $1`, sessionID)
+	_, _ = client.Pool().Exec(ctx, `DELETE FROM chat_session_state WHERE session_id = $1`, sessionID)
 	_, _ = client.Pool().Exec(ctx, `DELETE FROM chat_sessions WHERE id = $1`, sessionID)
 }
 
 func TestStateAdapter_CreateAndGetState(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
 
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer client.Close()
-
-	// Run migrations
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
@@ -94,27 +76,10 @@ func TestStateAdapter_CreateAndGetState(t *testing.T) {
 }
 
 func TestStateAdapter_UpdateState(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
 
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer client.Close()
-
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
@@ -161,32 +126,15 @@ func TestStateAdapter_UpdateState(t *testing.T) {
 }
 
 func TestStateAdapter_AddAndGetDeltas(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
 
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer client.Close()
-
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
 	// Create state first
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -266,26 +214,12 @@ func TestStateAdapter_AddAndGetDeltas(t *testing.T) {
 }
 
 func TestStateAdapter_GetState_NotFound(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
 
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer client.Close()
+	adapter := postgres.NewStateAdapter(client, testLog)
 
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
-
-	_, err = adapter.GetState(ctx, uuid.New().String())
+	_, err := adapter.GetState(ctx, uuid.New().String())
 	if err != domain.ErrSessionNotFound {
 		t.Errorf("Expected ErrSessionNotFound, got %v", err)
 	}
@@ -297,32 +231,15 @@ func TestStateAdapter_GetState_NotFound(t *testing.T) {
 
 // TestStateAdapter_DeltaWithSourceTracking tests new delta fields: Source, ActorID, DeltaType, Path
 func TestStateAdapter_DeltaWithSourceTracking(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
 
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer client.Close()
-
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
 	// Create state
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -411,31 +328,14 @@ func TestStateAdapter_DeltaWithSourceTracking(t *testing.T) {
 
 // TestStateAdapter_GetDeltasUntil tests retrieving deltas up to a specific step
 func TestStateAdapter_GetDeltasUntil(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
 
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer client.Close()
-
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -482,31 +382,14 @@ func TestStateAdapter_GetDeltasUntil(t *testing.T) {
 
 // TestStateAdapter_ViewStack tests PushView, PopView, GetViewStack operations
 func TestStateAdapter_ViewStack(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
 
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer client.Close()
-
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -605,27 +488,10 @@ func TestStateAdapter_ViewStack(t *testing.T) {
 
 // TestStateAdapter_ViewStateInSessionState tests view state fields in SessionState
 func TestStateAdapter_ViewStateInSessionState(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
 
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-	defer client.Close()
-
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run state migrations: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
@@ -683,30 +549,14 @@ func TestStateAdapter_ViewStateInSessionState(t *testing.T) {
 
 // TestStateAdapter_UpdateData tests zone-write for data zone
 func TestStateAdapter_UpdateData(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer client.Close()
 
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Migrations failed: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("State migrations failed: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -779,30 +629,14 @@ func TestStateAdapter_UpdateData(t *testing.T) {
 
 // TestStateAdapter_UpdateTemplate tests zone-write for template zone
 func TestStateAdapter_UpdateTemplate(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer client.Close()
 
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Migrations failed: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("State migrations failed: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -864,30 +698,14 @@ func TestStateAdapter_UpdateTemplate(t *testing.T) {
 
 // TestStateAdapter_UpdateView tests zone-write for view zone
 func TestStateAdapter_UpdateView(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer client.Close()
 
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Migrations failed: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("State migrations failed: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -944,30 +762,14 @@ func TestStateAdapter_UpdateView(t *testing.T) {
 
 // TestStateAdapter_AppendConversation tests conversation history zone-write
 func TestStateAdapter_AppendConversation(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer client.Close()
 
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Migrations failed: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("State migrations failed: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -1004,30 +806,14 @@ func TestStateAdapter_AppendConversation(t *testing.T) {
 
 // TestStateAdapter_DeltaWithTurnID tests that turn_id is stored and retrieved correctly
 func TestStateAdapter_DeltaWithTurnID(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer client.Close()
 
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Migrations failed: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("State migrations failed: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}
@@ -1115,30 +901,14 @@ func TestStateAdapter_DeltaWithTurnID(t *testing.T) {
 
 // TestStateAdapter_ZoneWriteIsolation tests that zone-writes don't affect other zones
 func TestStateAdapter_ZoneWriteIsolation(t *testing.T) {
-	dbURL := testDatabaseURL()
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
+	client := getSharedClient(t)
 	ctx := context.Background()
-	client, err := postgres.NewClient(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer client.Close()
 
-	if err := client.RunMigrations(ctx); err != nil {
-		t.Fatalf("Migrations failed: %v", err)
-	}
-	if err := client.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("State migrations failed: %v", err)
-	}
-
-	adapter := postgres.NewStateAdapter(client)
+	adapter := postgres.NewStateAdapter(client, testLog)
 	sessionID := testSessionID(t, client)
 	defer cleanupTestSession(t, client, sessionID)
 
-	_, err = adapter.CreateState(ctx, sessionID)
+	_, err := adapter.CreateState(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("CreateState failed: %v", err)
 	}

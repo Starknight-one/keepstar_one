@@ -136,6 +136,24 @@ func (m *mockCatalogPort) SaveCatalogDigest(_ context.Context, _ string, _ *doma
 func (m *mockCatalogPort) GetAllTenants(_ context.Context) ([]domain.Tenant, error) {
 	return nil, nil
 }
+func (m *mockCatalogPort) GetStock(_ context.Context, _ string, _ string) (*domain.Stock, error) {
+	return nil, nil
+}
+func (m *mockCatalogPort) ListServices(_ context.Context, _ string, _ ports.ProductFilter) ([]domain.Service, int, error) {
+	return nil, 0, nil
+}
+func (m *mockCatalogPort) GetService(_ context.Context, _ string, _ string) (*domain.Service, error) {
+	return nil, nil
+}
+func (m *mockCatalogPort) VectorSearchServices(_ context.Context, _ string, _ []float32, _ int, _ *ports.VectorFilter) ([]domain.Service, error) {
+	return nil, nil
+}
+func (m *mockCatalogPort) GetMasterServicesWithoutEmbedding(_ context.Context) ([]domain.MasterService, error) {
+	return nil, nil
+}
+func (m *mockCatalogPort) SeedServiceEmbedding(_ context.Context, _ string, _ []float32) error {
+	return nil
+}
 
 // --- Mock CatalogPort with capture ---
 
@@ -186,6 +204,24 @@ func (m *mockCatalogPortCapture) SaveCatalogDigest(_ context.Context, _ string, 
 }
 func (m *mockCatalogPortCapture) GetAllTenants(_ context.Context) ([]domain.Tenant, error) {
 	return nil, nil
+}
+func (m *mockCatalogPortCapture) GetStock(_ context.Context, _ string, _ string) (*domain.Stock, error) {
+	return nil, nil
+}
+func (m *mockCatalogPortCapture) ListServices(_ context.Context, _ string, _ ports.ProductFilter) ([]domain.Service, int, error) {
+	return nil, 0, nil
+}
+func (m *mockCatalogPortCapture) GetService(_ context.Context, _ string, _ string) (*domain.Service, error) {
+	return nil, nil
+}
+func (m *mockCatalogPortCapture) VectorSearchServices(_ context.Context, _ string, _ []float32, _ int, _ *ports.VectorFilter) ([]domain.Service, error) {
+	return nil, nil
+}
+func (m *mockCatalogPortCapture) GetMasterServicesWithoutEmbedding(_ context.Context) ([]domain.MasterService, error) {
+	return nil, nil
+}
+func (m *mockCatalogPortCapture) SeedServiceEmbedding(_ context.Context, _ string, _ []float32) error {
+	return nil
 }
 
 // --- Mock EmbeddingPort ---
@@ -579,4 +615,22 @@ func (m *tenantCaptureCatalogPort) SaveCatalogDigest(ctx context.Context, tenant
 }
 func (m *tenantCaptureCatalogPort) GetAllTenants(ctx context.Context) ([]domain.Tenant, error) {
 	return m.inner.GetAllTenants(ctx)
+}
+func (m *tenantCaptureCatalogPort) GetStock(ctx context.Context, tenantID string, productID string) (*domain.Stock, error) {
+	return m.inner.GetStock(ctx, tenantID, productID)
+}
+func (m *tenantCaptureCatalogPort) ListServices(ctx context.Context, tenantID string, filter ports.ProductFilter) ([]domain.Service, int, error) {
+	return m.inner.ListServices(ctx, tenantID, filter)
+}
+func (m *tenantCaptureCatalogPort) GetService(ctx context.Context, tenantID string, serviceID string) (*domain.Service, error) {
+	return m.inner.GetService(ctx, tenantID, serviceID)
+}
+func (m *tenantCaptureCatalogPort) VectorSearchServices(ctx context.Context, tenantID string, embedding []float32, limit int, filter *ports.VectorFilter) ([]domain.Service, error) {
+	return m.inner.VectorSearchServices(ctx, tenantID, embedding, limit, filter)
+}
+func (m *tenantCaptureCatalogPort) GetMasterServicesWithoutEmbedding(ctx context.Context) ([]domain.MasterService, error) {
+	return m.inner.GetMasterServicesWithoutEmbedding(ctx)
+}
+func (m *tenantCaptureCatalogPort) SeedServiceEmbedding(ctx context.Context, masterServiceID string, embedding []float32) error {
+	return m.inner.SeedServiceEmbedding(ctx, masterServiceID, embedding)
 }

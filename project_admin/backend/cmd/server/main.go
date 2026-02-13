@@ -179,8 +179,12 @@ func main() {
 		log.Info("spa_file_server_enabled", "dir", staticDir)
 	}
 
-	// Apply CORS + Logging middleware
-	logAdapter := postgres.NewLogAdapter(dbClient)
+	// Apply CORS + Logging middleware (DB persist opt-in via PERSIST_LOGS=true)
+	var logAdapter *postgres.LogAdapter
+	if os.Getenv("PERSIST_LOGS") == "true" {
+		logAdapter = postgres.NewLogAdapter(dbClient)
+		log.Info("request_log_persist_enabled", "storage", "postgres")
+	}
 	handler := handlers.LoggingMiddleware(log, logAdapter)(handlers.CORSMiddleware(mux))
 
 	addr := fmt.Sprintf(":%s", cfg.Port)

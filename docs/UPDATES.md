@@ -4,6 +4,75 @@
 
 ---
 
+## Test Coverage — 5-Layer Strategy — 2026-02-13
+
+Полное покрытие тестами chat backend. 5 слоёв, ~125 новых тестов, 13 новых файлов.
+
+### Что реализовано
+
+**Layer 1 — Domain Logic (49 тестов, 0 deps, <2 сек) — DONE, ALL PASS**
+- `domain/llm_cost_test.go` (10) — все модели, cache multipliers, fallback
+- `domain/span_test.go` (9) — concurrent safety, context round-trip
+- `tools/formation_test.go` (20) — BuildFormation, BuildTemplateFormation, field getters
+- `tools/rrf_merge_test.go` (10) — RRF merge, keyword weight, stable order
+
+**Layer 2 — DB Integration (22+ тестов, DATABASE_URL) — DONE, ALL PASS**
+- `postgres/postgres_catalog_integration_test.go` (15) — tenant CRUD, ListProducts (brand/price/search/sort/pagination), GetProduct, Digest generate+roundtrip
+- `postgres/postgres_session_integration_test.go` (6) — FK constraint, session CRUD, delta steps, ViewStack push/pop, zone-write UpdateData
+
+**Layer 3 — API Smoke (18 тестов, DATABASE_URL) — DONE, ALL PASS**
+- `handlers/smoke_test.go` (9) — Health, Seed→GetSession, Expand→Back flow, error cases
+- `handlers/middleware_test.go` (9) — CORS preflight, tenant from path/header, fallback
+
+**Layer 4 — Usecase Integration (12 тестов, DATABASE_URL) — DONE, compiles, not yet run**
+- `usecases/navigation_integration_test.go` (5) — DB-backed expand/back, deep stack (5 levels)
+- `usecases/tool_execution_integration_test.go` (4) — catalog_search + render_product_preset с реальным registry
+- `usecases/pipeline_mock_llm_test.go` (3) — MockLLMClient, TurnID grouping
+
+**Layer 5 — LLM Integration — NOT TOUCHED (existing tests need rewrite)**
+
+### Инфраструктура
+
+- `internal/testutil/testutil.go` — TestDB, TestSession, TestStateWithProducts, SeedProducts, SeedServices, MockLLMClient
+- `internal/adapters/postgres/shared_test.go` — TestMain с shared connection pool (один pool на весь пакет вместо per-test)
+- `Makefile` — `test-unit`, `test-integration`, `test-usecase`, `test-llm`, `test-all` (автоподтяжка `.env`)
+
+### Починки в существующем коде
+
+- 7 сломанных `NewStateAdapter(client)` → `NewStateAdapter(client, log)` (usecases: state_rollback, cache, agent1_execute)
+- 7 недостающих методов в mock'ах `tool_catalog_search_test.go` (CatalogPort расширился)
+
+### Что осталось
+
+1. **Скорость тестов** — `postgres_state_test.go` создаёт 14 отдельных DB connections (каждый ~4 сек TLS к Neon). Нужно перевести на shared client через `getSharedClient(t)` из `shared_test.go`. Паттерн уже готов, session/catalog тесты переведены.
+2. **Layer 4 прогон** — написаны, компилируются, не прогнаны с DATABASE_URL
+3. **Layer 5 переписать** — существующие LLM-тесты (agent1_execute_test, cache_test) логически слабые, нужен редизайн
+
+### Аномалия Neon DB
+
+На графиках Neon за ночь 12-13 февраля видна подозрительная активность:
+- **Pooler client connections**: 2-6 активных соединений всю ночь (12:13 AM - 5:13 AM), хотя никто не работал
+- **Rows inserted/updated**: всплески до 285 rows около 12:13 AM, затем периодическая активность (50-170 rows) до утра
+- **Compute**: endpoint НЕ засыпал (autosuspend 5 min) — значит что-то держало соединения
+- **Deadlocks**: 1 deadlock зафиксирован
+
+**Расследование — причины найдены и устранены:**
+
+1. **Retention loop на Railway** (главный виновник) — тикал каждые 30 мин, 3-4 DELETE/UPDATE запроса за тик. Neon видел активность → не засыпал. Фикс: `CleanupInterval: 30min → 6h`.
+2. **Connection pool config** — `MinConns=2` + `HealthCheckPeriod=1min` держали 2 idle соединения и пинговали БД каждую минуту. Фикс: `MinConns=0`, `MaxConnIdleTime=5min`, `HealthCheckPeriod=5min`.
+3. **Зомби-пулы от тестов** — `postgres_state_test.go` создаёт 14 отдельных пулов; при панике `defer client.Close()` не выполняется → пулы живут с health check. Фикс: перевод на shared client (TODO).
+4. **Admin backend** — LogAdapter всегда on, писал каждый HTTP запрос в `request_logs`. Фикс: `PERSIST_LOGS=true` opt-in (аналогично chat backend).
+
+**Правки:**
+- `postgres_client.go` — MinConns=0, MaxConnIdleTime=5min, HealthCheckPeriod=5min
+- `retention.go` — CleanupInterval=6h
+- `project/backend/cmd/server/main.go` — PERSIST_LOGS opt-in для LogAdapter
+- `project_admin/backend/cmd/server/main.go` — PERSIST_LOGS opt-in для LogAdapter
+
+**Файлы:** 13 новых + 6 изменённых + Makefile + 4 hotfix
+
+---
+
 ## Logging — Full Project Coverage — 2026-02-12
 
 Полное покрытие логами всего проекта: chat backend, admin backend, оба фронтенда. Каждый HTTP запрос = waterfall trace с таймингами на каждом стыке. Логи хранятся в Postgres, чистятся раз в 3 дня.
