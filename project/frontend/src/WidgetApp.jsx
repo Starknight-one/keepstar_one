@@ -28,12 +28,16 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
   return (
     <WidgetConfigProvider tenantSlug={tenantSlug} apiBaseUrl={apiBaseUrl}>
       <ThemeProvider defaultTheme="marketplace">
-        <button
-          className="chat-toggle-btn"
-          onClick={() => setIsChatOpen(!isChatOpen)}
-        >
-          {isChatOpen ? '\u2715' : '\uD83D\uDCAC'}
-        </button>
+        {!isChatOpen && (
+          <div className="chat-toggle-btn" onClick={() => setIsChatOpen(true)}>
+            <span className="chat-toggle-bubble">Спроси меня!</span>
+            <button className="chat-toggle-circle" aria-label="Open chat">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+            </button>
+          </div>
+        )}
 
         {isChatOpen && (
           <>

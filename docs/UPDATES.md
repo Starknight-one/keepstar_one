@@ -4,6 +4,40 @@
 
 ---
 
+## Japanese Stepper — Chat + Stepper + Blur Backdrop — 2026-02-13
+
+Степпер переехал из отдельного сайдбара в чат-колонку. Весь UI стал прозрачным (ghostly minimal). Новая toggle-кнопка с градиентом. По макету Pencil «V1 — Ghostly Minimal».
+
+### UI/Layout
+
+- **Blur backdrop** — `linear-gradient` заменён на `rgba(0,0,0,0.3)` + `backdrop-filter: blur(12px)`. Весь контент под оверлеем мягко размыт.
+- **Chat column** — полностью прозрачная. Убран белый `background`, `box-shadow`, `border-radius` у `.chat-container`. Сообщения, инпут, степпер — на прозрачном фоне поверх блюра.
+- **Vertical centering** — два `.chat-spacer` (flex: 1) выше и ниже контента. Инпут чата всегда по центру экрана по вертикали. `.chat-history` и `.stepper` ограничены `max-height: 35vh`, скроллятся внутри.
+- **Layout** — `[widget-display-area] [chat-area]`, степпер убран из overlay-уровня, живёт внутри ChatPanel после `<ChatInput>`.
+
+### Ghostly стиль (по макету Pencil)
+
+- **Messages** — user bubble: `rgba(0,0,0,0.03)`, rounded `16px 16px 4px 16px`. Assistant: без фона, просто текст `rgba(0,0,0,0.67)`.
+- **Input** — pill shape, `border: none`, `background: rgba(0,0,0,0.025)`, placeholder `rgba(0,0,0,0.27)`.
+- **Stepper** — полупрозрачные цвета: past dots `rgba(0,0,0,0.53)`, future `rgba(0,0,0,0.09)`, active ring `rgba(0,0,0,0.4)`. Разделитель `rgba(0,0,0,0.06)`.
+- **Scrollbars** — скрыты на `.chat-history` и `.stepper` (`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`).
+
+### Toggle-кнопка (макет Pencil «Chat Toggle Button»)
+
+- **Открытие** — bubble «Спроси меня!» (белый, rounded 16px, shadow) + градиентный круг 56px (`linear-gradient(225deg, #5BA4D9, #F0924A)`) с белой SVG иконкой ⚡ (zap).
+- **Закрытие** — такой же градиентный круг с SVG ✕ внутри, в правом верхнем углу чат-колонки. Большая синяя кнопка скрыта когда чат открыт.
+
+### Рефакторинг
+
+- **Stepper.jsx** — убрана обёртка `<div className="stepper-sidebar">`, рендерит `<nav>` напрямую.
+- **ChatPanel.jsx** — импортирует `<Stepper>`, содержит `handleStepperGoTo` (trail-логика). `onNavigationStateChange` больше не передаёт `history`/`currentIndex`/`goTo` наверх.
+- **WidgetApp.jsx** — убран `import Stepper`, убраны `history`/`currentIndex`/`goTo` из `navState`.
+- **Overlay.css** — удалены `.stepper-sidebar`, `@keyframes stepper-fade-in`. `.chat-area` получил фиксированную ширину 360px.
+
+**Файлы:** 6 изменённых (Overlay.css, ChatPanel.css, ChatPanel.jsx, WidgetApp.jsx, Stepper.jsx, Stepper.css) + widget.css.
+
+---
+
 ## Test Coverage — 5-Layer Strategy — 2026-02-13
 
 Полное покрытие тестами chat backend. 5 слоёв, ~125 новых тестов, 13 новых файлов.

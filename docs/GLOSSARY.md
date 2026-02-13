@@ -533,12 +533,14 @@ Tenant (клиент)
 2. Создаёт `<div>` с Shadow DOM (полная CSS-изоляция)
 3. Инжектит все стили внутрь Shadow DOM
 4. Монтирует React приложение внутрь Shadow DOM
-5. Показывает кнопку чата (60px круг, bottom-right)
-6. По клику: открывает overlay с чатом + зоной виджетов
+5. Показывает toggle-кнопку: bubble «Спроси меня!» + градиентный круг 56px (⚡) (bottom-right)
+6. По клику: blur backdrop + overlay `[widget-display-area | chat-area(360px)]`
+7. Chat-area: прозрачная колонка (ghostly minimal) — сообщения, инпут по центру, степпер снизу
+8. Закрытие: градиентный круг (✕) в правом верхнем углу колонки, или клик по backdrop
 
 **Tenant context:** `X-Tenant-Slug` header во всех API запросах.
 
-**Build:** Vite → единый `widget.js` (IIFE, ~72KB gzip). Custom `shadowDomCss()` plugin инлайнит все CSS через `?inline`.
+**Build:** Vite → единый `widget.js` (IIFE, ~75KB gzip). Custom `shadowDomCss()` plugin инлайнит все CSS через `?inline`.
 
 ---
 
@@ -576,4 +578,4 @@ Tenant (клиент)
 
 ---
 
-*Последнее обновление: 2026-02-12*
+*Последнее обновление: 2026-02-13*

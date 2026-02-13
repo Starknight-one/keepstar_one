@@ -16,6 +16,7 @@ import serviceCardCss from './entities/widget/templates/ServiceCardTemplate.css?
 import serviceDetailCss from './entities/widget/templates/ServiceDetailTemplate.css?inline'
 import productGridCss from './features/catalog/ProductGrid.css?inline'
 import backButtonCss from './features/navigation/BackButton.css?inline'
+import stepperCss from './features/navigation/Stepper.css?inline'
 
 const ALL_CSS = [
   widgetCss,
@@ -31,6 +32,7 @@ const ALL_CSS = [
   serviceDetailCss,
   productGridCss,
   backButtonCss,
+  stepperCss,
 ].join('\n')
 
 ;(function () {

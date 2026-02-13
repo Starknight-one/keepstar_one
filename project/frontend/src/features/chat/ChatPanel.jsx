@@ -3,7 +3,8 @@ import { useChatMessages } from './useChatMessages';
 import { useChatSubmit } from './useChatSubmit';
 import { ChatHistory } from './ChatHistory';
 import { ChatInput } from './ChatInput';
-import { useFormationStack } from './model/useFormationStack';
+import { useFormationHistory } from '../navigation/useFormationHistory';
+import { Stepper } from '../navigation/Stepper';
 import { fillFormation } from './model/fillFormation';
 import { syncExpand, syncBack } from './api/backgroundSync';
 import { expandView, getSession, initSession } from '../../shared/api/apiClient';
@@ -28,29 +29,45 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
   const lastFormationRef = useRef(null);
   const adjacentTemplatesRef = useRef(null);
   const entitiesRef = useRef(null);
+  const lastQueryRef = useRef('');
 
-  // Formation stack for instant back navigation
-  // Destructure to get stable function refs (push/pop/clear have [] deps)
-  const { push: stackPush, pop: stackPop, clear: stackClear, canGoBack, stack: formationStackArray } = useFormationStack();
+  // Formation history \u2014 chronological trail, always appends, never goes backwards
+  const {
+    history: formationHistory,
+    currentIndex: historyIndex,
+    push: historyPush,
+    clear: historyClear,
+    canGoBack,
+  } = useFormationHistory();
 
-  const { submit } = useChatSubmit({
+  // Keep a ref to always have fresh history for closures
+  const historyRef = useRef(formationHistory);
+  historyRef.current = formationHistory;
+
+  const { submit: rawSubmit } = useChatSubmit({
     sessionId,
     addMessage,
     setLoading,
     setError,
     setSessionId,
     onFormationReceived: useCallback((formation, adjacentTemplates, entities) => {
-      // Push current formation to stack before replacing (new branch of decision tree)
-      if (lastFormationRef.current) {
-        stackPush(lastFormationRef.current);
-      }
+      // Use ref \u2014 always has the latest query text, avoids stale closure
+      const label = lastQueryRef.current || 'Query';
+      // Push new formation into history (trims forward entries if in middle)
+      historyPush(formation, label);
       lastFormationRef.current = formation;
       // Store adjacent templates + entities for instant expand
       adjacentTemplatesRef.current = adjacentTemplates || null;
       entitiesRef.current = entities || null;
       onFormationReceived?.(formation);
-    }, [onFormationReceived, stackPush]),
+    }, [onFormationReceived, historyPush]),
   });
+
+  // Wrap submit to capture query text in ref before sending
+  const submit = useCallback((text) => {
+    lastQueryRef.current = text;
+    rawSubmit(text);
+  }, [rawSubmit]);
 
   // Navigation handlers
   const handleExpand = useCallback(async (entityType, entityId) => {
@@ -65,7 +82,8 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
       if (entity) {
         const filled = fillFormation(template, entity, entityType);
         if (filled) {
-          stackPush(lastFormationRef.current);
+          const label = `\u2192 ${entity.name || entityType}`;
+          historyPush(filled, label);
           lastFormationRef.current = filled;
           onFormationReceived?.(filled);
           // Fire-and-forget sync to keep backend in sync
@@ -76,33 +94,47 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     }
 
     // Fallback: API call (no template or entity not found)
-    stackPush(lastFormationRef.current);
     try {
       const result = await expandView(sessionId, entityType, entityId);
       if (result.formation) {
+        const label = `\u2192 ${entityType}`;
+        historyPush(result.formation, label);
         lastFormationRef.current = result.formation;
         onFormationReceived?.(result.formation);
       }
     } catch (err) {
-      // Rollback: pop from stack on failure
-      stackPop();
       log.error('Expand failed:', err);
     }
-  }, [sessionId, onFormationReceived, stackPush, stackPop]);
+  }, [sessionId, onFormationReceived, historyPush]);
 
   const handleBack = useCallback(() => {
     if (!canGoBack) return;
-    // Instant: pop from stack, no await
-    const prev = stackPop();
-    if (prev) {
-      lastFormationRef.current = prev;
-      onFormationReceived?.(prev);
+    // Trail model: "back" = push previous formation as a NEW step
+    const h = historyRef.current;
+    const prevEntry = h[h.length - 2];
+    if (prevEntry) {
+      const stepNum = String(h.length - 1).padStart(2, '0');
+      const label = `\u2190 ${stepNum} ${prevEntry.label}`;
+      historyPush(prevEntry.formation, label);
+      lastFormationRef.current = prevEntry.formation;
+      onFormationReceived?.(prevEntry.formation);
     }
     // Fire-and-forget sync to keep backend in sync
     if (sessionId) {
       syncBack(sessionId);
     }
-  }, [sessionId, onFormationReceived, canGoBack, stackPop]);
+  }, [sessionId, onFormationReceived, canGoBack, historyPush]);
+
+  // Stepper goTo handler \u2014 trail model: clicking a past step = push it as a new step
+  const handleStepperGoTo = useCallback((index) => {
+    const entry = historyRef.current[index];
+    if (!entry) return;
+    if (index === historyRef.current.length - 1) return;
+    const stepNum = String(index + 1).padStart(2, '0');
+    historyPush(entry.formation, `\u2190 ${stepNum} ${entry.label}`);
+    lastFormationRef.current = entry.formation;
+    onFormationReceived?.(entry.formation);
+  }, [historyPush, onFormationReceived]);
 
   // Expose navigation functions to parent
   useEffect(() => {
@@ -125,15 +157,16 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
         lastFormationRef.current = cached.formation;
         onFormationReceived?.(cached.formation);
       }
-      // Restore formation stack from cache
-      if (cached.formationStack?.length > 0) {
-        cached.formationStack.forEach((f) => stackPush(f));
+      // Restore formation history from cache (clear first to avoid HMR duplication)
+      if (cached.formationHistory?.length > 0) {
+        historyClear();
+        cached.formationHistory.forEach((entry) => historyPush(entry.formation, entry.label));
       }
       // Restore adjacent templates + entities for instant expand after F5
       adjacentTemplatesRef.current = cached.adjacentTemplates || null;
       entitiesRef.current = cached.entities || null;
 
-      // Async validate — if session is dead on backend, clear everything
+      // Async validate \u2014 if session is dead on backend, clear everything
       getSession(cached.sessionId).then(session => {
         if (!session || session.status !== 'active') {
           clearSessionCache();
@@ -142,7 +175,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
           lastFormationRef.current = null;
           adjacentTemplatesRef.current = null;
           entitiesRef.current = null;
-          stackClear();
+          historyClear();
           onFormationReceived?.(null);
         }
       }).catch((err) => {
@@ -151,7 +184,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
       return;
     }
 
-    // No cached session — init a new one with greeting
+    // No cached session \u2014 init a new one with greeting
     initSession().then(data => {
       setSessionId(data.sessionId);
       addMessage({
@@ -172,22 +205,28 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
         sessionId,
         messages,
         formation: lastFormationRef.current,
-        formationStack: formationStackArray,
+        formationHistory,
+        historyIndex,
         adjacentTemplates: adjacentTemplatesRef.current,
         entities: entitiesRef.current,
       });
     }
-  }, [sessionId, messages, formationStackArray]);
+  }, [sessionId, messages, formationHistory, historyIndex]);
 
   return (
     <div className="chat-container">
       <div className="chat-header">
-        <h3>Chat</h3>
-        <button className="close-btn" onClick={onClose}>✕</button>
+        <button className="gradient-circle-btn" onClick={onClose} aria-label="Close chat">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 6 6 18" /><path d="M6 6 18 18" />
+          </svg>
+        </button>
       </div>
-
+      <div className="chat-spacer" />
       <ChatHistory messages={messages} isLoading={isLoading} hideFormation={hideFormation} />
       <ChatInput onSubmit={submit} disabled={isLoading} />
+      <Stepper history={formationHistory} currentIndex={historyIndex} goTo={handleStepperGoTo} />
+      <div className="chat-spacer" />
       {error && <div className="chat-error">{error}</div>}
     </div>
   );

@@ -13,7 +13,7 @@ const (
 
 // SessionTTL is the sliding window for session expiration
 // After this duration of inactivity, session becomes closed
-const SessionTTL = 5 * time.Minute
+const SessionTTL = 30 * time.Minute
 
 // Session represents a chat session
 type Session struct {

@@ -1,7 +1,9 @@
 .chat-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   z-index: 998;
   animation: backdrop-fade-in 0.2s ease-out;
 }
@@ -20,7 +22,6 @@
   align-items: center;
   justify-content: center;
   padding: 40px;
-  padding-right: 0;
   pointer-events: auto;
   overflow: auto;
 }
@@ -32,9 +33,10 @@
 }
 
 .chat-area {
+  width: 360px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   pointer-events: auto;
   animation: chat-slide-in 0.25s ease-out;
 }

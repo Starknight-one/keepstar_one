@@ -25,28 +25,67 @@
   box-sizing: border-box;
 }
 
-/* Chat trigger button (from App.css) */
+/* Chat trigger — bubble + gradient circle */
 .chat-toggle-btn {
   position: fixed;
   bottom: 20px;
   right: 20px;
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  background: #007bff;
-  color: white;
-  border: none;
-  font-size: 24px;
-  cursor: pointer;
-  box-shadow: 0 4px 15px rgba(0, 123, 255, 0.4);
-  transition: transform 0.2s, box-shadow 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   z-index: 1001;
+  cursor: pointer;
+}
+
+.chat-toggle-bubble {
+  padding: 8px 14px;
+  background: #FFFFFF;
+  border-radius: 16px;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1a1a1a;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.07);
+  white-space: nowrap;
+}
+
+.chat-toggle-circle {
+  width: 56px;
+  height: 56px;
+  border-radius: 28px;
+  background: linear-gradient(225deg, #5BA4D9 0%, #F0924A 100%);
   display: flex;
   align-items: center;
   justify-content: center;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(91, 164, 217, 0.2);
+  transition: transform 0.2s, box-shadow 0.2s;
+  flex-shrink: 0;
 }
 
-.chat-toggle-btn:hover {
+.chat-toggle-circle:hover {
   transform: scale(1.05);
-  box-shadow: 0 6px 20px rgba(0, 123, 255, 0.5);
+  box-shadow: 0 6px 20px rgba(91, 164, 217, 0.33);
+}
+
+/* Shared gradient circle style for close button */
+.gradient-circle-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 28px;
+  background: linear-gradient(225deg, #5BA4D9 0%, #F0924A 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(91, 164, 217, 0.2);
+  transition: transform 0.2s, box-shadow 0.2s;
+  flex-shrink: 0;
+}
+
+.gradient-circle-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 20px rgba(91, 164, 217, 0.33);
 }
