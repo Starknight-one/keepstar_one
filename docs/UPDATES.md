@@ -4,6 +4,86 @@
 
 ---
 
+## Catalog Enrichment — LLM Product Classification — 2026-02-15
+
+Enrichment пайплайн для 967 товаров из краулера heybabes. LLM (Claude Haiku 4.5) классифицирует каждый продукт по закрытым спискам: категория, форма, тип кожи, проблема, ключевые ингредиенты. Результат перезаписывается в crawl JSON → затем импорт в БД.
+
+### Флоу
+
+```
+crawl JSON → POST /catalog/enrich (LLM, 2 мин) → enriched JSON → POST /catalog/import → БД → embed → digest
+```
+
+Enrichment работает на **файле**, не на БД. Читает JSON → батчит через LLM → перезаписывает JSON с добавленными атрибутами. В БД попадает уже обогащённый "эталонный" каталог.
+
+### Seed категорий (`cmd/seed/`)
+
+24 категории (4 корня + 20 листьев), deterministic UUID (uuid5 от slug), `ON CONFLICT DO NOTHING`.
+
+```
+face-care (10 дочерних: cleansing, toning, exfoliation, serums, moisturizing, suncare, masks, spot-treatment, essences, lip-care)
+makeup (4: makeup-face, makeup-eyes, makeup-lips, makeup-setting)
+body (3: body-cleansing, body-moisturizing, body-fragrance)
+hair (3: hair-shampoo, hair-conditioner, hair-treatment)
+```
+
+### Enrichment (`POST /admin/api/catalog/enrich`)
+
+- Принимает `{"filePath": "/path/to/crawl.json"}`
+- Батчи по 10 товаров, 5 параллельных горутин → ~97 API вызовов
+- System prompt содержит дерево категорий + закрытые enum-списки (product_form: 20, skin_type: 7, concern: 15, key_ingredients: 25)
+- LLM возвращает JSON array — парсится и мержится обратно в каждый продукт
+- Прогресс и стоимость доступны через `GET /admin/api/catalog/enrich`
+
+### Результат первого прогона (967 товаров)
+
+| Метрика | Значение |
+|---|---|
+| Обогащено | 965/967 |
+| Input tokens | 858K |
+| Output tokens | 93K |
+| Стоимость | **$1.06** |
+| Время | ~2 мин |
+| Модель | claude-haiku-4-5-20251001 |
+
+### Расширения импорта
+
+- `ImportItem.CategorySlug` — прямой lookup по slug из seed-дерева (без `slugify`)
+- Embedding text расширен: + product_form, skin_type, concern, key_ingredients, benefits, how_to_use, ingredients, active_ingredients
+- Поддержка `[]string` атрибутов (join через ", ")
+
+### Конфигурация
+
+```
+ANTHROPIC_API_KEY=sk-ant-...   # включает enrichment
+ENRICHMENT_MODEL=claude-haiku-4-5-20251001  # default
+```
+
+### Известные проблемы
+
+- **path вместо leaf slug**: LLM иногда возвращает `face-care/toning` вместо `toning` (~30 из 967). Fallback на slugify(category) — создаёт мусорную категорию. Нужен фикс в промпте.
+- **Digest неполный**: собирает только totalProducts, categories, brands. Не включает enriched фасеты (product_form, skin_type, concern, key_ingredients). Нужна доработка.
+- **Стоимость выше ожидаемой**: $1.06 vs оценка $0.40. Причина — длинные INCI-списки ингредиентов. Оптимизация: обрезать ingredients до 200 символов, увеличить batch до 20.
+- **Импорт медленный**: ~5 мин на 967 товаров (3 SQL запроса × 100ms RTT к Neon на каждый продукт). Нужен batch INSERT.
+
+### Файлы
+
+| Файл | Действие |
+|---|---|
+| `cmd/seed/main.go` | Создан — CLI seed категорий |
+| `adapters/anthropic/enrichment_client.go` | Создан — HTTP клиент Anthropic Messages API |
+| `ports/enrichment_port.go` | Создан — EnrichmentPort interface |
+| `domain/enrichment.go` | Создан — EnrichmentInput/Output/Result/Job |
+| `usecases/enrichment.go` | Создан — EnrichFile (файловый enrichment с прогресс-трекингом) |
+| `handlers/handler_enrichment.go` | Создан — POST/GET /catalog/enrich |
+| `config/config.go` | Изменён — + AnthropicAPIKey, EnrichmentModel, HasEnrichment() |
+| `usecases/import.go` | Изменён — + CategorySlug, расширенный embedding text |
+| `ports/catalog_port.go` | Изменён — + GetCategoryBySlug, GetMasterProductsForEnrichment, UpdateMasterProductEnrichment |
+| `adapters/postgres/catalog_adapter.go` | Изменён — реализация 3 новых методов |
+| `cmd/server/main.go` | Изменён — wiring enrichment client + handler + route |
+
+---
+
 ## Web Crawler — Structured Product Extraction — 2026-02-15
 
 Standalone Go crawler для heybabescosmetics.com. Парсит sitemap → продуктовые страницы → структурированный JSON для импорта в каталог.

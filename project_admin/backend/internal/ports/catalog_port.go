@@ -35,6 +35,11 @@ type AdminCatalogPort interface {
 	// Stock
 	BulkUpdateStock(ctx context.Context, tenantID string, items []domain.StockUpdate) (int, error)
 
+	// Enrichment
+	GetCategoryBySlug(ctx context.Context, slug string) (*domain.Category, error)
+	GetMasterProductsForEnrichment(ctx context.Context, tenantID string) ([]domain.MasterProduct, error)
+	UpdateMasterProductEnrichment(ctx context.Context, productID string, categoryID string, attrs map[string]any) error
+
 	// Post-import
 	GetMasterProductsWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterProduct, error)
 	GetMasterServicesWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterService, error)

@@ -435,6 +435,94 @@ func (a *CatalogAdapter) UpsertProductListing(ctx context.Context, p *domain.Pro
 	return id, nil
 }
 
+// --- Enrichment ---
+
+func (a *CatalogAdapter) GetCategoryBySlug(ctx context.Context, slug string) (*domain.Category, error) {
+	query := `SELECT id, name, slug, COALESCE(parent_id::text, '') FROM catalog.categories WHERE slug = $1`
+	var c domain.Category
+	err := a.client.pool.QueryRow(ctx, query, slug).Scan(&c.ID, &c.Name, &c.Slug, &c.ParentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrCategoryNotFound
+		}
+		return nil, fmt.Errorf("get category by slug: %w", err)
+	}
+	return &c, nil
+}
+
+func (a *CatalogAdapter) GetMasterProductsForEnrichment(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
+	// Products that don't have enriched attributes yet (product_form absent)
+	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
+		mp.images, mp.attributes, mp.owner_tenant_id, c.name
+		FROM catalog.master_products mp
+		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		WHERE mp.owner_tenant_id = $1
+			AND (mp.attributes IS NULL OR mp.attributes->>'product_form' IS NULL)
+		ORDER BY mp.created_at`
+
+	rows, err := a.client.pool.Query(ctx, query, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("get products for enrichment: %w", err)
+	}
+	defer rows.Close()
+
+	var products []domain.MasterProduct
+	for rows.Next() {
+		var mp domain.MasterProduct
+		var imagesJSON, attrsJSON []byte
+		var catName *string
+		if err := rows.Scan(
+			&mp.ID, &mp.SKU, &mp.Name, &mp.Description, &mp.Brand, &mp.CategoryID,
+			&imagesJSON, &attrsJSON, &mp.OwnerTenantID, &catName,
+		); err != nil {
+			return nil, fmt.Errorf("scan master product: %w", err)
+		}
+		if len(imagesJSON) > 0 {
+			json.Unmarshal(imagesJSON, &mp.Images)
+		}
+		if len(attrsJSON) > 0 {
+			json.Unmarshal(attrsJSON, &mp.Attributes)
+		}
+		if catName != nil {
+			mp.CategoryName = *catName
+		}
+		products = append(products, mp)
+	}
+	return products, nil
+}
+
+func (a *CatalogAdapter) UpdateMasterProductEnrichment(ctx context.Context, productID string, categoryID string, attrs map[string]any) error {
+	// Merge enriched attrs into existing attributes JSONB
+	attrsJSON, err := json.Marshal(attrs)
+	if err != nil {
+		return fmt.Errorf("marshal enrichment attrs: %w", err)
+	}
+
+	query := `UPDATE catalog.master_products
+		SET attributes = COALESCE(attributes, '{}'::jsonb) || $1::jsonb,
+			updated_at = NOW()`
+	args := []any{attrsJSON}
+	argIdx := 2
+
+	if categoryID != "" {
+		query += fmt.Sprintf(", category_id = $%d", argIdx)
+		args = append(args, categoryID)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(" WHERE id = $%d", argIdx)
+	args = append(args, productID)
+
+	tag, execErr := a.client.pool.Exec(ctx, query, args...)
+	if execErr != nil {
+		return fmt.Errorf("update master product enrichment: %w", execErr)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrProductNotFound
+	}
+	return nil
+}
+
 // --- Post-import ---
 
 func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {

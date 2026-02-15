@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	anthropicAdapter "keepstar-admin/internal/adapters/anthropic"
 	openaiAdapter "keepstar-admin/internal/adapters/openai"
 	"keepstar-admin/internal/adapters/postgres"
 	"keepstar-admin/internal/config"
@@ -74,6 +75,13 @@ func main() {
 		log.Info("embedding_client_initialized", "model", cfg.EmbeddingModel)
 	}
 
+	// Initialize enrichment client
+	var enrichmentClient ports.EnrichmentPort
+	if cfg.HasEnrichment() {
+		enrichmentClient = anthropicAdapter.NewEnrichmentClient(cfg.AnthropicAPIKey, cfg.EnrichmentModel)
+		log.Info("enrichment_client_initialized", "model", cfg.EnrichmentModel)
+	}
+
 	// Initialize adapters
 	authAdapter := postgres.NewAuthAdapter(dbClient)
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient, log)
@@ -82,6 +90,12 @@ func main() {
 	// Initialize use cases
 	authUC := usecases.NewAuthUseCase(authAdapter, catalogAdapter, cfg.JWTSecret)
 	productsUC := usecases.NewProductsUseCase(catalogAdapter)
+
+	var enrichUC *usecases.EnrichmentUseCase
+	if enrichmentClient != nil {
+		enrichUC = usecases.NewEnrichmentUseCase(enrichmentClient, log)
+	}
+
 	importUC := usecases.NewImportUseCase(catalogAdapter, importAdapter, embeddingClient, log)
 	settingsUC := usecases.NewSettingsUseCase(catalogAdapter)
 	stockUC := usecases.NewStockUseCase(catalogAdapter)
@@ -92,6 +106,11 @@ func main() {
 	importHandler := handlers.NewImportHandler(importUC, log)
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
 	stockHandler := handlers.NewStockHandler(stockUC, log)
+
+	var enrichmentHandler *handlers.EnrichmentHandler
+	if enrichUC != nil {
+		enrichmentHandler = handlers.NewEnrichmentHandler(enrichUC, log)
+	}
 
 	// Setup routes
 	mux := http.NewServeMux()
@@ -151,6 +170,9 @@ func main() {
 		}
 	})
 	protected.HandleFunc("/admin/api/stock/bulk", stockHandler.HandleBulkUpdate)
+	if enrichmentHandler != nil {
+		protected.HandleFunc("/admin/api/catalog/enrich", enrichmentHandler.HandleEnrich)
+	}
 
 	mux.Handle("/admin/api/auth/me", authMW(protected))
 	mux.Handle("/admin/api/tenant", authMW(protected))
@@ -163,6 +185,9 @@ func main() {
 	mux.Handle("/admin/api/catalog/imports", authMW(protected))
 	mux.Handle("/admin/api/settings", authMW(protected))
 	mux.Handle("/admin/api/stock/bulk", authMW(protected))
+	if enrichmentHandler != nil {
+		mux.Handle("/admin/api/catalog/enrich", authMW(protected))
+	}
 
 	// SPA file server: serve React frontend from ./static
 	staticDir := "./static"

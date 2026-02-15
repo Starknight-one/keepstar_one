@@ -23,11 +23,12 @@ func NewImportUseCase(catalog ports.AdminCatalogPort, importDB ports.ImportPort,
 }
 
 type ImportItem struct {
-	Type         string         `json:"type"`         // "product" (default) or "service"
+	Type         string         `json:"type"`          // "product" (default) or "service"
 	SKU          string         `json:"sku"`
 	Name         string         `json:"name"`
 	Brand        string         `json:"brand"`
 	Category     string         `json:"category"`
+	CategorySlug string         `json:"category_slug"` // direct slug lookup (from enriched data)
 	Price        int            `json:"price"`
 	Currency     string         `json:"currency"`
 	Stock        int            `json:"stock"`
@@ -35,9 +36,9 @@ type ImportItem struct {
 	Images       []string       `json:"images"`
 	Attributes   map[string]any `json:"attributes"`
 	Tags         []string       `json:"tags"`
-	Duration     string         `json:"duration"`     // service-specific
-	Provider     string         `json:"provider"`     // service-specific
-	Availability string         `json:"availability"` // service-specific
+	Duration     string         `json:"duration"`      // service-specific
+	Provider     string         `json:"provider"`      // service-specific
+	Availability string         `json:"availability"`  // service-specific
 }
 
 type ImportRequest struct {
@@ -116,18 +117,31 @@ func (uc *ImportUseCase) processItem(ctx context.Context, tenantID string, item 
 		return fmt.Errorf("sku and name are required")
 	}
 
-	// Category
-	catSlug := slugify(item.Category)
-	if catSlug == "" {
-		catSlug = "uncategorized"
+	// Category: prefer direct slug lookup, fall back to slugify+create
+	var categoryID string
+	if item.CategorySlug != "" {
+		cat, err := uc.catalog.GetCategoryBySlug(ctx, item.CategorySlug)
+		if err == nil {
+			categoryID = cat.ID
+		} else {
+			// Slug not found — fall through to legacy path
+			uc.log.Error("category_slug_not_found", "slug", item.CategorySlug, "sku", item.SKU)
+		}
 	}
-	catName := item.Category
-	if catName == "" {
-		catName = "Uncategorized"
-	}
-	categoryID, err := uc.catalog.GetOrCreateCategory(ctx, catName, catSlug)
-	if err != nil {
-		return fmt.Errorf("category: %w", err)
+	if categoryID == "" {
+		catSlug := slugify(item.Category)
+		if catSlug == "" {
+			catSlug = "uncategorized"
+		}
+		catName := item.Category
+		if catName == "" {
+			catName = "Uncategorized"
+		}
+		var err error
+		categoryID, err = uc.catalog.GetOrCreateCategory(ctx, catName, catSlug)
+		if err != nil {
+			return fmt.Errorf("category: %w", err)
+		}
 	}
 
 	currency := item.Currency
@@ -218,7 +232,7 @@ func (uc *ImportUseCase) processServiceItem(ctx context.Context, tenantID string
 }
 
 func (uc *ImportUseCase) postImport(tenantID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	if uc.embedding != nil {
@@ -261,10 +275,30 @@ func (uc *ImportUseCase) embedProducts(ctx context.Context, tenantID string) {
 			text += " " + p.CategoryName
 		}
 		if p.Attributes != nil {
-			for _, key := range []string{"color", "material", "type", "size"} {
+			attrKeys := []string{
+				"color", "material", "type", "size",
+				// cosmetics enriched
+				"product_form", "skin_type", "concern", "key_ingredients",
+				// cosmetics raw
+				"benefits", "how_to_use", "ingredients", "active_ingredients",
+			}
+			for _, key := range attrKeys {
 				if v, ok := p.Attributes[key]; ok {
-					if s, ok := v.(string); ok && s != "" {
-						text += " " + s
+					switch val := v.(type) {
+					case string:
+						if val != "" {
+							text += " " + val
+						}
+					case []any:
+						parts := make([]string, 0, len(val))
+						for _, item := range val {
+							if s, ok := item.(string); ok && s != "" {
+								parts = append(parts, s)
+							}
+						}
+						if len(parts) > 0 {
+							text += " " + strings.Join(parts, ", ")
+						}
 					}
 				}
 			}
