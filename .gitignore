@@ -23,3 +23,6 @@ dist/
 project/backend/server
 project/backend/bin/
 project/backend/bootstrap
+project_admin/backend/server
+project_admin/backend/crawler
+project_admin/Crawler_results/

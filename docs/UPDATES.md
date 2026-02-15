@@ -4,6 +4,41 @@
 
 ---
 
+## Web Crawler — Structured Product Extraction — 2026-02-15
+
+Standalone Go crawler для heybabescosmetics.com. Парсит sitemap → продуктовые страницы → структурированный JSON для импорта в каталог.
+
+### Crawler (`project_admin/backend/cmd/crawler/`)
+
+- **Sitemap pipeline**: `sitemap.xml` → `sitemap-iblock-58.xml` → фильтрация `/catalog/` URLs
+- **Concurrent crawling**: семафор + WaitGroup, настраиваемый concurrency/delay, progress bar с ETA
+- **JSON-LD parsing**: `@type: Product` — name, SKU, brand, price, rating, images
+- **HTML accordion parsing**: `row_PROP_*` (Состав/INCI), `row_USE` (Применение) — данные вне JSON-LD
+- **Description splitting**: автоматическое разделение текста по маркерам на структурированные атрибуты
+- **Output**: `ImportRequest` JSON, совместимый с `POST /admin/api/catalog/import`
+
+### Извлекаемые атрибуты
+
+| Атрибут | Источник | Покрытие |
+|---|---|---|
+| `description` | JSON-LD / HTML itemprop | 99% |
+| `ingredients` (INCI) | HTML accordion `row_PROP_*` / description | 97% |
+| `how_to_use` | HTML accordion `row_USE` / description | 93% |
+| `volume` | Description маркер / имя продукта | 92% |
+| `skin_type` | Description маркер "Подходит для:" | 80% |
+| `benefits` | Description маркер "Преимущества:" | 79% |
+| `active_ingredients` | Description маркер "Основные компоненты:" | 78% |
+
+Двойная стратегия: description splitting (маркеры в тексте) + accordion override (HTML-блоки перезаписывают). Volume fallback: description → имя продукта.
+
+### Результат первого краула
+
+967 товаров, 62 бренда, 30 категорий. ~5000 товаров всего на сайте (sitemap). 15 concurrency — полный краул за ~15 сек.
+
+**Файлы:** `project_admin/backend/cmd/crawler/main.go` (1 файл, ~560 строк)
+
+---
+
 ## Japanese Stepper — Chat + Stepper + Blur Backdrop — 2026-02-13
 
 Степпер переехал из отдельного сайдбара в чат-колонку. Весь UI стал прозрачным (ghostly minimal). Новая toggle-кнопка с градиентом. По макету Pencil «V1 — Ghostly Minimal».
