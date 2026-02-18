@@ -418,16 +418,6 @@ func runEmbedding(ctx context.Context, catalog *postgres.CatalogAdapter, emb por
 		if p.CategoryName != "" {
 			text += " " + p.CategoryName
 		}
-		// Include key attributes for richer semantic signal
-		if p.Attributes != nil {
-			for _, key := range []string{"color", "material", "type", "size"} {
-				if v, ok := p.Attributes[key]; ok {
-					if s, ok := v.(string); ok && s != "" {
-						text += " " + s
-					}
-				}
-			}
-		}
 		texts[i] = text
 	}
 

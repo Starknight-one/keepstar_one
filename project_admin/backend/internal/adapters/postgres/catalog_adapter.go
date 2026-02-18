@@ -124,7 +124,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		p.id, p.tenant_id, p.master_product_id, p.name, p.description,
 		p.price, p.currency, COALESCE(st.quantity, p.stock_quantity) as stock_quantity, p.rating, p.images, COALESCE(p.tags, '[]') as tags,
 		p.created_at, p.updated_at,
-		mp.id, mp.name, mp.description, mp.brand, mp.sku, mp.images, mp.attributes,
+		mp.id, mp.name, mp.description, mp.brand, mp.sku, mp.images,
 		c.name
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
@@ -144,7 +144,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	var products []domain.Product
 	for rows.Next() {
 		var p domain.Product
-		var pImagesJSON, tagsJSON, mpImagesJSON, mpAttrsJSON []byte
+		var pImagesJSON, tagsJSON, mpImagesJSON []byte
 		var mpID, mpName, mpDesc, mpBrand, mpSKU *string
 		var catName *string
 
@@ -152,7 +152,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			&p.ID, &p.TenantID, &p.MasterProductID, &p.Name, &p.Description,
 			&p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &pImagesJSON, &tagsJSON,
 			&p.CreatedAt, &p.UpdatedAt,
-			&mpID, &mpName, &mpDesc, &mpBrand, &mpSKU, &mpImagesJSON, &mpAttrsJSON,
+			&mpID, &mpName, &mpDesc, &mpBrand, &mpSKU, &mpImagesJSON,
 			&catName,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan product: %w", err)
@@ -180,9 +180,6 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		if len(tagsJSON) > 0 {
 			json.Unmarshal(tagsJSON, &p.Tags)
 		}
-		if len(mpAttrsJSON) > 0 {
-			json.Unmarshal(mpAttrsJSON, &p.Attributes)
-		}
 
 		p.PriceFormatted = formatPrice(p.Price, p.Currency)
 		products = append(products, p)
@@ -200,7 +197,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		p.id, p.tenant_id, p.master_product_id, p.name, p.description,
 		p.price, p.currency, COALESCE(st.quantity, p.stock_quantity) as stock_quantity, p.rating, p.images, COALESCE(p.tags, '[]') as tags,
 		p.created_at, p.updated_at,
-		mp.name, mp.description, mp.brand, mp.sku, mp.images, mp.attributes,
+		mp.name, mp.description, mp.brand, mp.sku, mp.images,
 		c.name
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
@@ -209,7 +206,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		WHERE p.id = $1 AND p.tenant_id = $2`
 
 	var p domain.Product
-	var pImagesJSON, tagsJSON, mpImagesJSON, mpAttrsJSON []byte
+	var pImagesJSON, tagsJSON, mpImagesJSON []byte
 	var mpName, mpDesc, mpBrand, mpSKU *string
 	var catName *string
 
@@ -217,7 +214,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		&p.ID, &p.TenantID, &p.MasterProductID, &p.Name, &p.Description,
 		&p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &pImagesJSON, &tagsJSON,
 		&p.CreatedAt, &p.UpdatedAt,
-		&mpName, &mpDesc, &mpBrand, &mpSKU, &mpImagesJSON, &mpAttrsJSON,
+		&mpName, &mpDesc, &mpBrand, &mpSKU, &mpImagesJSON,
 		&catName,
 	)
 	if err != nil {
@@ -247,9 +244,6 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 	}
 	if len(tagsJSON) > 0 {
 		json.Unmarshal(tagsJSON, &p.Tags)
-	}
-	if len(mpAttrsJSON) > 0 {
-		json.Unmarshal(mpAttrsJSON, &p.Attributes)
 	}
 
 	p.PriceFormatted = formatPrice(p.Price, p.Currency)
@@ -372,22 +366,20 @@ func (a *CatalogAdapter) UpsertMasterProduct(ctx context.Context, mp *domain.Mas
 		defer endSpan()
 	}
 	imagesJSON, _ := json.Marshal(mp.Images)
-	attrsJSON, _ := json.Marshal(mp.Attributes)
 
-	query := `INSERT INTO catalog.master_products (sku, name, description, brand, category_id, images, attributes, owner_tenant_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	query := `INSERT INTO catalog.master_products (sku, name, description, brand, category_id, images, owner_tenant_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (sku) DO UPDATE SET
 			name = EXCLUDED.name,
 			brand = EXCLUDED.brand,
 			images = EXCLUDED.images,
-			attributes = EXCLUDED.attributes,
 			updated_at = NOW()
 		RETURNING id`
 
 	var id string
 	err := a.client.pool.QueryRow(ctx, query,
 		mp.SKU, mp.Name, mp.Description, mp.Brand, mp.CategoryID,
-		imagesJSON, attrsJSON, mp.OwnerTenantID,
+		imagesJSON, mp.OwnerTenantID,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("upsert master product: %w", err)
@@ -450,14 +442,15 @@ func (a *CatalogAdapter) GetCategoryBySlug(ctx context.Context, slug string) (*d
 	return &c, nil
 }
 
+// GetMasterProductsForEnrichment returns products without PIM data for enrichment.
 func (a *CatalogAdapter) GetMasterProductsForEnrichment(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
-	// Products that don't have enriched attributes yet (product_form absent)
+	// Products that don't have enriched PIM data yet (product_form absent)
 	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
-		mp.images, mp.attributes, mp.owner_tenant_id, c.name
+		mp.images, mp.owner_tenant_id, c.name
 		FROM catalog.master_products mp
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		WHERE mp.owner_tenant_id = $1
-			AND (mp.attributes IS NULL OR mp.attributes->>'product_form' IS NULL)
+			AND (mp.product_form IS NULL OR mp.product_form = '')
 		ORDER BY mp.created_at`
 
 	rows, err := a.client.pool.Query(ctx, query, tenantID)
@@ -469,19 +462,16 @@ func (a *CatalogAdapter) GetMasterProductsForEnrichment(ctx context.Context, ten
 	var products []domain.MasterProduct
 	for rows.Next() {
 		var mp domain.MasterProduct
-		var imagesJSON, attrsJSON []byte
+		var imagesJSON []byte
 		var catName *string
 		if err := rows.Scan(
 			&mp.ID, &mp.SKU, &mp.Name, &mp.Description, &mp.Brand, &mp.CategoryID,
-			&imagesJSON, &attrsJSON, &mp.OwnerTenantID, &catName,
+			&imagesJSON, &mp.OwnerTenantID, &catName,
 		); err != nil {
 			return nil, fmt.Errorf("scan master product: %w", err)
 		}
 		if len(imagesJSON) > 0 {
 			json.Unmarshal(imagesJSON, &mp.Images)
-		}
-		if len(attrsJSON) > 0 {
-			json.Unmarshal(attrsJSON, &mp.Attributes)
 		}
 		if catName != nil {
 			mp.CategoryName = *catName
@@ -491,31 +481,78 @@ func (a *CatalogAdapter) GetMasterProductsForEnrichment(ctx context.Context, ten
 	return products, nil
 }
 
-func (a *CatalogAdapter) UpdateMasterProductEnrichment(ctx context.Context, productID string, categoryID string, attrs map[string]any) error {
-	// Merge enriched attrs into existing attributes JSONB
-	attrsJSON, err := json.Marshal(attrs)
-	if err != nil {
-		return fmt.Errorf("marshal enrichment attrs: %w", err)
-	}
+// --- Enrichment V2 ---
 
-	query := `UPDATE catalog.master_products
-		SET attributes = COALESCE(attributes, '{}'::jsonb) || $1::jsonb,
-			updated_at = NOW()`
-	args := []any{attrsJSON}
-	argIdx := 2
+func (a *CatalogAdapter) GetAllMasterProducts(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
+	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
+		mp.images, mp.owner_tenant_id, c.name
+		FROM catalog.master_products mp
+		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		WHERE mp.owner_tenant_id = $1
+		ORDER BY mp.created_at`
+
+	rows, err := a.client.pool.Query(ctx, query, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("get all master products: %w", err)
+	}
+	defer rows.Close()
+
+	var products []domain.MasterProduct
+	for rows.Next() {
+		var mp domain.MasterProduct
+		var imagesJSON []byte
+		var catName *string
+		if err := rows.Scan(
+			&mp.ID, &mp.SKU, &mp.Name, &mp.Description, &mp.Brand, &mp.CategoryID,
+			&imagesJSON, &mp.OwnerTenantID, &catName,
+		); err != nil {
+			return nil, fmt.Errorf("scan master product: %w", err)
+		}
+		if len(imagesJSON) > 0 {
+			json.Unmarshal(imagesJSON, &mp.Images)
+		}
+		if catName != nil {
+			mp.CategoryName = *catName
+		}
+		products = append(products, mp)
+	}
+	return products, nil
+}
+
+func (a *CatalogAdapter) UpdateMasterProductPIM(ctx context.Context, productID string, categoryID string, out domain.EnrichmentOutputV2) error {
+	query := `UPDATE catalog.master_products SET
+		name = $1, original_name = $2, product_line = $3,
+		product_form = $4, texture = $5, routine_step = $6, routine_time = $7,
+		application_method = $8, skin_type = $9, concern = $10,
+		key_ingredients = $11, target_area = $12, free_from = $13,
+		marketing_claim = $14, benefits = $15,
+		enrichment_version = 2, updated_at = NOW()
+	WHERE id = $16`
+
+	args := []any{
+		out.ShortName, out.OriginalName, out.ProductLine,
+		out.ProductForm, out.Texture, out.RoutineStep, out.RoutineTime,
+		out.ApplicationMethod, out.SkinType, out.Concern,
+		out.KeyIngredients, out.TargetArea, out.FreeFrom,
+		out.MarketingClaim, out.Benefits,
+		productID,
+	}
 
 	if categoryID != "" {
-		query += fmt.Sprintf(", category_id = $%d", argIdx)
+		query = `UPDATE catalog.master_products SET
+			name = $1, original_name = $2, product_line = $3,
+			product_form = $4, texture = $5, routine_step = $6, routine_time = $7,
+			application_method = $8, skin_type = $9, concern = $10,
+			key_ingredients = $11, target_area = $12, free_from = $13,
+			marketing_claim = $14, benefits = $15,
+			enrichment_version = 2, category_id = $17, updated_at = NOW()
+		WHERE id = $16`
 		args = append(args, categoryID)
-		argIdx++
 	}
 
-	query += fmt.Sprintf(" WHERE id = $%d", argIdx)
-	args = append(args, productID)
-
-	tag, execErr := a.client.pool.Exec(ctx, query, args...)
-	if execErr != nil {
-		return fmt.Errorf("update master product enrichment: %w", execErr)
+	tag, err := a.client.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update master product PIM: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrProductNotFound
@@ -527,7 +564,13 @@ func (a *CatalogAdapter) UpdateMasterProductEnrichment(ctx context.Context, prod
 
 func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
 	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
-		mp.images, mp.attributes, mp.owner_tenant_id, c.name
+		mp.images, mp.owner_tenant_id, c.name,
+		COALESCE(mp.product_form, '') as product_form,
+		COALESCE(mp.texture, '') as texture,
+		COALESCE(mp.routine_step, '') as routine_step,
+		COALESCE(mp.marketing_claim, '') as marketing_claim,
+		mp.skin_type, mp.concern, mp.key_ingredients,
+		COALESCE(mp.enrichment_version, 0) as enrichment_version
 		FROM catalog.master_products mp
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		WHERE mp.embedding IS NULL AND mp.owner_tenant_id = $1
@@ -542,19 +585,19 @@ func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context, 
 	var products []domain.MasterProduct
 	for rows.Next() {
 		var mp domain.MasterProduct
-		var imagesJSON, attrsJSON []byte
+		var imagesJSON []byte
 		var catName *string
 		if err := rows.Scan(
 			&mp.ID, &mp.SKU, &mp.Name, &mp.Description, &mp.Brand, &mp.CategoryID,
-			&imagesJSON, &attrsJSON, &mp.OwnerTenantID, &catName,
+			&imagesJSON, &mp.OwnerTenantID, &catName,
+			&mp.ProductForm, &mp.Texture, &mp.RoutineStep,
+			&mp.MarketingClaim, &mp.SkinType, &mp.Concern, &mp.KeyIngredients,
+			&mp.EnrichmentVersion,
 		); err != nil {
 			return nil, fmt.Errorf("scan master product: %w", err)
 		}
 		if len(imagesJSON) > 0 {
 			json.Unmarshal(imagesJSON, &mp.Images)
-		}
-		if len(attrsJSON) > 0 {
-			json.Unmarshal(attrsJSON, &mp.Attributes)
 		}
 		if catName != nil {
 			mp.CategoryName = *catName

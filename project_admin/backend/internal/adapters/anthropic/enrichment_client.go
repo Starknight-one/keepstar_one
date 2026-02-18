@@ -123,6 +123,67 @@ func (c *EnrichmentClient) EnrichProducts(ctx context.Context, items []domain.En
 	}, nil
 }
 
+func (c *EnrichmentClient) EnrichProductsV2(ctx context.Context, items []domain.EnrichmentInput) (*domain.EnrichmentResultV2, error) {
+	prompt := buildPromptV2(items)
+
+	reqBody := messagesRequest{
+		Model:     c.model,
+		MaxTokens: 8192,
+		System:    systemPromptV2,
+		Messages:  []message{{Role: "user", Content: prompt}},
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicAPI, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("x-api-key", c.apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("content-type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("anthropic API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var msgResp messagesResponse
+	if err := json.Unmarshal(respBody, &msgResp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	if len(msgResp.Content) == 0 {
+		return nil, fmt.Errorf("empty response from anthropic")
+	}
+
+	text := msgResp.Content[0].Text
+	text = extractJSON(text)
+
+	var outputs []domain.EnrichmentOutputV2
+	if err := json.Unmarshal([]byte(text), &outputs); err != nil {
+		return nil, fmt.Errorf("parse enrichment v2 JSON: %w (raw: %.500s)", err, text)
+	}
+
+	return &domain.EnrichmentResultV2{
+		Outputs:      outputs,
+		InputTokens:  msgResp.Usage.InputTokens,
+		OutputTokens: msgResp.Usage.OutputTokens,
+	}, nil
+}
+
 func extractJSON(s string) string {
 	// Strip markdown code fences if present
 	s = strings.TrimSpace(s)
@@ -208,5 +269,117 @@ Return ONLY a JSON array (no markdown, no explanation):
     "skin_type": ["..."],
     "concern": ["..."],
     "key_ingredients": ["..."]
+  }
+]`
+
+// --- V2 prompt ---
+
+func buildPromptV2(items []domain.EnrichmentInput) string {
+	var sb strings.Builder
+	sb.WriteString("Extract structured PIM data for the following products. Return a JSON array with one object per product.\n\n")
+
+	for i, item := range items {
+		fmt.Fprintf(&sb, "### Product %d\n", i+1)
+		fmt.Fprintf(&sb, "SKU: %s\n", item.SKU)
+		fmt.Fprintf(&sb, "Name: %s\n", item.Name)
+		if item.Brand != "" {
+			fmt.Fprintf(&sb, "Brand: %s\n", item.Brand)
+		}
+		if item.Description != "" {
+			fmt.Fprintf(&sb, "Description: %s\n", item.Description)
+		}
+		if item.Ingredients != "" {
+			fmt.Fprintf(&sb, "Ingredients: %s\n", item.Ingredients)
+		}
+		if item.ActiveIngredients != "" {
+			fmt.Fprintf(&sb, "Active Ingredients: %s\n", item.ActiveIngredients)
+		}
+		if item.SkinType != "" {
+			fmt.Fprintf(&sb, "Skin Type: %s\n", item.SkinType)
+		}
+		if item.Benefits != "" {
+			fmt.Fprintf(&sb, "Benefits: %s\n", item.Benefits)
+		}
+		if item.HowToUse != "" {
+			fmt.Fprintf(&sb, "How to Use: %s\n", item.HowToUse)
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+const systemPromptV2 = `You are a cosmetics product classifier. For each product, extract structured PIM data from CLOSED LISTS below.
+
+## Category tree (use leaf slug only)
+face-care:
+  cleansing, toning, exfoliation, serums, moisturizing, suncare, masks, spot-treatment, essences, lip-care
+makeup:
+  makeup-face, makeup-eyes, makeup-lips, makeup-setting
+body:
+  body-cleansing, body-moisturizing, body-fragrance
+hair:
+  hair-shampoo, hair-conditioner, hair-treatment
+
+## product_form (pick ONE)
+cream, gel, serum, toner, essence, lotion, oil, balm, foam, mousse, mist, spray, powder, stick, patch, sheet-mask, wash-off-mask, peel, scrub, soap
+
+## texture (pick ONE)
+watery, gel, milky, creamy, thick, oily, powdery, foamy, balmy
+
+## skin_type (pick 1-3)
+normal, dry, oily, combination, sensitive, acne-prone, mature
+
+## concern (pick 1-4)
+hydration, anti-aging, brightening, acne, pores, dark-spots, redness, sun-protection, exfoliation, firmness, dark-circles, lip-dryness, oil-control, texture, dullness
+
+## key_ingredients (pick 1-5)
+hyaluronic-acid, niacinamide, retinol, vitamin-c, salicylic-acid, glycolic-acid, centella-asiatica, ceramides, peptides, snail-mucin, tea-tree, aloe-vera, collagen, aha-bha, squalane, shea-butter, argan-oil, rice-extract, green-tea, propolis, mugwort, panthenol, zinc, turmeric, charcoal
+
+## target_area (pick 1-3)
+face, eye-area, lips, neck, body, hands, feet, scalp
+
+## free_from (pick 0-5 if mentioned)
+parabens, sulfates, alcohol, fragrance, silicones, mineral-oil, artificial-colors, phthalates, formaldehyde, triclosan
+
+## routine_step (pick ONE)
+cleansing, toning, exfoliation, treatment, moisturizing, sun-protection, makeup
+
+## routine_time (pick ONE)
+am, pm, both
+
+## application_method (pick ONE)
+apply, pat, massage, rinse, spray, peel, patch, roll
+
+## Rules
+- short_name: product essence in 2-3 words, NO brand, NO marketing adjectives. E.g. "Cica Cream", "AHA Toner Pads"
+- original_name: the full original product name as-is
+- product_line: brand sub-line if present (e.g. "Pure Fit", "Good Cera"). Empty string if none
+- marketing_claim: ONE sentence, max 150 chars
+- benefits: 3-5 short benefit points, each <50 chars
+- volume: product volume as stated (e.g. "50ml", "30 шт")
+
+## Output format
+Return ONLY a JSON array (no markdown, no explanation):
+[
+  {
+    "sku": "...",
+    "short_name": "...",
+    "original_name": "...",
+    "product_line": "...",
+    "category_slug": "...",
+    "product_form": "...",
+    "texture": "...",
+    "skin_type": ["..."],
+    "concern": ["..."],
+    "key_ingredients": ["..."],
+    "target_area": ["..."],
+    "free_from": ["..."],
+    "routine_step": "...",
+    "routine_time": "...",
+    "application_method": "...",
+    "marketing_claim": "...",
+    "benefits": ["..."],
+    "volume": "..."
   }
 ]`

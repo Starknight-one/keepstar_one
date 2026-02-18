@@ -569,7 +569,6 @@ func TestRelevance_AttributeFilter_Color(t *testing.T) {
 
 	products, total, err := catalog.ListProducts(ctx, tenantID, ports.ProductFilter{
 		CategoryName: "Casual Shoes",
-		Attributes:   map[string]string{"color": "Black"},
 		Limit:        20,
 	})
 	if err != nil {

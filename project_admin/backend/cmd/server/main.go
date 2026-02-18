@@ -93,7 +93,7 @@ func main() {
 
 	var enrichUC *usecases.EnrichmentUseCase
 	if enrichmentClient != nil {
-		enrichUC = usecases.NewEnrichmentUseCase(enrichmentClient, log)
+		enrichUC = usecases.NewEnrichmentUseCase(enrichmentClient, catalogAdapter, log)
 	}
 
 	importUC := usecases.NewImportUseCase(catalogAdapter, importAdapter, embeddingClient, log)
@@ -172,6 +172,7 @@ func main() {
 	protected.HandleFunc("/admin/api/stock/bulk", stockHandler.HandleBulkUpdate)
 	if enrichmentHandler != nil {
 		protected.HandleFunc("/admin/api/catalog/enrich", enrichmentHandler.HandleEnrich)
+		protected.HandleFunc("/admin/api/catalog/enrich-v2", enrichmentHandler.HandleEnrichV2)
 	}
 
 	mux.Handle("/admin/api/auth/me", authMW(protected))
@@ -187,6 +188,7 @@ func main() {
 	mux.Handle("/admin/api/stock/bulk", authMW(protected))
 	if enrichmentHandler != nil {
 		mux.Handle("/admin/api/catalog/enrich", authMW(protected))
+		mux.Handle("/admin/api/catalog/enrich-v2", authMW(protected))
 	}
 
 	// SPA file server: serve React frontend from ./static

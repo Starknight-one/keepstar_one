@@ -4,6 +4,52 @@
 
 ---
 
+## PIM Catalog Redesign — Structured Columns + Typed Search — 2026-02-18
+
+Перевели каталог с JSONB-каши на нормальный PIM со структурированными колонками, справочником ингредиентов и типизированными фильтрами для агента.
+
+**Ветка:** `feature/pim-catalog-redesign`
+**Файлов:** 17, +1031 / -86 строк
+
+### Database (auto-migrations)
+
+- 19 новых колонок на `catalog.master_products`: `short_name`, `product_form`, `texture`, `routine_step`, `skin_type[]`, `concern[]`, `key_ingredients[]`, `target_area[]`, `free_from[]`, `marketing_claim`, `benefits[]`, `volume`, `inci_text`, `enrichment_version`, etc.
+- 2 новые таблицы: `catalog.ingredients` (справочник INCI), `catalog.product_ingredients` (junction)
+- 10 индексов: 5 B-tree + 5 GIN
+
+### Enrichment v2 (admin backend)
+
+Новый LLM промпт (18 структурированных полей из закрытых списков) + `EnrichFromDB` use case. Читает master_products по tenant → батчи по 10, 5 воркеров → Haiku API → парсит JSON → записывает в PIM-колонки + `enrichment_version = 2`.
+
+- `POST /admin/api/catalog/enrich-v2` — принимает `{"tenantId": "..."}`
+- Стоимость первого прогона: $1.81 за 962 товара
+
+### Typed Search Filters (chat backend)
+
+Заменены generic JSONB фильтры в `catalog_search` tool на типизированные: `product_form`, `skin_type`, `concern`, `key_ingredient`, `routine_step`, `texture`, `target_area` — все с enum-значениями в JSON schema.
+
+SQL: `mp.product_form = $N`, `$N = ANY(mp.skin_type)`, etc.
+
+### Embeddings (чистый текст)
+
+`buildEmbeddingText()` для enrichment_version >= 2: ~30 токенов из PIM-полей вместо ~500-1000 из каши.
+
+### CLI утилиты (новые)
+
+- `cmd/seed-ingredients/` — парсинг INCI из attributes, создание справочника, LLM обогащение (name_ru + function)
+- `cmd/rebuild-embeddings/` — пересборка векторов из чистых PIM-данных
+
+### Статус
+
+- [x] Миграции применены (19 колонок + 2 таблицы + 10 индексов)
+- [x] Enrichment v2 endpoint работает, Haiku отвечает
+- [ ] **Баг SKU matching:** 125/962 записались — LLM возвращает все продукты но SKU не матчатся при записи. Диагностика добавлена
+- [ ] seed-ingredients
+- [ ] rebuild-embeddings
+- [ ] Проверка typed search
+
+---
+
 ## Catalog Enrichment — LLM Product Classification — 2026-02-15
 
 Enrichment пайплайн для 967 товаров из краулера heybabes. LLM (Claude Haiku 4.5) классифицирует каждый продукт по закрытым спискам: категория, форма, тип кожи, проблема, ключевые ингредиенты. Результат перезаписывается в crawl JSON → затем импорт в БД.

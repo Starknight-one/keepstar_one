@@ -135,6 +135,74 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`ALTER TABLE catalog.services ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_products_tags ON catalog.products USING gin(tags);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_services_tags ON catalog.services USING gin(tags);`,
+
+		// PIM Redesign: structured columns on master_products
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS short_name VARCHAR(200);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS original_name VARCHAR(500);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS product_line VARCHAR(200);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS product_form VARCHAR(30);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS texture VARCHAR(30);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS routine_step VARCHAR(30);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS routine_time VARCHAR(10);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS application_method VARCHAR(30);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS skin_type TEXT[];`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS concern TEXT[];`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS key_ingredients TEXT[];`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS target_area TEXT[];`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS free_from TEXT[];`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS marketing_claim VARCHAR(300);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS benefits TEXT[];`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS how_to_use TEXT;`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS volume VARCHAR(50);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS inci_text TEXT;`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS enrichment_version SMALLINT DEFAULT 0;`,
+
+		// PIM Redesign: ingredients reference table
+		`CREATE TABLE IF NOT EXISTS catalog.ingredients (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			inci_name VARCHAR(500) NOT NULL,
+			name_ru VARCHAR(500),
+			slug VARCHAR(200) NOT NULL,
+			function VARCHAR(100),
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_ingredients_inci_name
+			ON catalog.ingredients (LOWER(inci_name));`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_ingredients_slug
+			ON catalog.ingredients (slug);`,
+		`CREATE TABLE IF NOT EXISTS catalog.product_ingredients (
+			master_product_id UUID NOT NULL REFERENCES catalog.master_products(id) ON DELETE CASCADE,
+			ingredient_id UUID NOT NULL REFERENCES catalog.ingredients(id) ON DELETE CASCADE,
+			position SMALLINT NOT NULL DEFAULT 0,
+			is_key BOOLEAN NOT NULL DEFAULT false,
+			PRIMARY KEY (master_product_id, ingredient_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_product_ingredients_ingredient
+			ON catalog.product_ingredients (ingredient_id);`,
+
+		// PIM Redesign: indexes for typed columns
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_product_form ON catalog.master_products (product_form);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_routine_step ON catalog.master_products (routine_step);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_brand ON catalog.master_products (brand);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_short_name ON catalog.master_products (short_name);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_cat_form ON catalog.master_products (category_id, product_form);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_skin_type ON catalog.master_products USING gin (skin_type);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_concern ON catalog.master_products USING gin (concern);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_key_ingredients ON catalog.master_products USING gin (key_ingredients);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_target_area ON catalog.master_products USING gin (target_area);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_free_from ON catalog.master_products USING gin (free_from);`,
+
+		// PIM Redesign: structured volume columns
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS volume_ml INT;`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS weight_g INT;`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS unit_count SMALLINT NOT NULL DEFAULT 1;`,
+
+		// PIM Cleanup: drop legacy columns (data migrated to typed PIM columns)
+		`ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS short_name;`,
+		`ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS volume;`,
+		`ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS attributes;`,
+		`ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS inci_text;`,
+		`DROP INDEX IF EXISTS idx_catalog_mp_short_name;`,
 	}
 
 	for i, m := range migrations {

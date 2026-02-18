@@ -251,7 +251,6 @@ func TestProductFieldGetter_AllFields(t *testing.T) {
 		StockQuantity: 42,
 		Images:        []string{"img.jpg"},
 		Tags:          []string{"new"},
-		Attributes:    map[string]interface{}{"color": "black"},
 	}
 
 	fg := productFieldGetter(p)
@@ -287,7 +286,7 @@ func TestProductFieldGetter_EmptyFieldsReturnNil(t *testing.T) {
 	p := domain.Product{ID: "p1"}
 	fg := productFieldGetter(p)
 
-	nilFields := []string{"name", "description", "brand", "category", "images", "tags", "attributes"}
+	nilFields := []string{"name", "description", "brand", "category", "images", "tags"}
 	for _, f := range nilFields {
 		if fg(f) != nil {
 			t.Errorf("empty product field %q should return nil, got %v", f, fg(f))

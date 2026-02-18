@@ -280,7 +280,6 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 			Brand:         "Nike",
 			Category:      "Sneakers",
 			Tags:          []string{"running", "classic", "air max"},
-			Attributes:    map[string]interface{}{"color": "White/Black", "material": "Leather/Mesh"},
 		},
 		{
 			ID:            "prod-2",
@@ -294,7 +293,6 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 			Brand:         "Nike",
 			Category:      "Sneakers",
 			Tags:          []string{"basketball", "classic", "white"},
-			Attributes:    map[string]interface{}{"color": "White", "material": "Leather"},
 		},
 		{
 			ID:            "prod-3",
@@ -308,7 +306,6 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 			Brand:         "Nike",
 			Category:      "Sneakers",
 			Tags:          []string{"skateboard", "retro"},
-			Attributes:    map[string]interface{}{"color": "Panda", "material": "Leather"},
 		},
 		{
 			ID:            "prod-4",
@@ -322,7 +319,6 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 			Brand:         "Jordan",
 			Category:      "Sneakers",
 			Tags:          []string{"basketball", "jordan", "retro", "high-top"},
-			Attributes:    map[string]interface{}{"color": "Chicago", "material": "Leather"},
 		},
 	}
 
@@ -431,11 +427,6 @@ func productFieldGetterDebug(p domain.Product) tools.FieldGetter {
 				return nil
 			}
 			return p.Tags
-		case "attributes":
-			if len(p.Attributes) == 0 {
-				return nil
-			}
-			return p.Attributes
 		default:
 			return nil
 		}

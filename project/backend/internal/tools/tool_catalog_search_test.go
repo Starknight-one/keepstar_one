@@ -435,9 +435,6 @@ func TestCatalogSearch_FiltersPassed(t *testing.T) {
 	if capturedFilter.MaxPrice != 2000000 {
 		t.Errorf("expected MaxPrice=2000000 (kopecks), got %d", capturedFilter.MaxPrice)
 	}
-	if capturedFilter.Attributes["color"] != "Blue" {
-		t.Errorf("expected color attribute=Blue, got %s", capturedFilter.Attributes["color"])
-	}
 }
 
 func TestCatalogSearch_FiltersPassedToVector(t *testing.T) {

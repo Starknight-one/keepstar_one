@@ -46,15 +46,15 @@ func (t *CatalogSearchTool) Definition() domain.ToolDefinition {
 				},
 				"filters": map[string]interface{}{
 					"type":        "object",
-					"description": "Exact keyword filters. Only include filters you're confident about.",
+					"description": "Exact filters. Only include filters you're confident about.",
 					"properties": map[string]interface{}{
 						"brand": map[string]interface{}{
 							"type":        "string",
-							"description": "Brand name in English (e.g. Nike, Samsung, Apple)",
+							"description": "Brand name (e.g. COSRX, MEDI-PEEL, Holika Holika)",
 						},
 						"category": map[string]interface{}{
 							"type":        "string",
-							"description": "Product category (e.g. Sneakers, Laptops, Headphones)",
+							"description": "Category name (e.g. Сыворотки, Кремы)",
 						},
 						"min_price": map[string]interface{}{
 							"type":        "number",
@@ -64,25 +64,40 @@ func (t *CatalogSearchTool) Definition() domain.ToolDefinition {
 							"type":        "number",
 							"description": "Maximum price in RUBLES",
 						},
-						"color": map[string]interface{}{
+						"product_form": map[string]interface{}{
 							"type":        "string",
-							"description": "Product color in English (e.g. Black, White, Blue)",
+							"enum":        []string{"cream", "gel", "serum", "toner", "essence", "lotion", "oil", "balm", "foam", "mousse", "mist", "spray", "powder", "stick", "patch", "sheet-mask", "wash-off-mask", "peel", "scrub", "soap"},
+							"description": "Product form/type",
 						},
-						"material": map[string]interface{}{
+						"skin_type": map[string]interface{}{
 							"type":        "string",
-							"description": "Material (e.g. Leather, Mesh, Fleece)",
+							"enum":        []string{"normal", "dry", "oily", "combination", "sensitive", "acne-prone", "mature"},
+							"description": "Target skin type",
 						},
-						"storage": map[string]interface{}{
+						"concern": map[string]interface{}{
 							"type":        "string",
-							"description": "Storage capacity (e.g. 128GB, 256GB, 512GB)",
+							"enum":        []string{"hydration", "anti-aging", "brightening", "acne", "pores", "dark-spots", "redness", "sun-protection", "exfoliation", "firmness", "dark-circles", "lip-dryness", "oil-control", "texture", "dullness"},
+							"description": "Skin concern to address",
 						},
-						"ram": map[string]interface{}{
+						"key_ingredient": map[string]interface{}{
 							"type":        "string",
-							"description": "RAM size (e.g. 8GB, 16GB)",
+							"enum":        []string{"hyaluronic-acid", "niacinamide", "retinol", "vitamin-c", "salicylic-acid", "glycolic-acid", "centella-asiatica", "ceramides", "peptides", "snail-mucin", "tea-tree", "aloe-vera", "collagen", "aha-bha", "squalane", "shea-butter", "argan-oil", "rice-extract", "green-tea", "propolis", "mugwort", "panthenol", "zinc", "turmeric", "charcoal"},
+							"description": "Key active ingredient",
 						},
-						"size": map[string]interface{}{
+						"routine_step": map[string]interface{}{
 							"type":        "string",
-							"description": "Size (e.g. 11 inch, 44mm)",
+							"enum":        []string{"cleansing", "toning", "exfoliation", "treatment", "moisturizing", "sun-protection", "makeup"},
+							"description": "Step in skincare routine",
+						},
+						"texture": map[string]interface{}{
+							"type":        "string",
+							"enum":        []string{"watery", "gel", "milky", "creamy", "thick", "oily", "powdery", "foamy", "balmy"},
+							"description": "Product texture",
+						},
+						"target_area": map[string]interface{}{
+							"type":        "string",
+							"enum":        []string{"face", "eye-area", "lips", "neck", "body", "hands", "feet", "scalp"},
+							"description": "Target application area",
 						},
 					},
 				},
@@ -124,7 +139,7 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	// Parse filters object
 	var brand, category string
 	var minPrice, maxPrice int
-	attributes := make(map[string]string)
+	var productForm, skinType, concern, keyIngredient, routineStep, texture, targetArea string
 
 	if filters, ok := input["filters"].(map[string]interface{}); ok {
 		brand, _ = filters["brand"].(string)
@@ -135,15 +150,13 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		if v, ok := filters["max_price"].(float64); ok {
 			maxPrice = int(v)
 		}
-		// Collect JSONB attributes (everything that's not a known column filter)
-		knownFilters := map[string]bool{"brand": true, "category": true, "min_price": true, "max_price": true}
-		for key, val := range filters {
-			if !knownFilters[key] {
-				if strVal, ok := val.(string); ok {
-					attributes[key] = strVal
-				}
-			}
-		}
+		productForm, _ = filters["product_form"].(string)
+		skinType, _ = filters["skin_type"].(string)
+		concern, _ = filters["concern"].(string)
+		keyIngredient, _ = filters["key_ingredient"].(string)
+		routineStep, _ = filters["routine_step"].(string)
+		texture, _ = filters["texture"].(string)
+		targetArea, _ = filters["target_area"].(string)
 	}
 
 	// Convert prices: rubles → kopecks (×100)
@@ -211,15 +224,21 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 
 	// Keyword search
 	filter := ports.ProductFilter{
-		Search:       vectorQuery, // also used for ILIKE fallback
-		Brand:        brand,
-		CategoryName: category, // agent passes category name/slug → ILIKE on c.name/c.slug
-		MinPrice:     minPriceKopecks,
-		MaxPrice:     maxPriceKopecks,
-		SortField:    sortBy,
-		SortOrder:    sortOrder,
-		Limit:        limit * 2,
-		Attributes:   attributes, // JSONB filters
+		Search:        vectorQuery, // also used for ILIKE fallback
+		Brand:         brand,
+		CategoryName:  category, // agent passes category name/slug → ILIKE on c.name/c.slug
+		MinPrice:      minPriceKopecks,
+		MaxPrice:      maxPriceKopecks,
+		SortField:     sortBy,
+		SortOrder:     sortOrder,
+		Limit:         limit * 2,
+		ProductForm:   productForm,
+		SkinType:      skinType,
+		Concern:       concern,
+		KeyIngredient: keyIngredient,
+		TargetArea:    targetArea,
+		RoutineStep:   routineStep,
+		Texture:       texture,
 	}
 
 	// Strip brand from ILIKE search to avoid AND conflict
@@ -250,8 +269,8 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		}
 		vectorStart := time.Now()
 		var vf *ports.VectorFilter
-		if brand != "" || category != "" {
-			vf = &ports.VectorFilter{Brand: brand, CategoryName: category}
+		if brand != "" || category != "" || productForm != "" || skinType != "" || concern != "" || routineStep != "" || texture != "" {
+			vf = &ports.VectorFilter{Brand: brand, CategoryName: category, ProductForm: productForm, SkinType: skinType, Concern: concern, RoutineStep: routineStep, Texture: texture}
 		}
 		var vectorErr error
 		vectorProducts, vectorErr = t.catalogPort.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2, vf)
@@ -279,7 +298,6 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 			SortField:    sortBy,
 			SortOrder:    sortOrder,
 			Limit:        limit * 2,
-			Attributes:   attributes,
 		}
 		if svcFilter.Brand != "" && svcFilter.Search != "" {
 			cleaned := strings.TrimSpace(removeSubstringIgnoreCase(svcFilter.Search, svcFilter.Brand))
@@ -301,7 +319,7 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	}
 
 	// RRF merge for products
-	hasFilters := brand != "" || category != ""
+	hasFilters := brand != "" || category != "" || productForm != "" || skinType != "" || concern != "" || keyIngredient != "" || routineStep != "" || texture != "" || targetArea != ""
 	var merged []domain.Product
 	if entityType != "service" {
 		merged = rrfMerge(keywordProducts, vectorProducts, limit, hasFilters)

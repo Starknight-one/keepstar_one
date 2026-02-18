@@ -97,3 +97,57 @@ func (h *EnrichmentHandler) getStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, job)
 }
+
+// HandleEnrichV2 runs PIM v2 enrichment from DB (reads master_products, writes structured columns).
+func (h *EnrichmentHandler) HandleEnrichV2(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		h.getStatus(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "GET or POST only")
+		return
+	}
+
+	reqLog := h.log.FromContext(r.Context())
+
+	if job := h.enrichUC.GetStatus(); job != nil && job.Status == "processing" {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "enrichment already running",
+			"job":   job,
+		})
+		return
+	}
+
+	var req struct {
+		TenantID string `json:"tenantId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TenantID == "" {
+		writeError(w, http.StatusBadRequest, "tenantId is required")
+		return
+	}
+
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+
+		job, err := h.enrichUC.EnrichFromDB(bgCtx, req.TenantID)
+		if err != nil {
+			reqLog.Error("enrichment_v2_failed", "error", err)
+			return
+		}
+		if job != nil {
+			reqLog.Info("enrichment_v2_done",
+				"enriched", job.EnrichedProducts,
+				"cost_usd", job.EstimatedCostUSD)
+		}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	if status := h.enrichUC.GetStatus(); status != nil {
+		writeJSON(w, http.StatusAccepted, status)
+	} else {
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "started"})
+	}
+}

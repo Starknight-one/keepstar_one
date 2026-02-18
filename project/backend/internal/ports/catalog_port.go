@@ -17,13 +17,25 @@ type ProductFilter struct {
 	SortOrder    string            // "asc", "desc" (default: "desc")
 	Limit        int
 	Offset       int
-	Attributes   map[string]string // JSONB attribute filters (key → ILIKE value)
+	// Typed PIM filters
+	ProductForm   string // mp.product_form = $N
+	SkinType      string // $N = ANY(mp.skin_type)
+	Concern       string // $N = ANY(mp.concern)
+	KeyIngredient string // $N = ANY(mp.key_ingredients)
+	TargetArea    string // $N = ANY(mp.target_area)
+	RoutineStep   string // mp.routine_step = $N
+	Texture       string // mp.texture = $N
 }
 
 // VectorFilter holds optional filters for VectorSearch to narrow results before ranking.
 type VectorFilter struct {
 	Brand        string
 	CategoryName string
+	ProductForm  string
+	SkinType     string
+	Concern      string
+	RoutineStep  string
+	Texture      string
 }
 
 type CatalogPort interface {

@@ -15,7 +15,7 @@ type EnrichmentInput struct {
 	HowToUse          string
 }
 
-// EnrichmentOutput is the enriched data returned by the LLM.
+// EnrichmentOutput is the enriched data returned by the LLM (v1).
 type EnrichmentOutput struct {
 	SKU            string   `json:"sku"`
 	CategorySlug   string   `json:"category_slug"`
@@ -23,6 +23,35 @@ type EnrichmentOutput struct {
 	SkinType       []string `json:"skin_type"`
 	Concern        []string `json:"concern"`
 	KeyIngredients []string `json:"key_ingredients"`
+}
+
+// EnrichmentOutputV2 is the enriched data returned by the v2 PIM prompt.
+type EnrichmentOutputV2 struct {
+	SKU               string   `json:"sku"`
+	ShortName         string   `json:"short_name"`
+	OriginalName      string   `json:"original_name"`
+	ProductLine       string   `json:"product_line"`
+	CategorySlug      string   `json:"category_slug"`
+	ProductForm       string   `json:"product_form"`
+	Texture           string   `json:"texture"`
+	SkinType          []string `json:"skin_type"`
+	Concern           []string `json:"concern"`
+	KeyIngredients    []string `json:"key_ingredients"`
+	TargetArea        []string `json:"target_area"`
+	FreeFrom          []string `json:"free_from"`
+	RoutineStep       string   `json:"routine_step"`
+	RoutineTime       string   `json:"routine_time"`
+	ApplicationMethod string   `json:"application_method"`
+	MarketingClaim    string   `json:"marketing_claim"`
+	Benefits          []string `json:"benefits"`
+	Volume            string   `json:"volume"`
+}
+
+// EnrichmentResultV2 is the return value from one LLM v2 batch call.
+type EnrichmentResultV2 struct {
+	Outputs      []EnrichmentOutputV2
+	InputTokens  int
+	OutputTokens int
 }
 
 // EnrichmentResult is the return value from one LLM batch call.

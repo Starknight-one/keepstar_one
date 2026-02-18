@@ -98,13 +98,13 @@ func (a *CatalogAdapter) GetCategories(ctx context.Context) ([]domain.Category, 
 // GetMasterProduct retrieves a master product by ID
 func (a *CatalogAdapter) GetMasterProduct(ctx context.Context, id string) (*domain.MasterProduct, error) {
 	query := `
-		SELECT id, sku, name, description, brand, category_id, images, attributes, owner_tenant_id, created_at, updated_at
+		SELECT id, sku, name, description, brand, category_id, images, owner_tenant_id, created_at, updated_at
 		FROM catalog.master_products
 		WHERE id = $1
 	`
 
 	var product domain.MasterProduct
-	var imagesJSON, attributesJSON []byte
+	var imagesJSON []byte
 
 	err := a.client.pool.QueryRow(ctx, query, id).Scan(
 		&product.ID,
@@ -114,7 +114,6 @@ func (a *CatalogAdapter) GetMasterProduct(ctx context.Context, id string) (*doma
 		&product.Brand,
 		&product.CategoryID,
 		&imagesJSON,
-		&attributesJSON,
 		&product.OwnerTenantID,
 		&product.CreatedAt,
 		&product.UpdatedAt,
@@ -130,12 +129,6 @@ func (a *CatalogAdapter) GetMasterProduct(ctx context.Context, id string) (*doma
 	if len(imagesJSON) > 0 {
 		if err := json.Unmarshal(imagesJSON, &product.Images); err != nil {
 			return nil, fmt.Errorf("unmarshal images: %w", err)
-		}
-	}
-
-	if len(attributesJSON) > 0 {
-		if err := json.Unmarshal(attributesJSON, &product.Attributes); err != nil {
-			return nil, fmt.Errorf("unmarshal attributes: %w", err)
 		}
 	}
 
@@ -156,8 +149,14 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			p.price, p.currency, COALESCE(s.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
 			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
-			mp.brand, mp.category_id, mp.images as mp_images, mp.attributes,
-			c.name as category_name
+			mp.brand, mp.category_id, mp.images as mp_images,
+			c.name as category_name,
+			COALESCE(mp.product_form, '') as product_form,
+			COALESCE(mp.texture, '') as texture,
+			COALESCE(mp.routine_step, '') as routine_step,
+			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
+			COALESCE(mp.marketing_claim, '') as marketing_claim,
+			mp.benefits
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
@@ -225,10 +224,41 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		argNum++
 	}
 
-	for key, value := range filter.Attributes {
-		conditions = append(conditions, fmt.Sprintf("mp.attributes->>$%d ILIKE $%d", argNum, argNum+1))
-		args = append(args, key, "%"+value+"%")
-		argNum += 2
+	// Typed PIM filters
+	if filter.ProductForm != "" {
+		conditions = append(conditions, fmt.Sprintf("mp.product_form = $%d", argNum))
+		args = append(args, filter.ProductForm)
+		argNum++
+	}
+	if filter.SkinType != "" {
+		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mp.skin_type)", argNum))
+		args = append(args, filter.SkinType)
+		argNum++
+	}
+	if filter.Concern != "" {
+		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mp.concern)", argNum))
+		args = append(args, filter.Concern)
+		argNum++
+	}
+	if filter.KeyIngredient != "" {
+		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mp.key_ingredients)", argNum))
+		args = append(args, filter.KeyIngredient)
+		argNum++
+	}
+	if filter.TargetArea != "" {
+		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mp.target_area)", argNum))
+		args = append(args, filter.TargetArea)
+		argNum++
+	}
+	if filter.RoutineStep != "" {
+		conditions = append(conditions, fmt.Sprintf("mp.routine_step = $%d", argNum))
+		args = append(args, filter.RoutineStep)
+		argNum++
+	}
+	if filter.Texture != "" {
+		conditions = append(conditions, fmt.Sprintf("mp.texture = $%d", argNum))
+		args = append(args, filter.Texture)
+		argNum++
 	}
 
 	if len(conditions) > 0 {
@@ -282,14 +312,19 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	for rows.Next() {
 		var p domain.Product
 		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-		var productImagesJSON, tagsJSON, mpImagesJSON, attributesJSON []byte
+		var productImagesJSON, tagsJSON, mpImagesJSON []byte
+		var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
+		var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 
 		err := rows.Scan(
 			&p.ID, &p.TenantID, &masterProductID,
 			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 			&mpID, &mpSKU, &mpName, &mpDesc,
-			&mpBrand, &mpCategoryID, &mpImagesJSON, &attributesJSON,
+			&mpBrand, &mpCategoryID, &mpImagesJSON,
 			&categoryName,
+			&mpProductForm, &mpTexture, &mpRoutineStep,
+			&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
+			&mpMarketingClaim, &mpBenefits,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan product: %w", err)
@@ -315,7 +350,15 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			Brand:           mpBrand,
 			CategoryName:    categoryName,
 			ImagesJSON:      mpImagesJSON,
-			AttributesJSON:  attributesJSON,
+			ProductForm:     mpProductForm,
+			Texture:         mpTexture,
+			RoutineStep:     mpRoutineStep,
+			SkinType:        mpSkinType,
+			Concern:         mpConcern,
+			KeyIngredients:  mpKeyIngredients,
+			TargetArea:      mpTargetArea,
+			MarketingClaim:  mpMarketingClaim,
+			Benefits:        mpBenefits,
 		}); err != nil {
 			return nil, 0, err
 		}
@@ -342,8 +385,14 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 			p.price, p.currency, COALESCE(s.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
 			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
-			mp.brand, mp.category_id, mp.images as mp_images, mp.attributes,
-			c.name as category_name
+			mp.brand, mp.category_id, mp.images as mp_images,
+			c.name as category_name,
+			COALESCE(mp.product_form, '') as product_form,
+			COALESCE(mp.texture, '') as texture,
+			COALESCE(mp.routine_step, '') as routine_step,
+			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
+			COALESCE(mp.marketing_claim, '') as marketing_claim,
+			mp.benefits
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
@@ -353,14 +402,19 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 
 	var p domain.Product
 	var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-	var productImagesJSON, tagsJSON, mpImagesJSON, attributesJSON []byte
+	var productImagesJSON, tagsJSON, mpImagesJSON []byte
+	var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
+	var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 
 	err := a.client.pool.QueryRow(ctx, query, tenantID, productID).Scan(
 		&p.ID, &p.TenantID, &masterProductID,
 		&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 		&mpID, &mpSKU, &mpName, &mpDesc,
-		&mpBrand, &mpCategoryID, &mpImagesJSON, &attributesJSON,
+		&mpBrand, &mpCategoryID, &mpImagesJSON,
 		&categoryName,
+		&mpProductForm, &mpTexture, &mpRoutineStep,
+		&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
+		&mpMarketingClaim, &mpBenefits,
 	)
 
 	if err != nil {
@@ -390,7 +444,15 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		Brand:           mpBrand,
 		CategoryName:    categoryName,
 		ImagesJSON:      mpImagesJSON,
-		AttributesJSON:  attributesJSON,
+		ProductForm:     mpProductForm,
+		Texture:         mpTexture,
+		RoutineStep:     mpRoutineStep,
+		SkinType:        mpSkinType,
+		Concern:         mpConcern,
+		KeyIngredients:  mpKeyIngredients,
+		TargetArea:      mpTargetArea,
+		MarketingClaim:  mpMarketingClaim,
+		Benefits:        mpBenefits,
 	}); err != nil {
 		return nil, err
 	}
@@ -433,7 +495,16 @@ type masterProductRow struct {
 	Brand           *string
 	CategoryName    *string
 	ImagesJSON      []byte
-	AttributesJSON  []byte
+	// PIM fields
+	ProductForm    *string
+	Texture        *string
+	RoutineStep    *string
+	SkinType       []string
+	Concern        []string
+	KeyIngredients []string
+	TargetArea     []string
+	MarketingClaim *string
+	Benefits       []string
 }
 
 // mergeProductWithMaster fills product fields from a master-product row.
@@ -460,11 +531,24 @@ func mergeProductWithMaster(p *domain.Product, mp masterProductRow) error {
 			return fmt.Errorf("unmarshal master images: %w", err)
 		}
 	}
-	if len(mp.AttributesJSON) > 0 {
-		if err := json.Unmarshal(mp.AttributesJSON, &p.Attributes); err != nil {
-			return fmt.Errorf("unmarshal attributes: %w", err)
-		}
+	// PIM fields — name already contains the clean short name from DB
+	if mp.ProductForm != nil {
+		p.ProductForm = *mp.ProductForm
 	}
+	if mp.Texture != nil {
+		p.Texture = *mp.Texture
+	}
+	if mp.RoutineStep != nil {
+		p.RoutineStep = *mp.RoutineStep
+	}
+	p.SkinType = mp.SkinType
+	p.Concern = mp.Concern
+	p.KeyIngredients = mp.KeyIngredients
+	p.TargetArea = mp.TargetArea
+	if mp.MarketingClaim != nil {
+		p.MarketingClaim = *mp.MarketingClaim
+	}
+	p.Benefits = mp.Benefits
 	return nil
 }
 
@@ -482,8 +566,14 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			p.price, p.currency, COALESCE(st.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
 			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
-			mp.brand, mp.category_id, mp.images as mp_images, mp.attributes,
-			c.name as category_name
+			mp.brand, mp.category_id, mp.images as mp_images,
+			c.name as category_name,
+			COALESCE(mp.product_form, '') as product_form,
+			COALESCE(mp.texture, '') as texture,
+			COALESCE(mp.routine_step, '') as routine_step,
+			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
+			COALESCE(mp.marketing_claim, '') as marketing_claim,
+			mp.benefits
 		FROM catalog.products p
 		JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
@@ -506,6 +596,31 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			args = append(args, "%"+filter.CategoryName+"%")
 			argNum++
 		}
+		if filter.ProductForm != "" {
+			query += fmt.Sprintf(" AND mp.product_form = $%d", argNum)
+			args = append(args, filter.ProductForm)
+			argNum++
+		}
+		if filter.SkinType != "" {
+			query += fmt.Sprintf(" AND $%d = ANY(mp.skin_type)", argNum)
+			args = append(args, filter.SkinType)
+			argNum++
+		}
+		if filter.Concern != "" {
+			query += fmt.Sprintf(" AND $%d = ANY(mp.concern)", argNum)
+			args = append(args, filter.Concern)
+			argNum++
+		}
+		if filter.RoutineStep != "" {
+			query += fmt.Sprintf(" AND mp.routine_step = $%d", argNum)
+			args = append(args, filter.RoutineStep)
+			argNum++
+		}
+		if filter.Texture != "" {
+			query += fmt.Sprintf(" AND mp.texture = $%d", argNum)
+			args = append(args, filter.Texture)
+			argNum++
+		}
 	}
 
 	query += fmt.Sprintf(" ORDER BY mp.embedding <=> $2 LIMIT $%d", argNum)
@@ -521,14 +636,19 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 	for rows.Next() {
 		var p domain.Product
 		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-		var productImagesJSON, tagsJSON, mpImagesJSON, attributesJSON []byte
+		var productImagesJSON, tagsJSON, mpImagesJSON []byte
+		var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
+		var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 
 		err := rows.Scan(
 			&p.ID, &p.TenantID, &masterProductID,
 			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 			&mpID, &mpSKU, &mpName, &mpDesc,
-			&mpBrand, &mpCategoryID, &mpImagesJSON, &attributesJSON,
+			&mpBrand, &mpCategoryID, &mpImagesJSON,
 			&categoryName,
+			&mpProductForm, &mpTexture, &mpRoutineStep,
+			&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
+			&mpMarketingClaim, &mpBenefits,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan vector product: %w", err)
@@ -551,7 +671,15 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			Brand:           mpBrand,
 			CategoryName:    categoryName,
 			ImagesJSON:      mpImagesJSON,
-			AttributesJSON:  attributesJSON,
+			ProductForm:     mpProductForm,
+			Texture:         mpTexture,
+			RoutineStep:     mpRoutineStep,
+			SkinType:        mpSkinType,
+			Concern:         mpConcern,
+			KeyIngredients:  mpKeyIngredients,
+			TargetArea:      mpTargetArea,
+			MarketingClaim:  mpMarketingClaim,
+			Benefits:        mpBenefits,
 		}); err != nil {
 			return nil, err
 		}
@@ -579,7 +707,14 @@ func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context) 
 	query := `
 		SELECT mp.id, mp.sku, mp.name, COALESCE(mp.description, '') as description,
 		       COALESCE(mp.brand, '') as brand, COALESCE(mp.category_id::text, '') as category_id,
-		       COALESCE(c.name, '') as category_name, COALESCE(mp.attributes::text, '{}') as attributes
+		       COALESCE(c.name, '') as category_name,
+		       COALESCE(mp.product_form, '') as product_form,
+		       COALESCE(mp.texture, '') as texture,
+		       COALESCE(mp.routine_step, '') as routine_step,
+		       mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
+		       COALESCE(mp.marketing_claim, '') as marketing_claim,
+		       mp.benefits,
+		       COALESCE(mp.enrichment_version, 0) as enrichment_version
 		FROM catalog.master_products mp
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		WHERE mp.embedding IS NULL
@@ -595,14 +730,13 @@ func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context) 
 	var products []domain.MasterProduct
 	for rows.Next() {
 		var p domain.MasterProduct
-		var attrsJSON string
-		if err := rows.Scan(&p.ID, &p.SKU, &p.Name, &p.Description, &p.Brand, &p.CategoryID, &p.CategoryName, &attrsJSON); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.SKU, &p.Name, &p.Description, &p.Brand, &p.CategoryID, &p.CategoryName,
+			&p.ProductForm, &p.Texture, &p.RoutineStep,
+			&p.SkinType, &p.Concern, &p.KeyIngredients, &p.TargetArea,
+			&p.MarketingClaim, &p.Benefits, &p.EnrichmentVersion,
+		); err != nil {
 			return nil, fmt.Errorf("scan master product: %w", err)
-		}
-		if attrsJSON != "{}" && attrsJSON != "" {
-			if err := json.Unmarshal([]byte(attrsJSON), &p.Attributes); err != nil {
-				a.log.Warn("unmarshal master product attributes", "id", p.ID, "error", err)
-			}
 		}
 		products = append(products, p)
 	}
@@ -702,21 +836,52 @@ func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID str
 		}, nil
 	}
 
-	// Query 2: attributes with cardinality per category
+	// Query 2: PIM columns aggregated per category (replaces old LATERAL jsonb_each_text)
 	attrQuery := `
-		SELECT
-			c.name AS category_name,
-			attr.key AS attr_key,
-			COUNT(DISTINCT attr.value) AS cardinality,
-			ARRAY_AGG(DISTINCT attr.value ORDER BY attr.value) AS all_values
-		FROM catalog.products p
-		JOIN catalog.master_products mp ON p.master_product_id = mp.id
-		JOIN catalog.categories c ON mp.category_id = c.id,
-		LATERAL jsonb_each_text(mp.attributes) AS attr(key, value)
-		WHERE p.tenant_id = $1
-		  AND attr.value IS NOT NULL AND attr.value != ''
-		GROUP BY c.name, attr.key
-		ORDER BY c.name, cardinality DESC
+		SELECT category_name, attr_key,
+			COUNT(DISTINCT attr_value) AS cardinality,
+			ARRAY_AGG(DISTINCT attr_value ORDER BY attr_value) AS all_values
+		FROM (
+			-- Scalar PIM columns
+			SELECT c.name AS category_name, 'product_form' AS attr_key, mp.product_form AS attr_value
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.categories c ON mp.category_id = c.id
+			WHERE p.tenant_id = $1 AND mp.product_form IS NOT NULL AND mp.product_form != ''
+			UNION ALL
+			SELECT c.name, 'texture', mp.texture
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.categories c ON mp.category_id = c.id
+			WHERE p.tenant_id = $1 AND mp.texture IS NOT NULL AND mp.texture != ''
+			UNION ALL
+			SELECT c.name, 'routine_step', mp.routine_step
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.categories c ON mp.category_id = c.id
+			WHERE p.tenant_id = $1 AND mp.routine_step IS NOT NULL AND mp.routine_step != ''
+			UNION ALL
+			-- Array PIM columns (unnested)
+			SELECT c.name, 'skin_type', unnest(mp.skin_type)
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.categories c ON mp.category_id = c.id
+			WHERE p.tenant_id = $1 AND mp.skin_type IS NOT NULL
+			UNION ALL
+			SELECT c.name, 'concern', unnest(mp.concern)
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.categories c ON mp.category_id = c.id
+			WHERE p.tenant_id = $1 AND mp.concern IS NOT NULL
+			UNION ALL
+			SELECT c.name, 'key_ingredients', unnest(mp.key_ingredients)
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.categories c ON mp.category_id = c.id
+			WHERE p.tenant_id = $1 AND mp.key_ingredients IS NOT NULL
+			UNION ALL
+			SELECT c.name, 'target_area', unnest(mp.target_area)
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.categories c ON mp.category_id = c.id
+			WHERE p.tenant_id = $1 AND mp.target_area IS NOT NULL
+		) AS attrs
+		WHERE attr_value IS NOT NULL AND attr_value != ''
+		GROUP BY category_name, attr_key
+		ORDER BY category_name, cardinality DESC
 	`
 
 	attrRows, err := a.client.pool.Query(ctx, attrQuery, tenantID)
@@ -747,6 +912,33 @@ func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID str
 		})
 	}
 
+	// Query 3: top-20 ingredients (compact sample for LLM context)
+	ingrQuery := `
+		SELECT i.inci_name
+		FROM catalog.product_ingredients pi
+		JOIN catalog.ingredients i ON pi.ingredient_id = i.id
+		JOIN catalog.master_products mp ON pi.master_product_id = mp.id
+		JOIN catalog.products p ON p.master_product_id = mp.id
+		WHERE p.tenant_id = $1
+		GROUP BY i.inci_name
+		ORDER BY COUNT(*) DESC
+		LIMIT 20
+	`
+	ingrRows, err := a.client.pool.Query(ctx, ingrQuery, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query ingredients for digest: %w", err)
+	}
+	defer ingrRows.Close()
+
+	var topIngredients []string
+	for ingrRows.Next() {
+		var name string
+		if err := ingrRows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan ingredient digest: %w", err)
+		}
+		topIngredients = append(topIngredients, name)
+	}
+
 	// Build digest categories
 	categories := make([]domain.DigestCategory, 0, len(catInfos))
 	for _, ci := range catInfos {
@@ -773,9 +965,10 @@ func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID str
 	}
 
 	return &domain.CatalogDigest{
-		GeneratedAt:   time.Now(),
-		TotalProducts: totalProducts,
-		Categories:    categories,
+		GeneratedAt:    time.Now(),
+		TotalProducts:  totalProducts,
+		Categories:     categories,
+		TopIngredients: topIngredients,
 	}, nil
 }
 
@@ -943,7 +1136,6 @@ type masterServiceRow struct {
 	Provider        *string
 	CategoryName    *string
 	ImagesJSON      []byte
-	AttributesJSON  []byte
 }
 
 // mergeServiceWithMaster fills service fields from a master-service row.
@@ -959,9 +1151,6 @@ func mergeServiceWithMaster(s *domain.Service, ms masterServiceRow) error {
 	if s.Description == "" && ms.Description != nil {
 		s.Description = *ms.Description
 	}
-	if ms.Brand != nil {
-		// Services don't have Brand field, but Provider can come from master
-	}
 	if ms.Duration != nil && s.Duration == "" {
 		s.Duration = *ms.Duration
 	}
@@ -974,11 +1163,6 @@ func mergeServiceWithMaster(s *domain.Service, ms masterServiceRow) error {
 	if len(s.Images) == 0 && len(ms.ImagesJSON) > 0 {
 		if err := json.Unmarshal(ms.ImagesJSON, &s.Images); err != nil {
 			return fmt.Errorf("unmarshal master service images: %w", err)
-		}
-	}
-	if len(ms.AttributesJSON) > 0 {
-		if err := json.Unmarshal(ms.AttributesJSON, &s.Attributes); err != nil {
-			return fmt.Errorf("unmarshal service attributes: %w", err)
 		}
 	}
 	return nil
@@ -999,7 +1183,7 @@ func (a *CatalogAdapter) ListServices(ctx context.Context, tenantID string, filt
 			sv.availability,
 			ms.id as ms_id, ms.name as ms_name, ms.description as ms_description,
 			ms.brand, ms.duration, ms.provider,
-			ms.images as ms_images, ms.attributes,
+			ms.images as ms_images,
 			c.name as category_name
 		FROM catalog.services sv
 		LEFT JOIN catalog.master_services ms ON sv.master_service_id = ms.id
@@ -1108,7 +1292,7 @@ func (a *CatalogAdapter) ListServices(ctx context.Context, tenantID string, filt
 	for rows.Next() {
 		var s domain.Service
 		var masterServiceID, msID, msName, msDesc, msBrand, msDuration, msProvider, categoryName *string
-		var serviceImagesJSON, tagsJSON, msImagesJSON, attributesJSON []byte
+		var serviceImagesJSON, tagsJSON, msImagesJSON []byte
 
 		err := rows.Scan(
 			&s.ID, &s.TenantID, &masterServiceID,
@@ -1118,7 +1302,7 @@ func (a *CatalogAdapter) ListServices(ctx context.Context, tenantID string, filt
 			&s.Availability,
 			&msID, &msName, &msDesc,
 			&msBrand, &msDuration, &msProvider,
-			&msImagesJSON, &attributesJSON,
+			&msImagesJSON,
 			&categoryName,
 		)
 		if err != nil {
@@ -1141,7 +1325,6 @@ func (a *CatalogAdapter) ListServices(ctx context.Context, tenantID string, filt
 			Provider:        msProvider,
 			CategoryName:    categoryName,
 			ImagesJSON:      msImagesJSON,
-			AttributesJSON:  attributesJSON,
 		}); err != nil {
 			return nil, 0, err
 		}
@@ -1168,7 +1351,7 @@ func (a *CatalogAdapter) GetService(ctx context.Context, tenantID string, servic
 			sv.availability,
 			ms.id as ms_id, ms.name as ms_name, ms.description as ms_description,
 			ms.brand, ms.duration, ms.provider,
-			ms.images as ms_images, ms.attributes,
+			ms.images as ms_images,
 			c.name as category_name
 		FROM catalog.services sv
 		LEFT JOIN catalog.master_services ms ON sv.master_service_id = ms.id
@@ -1178,7 +1361,7 @@ func (a *CatalogAdapter) GetService(ctx context.Context, tenantID string, servic
 
 	var s domain.Service
 	var masterServiceID, msID, msName, msDesc, msBrand, msDuration, msProvider, categoryName *string
-	var serviceImagesJSON, tagsJSON, msImagesJSON, attributesJSON []byte
+	var serviceImagesJSON, tagsJSON, msImagesJSON []byte
 
 	err := a.client.pool.QueryRow(ctx, query, tenantID, serviceID).Scan(
 		&s.ID, &s.TenantID, &masterServiceID,
@@ -1188,7 +1371,7 @@ func (a *CatalogAdapter) GetService(ctx context.Context, tenantID string, servic
 		&s.Availability,
 		&msID, &msName, &msDesc,
 		&msBrand, &msDuration, &msProvider,
-		&msImagesJSON, &attributesJSON,
+		&msImagesJSON,
 		&categoryName,
 	)
 	if err != nil {
@@ -1214,7 +1397,6 @@ func (a *CatalogAdapter) GetService(ctx context.Context, tenantID string, servic
 		Provider:        msProvider,
 		CategoryName:    categoryName,
 		ImagesJSON:      msImagesJSON,
-		AttributesJSON:  attributesJSON,
 	}); err != nil {
 		return nil, err
 	}
@@ -1238,7 +1420,7 @@ func (a *CatalogAdapter) VectorSearchServices(ctx context.Context, tenantID stri
 			sv.availability,
 			ms.id as ms_id, ms.name as ms_name, ms.description as ms_description,
 			ms.brand, ms.duration, ms.provider,
-			ms.images as ms_images, ms.attributes,
+			ms.images as ms_images,
 			c.name as category_name
 		FROM catalog.services sv
 		JOIN catalog.master_services ms ON sv.master_service_id = ms.id
@@ -1276,7 +1458,7 @@ func (a *CatalogAdapter) VectorSearchServices(ctx context.Context, tenantID stri
 	for rows.Next() {
 		var s domain.Service
 		var masterServiceID, msID, msName, msDesc, msBrand, msDuration, msProvider, categoryName *string
-		var serviceImagesJSON, tagsJSON, msImagesJSON, attributesJSON []byte
+		var serviceImagesJSON, tagsJSON, msImagesJSON []byte
 
 		err := rows.Scan(
 			&s.ID, &s.TenantID, &masterServiceID,
@@ -1286,7 +1468,7 @@ func (a *CatalogAdapter) VectorSearchServices(ctx context.Context, tenantID stri
 			&s.Availability,
 			&msID, &msName, &msDesc,
 			&msBrand, &msDuration, &msProvider,
-			&msImagesJSON, &attributesJSON,
+			&msImagesJSON,
 			&categoryName,
 		)
 		if err != nil {
@@ -1309,7 +1491,6 @@ func (a *CatalogAdapter) VectorSearchServices(ctx context.Context, tenantID stri
 			Provider:        msProvider,
 			CategoryName:    categoryName,
 			ImagesJSON:      msImagesJSON,
-			AttributesJSON:  attributesJSON,
 		}); err != nil {
 			return nil, err
 		}
@@ -1336,7 +1517,7 @@ func (a *CatalogAdapter) GetMasterServicesWithoutEmbedding(ctx context.Context) 
 	query := `
 		SELECT ms.id, ms.sku, ms.name, COALESCE(ms.description, '') as description,
 		       COALESCE(ms.brand, '') as brand, COALESCE(ms.category_id::text, '') as category_id,
-		       COALESCE(c.name, '') as category_name, COALESCE(ms.attributes::text, '{}') as attributes,
+		       COALESCE(c.name, '') as category_name,
 		       COALESCE(ms.duration, '') as duration, COALESCE(ms.provider, '') as provider
 		FROM catalog.master_services ms
 		LEFT JOIN catalog.categories c ON ms.category_id = c.id
@@ -1353,14 +1534,8 @@ func (a *CatalogAdapter) GetMasterServicesWithoutEmbedding(ctx context.Context) 
 	var services []domain.MasterService
 	for rows.Next() {
 		var s domain.MasterService
-		var attrsJSON string
-		if err := rows.Scan(&s.ID, &s.SKU, &s.Name, &s.Description, &s.Brand, &s.CategoryID, &s.CategoryName, &attrsJSON, &s.Duration, &s.Provider); err != nil {
+		if err := rows.Scan(&s.ID, &s.SKU, &s.Name, &s.Description, &s.Brand, &s.CategoryID, &s.CategoryName, &s.Duration, &s.Provider); err != nil {
 			return nil, fmt.Errorf("scan master service: %w", err)
-		}
-		if attrsJSON != "{}" && attrsJSON != "" {
-			if err := json.Unmarshal([]byte(attrsJSON), &s.Attributes); err != nil {
-				a.log.Warn("unmarshal master service attributes", "id", s.ID, "error", err)
-			}
 		}
 		services = append(services, s)
 	}

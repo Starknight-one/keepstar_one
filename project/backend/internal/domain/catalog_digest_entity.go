@@ -10,9 +10,10 @@ import (
 // CatalogDigest is a pre-computed meta-schema of a tenant's catalog.
 // It tells Agent1 HOW to search (strategy), not WHAT exists (data dump).
 type CatalogDigest struct {
-	GeneratedAt   time.Time        `json:"generated_at"`
-	TotalProducts int              `json:"total_products"`
-	Categories    []DigestCategory `json:"categories"`
+	GeneratedAt    time.Time        `json:"generated_at"`
+	TotalProducts  int              `json:"total_products"`
+	Categories     []DigestCategory `json:"categories"`
+	TopIngredients []string         `json:"top_ingredients,omitempty"`
 }
 
 // DigestCategory describes one product category in the digest.
@@ -70,6 +71,11 @@ func (d *CatalogDigest) ToPromptText() string {
 
 	if remaining > 0 {
 		b.WriteString(fmt.Sprintf("\n...and %d more categories\n", remaining))
+	}
+
+	// Top ingredients (compact sample)
+	if len(d.TopIngredients) > 0 {
+		b.WriteString(fmt.Sprintf("\nTop ingredients (sample %d): %s\n", len(d.TopIngredients), strings.Join(d.TopIngredients, ", ")))
 	}
 
 	// Search strategy block

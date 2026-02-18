@@ -163,7 +163,6 @@ func (uc *ImportUseCase) processProductItem(ctx context.Context, tenantID string
 		Brand:         item.Brand,
 		CategoryID:    categoryID,
 		Images:        item.Images,
-		Attributes:    item.Attributes,
 		OwnerTenantID: tenantID,
 	}
 	mpID, err := uc.catalog.UpsertMasterProduct(ctx, mp)
@@ -197,7 +196,6 @@ func (uc *ImportUseCase) processServiceItem(ctx context.Context, tenantID string
 		Brand:         item.Brand,
 		CategoryID:    categoryID,
 		Images:        item.Images,
-		Attributes:    item.Attributes,
 		Duration:      item.Duration,
 		Provider:      item.Provider,
 		OwnerTenantID: tenantID,
@@ -264,46 +262,7 @@ func (uc *ImportUseCase) embedProducts(ctx context.Context, tenantID string) {
 	uc.log.Info("post_import_product_embedding_started", "count", len(products))
 	texts := make([]string, len(products))
 	for i, p := range products {
-		text := p.Name
-		if p.Description != "" {
-			text += " " + p.Description
-		}
-		if p.Brand != "" {
-			text += " " + p.Brand
-		}
-		if p.CategoryName != "" {
-			text += " " + p.CategoryName
-		}
-		if p.Attributes != nil {
-			attrKeys := []string{
-				"color", "material", "type", "size",
-				// cosmetics enriched
-				"product_form", "skin_type", "concern", "key_ingredients",
-				// cosmetics raw
-				"benefits", "how_to_use", "ingredients", "active_ingredients",
-			}
-			for _, key := range attrKeys {
-				if v, ok := p.Attributes[key]; ok {
-					switch val := v.(type) {
-					case string:
-						if val != "" {
-							text += " " + val
-						}
-					case []any:
-						parts := make([]string, 0, len(val))
-						for _, item := range val {
-							if s, ok := item.(string); ok && s != "" {
-								parts = append(parts, s)
-							}
-						}
-						if len(parts) > 0 {
-							text += " " + strings.Join(parts, ", ")
-						}
-					}
-				}
-			}
-		}
-		texts[i] = text
+		texts[i] = buildEmbeddingText(p)
 	}
 
 	batchSize := 100
@@ -322,6 +281,40 @@ func (uc *ImportUseCase) embedProducts(ctx context.Context, tenantID string) {
 		}
 	}
 	uc.log.Info("post_import_product_embedding_completed", "count", len(products))
+}
+
+// buildEmbeddingText creates a compact semantic text for vector embedding.
+// Uses PIM structured fields (~30 tokens). Falls back to name+brand+category for unenriched.
+func buildEmbeddingText(p domain.MasterProduct) string {
+	parts := []string{p.Name}
+	if p.Brand != "" {
+		parts = append(parts, p.Brand)
+	}
+	if p.CategoryName != "" {
+		parts = append(parts, p.CategoryName)
+	}
+	if p.ProductForm != "" {
+		parts = append(parts, p.ProductForm)
+	}
+	if p.Texture != "" {
+		parts = append(parts, p.Texture)
+	}
+	if p.MarketingClaim != "" {
+		parts = append(parts, p.MarketingClaim)
+	}
+	if len(p.SkinType) > 0 {
+		parts = append(parts, strings.Join(p.SkinType, " "))
+	}
+	if len(p.Concern) > 0 {
+		parts = append(parts, strings.Join(p.Concern, " "))
+	}
+	if len(p.KeyIngredients) > 0 {
+		parts = append(parts, strings.Join(p.KeyIngredients, " "))
+	}
+	if p.RoutineStep != "" {
+		parts = append(parts, p.RoutineStep)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (uc *ImportUseCase) embedServices(ctx context.Context, tenantID string) {

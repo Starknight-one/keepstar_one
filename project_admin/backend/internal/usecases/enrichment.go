@@ -23,14 +23,15 @@ const (
 
 type EnrichmentUseCase struct {
 	enrichment ports.EnrichmentPort
+	catalog    ports.AdminCatalogPort
 	log        *logger.Logger
 
 	mu      sync.RWMutex
 	current *domain.EnrichmentJob
 }
 
-func NewEnrichmentUseCase(enrichment ports.EnrichmentPort, log *logger.Logger) *EnrichmentUseCase {
-	return &EnrichmentUseCase{enrichment: enrichment, log: log}
+func NewEnrichmentUseCase(enrichment ports.EnrichmentPort, catalog ports.AdminCatalogPort, log *logger.Logger) *EnrichmentUseCase {
+	return &EnrichmentUseCase{enrichment: enrichment, catalog: catalog, log: log}
 }
 
 // GetStatus returns the current/last enrichment job status.
@@ -270,4 +271,196 @@ func makeBatches(items []domain.EnrichmentInput, size int) [][]domain.Enrichment
 		batches = append(batches, items[i:end])
 	}
 	return batches
+}
+
+// --- V2: DB-based enrichment ---
+
+// EnrichFromDB reads all master products from DB, enriches via LLM v2 prompt,
+// and writes PIM fields directly to DB columns.
+func (uc *EnrichmentUseCase) EnrichFromDB(ctx context.Context, tenantID string) (*domain.EnrichmentJob, error) {
+	// 1. Get all master products for tenant
+	products, err := uc.catalog.GetAllMasterProducts(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("get master products: %w", err)
+	}
+	if len(products) == 0 {
+		return nil, fmt.Errorf("no master products found for tenant %s", tenantID)
+	}
+
+	// 2. Build enrichment inputs
+	inputs := make([]domain.EnrichmentInput, len(products))
+	for i, mp := range products {
+		inputs[i] = buildInputFromMasterProduct(mp)
+	}
+
+	// Build SKU → MasterProduct ID lookup
+	skuToID := make(map[string]string, len(products))
+	for _, mp := range products {
+		skuToID[mp.SKU] = mp.ID
+	}
+
+	const batchSize = 10
+	const workers = 5
+	batches := makeBatches(inputs, batchSize)
+
+	// 3. Initialize job tracker
+	job := &domain.EnrichmentJob{
+		ID:            uuid.New().String(),
+		TenantID:      tenantID,
+		Status:        "processing",
+		TotalProducts: len(products),
+		TotalBatches:  len(batches),
+		Model:         uc.enrichment.Model(),
+		StartedAt:     time.Now(),
+	}
+	uc.mu.Lock()
+	uc.current = job
+	uc.mu.Unlock()
+
+	uc.log.Info("enrichment_v2_started",
+		"job_id", job.ID,
+		"tenant_id", tenantID,
+		"products", job.TotalProducts,
+		"batches", job.TotalBatches)
+
+	// 4. Process batches through LLM v2
+	var totalInputTokens, totalOutputTokens atomic.Int64
+	var processedBatches atomic.Int32
+	var errorCount atomic.Int32
+
+	type batchResult struct {
+		result *domain.EnrichmentResultV2
+		err    error
+	}
+	results := make([]batchResult, len(batches))
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+
+	for i, batch := range batches {
+		wg.Add(1)
+		go func(idx int, items []domain.EnrichmentInput) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			res, err := uc.enrichment.EnrichProductsV2(ctx, items)
+			results[idx] = batchResult{result: res, err: err}
+
+			processed := int(processedBatches.Add(1))
+			if err != nil {
+				errorCount.Add(1)
+				uc.log.Error("enrichment_v2_batch_error",
+					"batch", fmt.Sprintf("%d/%d", processed, len(batches)),
+					"error", err)
+			}
+			if res != nil {
+				totalInputTokens.Add(int64(res.InputTokens))
+				totalOutputTokens.Add(int64(res.OutputTokens))
+			}
+
+			inTok := int(totalInputTokens.Load())
+			outTok := int(totalOutputTokens.Load())
+			uc.mu.Lock()
+			uc.current.ProcessedBatches = processed
+			uc.current.ErrorCount = int(errorCount.Load())
+			uc.current.InputTokens = inTok
+			uc.current.OutputTokens = outTok
+			uc.current.EstimatedCostUSD = estimateCost(inTok, outTok)
+			uc.mu.Unlock()
+
+			uc.log.Info("enrichment_v2_batch_done",
+				"batch", fmt.Sprintf("%d/%d", processed, len(batches)),
+				"input_tokens", inTok,
+				"output_tokens", outTok,
+				"cost_usd", fmt.Sprintf("$%.4f", estimateCost(inTok, outTok)))
+		}(i, batch)
+	}
+	wg.Wait()
+
+	// 5. Write enriched data to DB
+	enriched := 0
+	totalOutputs := 0
+	skuMisses := 0
+	for _, res := range results {
+		if res.err != nil {
+			continue
+		}
+		totalOutputs += len(res.result.Outputs)
+		for _, out := range res.result.Outputs {
+			productID, ok := skuToID[out.SKU]
+			if !ok {
+				skuMisses++
+				if skuMisses <= 10 {
+					uc.log.Error("enrichment_v2_sku_miss",
+						"sku_from_llm", out.SKU,
+						"short_name", out.ShortName)
+				}
+				continue
+			}
+
+			// Resolve category slug to ID
+			var categoryID string
+			if out.CategorySlug != "" {
+				cat, err := uc.catalog.GetCategoryBySlug(ctx, out.CategorySlug)
+				if err == nil {
+					categoryID = cat.ID
+				}
+			}
+
+			if err := uc.catalog.UpdateMasterProductPIM(ctx, productID, categoryID, out); err != nil {
+				uc.log.Error("enrichment_v2_update_error",
+					"product_id", productID,
+					"sku", out.SKU,
+					"error", err)
+				continue
+			}
+			enriched++
+		}
+	}
+
+	uc.log.Info("enrichment_v2_sku_stats",
+		"total_outputs", totalOutputs,
+		"sku_misses", skuMisses,
+		"enriched", enriched)
+
+	// 6. Finalize job
+	now := time.Now()
+	inTok := int(totalInputTokens.Load())
+	outTok := int(totalOutputTokens.Load())
+
+	uc.mu.Lock()
+	uc.current.Status = "completed"
+	uc.current.EnrichedProducts = enriched
+	uc.current.CompletedAt = &now
+	uc.current.InputTokens = inTok
+	uc.current.OutputTokens = outTok
+	uc.current.EstimatedCostUSD = estimateCost(inTok, outTok)
+	finalJob := *uc.current
+	uc.mu.Unlock()
+
+	uc.log.Info("enrichment_v2_completed",
+		"job_id", job.ID,
+		"tenant_id", tenantID,
+		"enriched", enriched,
+		"total", len(products),
+		"input_tokens", inTok,
+		"output_tokens", outTok,
+		"cost_usd", fmt.Sprintf("$%.4f", finalJob.EstimatedCostUSD),
+		"duration", time.Since(job.StartedAt).Round(time.Second))
+
+	return &finalJob, nil
+}
+
+func buildInputFromMasterProduct(mp domain.MasterProduct) domain.EnrichmentInput {
+	return domain.EnrichmentInput{
+		SKU:               mp.SKU,
+		Name:              mp.Name,
+		Brand:             mp.Brand,
+		Description:       mp.Description,
+		Ingredients:       "",
+		ActiveIngredients: "",
+		SkinType:          "",
+		Benefits:          "",
+		HowToUse:          mp.HowToUse,
+	}
 }

@@ -41,7 +41,6 @@ type ProductResponse struct {
 	Brand          string         `json:"brand"`
 	Category       string         `json:"category"`
 	Tags           []string       `json:"tags,omitempty"`
-	Attributes     map[string]any `json:"attributes,omitempty"`
 }
 
 // ListProductsResponse is the API response for product list
@@ -198,11 +197,6 @@ func mapProductToResponse(p domain.Product) ProductResponse {
 		images = []string{}
 	}
 
-	attrs := p.Attributes
-	if attrs == nil {
-		attrs = map[string]any{}
-	}
-
 	return ProductResponse{
 		ID:             p.ID,
 		Name:           p.Name,
@@ -216,6 +210,5 @@ func mapProductToResponse(p domain.Product) ProductResponse {
 		Brand:          p.Brand,
 		Category:       p.Category,
 		Tags:           p.Tags,
-		Attributes:     attrs,
 	}
 }

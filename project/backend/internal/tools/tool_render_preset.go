@@ -521,11 +521,6 @@ func productFieldGetter(p domain.Product) FieldGetter {
 				return nil
 			}
 			return p.Tags
-		case "attributes":
-			if len(p.Attributes) == 0 {
-				return nil
-			}
-			return p.Attributes
 		default:
 			return nil
 		}
