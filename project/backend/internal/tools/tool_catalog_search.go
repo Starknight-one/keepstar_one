@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"keepstar/internal/domain"
 	"keepstar/internal/ports"
 )
@@ -170,31 +171,8 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	sc := domain.SpanFromContext(ctx)
 	stage := domain.StageFromContext(ctx)
 
-	// Generate query embedding
-	var queryEmbedding []float32
-	if t.embedding != nil && vectorQuery != "" {
-		var endEmbed func(...string)
-		if sc != nil && stage != "" {
-			endEmbed = sc.Start(stage + ".tool.embed")
-		}
-		embedStart := time.Now()
-		searchText := vectorQuery
-		if brand != "" {
-			searchText = vectorQuery + " " + brand
-		}
-		embeddings, embErr := t.embedding.Embed(ctx, []string{searchText})
-		if embErr != nil {
-			meta["embed_error"] = embErr.Error()
-		} else if len(embeddings) > 0 {
-			queryEmbedding = embeddings[0]
-		}
-		meta["embed_ms"] = time.Since(embedStart).Milliseconds()
-		if endEmbed != nil {
-			endEmbed("OpenAI embedding")
-		}
-	}
+	// ── Phase 0: GetState → GetTenant → prepare filters (sequential) ──
 
-	// Get state
 	state, err := t.statePort.GetState(ctx, toolCtx.SessionID)
 	if err == domain.ErrSessionNotFound {
 		state, err = t.statePort.CreateState(ctx, toolCtx.SessionID)
@@ -203,7 +181,6 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		return nil, fmt.Errorf("get/create state: %w", err)
 	}
 
-	// Resolve tenant (slug → UUID)
 	tenantSlug := toolCtx.TenantSlug
 	if tenantSlug == "" {
 		if state.Current.Meta.Aliases != nil {
@@ -213,7 +190,7 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		}
 	}
 	if tenantSlug == "" {
-		tenantSlug = "nike" // last resort fallback
+		tenantSlug = "nike"
 	}
 	meta["tenant"] = tenantSlug
 
@@ -222,11 +199,11 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		return nil, fmt.Errorf("get tenant: %w", err)
 	}
 
-	// Keyword search
+	// Prepare product filter
 	filter := ports.ProductFilter{
-		Search:        vectorQuery, // also used for ILIKE fallback
+		Search:        vectorQuery,
 		Brand:         brand,
-		CategoryName:  category, // agent passes category name/slug → ILIKE on c.name/c.slug
+		CategoryName:  category,
 		MinPrice:      minPriceKopecks,
 		MaxPrice:      maxPriceKopecks,
 		SortField:     sortBy,
@@ -240,8 +217,6 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		RoutineStep:   routineStep,
 		Texture:       texture,
 	}
-
-	// Strip brand from ILIKE search to avoid AND conflict
 	if filter.Brand != "" && filter.Search != "" {
 		cleaned := strings.TrimSpace(removeSubstringIgnoreCase(filter.Search, filter.Brand))
 		if cleaned != "" {
@@ -249,71 +224,184 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		}
 	}
 
-	var endSQL func(...string)
-	if sc != nil && stage != "" {
-		endSQL = sc.Start(stage + ".tool.sql")
+	// Prepare service filter
+	svcFilter := ports.ProductFilter{
+		Search:       vectorQuery,
+		Brand:        brand,
+		CategoryName: category,
+		MinPrice:     minPriceKopecks,
+		MaxPrice:     maxPriceKopecks,
+		SortField:    sortBy,
+		SortOrder:    sortOrder,
+		Limit:        limit * 2,
 	}
-	sqlStart := time.Now()
-	keywordProducts, _, _ := t.catalogPort.ListProducts(ctx, tenant.ID, filter)
-	meta["sql_ms"] = time.Since(sqlStart).Milliseconds()
-	if endSQL != nil {
-		endSQL("keyword search")
+	if svcFilter.Brand != "" && svcFilter.Search != "" {
+		cleaned := strings.TrimSpace(removeSubstringIgnoreCase(svcFilter.Search, svcFilter.Brand))
+		if cleaned != "" {
+			svcFilter.Search = cleaned
+		}
 	}
 
-	// Vector search (with brand/category filters for precision)
+	// ── Phase 1: Embedding + keyword searches in parallel ──
+
+	var queryEmbedding []float32
+	var keywordProducts []domain.Product
+	var keywordServices []domain.Service
+	var embedMs, sqlMs, svcSqlMs int64
+	var embedErr error
+
+	g1, ctx1 := errgroup.WithContext(ctx)
+
+	// Goroutine 1: Embedding
+	if t.embedding != nil && vectorQuery != "" {
+		g1.Go(func() error {
+			var endEmbed func(...string)
+			if sc != nil && stage != "" {
+				endEmbed = sc.Start(stage + ".tool.embed")
+			}
+			embedStart := time.Now()
+			searchText := vectorQuery
+			if brand != "" {
+				searchText = vectorQuery + " " + brand
+			}
+			embeddings, err := t.embedding.Embed(ctx1, []string{searchText})
+			embedMs = time.Since(embedStart).Milliseconds()
+			if err != nil {
+				embedErr = err
+			} else if len(embeddings) > 0 {
+				queryEmbedding = embeddings[0]
+			}
+			if endEmbed != nil {
+				endEmbed("OpenAI embedding")
+			}
+			return nil
+		})
+	}
+
+	// Goroutine 2: Keyword products
+	if entityType != "service" {
+		g1.Go(func() error {
+			var endSQL func(...string)
+			if sc != nil && stage != "" {
+				endSQL = sc.Start(stage + ".tool.sql")
+			}
+			sqlStart := time.Now()
+			keywordProducts, _, _ = t.catalogPort.ListProducts(ctx1, tenant.ID, filter)
+			sqlMs = time.Since(sqlStart).Milliseconds()
+			if endSQL != nil {
+				endSQL("keyword search")
+			}
+			return nil
+		})
+	}
+
+	// Goroutine 3: Keyword services
+	if entityType == "service" || entityType == "all" {
+		g1.Go(func() error {
+			var endSvcSQL func(...string)
+			if sc != nil && stage != "" {
+				endSvcSQL = sc.Start(stage + ".tool.svc_sql")
+			}
+			svcSqlStart := time.Now()
+			keywordServices, _, _ = t.catalogPort.ListServices(ctx1, tenant.ID, svcFilter)
+			svcSqlMs = time.Since(svcSqlStart).Milliseconds()
+			if endSvcSQL != nil {
+				endSvcSQL("keyword services")
+			}
+			return nil
+		})
+	}
+
+	_ = g1.Wait()
+
+	// Record Phase 1 timing in meta
+	if embedMs > 0 {
+		meta["embed_ms"] = embedMs
+	}
+	if embedErr != nil {
+		meta["embed_error"] = embedErr.Error()
+	}
+	if sqlMs > 0 {
+		meta["sql_ms"] = sqlMs
+	}
+	if svcSqlMs > 0 {
+		meta["svc_sql_ms"] = svcSqlMs
+	}
+
+	// ── Phase 2: Vector searches in parallel (only if embedding ready) ──
+
 	var vectorProducts []domain.Product
+	var vectorServices []domain.Service
+	var vectorMs, svcVectorMs int64
+	var vectorErr, svcVectorErr error
+
 	if queryEmbedding != nil {
-		var endVector func(...string)
-		if sc != nil && stage != "" {
-			endVector = sc.Start(stage + ".tool.vector")
-		}
-		vectorStart := time.Now()
+		// Build vector filter once (shared, read-only)
 		var vf *ports.VectorFilter
 		if brand != "" || category != "" || productForm != "" || skinType != "" || concern != "" || keyIngredient != "" || targetArea != "" || routineStep != "" || texture != "" {
 			vf = &ports.VectorFilter{Brand: brand, CategoryName: category, ProductForm: productForm, SkinType: skinType, Concern: concern, KeyIngredient: keyIngredient, TargetArea: targetArea, RoutineStep: routineStep, Texture: texture}
 		}
-		var vectorErr error
-		vectorProducts, vectorErr = t.catalogPort.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2, vf)
-		if vectorErr != nil {
-			meta["vector_error"] = vectorErr.Error()
+
+		g2, ctx2 := errgroup.WithContext(ctx)
+
+		// Goroutine 1: Vector product search
+		if entityType != "service" {
+			g2.Go(func() error {
+				var endVector func(...string)
+				if sc != nil && stage != "" {
+					endVector = sc.Start(stage + ".tool.vector")
+				}
+				vectorStart := time.Now()
+				vectorProducts, vectorErr = t.catalogPort.VectorSearch(ctx2, tenant.ID, queryEmbedding, limit*2, vf)
+				vectorMs = time.Since(vectorStart).Milliseconds()
+				if endVector != nil {
+					endVector("pgvector")
+				}
+				return nil
+			})
 		}
-		meta["vector_ms"] = time.Since(vectorStart).Milliseconds()
-		if endVector != nil {
-			endVector("pgvector")
+
+		// Goroutine 2: Vector service search
+		if entityType == "service" || entityType == "all" {
+			g2.Go(func() error {
+				var endSvcVector func(...string)
+				if sc != nil && stage != "" {
+					endSvcVector = sc.Start(stage + ".tool.svc_vector")
+				}
+				svcVectorStart := time.Now()
+				var svcVF *ports.VectorFilter
+				if brand != "" || category != "" {
+					svcVF = &ports.VectorFilter{Brand: brand, CategoryName: category}
+				}
+				vectorServices, svcVectorErr = t.catalogPort.VectorSearchServices(ctx2, tenant.ID, queryEmbedding, limit*2, svcVF)
+				svcVectorMs = time.Since(svcVectorStart).Milliseconds()
+				if endSvcVector != nil {
+					endSvcVector("pgvector services")
+				}
+				return nil
+			})
 		}
+
+		_ = g2.Wait()
 	}
+
+	// Record Phase 2 timing in meta
+	if vectorMs > 0 {
+		meta["vector_ms"] = vectorMs
+	}
+	if vectorErr != nil {
+		meta["vector_error"] = vectorErr.Error()
+	}
+	if svcVectorMs > 0 {
+		meta["svc_vector_ms"] = svcVectorMs
+	}
+	if svcVectorErr != nil {
+		meta["svc_vector_error"] = svcVectorErr.Error()
+	}
+
 	meta["keyword_count"] = len(keywordProducts)
 	meta["vector_count"] = len(vectorProducts)
-
-	// Service search (when entity_type is "service" or "all")
-	var keywordServices []domain.Service
-	var vectorServices []domain.Service
 	if entityType == "service" || entityType == "all" {
-		svcFilter := ports.ProductFilter{
-			Search:       vectorQuery,
-			Brand:        brand,
-			CategoryName: category,
-			MinPrice:     minPriceKopecks,
-			MaxPrice:     maxPriceKopecks,
-			SortField:    sortBy,
-			SortOrder:    sortOrder,
-			Limit:        limit * 2,
-		}
-		if svcFilter.Brand != "" && svcFilter.Search != "" {
-			cleaned := strings.TrimSpace(removeSubstringIgnoreCase(svcFilter.Search, svcFilter.Brand))
-			if cleaned != "" {
-				svcFilter.Search = cleaned
-			}
-		}
-		keywordServices, _, _ = t.catalogPort.ListServices(ctx, tenant.ID, svcFilter)
-
-		if queryEmbedding != nil {
-			var vf *ports.VectorFilter
-			if brand != "" || category != "" {
-				vf = &ports.VectorFilter{Brand: brand, CategoryName: category}
-			}
-			vectorServices, _ = t.catalogPort.VectorSearchServices(ctx, tenant.ID, queryEmbedding, limit*2, vf)
-		}
 		meta["service_keyword_count"] = len(keywordServices)
 		meta["service_vector_count"] = len(vectorServices)
 	}
