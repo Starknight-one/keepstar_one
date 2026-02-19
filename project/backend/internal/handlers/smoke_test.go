@@ -44,7 +44,7 @@ func smokeServer(t *testing.T) *httptest.Server {
 	presetRegistry := presets.NewPresetRegistry()
 	metricsStore := handlers.NewMetricsStore()
 
-	sessionHandler := handlers.NewSessionHandler(cacheAdapter, stateAdapter, log)
+	sessionHandler := handlers.NewSessionHandler(cacheAdapter, stateAdapter, nil, log)
 	healthHandler := handlers.NewHealthHandler()
 	debugHandler := handlers.NewDebugHandler(stateAdapter, cacheAdapter, metricsStore)
 

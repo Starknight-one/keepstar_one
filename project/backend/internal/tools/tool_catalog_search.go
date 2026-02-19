@@ -269,8 +269,8 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		}
 		vectorStart := time.Now()
 		var vf *ports.VectorFilter
-		if brand != "" || category != "" || productForm != "" || skinType != "" || concern != "" || routineStep != "" || texture != "" {
-			vf = &ports.VectorFilter{Brand: brand, CategoryName: category, ProductForm: productForm, SkinType: skinType, Concern: concern, RoutineStep: routineStep, Texture: texture}
+		if brand != "" || category != "" || productForm != "" || skinType != "" || concern != "" || keyIngredient != "" || targetArea != "" || routineStep != "" || texture != "" {
+			vf = &ports.VectorFilter{Brand: brand, CategoryName: category, ProductForm: productForm, SkinType: skinType, Concern: concern, KeyIngredient: keyIngredient, TargetArea: targetArea, RoutineStep: routineStep, Texture: texture}
 		}
 		var vectorErr error
 		vectorProducts, vectorErr = t.catalogPort.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2, vf)

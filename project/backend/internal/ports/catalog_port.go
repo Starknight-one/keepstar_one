@@ -29,13 +29,15 @@ type ProductFilter struct {
 
 // VectorFilter holds optional filters for VectorSearch to narrow results before ranking.
 type VectorFilter struct {
-	Brand        string
-	CategoryName string
-	ProductForm  string
-	SkinType     string
-	Concern      string
-	RoutineStep  string
-	Texture      string
+	Brand         string
+	CategoryName  string
+	ProductForm   string
+	SkinType      string
+	Concern       string
+	KeyIngredient string
+	TargetArea    string
+	RoutineStep   string
+	Texture       string
 }
 
 type CatalogPort interface {

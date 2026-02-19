@@ -475,11 +475,14 @@ func formatPrice(kopecks int, currency string) string {
 		result.WriteRune(c)
 	}
 
-	symbol := "₽"
-	if currency == "USD" {
+	var symbol string
+	switch currency {
+	case "USD":
 		symbol = "$"
-	} else if currency == "EUR" {
+	case "EUR":
 		symbol = "€"
+	default:
+		symbol = "₽"
 	}
 
 	return result.String() + " " + symbol
@@ -617,6 +620,16 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 		if filter.Texture != "" {
 			query += fmt.Sprintf(" AND mp.texture = $%d", argNum)
 			args = append(args, filter.Texture)
+			argNum++
+		}
+		if filter.KeyIngredient != "" {
+			query += fmt.Sprintf(" AND $%d = ANY(mp.key_ingredients)", argNum)
+			args = append(args, filter.KeyIngredient)
+			argNum++
+		}
+		if filter.TargetArea != "" {
+			query += fmt.Sprintf(" AND $%d = ANY(mp.target_area)", argNum)
+			args = append(args, filter.TargetArea)
 			argNum++
 		}
 	}
@@ -831,19 +844,16 @@ func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID str
 			groupMap[parent] = &domain.DigestCategoryGroup{Slug: parent, Name: parent}
 			groupOrder = append(groupOrder, parent)
 		}
-		if li.parentSlug != "" {
-			groupMap[parent].Children = append(groupMap[parent].Children, domain.DigestCategoryLeaf{
-				Name: li.name, Slug: li.slug, Count: li.count,
-			})
-		}
+		// Root-level categories (no parent) add themselves as a leaf;
+		// sub-categories add under their parent group.
+		groupMap[parent].Children = append(groupMap[parent].Children, domain.DigestCategoryLeaf{
+			Name: li.name, Slug: li.slug, Count: li.count,
+		})
 	}
 
 	tree := make([]domain.DigestCategoryGroup, 0, len(groupOrder))
 	for _, slug := range groupOrder {
-		g := groupMap[slug]
-		if len(g.Children) > 0 {
-			tree = append(tree, *g)
-		}
+		tree = append(tree, *groupMap[slug])
 	}
 
 	// Query 2: shared filters — global distinct values (NOT per-category)
