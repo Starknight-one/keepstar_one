@@ -15,48 +15,22 @@ Your job: call catalog_search when user needs NEW data. If the user is asking ab
 Rules:
 1. If user asks for products/services → call catalog_search
 2. catalog_search has two inputs:
-   - filters: structured keyword filters. Write values in English.
-     Brand, category, color, material etc. — translate to English.
-     "Найк" → brand: "Nike". "чёрный" → color: "Black".
+   - filters: exact match filters. Use enum values from <catalog> block.
    - vector_query: semantic search in user's ORIGINAL language. Do NOT translate.
-     This handles multilingual matching automatically via embeddings.
-3. Put everything you can match exactly into filters. Put the search intent into vector_query.
+3. Match user intent to exact filter values from <catalog> → filters.{key}. Everything else → vector_query.
 4. Prices are in RUBLES. "дешевле 10000" → filters.max_price: 10000
 5. If user asks to CHANGE DISPLAY STYLE → DO NOT call any tool. Just stop.
-6. Do NOT explain what you're doing.
-7. Do NOT ask clarifying questions - make best guess.
-8. After getting "ok"/"empty", stop. Do not call more tools.
-9. You will receive a <state> block with current data. Use it:
-   - loaded_products/loaded_services > 0 means data is already loaded
-   - available_fields lists what fields exist (e.g. rating, price, images)
-   - current_display shows what's rendered now
-   - If user asks about fields ALREADY in available_fields → style request, DO NOT call tool
-   - If user asks for DIFFERENT data (new brand, category, search) → call catalog_search
-10. When <state> is absent, treat as new data request.
-11. When <catalog> block is present, use it to form precise search filters:
-    - Params marked "→ filter": use EXACT values in filters.{param}
-    - Params marked "→ vector_query": include descriptive text in vector_query (semantic match)
-    - Use EXACT category names from the catalog tree
-    - Use price_range to validate min_price/max_price make sense
-    - Translate user terms to catalog terms: "Найк" → "Nike", "кроссы" → look at Running Shoes category
-12. Category strategy:
-    - Specific product request ("кроссовки Nike") → set category filter to exact name from catalog
-    - Broad/activity request ("для бега до 12000", "в подарок маме") → do NOT set category filter, use only vector_query + price filter
-    - Ambiguous ("обувь") → if multiple categories match, omit category filter
-13. High-cardinality attributes (colors, models, etc.):
-    - If a param shows "families" or cardinality > 15, do NOT try exact filter — put it in vector_query
-    - Example: user says "салатовые" → vector_query: "салатовые зелёные кроссовки", NOT filter.color: "салатовый"
-
-Examples:
-- "покажи кроссы Найк" → catalog_search(vector_query="кроссы", filters={brand:"Nike"})
-- "чёрные худи Adidas" → catalog_search(vector_query="худи", filters={brand:"Adidas", color:"Black"})
-- "дешевые телефоны Samsung" → catalog_search(vector_query="телефоны", filters={brand:"Samsung"}, sort_by="price", sort_order="asc")
-- "ноутбуки дешевле 50000" → catalog_search(vector_query="ноутбуки", filters={max_price:50000})
-- "что-нибудь для бега" → catalog_search(vector_query="что-нибудь для бега")
-- "TWS наушники с шумодавом" → catalog_search(vector_query="наушники с шумодавом", filters={type:"TWS", anc:"true"})
-- "покажи с большими заголовками" → DO NOT call tool (style request)
-- "покажи крупнее с рейтингом" + state has rating in fields → DO NOT call (style)
-- "а теперь покажи Adidas" + state has Nike loaded → catalog_search (new data)
+6. Do NOT explain. Do NOT ask questions. Make best guess.
+7. After getting "ok"/"empty", stop. Do not call more tools.
+8. <state> block = current data on screen:
+   - loaded_products > 0 → data exists, maybe no search needed
+   - If user asks about fields already displayed → style request, DO NOT call tool
+   - If user asks for DIFFERENT data → call catalog_search
+9. <catalog> block = available filter values:
+   - Use EXACT category slugs from the tree
+   - Use EXACT enum values for filters (skin_type, concern, product_form, etc.)
+   - Unknown values or broad queries → vector_query only
+   - Broad request ("для сухой кожи", "подарок") → do NOT set category, use vector_query + relevant filters
 `
 
 // Legacy prompts (kept for backward compatibility)
@@ -77,22 +51,12 @@ Extract:
 JSON response:`
 
 // BuildAgent1ContextPrompt enriches the user query with current state context.
-// If digest is non-nil, prepends a <catalog> block with the digest text.
-// If no data is loaded (ProductCount=0, ServiceCount=0), returns raw query (with optional catalog).
+// Catalog digest is already in conversation_history from session init — not injected here.
+// If no data is loaded (ProductCount=0, ServiceCount=0), returns raw query.
 // Otherwise wraps state summary in <state> block before the query.
-func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.RenderConfig, userQuery string, digest *domain.CatalogDigest) string {
-	var prefix string
-
-	// Add catalog digest if available
-	if digest != nil {
-		digestText := digest.ToPromptText()
-		if digestText != "" {
-			prefix = "<catalog>\n" + digestText + "</catalog>\n\n"
-		}
-	}
-
+func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.RenderConfig, userQuery string) string {
 	if meta.ProductCount == 0 && meta.ServiceCount == 0 {
-		return prefix + userQuery
+		return userQuery
 	}
 
 	stateInfo := map[string]interface{}{
@@ -118,7 +82,7 @@ func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.Rende
 	}
 
 	jsonBytes, _ := json.Marshal(stateInfo)
-	return prefix + fmt.Sprintf("<state>\n%s\n</state>\n\n%s", string(jsonBytes), userQuery)
+	return fmt.Sprintf("<state>\n%s\n</state>\n\n%s", string(jsonBytes), userQuery)
 }
 
 // BuildAnalyzeQueryPrompt builds the prompt for query analysis (legacy)

@@ -4,6 +4,82 @@
 
 ---
 
+## Digest Redesign — Compact Format + One-Time Delivery — 2026-02-19
+
+Дайджест каталога переделан: сжатие ~2000 токенов → ~300 токенов, доставка один раз при старте сессии (не на каждое сообщение). Использует prompt caching Anthropic.
+
+**Ветка:** `feature/digest-redesign`
+**Файлов:** 10, на базе `feature/pim-catalog-redesign`
+
+### Compact Digest Format
+
+Новая структура `CatalogDigest`:
+- `CategoryTree` — дерево категорий: parent → children(count), компактная нотация
+- `SharedFilters` — глобальные PIM фильтры (product_form, skin_type, concern, texture, routine_step, target_area, key_ingredient) со всеми enum значениями
+- `TopBrands` — топ 30 брендов по частоте
+- `TopIngredients` — топ 30 ингредиентов из `catalog.product_ingredients`
+
+`ToPromptText()` рендерит в ультракомпактный формат:
+```
+967 products
+
+categories:
+  face-care: cleansing(120), serums(85), moisturizing(200), ...
+  makeup: makeup-lips(150), makeup-eyes(80), ...
+
+filters:
+  product_form: cream|serum|gel|oil|...
+  skin_type: dry|oily|combination|sensitive|...
+
+brands(30): HeyBabes, Cosrx, ...
+ingredients(30): Hyaluronic Acid, Niacinamide, ...
+
+enum value → filters.{key}, free text → vector_query
+```
+
+### SQL Generation (4 запроса)
+
+`GenerateCatalogDigest()` переписан — 4 отдельных SQL:
+1. **Category tree** — categories + parent_id + product_count, группировка по родителям
+2. **Shared filters** — `UNION ALL` по всем PIM колонкам, `ARRAY_AGG(DISTINCT ...)` для enum значений
+3. **Top brands** — `GROUP BY brand ORDER BY COUNT(*) DESC LIMIT 30`
+4. **Top ingredients** — join через `catalog.product_ingredients` + `catalog.ingredients`, top 30 по частоте (graceful fallback если таблица не заполнена)
+
+### One-Time Delivery at Session Init
+
+- `handler_session.go` → `HandleInitSession()`: загружает дайджест для тенанта, вставляет `<catalog>` блок в `conversation_history` при создании сессии
+- `agent1_execute.go`: убрана загрузка дайджеста на каждый turn — дайджест приходит из кэша conversation history
+- `prompts.BuildAgent1ContextPrompt()`: убран параметр `digest` — `<catalog>` блок уже в истории
+
+### Prompt Simplification
+
+`Agent1SystemPrompt` упрощён: убраны verbose правила про `→ filter` / `→ vector_query` маркеры, кардинальность, цветовые семейства. Заменено компактной инструкцией: `enum value → filters.{key}, free text → vector_query`.
+
+### Файлы
+
+| Файл | Действие |
+|---|---|
+| `domain/catalog_digest_entity.go` | Переписан — новые структуры, компактный `ToPromptText()` |
+| `adapters/postgres/postgres_catalog.go` | Переписан `GenerateCatalogDigest()` — 4 SQL запроса |
+| `handlers/handler_session.go` | Изменён — `NewSessionHandler` принимает `CatalogPort`, вставка дайджеста при init |
+| `usecases/agent1_execute.go` | Изменён — убрана per-turn загрузка дайджеста |
+| `prompts/prompt_analyze_query.go` | Изменён — убран `digest` из `BuildAgent1ContextPrompt`, упрощён system prompt |
+| `cmd/server/main.go` | Изменён — wiring `catalogAdapter` → `SessionHandler`, фикс лога |
+| `domain/catalog_digest_test.go` | Переписан |
+| `adapters/postgres/catalog_digest_test.go` | Переписан |
+| `adapters/postgres/postgres_catalog_integration_test.go` | Обновлён — фикс `seedTestProducts` (убрана колонка `attributes`) |
+| `prompts/prompt_analyze_query_test.go` | Обновлён |
+
+### Статус
+
+- [x] Компилируется
+- [x] Unit тесты проходят (domain, prompts)
+- [x] Integration тесты обновлены (seedTestProducts без attributes)
+- [ ] Прогон integration тестов на живой БД (нужен DATABASE_URL)
+- [ ] Валидация дайджеста для тенанта `c48987eb-...` с реальными данными
+
+---
+
 ## PIM Catalog Redesign — Structured Columns + Typed Search — 2026-02-18
 
 Перевели каталог с JSONB-каши на нормальный PIM со структурированными колонками, справочником ингредиентов и типизированными фильтрами для агента.

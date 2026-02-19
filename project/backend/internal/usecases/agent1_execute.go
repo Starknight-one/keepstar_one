@@ -118,18 +118,9 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		}
 	}
 
-	// Load pre-computed catalog digest for tenant context
-	var digest *domain.CatalogDigest
-	if uc.catalogPort != nil && req.TenantSlug != "" {
-		tenant, tenantErr := uc.catalogPort.GetTenantBySlug(ctx, req.TenantSlug)
-		if tenantErr == nil && tenant != nil {
-			digest, _ = uc.catalogPort.GetCatalogDigest(ctx, tenant.ID)
-			// Error is not critical — Agent1 works without digest
-		}
-	}
-
 	// Build enriched query with state context for LLM (ephemeral, not saved to history)
-	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, req.Query, digest)
+	// Note: catalog digest is already in conversation_history from session init — no per-turn loading
+	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, req.Query)
 
 	// Build messages with conversation history
 	messages := state.ConversationHistory

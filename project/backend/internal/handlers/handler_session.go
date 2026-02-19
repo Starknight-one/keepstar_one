@@ -14,14 +14,15 @@ import (
 
 // SessionHandler handles session endpoints
 type SessionHandler struct {
-	cache     ports.CachePort
-	statePort ports.StatePort
-	log       *logger.Logger
+	cache       ports.CachePort
+	statePort   ports.StatePort
+	catalogPort ports.CatalogPort
+	log         *logger.Logger
 }
 
 // NewSessionHandler creates a new session handler
-func NewSessionHandler(cache ports.CachePort, statePort ports.StatePort, log *logger.Logger) *SessionHandler {
-	return &SessionHandler{cache: cache, statePort: statePort, log: log}
+func NewSessionHandler(cache ports.CachePort, statePort ports.StatePort, catalogPort ports.CatalogPort, log *logger.Logger) *SessionHandler {
+	return &SessionHandler{cache: cache, statePort: statePort, catalogPort: catalogPort, log: log}
 }
 
 // SessionResponse is the response for GET /api/v1/session/{id}
@@ -182,6 +183,22 @@ func (h *SessionHandler) HandleInitSession(w http.ResponseWriter, r *http.Reques
 		if err := h.statePort.UpdateState(r.Context(), state); err != nil {
 			http.Error(w, "Failed to save session state", http.StatusInternalServerError)
 			return
+		}
+
+		// Seed catalog digest into conversation history (sent once, cached by Anthropic)
+		if h.catalogPort != nil {
+			if digest, err := h.catalogPort.GetCatalogDigest(r.Context(), tenant.ID); err == nil && digest != nil {
+				digestText := digest.ToPromptText()
+				if digestText != "" {
+					initialHistory := []domain.LLMMessage{
+						{Role: "user", Content: "<catalog>\n" + digestText + "</catalog>"},
+						{Role: "assistant", Content: "ok"},
+					}
+					if err := h.statePort.AppendConversation(r.Context(), sessionID, initialHistory); err != nil {
+						h.log.Warn("digest_seed_failed", "session_id", sessionID, "error", err)
+					}
+				}
+			}
 		}
 	}
 

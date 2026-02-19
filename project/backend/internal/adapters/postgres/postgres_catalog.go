@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -778,141 +776,155 @@ func (a *CatalogAdapter) GetAllTenants(ctx context.Context) ([]domain.Tenant, er
 
 // GenerateCatalogDigest computes a compact catalog meta-schema for a tenant.
 func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID string) (*domain.CatalogDigest, error) {
-	// Query 1: categories + brands + prices
+	// Query 1: category tree (with parent_id for grouping)
 	catQuery := `
-		SELECT
-			c.name AS category_name,
-			c.slug AS category_slug,
-			COUNT(DISTINCT mp.id) AS product_count,
-			ARRAY_AGG(DISTINCT mp.brand) FILTER (WHERE mp.brand IS NOT NULL AND mp.brand != '') AS brands,
-			MIN(p.price) AS min_price,
-			MAX(p.price) AS max_price
+		SELECT c.name, c.slug, COALESCE(pc.slug, '') AS parent_slug,
+		       COUNT(DISTINCT mp.id) AS product_count
 		FROM catalog.products p
 		JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN catalog.categories pc ON c.parent_id = pc.id
 		WHERE p.tenant_id = $1
-		GROUP BY c.name, c.slug
+		GROUP BY c.id, c.name, c.slug, pc.slug
 		ORDER BY product_count DESC
 	`
-
 	catRows, err := a.client.pool.Query(ctx, catQuery, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("query categories for digest: %w", err)
 	}
 	defer catRows.Close()
 
-	type catInfo struct {
-		name     string
-		slug     string
-		count    int
-		brands   []string
-		minPrice int
-		maxPrice int
+	type leafInfo struct {
+		name       string
+		slug       string
+		parentSlug string
+		count      int
 	}
-	var catInfos []catInfo
+	var leaves []leafInfo
 	totalProducts := 0
 
 	for catRows.Next() {
-		var ci catInfo
-		var brands []string
-		if err := catRows.Scan(&ci.name, &ci.slug, &ci.count, &brands, &ci.minPrice, &ci.maxPrice); err != nil {
+		var li leafInfo
+		if err := catRows.Scan(&li.name, &li.slug, &li.parentSlug, &li.count); err != nil {
 			return nil, fmt.Errorf("scan category digest: %w", err)
 		}
-		// Filter out empty brands
-		for _, b := range brands {
-			if b != "" {
-				ci.brands = append(ci.brands, b)
-			}
-		}
-		totalProducts += ci.count
-		catInfos = append(catInfos, ci)
+		totalProducts += li.count
+		leaves = append(leaves, li)
 	}
 
-	if len(catInfos) == 0 {
+	if len(leaves) == 0 {
 		return &domain.CatalogDigest{
 			GeneratedAt:   time.Now(),
 			TotalProducts: 0,
-			Categories:    []domain.DigestCategory{},
 		}, nil
 	}
 
-	// Query 2: PIM columns aggregated per category (replaces old LATERAL jsonb_each_text)
-	attrQuery := `
-		SELECT category_name, attr_key,
-			COUNT(DISTINCT attr_value) AS cardinality,
-			ARRAY_AGG(DISTINCT attr_value ORDER BY attr_value) AS all_values
+	// Build category tree: group by parent
+	groupMap := make(map[string]*domain.DigestCategoryGroup)
+	var groupOrder []string
+	for _, li := range leaves {
+		parent := li.parentSlug
+		if parent == "" {
+			parent = li.slug // root category without parent = standalone group
+		}
+		if _, ok := groupMap[parent]; !ok {
+			groupMap[parent] = &domain.DigestCategoryGroup{Slug: parent, Name: parent}
+			groupOrder = append(groupOrder, parent)
+		}
+		if li.parentSlug != "" {
+			groupMap[parent].Children = append(groupMap[parent].Children, domain.DigestCategoryLeaf{
+				Name: li.name, Slug: li.slug, Count: li.count,
+			})
+		}
+	}
+
+	tree := make([]domain.DigestCategoryGroup, 0, len(groupOrder))
+	for _, slug := range groupOrder {
+		g := groupMap[slug]
+		if len(g.Children) > 0 {
+			tree = append(tree, *g)
+		}
+	}
+
+	// Query 2: shared filters — global distinct values (NOT per-category)
+	filterQuery := `
+		SELECT attr_key, ARRAY_AGG(DISTINCT attr_value ORDER BY attr_value) AS all_values
 		FROM (
-			-- Scalar PIM columns
-			SELECT c.name AS category_name, 'product_form' AS attr_key, mp.product_form AS attr_value
+			SELECT 'product_form' AS attr_key, mp.product_form AS attr_value
 			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.categories c ON mp.category_id = c.id
 			WHERE p.tenant_id = $1 AND mp.product_form IS NOT NULL AND mp.product_form != ''
 			UNION ALL
-			SELECT c.name, 'texture', mp.texture
+			SELECT 'texture', mp.texture
 			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.categories c ON mp.category_id = c.id
 			WHERE p.tenant_id = $1 AND mp.texture IS NOT NULL AND mp.texture != ''
 			UNION ALL
-			SELECT c.name, 'routine_step', mp.routine_step
+			SELECT 'routine_step', mp.routine_step
 			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.categories c ON mp.category_id = c.id
 			WHERE p.tenant_id = $1 AND mp.routine_step IS NOT NULL AND mp.routine_step != ''
 			UNION ALL
-			-- Array PIM columns (unnested)
-			SELECT c.name, 'skin_type', unnest(mp.skin_type)
+			SELECT 'skin_type', unnest(mp.skin_type)
 			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.categories c ON mp.category_id = c.id
 			WHERE p.tenant_id = $1 AND mp.skin_type IS NOT NULL
 			UNION ALL
-			SELECT c.name, 'concern', unnest(mp.concern)
+			SELECT 'concern', unnest(mp.concern)
 			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.categories c ON mp.category_id = c.id
 			WHERE p.tenant_id = $1 AND mp.concern IS NOT NULL
 			UNION ALL
-			SELECT c.name, 'key_ingredients', unnest(mp.key_ingredients)
+			SELECT 'key_ingredient', unnest(mp.key_ingredients)
 			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.categories c ON mp.category_id = c.id
 			WHERE p.tenant_id = $1 AND mp.key_ingredients IS NOT NULL
 			UNION ALL
-			SELECT c.name, 'target_area', unnest(mp.target_area)
+			SELECT 'target_area', unnest(mp.target_area)
 			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.categories c ON mp.category_id = c.id
 			WHERE p.tenant_id = $1 AND mp.target_area IS NOT NULL
 		) AS attrs
 		WHERE attr_value IS NOT NULL AND attr_value != ''
-		GROUP BY category_name, attr_key
-		ORDER BY category_name, cardinality DESC
+		GROUP BY attr_key
+		ORDER BY attr_key
 	`
-
-	attrRows, err := a.client.pool.Query(ctx, attrQuery, tenantID)
+	filterRows, err := a.client.pool.Query(ctx, filterQuery, tenantID)
 	if err != nil {
-		return nil, fmt.Errorf("query attributes for digest: %w", err)
+		return nil, fmt.Errorf("query filters for digest: %w", err)
 	}
-	defer attrRows.Close()
+	defer filterRows.Close()
 
-	// Build category → attrs map
-	type attrInfo struct {
-		key         string
-		cardinality int
-		values      []string
-	}
-	catAttrs := make(map[string][]attrInfo)
-
-	for attrRows.Next() {
-		var catName, attrKey string
-		var cardinality int
+	var sharedFilters []domain.DigestSharedFilter
+	for filterRows.Next() {
+		var key string
 		var values []string
-		if err := attrRows.Scan(&catName, &attrKey, &cardinality, &values); err != nil {
-			return nil, fmt.Errorf("scan attribute digest: %w", err)
+		if err := filterRows.Scan(&key, &values); err != nil {
+			return nil, fmt.Errorf("scan filter digest: %w", err)
 		}
-		catAttrs[catName] = append(catAttrs[catName], attrInfo{
-			key:         attrKey,
-			cardinality: cardinality,
-			values:      values,
-		})
+		sharedFilters = append(sharedFilters, domain.DigestSharedFilter{Key: key, Values: values})
 	}
 
-	// Query 3: top-20 ingredients (compact sample for LLM context)
+	// Query 3: top brands (top 30 by product count)
+	brandQuery := `
+		SELECT mp.brand
+		FROM catalog.products p
+		JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		WHERE p.tenant_id = $1 AND mp.brand IS NOT NULL AND mp.brand != ''
+		GROUP BY mp.brand
+		ORDER BY COUNT(*) DESC
+		LIMIT 30
+	`
+	brandRows, err := a.client.pool.Query(ctx, brandQuery, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query brands for digest: %w", err)
+	}
+	defer brandRows.Close()
+
+	var topBrands []string
+	for brandRows.Next() {
+		var brand string
+		if err := brandRows.Scan(&brand); err != nil {
+			return nil, fmt.Errorf("scan brand digest: %w", err)
+		}
+		topBrands = append(topBrands, brand)
+	}
+
+	// Query 4: top ingredients (top 30 by frequency)
+	var topIngredients []string
 	ingrQuery := `
 		SELECT i.inci_name
 		FROM catalog.product_ingredients pi
@@ -922,142 +934,32 @@ func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID str
 		WHERE p.tenant_id = $1
 		GROUP BY i.inci_name
 		ORDER BY COUNT(*) DESC
-		LIMIT 20
+		LIMIT 30
 	`
 	ingrRows, err := a.client.pool.Query(ctx, ingrQuery, tenantID)
 	if err != nil {
-		return nil, fmt.Errorf("query ingredients for digest: %w", err)
-	}
-	defer ingrRows.Close()
-
-	var topIngredients []string
-	for ingrRows.Next() {
-		var name string
-		if err := ingrRows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("scan ingredient digest: %w", err)
-		}
-		topIngredients = append(topIngredients, name)
-	}
-
-	// Build digest categories
-	categories := make([]domain.DigestCategory, 0, len(catInfos))
-	for _, ci := range catInfos {
-		dc := domain.DigestCategory{
-			Name:       ci.name,
-			Slug:       ci.slug,
-			Count:      ci.count,
-			PriceRange: [2]int{ci.minPrice, ci.maxPrice},
-		}
-
-		// Brand as first param
-		if len(ci.brands) > 0 {
-			dc.Params = append(dc.Params, buildDigestParam("brand", ci.brands))
-		}
-
-		// Attributes
-		if attrs, ok := catAttrs[ci.name]; ok {
-			for _, ai := range attrs {
-				dc.Params = append(dc.Params, buildDigestParam(ai.key, ai.values))
+		// Not fatal — ingredients table may not be seeded yet
+		a.log.Warn("digest_ingredients_query_failed", "error", err)
+	} else {
+		defer ingrRows.Close()
+		for ingrRows.Next() {
+			var name string
+			if err := ingrRows.Scan(&name); err != nil {
+				a.log.Warn("digest_ingredient_scan_failed", "error", err)
+				break
 			}
+			topIngredients = append(topIngredients, name)
 		}
-
-		categories = append(categories, dc)
 	}
 
 	return &domain.CatalogDigest{
 		GeneratedAt:    time.Now(),
 		TotalProducts:  totalProducts,
-		Categories:     categories,
+		CategoryTree:   tree,
+		SharedFilters:  sharedFilters,
+		TopBrands:      topBrands,
 		TopIngredients: topIngredients,
 	}, nil
-}
-
-// buildDigestParam creates a DigestParam applying cardinality rules.
-func buildDigestParam(key string, values []string) domain.DigestParam {
-	cardinality := len(values)
-
-	// Check if values are numeric (for range params like size)
-	if isNumericValues(values) && cardinality > 1 {
-		minVal, maxVal := numericRange(values)
-		return domain.DigestParam{
-			Key:         key,
-			Type:        "range",
-			Cardinality: cardinality,
-			Range:       fmt.Sprintf("%s-%s", minVal, maxVal),
-		}
-	}
-
-	p := domain.DigestParam{
-		Key:         key,
-		Type:        "enum",
-		Cardinality: cardinality,
-	}
-
-	switch {
-	case cardinality <= 15:
-		p.Values = values
-	case cardinality <= 50:
-		top := 5
-		if top > cardinality {
-			top = cardinality
-		}
-		p.Top = values[:top]
-		p.More = cardinality - top
-	default:
-		// 50+ values → families
-		p.Families = domain.ComputeFamilies(key, values)
-		if len(p.Families) == 0 {
-			// Fallback: top 10 values
-			top := 10
-			if top > cardinality {
-				top = cardinality
-			}
-			p.Top = values[:top]
-			p.More = cardinality - top
-		}
-	}
-
-	return p
-}
-
-// stripNumericSuffix removes common unit suffixes for numeric parsing.
-func stripNumericSuffix(s string) string {
-	clean := strings.TrimSpace(s)
-	// Remove common unit suffixes
-	for _, suffix := range []string{"GB", "MB", "TB", "mm", "inch", "\"", " inch"} {
-		clean = strings.TrimSuffix(clean, suffix)
-	}
-	return strings.TrimSpace(clean)
-}
-
-// isNumericValues checks if all values are purely numeric (possibly with unit suffixes).
-func isNumericValues(values []string) bool {
-	if len(values) == 0 {
-		return false
-	}
-	for _, v := range values {
-		clean := stripNumericSuffix(v)
-		if _, err := strconv.ParseFloat(clean, 64); err != nil {
-			return false
-		}
-	}
-	return true
-}
-
-// numericRange returns min and max original string representations from numeric values.
-func numericRange(values []string) (string, string) {
-	if len(values) == 0 {
-		return "0", "0"
-	}
-	// Sort numerically using stripped values
-	sorted := make([]string, len(values))
-	copy(sorted, values)
-	sort.Slice(sorted, func(i, j int) bool {
-		ni, _ := strconv.ParseFloat(stripNumericSuffix(sorted[i]), 64)
-		nj, _ := strconv.ParseFloat(stripNumericSuffix(sorted[j]), 64)
-		return ni < nj
-	})
-	return sorted[0], sorted[len(sorted)-1]
 }
 
 // SaveCatalogDigest persists the computed digest to the tenants table.

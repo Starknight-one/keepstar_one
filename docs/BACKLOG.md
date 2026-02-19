@@ -175,4 +175,4 @@ Back < 16ms, Expand < 16ms. Formation stack (instant back) + adjacent templates 
 
 ---
 
-*Последнее обновление: 2026-02-13*
+*Последнее обновление: 2026-02-19*

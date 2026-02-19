@@ -175,7 +175,7 @@ func main() {
 
 	// Initialize handlers
 	chatHandler := handlers.NewChatHandler(sendMessage, appLog)
-	sessionHandler := handlers.NewSessionHandler(cacheAdapter, stateAdapter, appLog)
+	sessionHandler := handlers.NewSessionHandler(cacheAdapter, stateAdapter, catalogAdapter, appLog)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Create metrics store for debug page
@@ -389,7 +389,7 @@ func generateAllDigests(ctx context.Context, catalog *postgres.CatalogAdapter, l
 			log.Error("digest_save_failed", "tenant", t.Slug, "error", err)
 			continue
 		}
-		log.Info("digest_generated", "tenant", t.Slug, "categories", len(digest.Categories), "total_products", digest.TotalProducts)
+		log.Info("digest_generated", "tenant", t.Slug, "categories", len(digest.CategoryTree), "total_products", digest.TotalProducts)
 	}
 	return nil
 }

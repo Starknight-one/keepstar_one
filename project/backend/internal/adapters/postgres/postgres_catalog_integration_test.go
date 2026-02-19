@@ -73,14 +73,13 @@ func seedTestProducts(t *testing.T, client *postgres.Client, tenantID string, n 
 		sku := fmt.Sprintf("TEST-SKU-%s", uuid.New().String()[:8])
 		masterIDs = append(masterIDs, masterID)
 		_, err = client.Pool().Exec(ctx, `
-			INSERT INTO catalog.master_products (id, sku, name, description, brand, category_id, images, attributes, owner_tenant_id, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, '[]', $7, $8, NOW(), NOW())
+			INSERT INTO catalog.master_products (id, sku, name, description, brand, category_id, images, owner_tenant_id, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, '[]', $7, NOW(), NOW())
 		`, masterID, sku,
 			fmt.Sprintf("Test Product %d", i+1),
 			fmt.Sprintf("Description %d", i+1),
 			brands[i%len(brands)],
 			categoryID,
-			fmt.Sprintf(`{"color": "color%d"}`, i%3),
 			tenantID)
 		if err != nil {
 			t.Fatalf("seed master product: %v", err)
@@ -361,8 +360,10 @@ func TestCatalogIntegration_DigestSaveAndGet(t *testing.T) {
 	digest := &domain.CatalogDigest{
 		GeneratedAt:   time.Now(),
 		TotalProducts: 42,
-		Categories: []domain.DigestCategory{
-			{Name: "Sneakers", Slug: "sneakers", Count: 42},
+		CategoryTree: []domain.DigestCategoryGroup{
+			{Name: "Shoes", Slug: "shoes", Children: []domain.DigestCategoryLeaf{
+				{Name: "Sneakers", Slug: "sneakers", Count: 42},
+			}},
 		},
 	}
 
@@ -378,8 +379,8 @@ func TestCatalogIntegration_DigestSaveAndGet(t *testing.T) {
 	if loaded.TotalProducts != 42 {
 		t.Errorf("want TotalProducts=42, got %d", loaded.TotalProducts)
 	}
-	if len(loaded.Categories) != 1 {
-		t.Errorf("want 1 category, got %d", len(loaded.Categories))
+	if len(loaded.CategoryTree) != 1 {
+		t.Errorf("want 1 category group, got %d", len(loaded.CategoryTree))
 	}
 }
 
@@ -396,8 +397,8 @@ func TestCatalogIntegration_DigestGenerate(t *testing.T) {
 	if digest.TotalProducts < 4 {
 		t.Errorf("want TotalProducts >= 4, got %d", digest.TotalProducts)
 	}
-	if len(digest.Categories) < 1 {
-		t.Errorf("want >= 1 category, got %d", len(digest.Categories))
+	if len(digest.CategoryTree) < 1 {
+		t.Errorf("want >= 1 category group, got %d", len(digest.CategoryTree))
 	}
 }
 

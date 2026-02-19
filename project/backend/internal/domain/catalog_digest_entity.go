@@ -2,220 +2,89 @@ package domain
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
 
 // CatalogDigest is a pre-computed meta-schema of a tenant's catalog.
-// It tells Agent1 HOW to search (strategy), not WHAT exists (data dump).
+// Compact format (~300-400 tokens) — sent once at session init, cached by Anthropic.
 type CatalogDigest struct {
-	GeneratedAt    time.Time        `json:"generated_at"`
-	TotalProducts  int              `json:"total_products"`
-	Categories     []DigestCategory `json:"categories"`
-	TopIngredients []string         `json:"top_ingredients,omitempty"`
+	GeneratedAt    time.Time               `json:"generated_at"`
+	TotalProducts  int                     `json:"total_products"`
+	CategoryTree   []DigestCategoryGroup   `json:"category_tree"`
+	SharedFilters  []DigestSharedFilter    `json:"shared_filters"`
+	TopBrands      []string                `json:"top_brands,omitempty"`
+	TopIngredients []string                `json:"top_ingredients,omitempty"`
 }
 
-// DigestCategory describes one product category in the digest.
-type DigestCategory struct {
-	Name       string        `json:"name"`
-	Slug       string        `json:"slug"`
-	Count      int           `json:"count"`
-	PriceRange [2]int        `json:"price_range"` // kopecks [min, max]
-	Params     []DigestParam `json:"params"`
+// DigestCategoryGroup is a root category with leaf children.
+type DigestCategoryGroup struct {
+	Name     string                `json:"name"`
+	Slug     string                `json:"slug"`
+	Children []DigestCategoryLeaf  `json:"children"`
 }
 
-// DigestParam describes a single filterable parameter within a category.
-type DigestParam struct {
-	Key         string   `json:"key"`
-	Type        string   `json:"type"`                    // "enum" | "range"
-	Cardinality int      `json:"cardinality"`
-	Values      []string `json:"values,omitempty"`   // full list (cardinality <= 15)
-	Top         []string `json:"top,omitempty"`      // top-N (cardinality 16-50)
-	More        int      `json:"more,omitempty"`     // remaining count (cardinality 16-50)
-	Families    []string `json:"families,omitempty"` // families (cardinality 50+)
-	Range       string   `json:"range,omitempty"`    // "36-47", "13-17 inch"
+// DigestCategoryLeaf is a leaf category with product count.
+type DigestCategoryLeaf struct {
+	Name  string   `json:"name"`
+	Slug  string   `json:"slug"`
+	Count int      `json:"count"`
+	Forms []string `json:"forms,omitempty"` // product_form values specific to this category
 }
 
-// ToPromptText returns compact text for LLM system prompt.
-// Includes search strategy hints (→ filter / → vector_query).
+// DigestSharedFilter is a global filter with all possible values.
+type DigestSharedFilter struct {
+	Key    string   `json:"key"`
+	Values []string `json:"values"`
+}
+
+// ToPromptText returns ultra-compact text for LLM context (~300-400 tokens).
 func (d *CatalogDigest) ToPromptText() string {
-	if d == nil || len(d.Categories) == 0 {
+	if d == nil || d.TotalProducts == 0 {
 		return ""
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Tenant catalog: %d products\n\n", d.TotalProducts))
+	b.WriteString(fmt.Sprintf("%d products\n\n", d.TotalProducts))
 
-	// Determine how many categories to show
-	maxCategories := 25
-	cats := d.Categories
-	remaining := 0
-	if len(cats) > maxCategories {
-		remaining = len(cats) - maxCategories
-		cats = cats[:maxCategories]
+	// Category tree: compact "parent: child(N), child(N), ..."
+	b.WriteString("categories:\n")
+	for _, group := range d.CategoryTree {
+		if len(group.Children) == 0 {
+			continue
+		}
+		b.WriteString("  ")
+		b.WriteString(group.Slug)
+		b.WriteString(": ")
+		for i, child := range group.Children {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fmt.Sprintf("%s(%d)", child.Slug, child.Count))
+		}
+		b.WriteString("\n")
 	}
 
-	for _, cat := range cats {
-		// Category line: Name (count): price range
-		priceStr := formatPriceRange(cat.PriceRange[0], cat.PriceRange[1])
-		b.WriteString(fmt.Sprintf("%s (%d): %s\n", cat.Name, cat.Count, priceStr))
-
-		// Params
-		for _, p := range cat.Params {
-			b.WriteString("  ")
-			b.WriteString(formatParam(p))
-			b.WriteString("\n")
+	// Shared filters
+	if len(d.SharedFilters) > 0 {
+		b.WriteString("\nfilters:\n")
+		for _, f := range d.SharedFilters {
+			b.WriteString(fmt.Sprintf("  %s: %s\n", f.Key, strings.Join(f.Values, "|")))
 		}
 	}
 
-	if remaining > 0 {
-		b.WriteString(fmt.Sprintf("\n...and %d more categories\n", remaining))
+	// Top brands
+	if len(d.TopBrands) > 0 {
+		b.WriteString(fmt.Sprintf("\nbrands(%d): %s\n", len(d.TopBrands), strings.Join(d.TopBrands, ", ")))
 	}
 
-	// Top ingredients (compact sample)
+	// Top ingredients
 	if len(d.TopIngredients) > 0 {
-		b.WriteString(fmt.Sprintf("\nTop ingredients (sample %d): %s\n", len(d.TopIngredients), strings.Join(d.TopIngredients, ", ")))
+		b.WriteString(fmt.Sprintf("ingredients(%d): %s\n", len(d.TopIngredients), strings.Join(d.TopIngredients, ", ")))
 	}
 
-	// Search strategy block
-	b.WriteString("\nSearch strategy:\n")
-	b.WriteString("- param marked \"→ filter\": use in filters.{param} (exact SQL match)\n")
-	b.WriteString("- param marked \"→ vector_query\": include in vector_query text (semantic match)\n")
-	b.WriteString("- broad/activity queries (\"для бега\", \"в подарок\"): do NOT set category filter, use only vector_query + price\n")
-	b.WriteString("- if unsure about category: omit category filter, let vector search find across all categories\n")
+	// One-line search rule
+	b.WriteString("\nenum value → filters.{key}, free text → vector_query\n")
 
 	return b.String()
-}
-
-// formatPriceRange converts kopecks to rubles for display.
-// If min == max or min == 0: "from N RUB". Otherwise "N-M RUB".
-func formatPriceRange(minKop, maxKop int) string {
-	minRub := minKop / 100
-	maxRub := maxKop / 100
-	if minRub == 0 && maxRub == 0 {
-		return "price N/A"
-	}
-	if minRub == maxRub || minRub == 0 {
-		return fmt.Sprintf("from %d RUB", maxRub)
-	}
-	if maxRub == 0 {
-		return fmt.Sprintf("from %d RUB", minRub)
-	}
-	return fmt.Sprintf("%d-%d RUB", minRub, maxRub)
-}
-
-// formatParam formats a single DigestParam with search hint.
-func formatParam(p DigestParam) string {
-	hint := "→ filter"
-
-	switch {
-	case p.Range != "":
-		return fmt.Sprintf("%s(%s: %s) %s", p.Key, p.Type, p.Range, hint)
-	case len(p.Values) > 0:
-		return fmt.Sprintf("%s(%d): %s %s", p.Key, p.Cardinality, strings.Join(p.Values, ", "), hint)
-	case len(p.Top) > 0:
-		return fmt.Sprintf("%s(%d, top: %s +%d) %s", p.Key, p.Cardinality, strings.Join(p.Top, "/"), p.More, hint)
-	case len(p.Families) > 0:
-		hint = "→ vector_query"
-		return fmt.Sprintf("%s(%d, families: %s) %s", p.Key, p.Cardinality, strings.Join(p.Families, "/"), hint)
-	default:
-		return fmt.Sprintf("%s(%d) %s", p.Key, p.Cardinality, hint)
-	}
-}
-
-// colorFamilyMap maps color names (Russian/English) to color families.
-var colorFamilyMap = map[string]string{
-	// Red family
-	"red": "Red", "красный": "Red", "бордовый": "Red", "алый": "Red",
-	"малиновый": "Red", "вишнёвый": "Red", "вишневый": "Red", "рубиновый": "Red",
-	"коралловый": "Red", "багровый": "Red", "crimson": "Red", "maroon": "Red",
-	"burgundy": "Red", "cherry": "Red", "coral": "Red", "wine": "Red",
-
-	// Blue family
-	"blue": "Blue", "синий": "Blue", "голубой": "Blue", "тёмно-синий": "Blue",
-	"темно-синий": "Blue", "лазурный": "Blue", "бирюзовый": "Blue", "индиго": "Blue",
-	"navy": "Blue", "azure": "Blue", "cobalt": "Blue", "turquoise": "Blue",
-	"teal": "Blue", "cyan": "Blue", "sky blue": "Blue", "royal blue": "Blue",
-
-	// Green family
-	"green": "Green", "зелёный": "Green", "зеленый": "Green", "салатовый": "Green",
-	"травяной": "Green", "нежно-травяной": "Green", "изумрудный": "Green", "оливковый": "Green",
-	"хаки": "Green", "мятный": "Green", "lime": "Green", "olive": "Green",
-	"emerald": "Green", "mint": "Green", "forest green": "Green", "sage": "Green",
-	"khaki": "Green",
-
-	// Black family
-	"black": "Black", "чёрный": "Black", "черный": "Black", "графитовый": "Black",
-	"угольный": "Black", "антрацит": "Black", "graphite": "Black", "charcoal": "Black",
-	"onyx": "Black", "jet black": "Black",
-
-	// White family
-	"white": "White", "белый": "White", "молочный": "White", "кремовый": "White",
-	"слоновая кость": "White", "ivory": "White", "cream": "White", "snow": "White",
-	"pearl": "White", "off-white": "White",
-
-	// Gray family
-	"gray": "Gray", "grey": "Gray", "серый": "Gray", "серебристый": "Gray",
-	"стальной": "Gray", "silver": "Gray", "steel": "Gray", "platinum": "Gray",
-	"ash": "Gray", "slate": "Gray",
-
-	// Yellow family
-	"yellow": "Yellow", "жёлтый": "Yellow", "желтый": "Yellow", "золотой": "Yellow",
-	"лимонный": "Yellow", "янтарный": "Yellow", "gold": "Yellow", "lemon": "Yellow",
-	"amber": "Yellow", "mustard": "Yellow",
-
-	// Orange family
-	"orange": "Orange", "оранжевый": "Orange", "рыжий": "Orange", "апельсиновый": "Orange",
-	"мандариновый": "Orange", "tangerine": "Orange", "peach": "Orange", "персиковый": "Orange",
-
-	// Pink family
-	"pink": "Pink", "розовый": "Pink", "фуксия": "Pink", "пурпурный": "Pink",
-	"magenta": "Pink", "fuchsia": "Pink", "hot pink": "Pink", "salmon": "Pink",
-	"rose": "Pink", "blush": "Pink",
-
-	// Purple family
-	"purple": "Purple", "фиолетовый": "Purple", "лиловый": "Purple", "сиреневый": "Purple",
-	"лавандовый": "Purple", "violet": "Purple", "lavender": "Purple", "plum": "Purple",
-	"mauve": "Purple", "lilac": "Purple",
-
-	// Brown family
-	"brown": "Brown", "коричневый": "Brown", "шоколадный": "Brown", "каштановый": "Brown",
-	"бежевый": "Brown", "песочный": "Brown", "beige": "Brown", "tan": "Brown",
-	"chocolate": "Brown", "sand": "Brown", "camel": "Brown", "taupe": "Brown",
-}
-
-// ComputeFamilies groups a list of color values into color families.
-// For non-color attributes, returns top-10 most frequent values.
-func ComputeFamilies(key string, values []string) []string {
-	isColor := strings.EqualFold(key, "color") || strings.EqualFold(key, "цвет")
-
-	if isColor {
-		return computeColorFamilies(values)
-	}
-
-	// For non-color: return top-10
-	if len(values) <= 10 {
-		return values
-	}
-	return values[:10]
-}
-
-// computeColorFamilies maps raw color values to color family names.
-func computeColorFamilies(values []string) []string {
-	familySet := make(map[string]bool)
-	for _, v := range values {
-		lower := strings.ToLower(strings.TrimSpace(v))
-		if family, ok := colorFamilyMap[lower]; ok {
-			familySet[family] = true
-		}
-	}
-
-	// Sort families for deterministic output
-	families := make([]string, 0, len(familySet))
-	for f := range familySet {
-		families = append(families, f)
-	}
-	sort.Strings(families)
-	return families
 }
