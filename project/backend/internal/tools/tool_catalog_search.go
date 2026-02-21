@@ -626,5 +626,23 @@ func catalogExtractProductFields(p domain.Product) []string {
 	if len(p.Images) > 0 {
 		fields = append(fields, "images")
 	}
+	if len(p.Tags) > 0 {
+		fields = append(fields, "tags")
+	}
+	if p.StockQuantity > 0 {
+		fields = append(fields, "stockQuantity")
+	}
+	if p.ProductForm != "" {
+		fields = append(fields, "productForm")
+	}
+	if len(p.SkinType) > 0 {
+		fields = append(fields, "skinType")
+	}
+	if len(p.Concern) > 0 {
+		fields = append(fields, "concern")
+	}
+	if len(p.KeyIngredients) > 0 {
+		fields = append(fields, "keyIngredients")
+	}
 	return fields
 }

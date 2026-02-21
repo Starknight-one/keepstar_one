@@ -69,7 +69,7 @@
   justify-content: center;
 }
 
-.formation-single .widget {
+.formation-single > * {
   width: 100%;
   max-width: 400px;
 }
@@ -82,7 +82,7 @@
   width: 100%;
 }
 
-.formation-list .widget {
+.formation-list > * {
   width: 100%;
   max-width: 100%;
 }

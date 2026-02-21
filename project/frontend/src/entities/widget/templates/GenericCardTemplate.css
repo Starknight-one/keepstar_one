@@ -1,0 +1,84 @@
+/* GenericCard — fills its container (grid cell controls width) */
+.generic-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-secondary, #F4F4F5);
+  border-radius: var(--border-radius-lg, 16px);
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.generic-card:hover {
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.1));
+  transform: translateY(-2px);
+}
+
+/* --- Media zone --- */
+
+.generic-card-media {
+  position: relative;
+  height: 180px;
+  overflow: hidden;
+  background: var(--color-bg-tertiary, #E4E4E7);
+}
+
+.generic-card.size-tiny .generic-card-media {
+  height: 100px;
+}
+
+.generic-card.size-small .generic-card-media {
+  height: 130px;
+}
+
+.generic-card.size-large .generic-card-media {
+  height: 280px;
+}
+
+/* --- Content zone --- */
+
+.generic-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+}
+
+.generic-card.size-tiny .generic-card-content {
+  padding: 8px;
+  gap: 4px;
+}
+
+.generic-card.size-small .generic-card-content {
+  padding: 10px;
+  gap: 6px;
+}
+
+.generic-card.size-large .generic-card-content {
+  padding: 20px;
+  gap: 10px;
+}
+
+/* --- Horizontal mode --- */
+
+.generic-card-horizontal {
+  flex-direction: row;
+}
+
+.generic-card-horizontal .generic-card-media {
+  width: 140px;
+  min-width: 140px;
+  height: auto;
+  min-height: 100%;
+}
+
+.generic-card-horizontal.size-large .generic-card-media {
+  width: 200px;
+  min-width: 200px;
+}
+
+.generic-card-horizontal .generic-card-content {
+  flex: 1;
+  min-width: 0;
+}

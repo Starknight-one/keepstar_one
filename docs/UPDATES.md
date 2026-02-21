@@ -4,16 +4,30 @@
 
 ---
 
-## Frontend Polish — 2026-02-21
+## Frontend Polish (попытка) — 2026-02-21
 
-Comparison preset, lazy loading, увеличение лимита поиска, разлочка overlay.
+Бэкенд-часть работает, фронт — сломан. Нужна полная переработка CSS виджетов.
 
+### Что сделано (бэкенд — ок):
 - **Comparison preset:** `product_comparison` — таблица бок-о-бок (макс 4 товара), ComparisonTemplate.jsx + CSS
-- **Lazy loading:** FormationRenderer рендерит виджеты батчами по 12, IntersectionObserver подгружает остальные при скролле
 - **Catalog search limit:** default 10 → 50 (0 = no limit, safety cap 200)
-- **Overlay:** убран `max-width: 600px`, добавлен `overflow-y: auto` для длинных списков
-- **FieldName в атомах:** buildAtoms прокидывает `field.Name` → `atom.FieldName` для ComparisonTemplate
+- **FieldName в атомах:** buildAtoms прокидывает `field.Name` → `atom.FieldName`
 - **Agent2 prompt:** добавлен `product_comparison` в примеры и описание пресетов
+- **Lazy loading:** FormationRenderer батчи по 12 + IntersectionObserver
+
+### Что сломано (фронт — критические баги):
+1. **Грид карточек:** убрали фиксированные width/min-width/max-width из Widget.css и ProductCardTemplate.css чтобы карточки заполняли грид → карточки раздулись на весь экран, текст огромный, выглядит ужасно. Нужно найти баланс: карточки должны заполнять грид-ячейки но иметь разумные max-width (220-280px)
+2. **Comparison не работает:** бэкенд отдаёт mode=comparison, но фронт рендерит как обычный list — гигантская фотка на весь экран вместо таблицы. Вероятно mode не доходит или condition в FormationRenderer не срабатывает
+3. **Sticky счётчик "13 товаров"** — технически работает, но выглядит отвратительно. Нужен редизайн: либо встроить в контекст красиво, либо убрать
+4. **Overlay `widget-display-area > *` получил `width: 100%`** — это может быть причиной раздувания. Нужно аккуратнее: max-width на контейнере, а не безлимитный width
+5. **Фотки в comparison:** нет ограничения, рендерятся на полный размер контейнера
+
+### Текущее состояние файлов с проблемами:
+- `Widget.css` — убраны фиксированные размеры, нужно вернуть разумные max-width
+- `ProductCardTemplate.css` — width 220px → 100%, нужно ограничить
+- `Formation.css` — грид auto-fill minmax(200px,1fr) + sticky counter
+- `Overlay.css` — `width: 100%` на дочерних, может нужен max-width
+- `FormationRenderer.jsx` — formation-wrapper + formation-status + lazy load
 
 ---
 

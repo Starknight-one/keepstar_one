@@ -27,7 +27,8 @@
 }
 
 .widget-display-area > * {
-  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
   max-height: 90vh;
   overflow-y: auto;
   animation: widget-fade-in 0.3s ease-out 0.1s both;

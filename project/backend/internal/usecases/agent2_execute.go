@@ -15,9 +15,10 @@ import (
 
 // Agent2ExecuteRequest is the input for Agent 2
 type Agent2ExecuteRequest struct {
-	SessionID string
-	TurnID    string // Turn ID for delta grouping
-	UserQuery string // User's original query (for style selection)
+	SessionID    string
+	TurnID       string // Turn ID for delta grouping
+	UserQuery    string // User's original query (for style selection)
+	Microcontext string // Pipeline-generated context signal (e.g. "new_search: 23 items found")
 }
 
 // Agent2ExecuteResponse is the output from Agent 2
@@ -124,8 +125,11 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		}
 	}
 
-	// Build user message with view context, user query, data delta, and current config
-	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig)
+	// Load all deltas for history summary
+	allDeltas, _ := uc.statePort.GetDeltas(ctx, req.SessionID)
+
+	// Build user message with view context, user query, data delta, current config, history, and microcontext
+	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext)
 
 	// Include recent user queries from conversation history for context (last 4 user messages max).
 	// Only take user messages with Content (skip assistant, tool_use, tool_result).
@@ -254,12 +258,12 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	return response, nil
 }
 
-// getAgent2Tools returns render_* and freestyle tools for Agent 2
+// getAgent2Tools returns visual_* tools for Agent 2
 func (uc *Agent2ExecuteUseCase) getAgent2Tools() []domain.ToolDefinition {
 	allTools := uc.toolRegistry.GetDefinitions()
 	var agent2Tools []domain.ToolDefinition
 	for _, t := range allTools {
-		if strings.HasPrefix(t.Name, "render_") || t.Name == "freestyle" {
+		if strings.HasPrefix(t.Name, "visual_") {
 			agent2Tools = append(agent2Tools, t)
 		}
 	}

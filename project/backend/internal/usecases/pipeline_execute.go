@@ -193,11 +193,15 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		trace.StateAfterAgent1 = snapshot
 	}
 
+	// Generate microcontext signal for Agent2
+	microcontext := buildMicrocontext(agent1Resp)
+
 	// Step 2: Agent 2 (Template Builder) - triggered after Agent 1
 	agent2Resp, err := uc.agent2UC.Execute(ctx, Agent2ExecuteRequest{
-		SessionID: req.SessionID,
-		TurnID:    turnID,
-		UserQuery: req.Query,
+		SessionID:    req.SessionID,
+		TurnID:       turnID,
+		UserQuery:    req.Query,
+		Microcontext: microcontext,
 	})
 	if err != nil {
 		trace.Error = fmt.Sprintf("agent2: %v", err)
@@ -324,21 +328,24 @@ func (uc *PipelineExecuteUseCase) recordTrace(ctx context.Context, trace *domain
 
 // buildAdjacentTemplates builds 1 template per entity type + returns raw entity data.
 // Frontend fills templates with entity data at click time (instant, no round-trip).
+// Uses defaults engine with maxFields=10 for detail view.
 func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionState) (map[string]*domain.FormationWithData, *domain.StateData) {
 	templates := make(map[string]*domain.FormationWithData)
 
-	// Product template
+	// Product detail template via defaults engine
 	if len(state.Current.Data.Products) > 0 {
-		if preset, found := uc.presetRegistry.Get(domain.PresetProductDetail); found {
-			templates[string(domain.EntityTypeProduct)] = tools.BuildTemplateFormation(preset)
-		}
+		resolved := tools.AutoResolve("product", 1) // single item = detail view
+		fieldConfigs := tools.BuildFieldConfigs(resolved.Fields, nil)
+		formation := tools.BuildTemplateFormation(buildGenericPreset(fieldConfigs, resolved))
+		templates[string(domain.EntityTypeProduct)] = formation
 	}
 
-	// Service template
+	// Service detail template via defaults engine
 	if len(state.Current.Data.Services) > 0 {
-		if preset, found := uc.presetRegistry.Get(domain.PresetServiceDetail); found {
-			templates[string(domain.EntityTypeService)] = tools.BuildTemplateFormation(preset)
-		}
+		resolved := tools.AutoResolve("service", 1)
+		fieldConfigs := tools.BuildFieldConfigs(resolved.Fields, nil)
+		formation := tools.BuildTemplateFormation(buildGenericPreset(fieldConfigs, resolved))
+		templates[string(domain.EntityTypeService)] = formation
 	}
 
 	if len(templates) == 0 {
@@ -351,6 +358,25 @@ func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionSt
 	}
 
 	return templates, entities
+}
+
+// buildGenericPreset creates a Preset from field configs and resolved defaults for template building
+func buildGenericPreset(fieldConfigs []domain.FieldConfig, resolved tools.ResolvedDefaults) domain.Preset {
+	mode := domain.FormationTypeSingle
+	switch resolved.Layout {
+	case "grid":
+		mode = domain.FormationTypeGrid
+	case "list":
+		mode = domain.FormationTypeList
+	case "carousel":
+		mode = domain.FormationTypeCarousel
+	}
+	return domain.Preset{
+		Template:    "GenericCard",
+		Fields:      fieldConfigs,
+		DefaultMode: mode,
+		DefaultSize: resolved.Size,
+	}
 }
 
 // convertToFormation converts map[string]interface{} to FormationWithData
@@ -373,4 +399,18 @@ func convertToFormation(data interface{}) *domain.FormationWithData {
 	}
 
 	return &formation
+}
+
+// buildMicrocontext generates a short context signal from Agent1 results for Agent2
+func buildMicrocontext(agent1Resp *Agent1ExecuteResponse) string {
+	switch {
+	case agent1Resp.ToolName == "catalog_search":
+		return fmt.Sprintf("new_search: %d items found", agent1Resp.ProductsFound)
+	case agent1Resp.ToolName == "_internal_state_filter":
+		return fmt.Sprintf("filtered: %d items", agent1Resp.ProductsFound)
+	case agent1Resp.ToolName == "":
+		return "no_data_change"
+	default:
+		return fmt.Sprintf("tool: %s", agent1Resp.ToolName)
+	}
 }

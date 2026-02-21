@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"keepstar/internal/domain"
@@ -38,9 +39,13 @@ var fieldTypeMap = map[string]fieldTypeEntry{
 	"stockQuantity": {domain.AtomTypeNumber, domain.SubtypeInt},
 	"tags":          {domain.AtomTypeText, domain.SubtypeString},
 	"attributes":    {domain.AtomTypeText, domain.SubtypeString},
-	"duration":      {domain.AtomTypeText, domain.SubtypeString},
-	"provider":      {domain.AtomTypeText, domain.SubtypeString},
-	"availability":  {domain.AtomTypeText, domain.SubtypeString},
+	"duration":       {domain.AtomTypeText, domain.SubtypeString},
+	"provider":       {domain.AtomTypeText, domain.SubtypeString},
+	"availability":   {domain.AtomTypeText, domain.SubtypeString},
+	"productForm":    {domain.AtomTypeText, domain.SubtypeString},
+	"skinType":       {domain.AtomTypeText, domain.SubtypeString},
+	"concern":        {domain.AtomTypeText, domain.SubtypeString},
+	"keyIngredients": {domain.AtomTypeText, domain.SubtypeString},
 }
 
 // parseFieldSpecs parses fields[] from tool input into []domain.FieldConfig
@@ -527,6 +532,23 @@ func productFieldGetter(p domain.Product) FieldGetter {
 				return nil
 			}
 			return p.Tags
+		case "productForm":
+			return nonEmpty(p.ProductForm)
+		case "skinType":
+			if len(p.SkinType) == 0 {
+				return nil
+			}
+			return strings.Join(p.SkinType, ", ")
+		case "concern":
+			if len(p.Concern) == 0 {
+				return nil
+			}
+			return strings.Join(p.Concern, ", ")
+		case "keyIngredients":
+			if len(p.KeyIngredients) == 0 {
+				return nil
+			}
+			return strings.Join(p.KeyIngredients, ", ")
 		default:
 			return nil
 		}

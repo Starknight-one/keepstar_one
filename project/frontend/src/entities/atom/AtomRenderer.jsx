@@ -2,9 +2,26 @@ import { AtomType, AtomSubtype, LEGACY_TYPE_TO_DISPLAY } from './atomModel';
 import { log } from '../../shared/logger';
 import './Atom.css';
 
+// Named color palette
+const COLOR_PALETTE = {
+  green: '#22C55E',
+  red: '#EF4444',
+  blue: '#3B82F6',
+  orange: '#F97316',
+  purple: '#8B5CF6',
+  gray: '#6B7280',
+};
+
+// Resolve named color or pass hex through
+function resolveColor(color) {
+  if (!color) return null;
+  return COLOR_PALETTE[color.toLowerCase()] || color;
+}
+
 export function AtomRenderer({ atom, onClick }) {
   // Determine display: explicit display > legacy mapping > inferred from type/subtype
   const display = atom.display || LEGACY_TYPE_TO_DISPLAY[atom.type] || inferDisplay(atom);
+  const resolvedColor = resolveColor(atom.meta?.color);
 
   return (
     <span
@@ -12,7 +29,7 @@ export function AtomRenderer({ atom, onClick }) {
       onClick={onClick}
       data-slot={atom.slot}
     >
-      {renderByDisplay(atom, display)}
+      {renderByDisplay(atom, display, resolvedColor)}
     </span>
   );
 }
@@ -44,31 +61,35 @@ function inferDisplay(atom) {
 }
 
 // Render content based on display type
-function renderByDisplay(atom, display) {
+function renderByDisplay(atom, display, color) {
+  // Color style helpers
+  const textColorStyle = color ? { color } : undefined;
+  const bgColorStyle = color ? { backgroundColor: color, color: 'white' } : undefined;
+
   // Heading displays
   if (['h1', 'h2', 'h3', 'h4'].includes(display)) {
     const Tag = display;
-    return <Tag className="atom-heading">{formatText(atom)}</Tag>;
+    return <Tag className="atom-heading" style={textColorStyle}>{formatText(atom)}</Tag>;
   }
 
   // Body text displays
   if (['body-lg', 'body', 'body-sm', 'caption'].includes(display)) {
-    return <span className={`atom-text ${display}`}>{formatText(atom)}</span>;
+    return <span className={`atom-text ${display}`} style={textColorStyle}>{formatText(atom)}</span>;
   }
 
   // Badge displays
   if (display.startsWith('badge')) {
-    return <span className={`atom-badge ${display}`}>{atom.value}</span>;
+    return <span className={`atom-badge ${display}`} style={bgColorStyle}>{atom.value}</span>;
   }
 
   // Tag displays
   if (display.startsWith('tag')) {
-    return <span className={`atom-tag ${display}`}>{atom.value}</span>;
+    return <span className={`atom-tag ${display}`} style={bgColorStyle}>{atom.value}</span>;
   }
 
   // Price displays
   if (display.startsWith('price')) {
-    return <span className={`atom-price ${display}`}>{formatPrice(atom)}</span>;
+    return <span className={`atom-price ${display}`} style={textColorStyle}>{formatPrice(atom)}</span>;
   }
 
   // Rating displays
