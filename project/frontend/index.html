@@ -3,26 +3,99 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Keepstar Widget — Dev</title>
+    <title>Keepstar — Dev Stand</title>
     <style>
-      body { font-family: sans-serif; margin: 40px; color: #333; }
-      h1 { margin-bottom: 16px; }
-      p { color: #666; max-width: 600px; line-height: 1.6; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #f8fafc;
+        color: #1e293b;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      .container {
+        text-align: center;
+        padding: 40px 24px;
+        max-width: 520px;
+      }
+      .badge {
+        display: inline-block;
+        background: #fef3c7;
+        color: #92400e;
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: 1px;
+        padding: 6px 16px;
+        border-radius: 6px;
+        margin-bottom: 24px;
+        text-transform: uppercase;
+      }
+      h1 {
+        font-size: 48px;
+        font-weight: 800;
+        margin-bottom: 8px;
+        letter-spacing: -1px;
+      }
+      .subtitle {
+        font-size: 18px;
+        color: #64748b;
+        margin-bottom: 32px;
+      }
+      .info {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 24px;
+        text-align: left;
+        line-height: 1.7;
+        color: #475569;
+        font-size: 15px;
+      }
+      .info code {
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 13px;
+        color: #0f172a;
+      }
+      .status {
+        margin-top: 24px;
+        font-size: 13px;
+        color: #94a3b8;
+      }
+      .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
     </style>
   </head>
   <body>
-    <h1>Client Website (Test Page)</h1>
-    <p>
-      This page simulates a client's website. The Keepstar chat widget is loaded
-      below as an embedded script — exactly how real customers will use it.
-    </p>
-    <p>Scroll down or click the chat button in the bottom-right corner.</p>
+    <div class="container">
+      <div class="badge">Dev Stand</div>
+      <h1>Keepstar</h1>
+      <p class="subtitle">AI-чат виджет для e-commerce</p>
+      <div class="info">
+        Это dev-стенд. Чат-виджет встраивается на сайт клиента через скрипт:<br><br>
+        <code>&lt;script src="keepstar.one/widget.js" data-tenant="..."&gt;</code><br><br>
+        API доступен по <code>/api/v1/*</code><br>
+        Health check: <code>/health</code>
+      </div>
+      <p class="status"><span class="dot"></span>Backend работает</p>
+    </div>
 
     <script>
       // Dev config — in production these come from data-tenant / data-api on the script tag
       window.__KEEPSTAR_WIDGET__ = {
         tenant: 'hey-babes-cosmetics',
-        api: 'http://localhost:8080/api/v1'
+        api: window.location.origin + '/api/v1'
       };
     </script>
     <script type="module" src="/src/widget.jsx"></script>
