@@ -298,17 +298,6 @@ func main() {
 			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
 		})
 		appLog.Info("spa_file_server_enabled", "dir", staticDir)
-	} else {
-		// No static dir — serve a fallback landing page
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/" {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write([]byte(fallbackPage))
-		})
-		appLog.Info("spa_file_server_disabled", "reason", "static dir not found, serving fallback")
 	}
 
 	// Apply middleware (stdout logging always on; DB persist opt-in via PERSIST_LOGS=true)
@@ -384,40 +373,6 @@ func main() {
 
 	appLog.Info("server_stopped")
 }
-
-const fallbackPage = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Keepstar — Dev Stand</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#1e293b;min-height:100vh;display:flex;align-items:center;justify-content:center}
-.c{text-align:center;padding:40px 24px;max-width:520px}
-.badge{display:inline-block;background:#fef3c7;color:#92400e;font-weight:700;font-size:14px;letter-spacing:1px;padding:6px 16px;border-radius:6px;margin-bottom:24px;text-transform:uppercase}
-h1{font-size:48px;font-weight:800;margin-bottom:8px;letter-spacing:-1px}
-.sub{font-size:18px;color:#64748b;margin-bottom:32px}
-.info{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;text-align:left;line-height:1.7;color:#475569;font-size:15px}
-.info code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:13px;color:#0f172a}
-.st{margin-top:24px;font-size:13px;color:#94a3b8}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;margin-right:6px;vertical-align:middle}
-</style>
-</head>
-<body>
-<div class="c">
-<div class="badge">Dev Stand</div>
-<h1>Keepstar</h1>
-<p class="sub">AI chat widget for e-commerce</p>
-<div class="info">
-This is a dev stand. The chat widget is embedded on client sites via script tag:<br><br>
-<code>&lt;script src="keepstar.one/widget.js" data-tenant="..."&gt;</code><br><br>
-API: <code>/api/v1/*</code> &middot; Health: <code>/health</code>
-</div>
-<p class="st"><span class="dot"></span>Backend is running</p>
-</div>
-</body>
-</html>`
 
 func generateAllDigests(ctx context.Context, catalog *postgres.CatalogAdapter, log *logger.Logger) error {
 	tenants, err := catalog.GetAllTenants(ctx)
