@@ -27,8 +27,8 @@
 }
 
 .widget-display-area > * {
-  max-width: 600px;
-  max-height: 80vh;
+  max-height: 90vh;
+  overflow-y: auto;
   animation: widget-fade-in 0.3s ease-out 0.1s both;
 }
 

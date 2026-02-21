@@ -1,0 +1,134 @@
+/* Comparison Table */
+.comparison-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 0;
+}
+
+.comparison-table {
+  display: grid;
+  /* grid-template-columns set via inline style (var() in repeat count not supported) */
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  min-width: fit-content;
+}
+
+.comparison-cell {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+}
+
+/* Remove bottom border on last row — use :last-child since calc(var()) unreliable */
+.comparison-table > .comparison-cell:last-child {
+  border-bottom: none;
+}
+
+/* Corner cell (top-left) */
+.comparison-corner {
+  background: #f8fafc;
+  border-right: 1px solid #e2e8f0;
+}
+
+/* Header cells (product names) */
+.comparison-header {
+  background: #f8fafc;
+  font-weight: 600;
+  font-size: 14px;
+  color: #1e293b;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.comparison-header:hover {
+  background: #f1f5f9;
+}
+
+/* Label cells (row names) */
+.comparison-label {
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  border-right: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+/* Value cells */
+.comparison-value {
+  font-size: 13px;
+  color: #334155;
+  justify-content: center;
+  text-align: center;
+  word-break: break-word;
+}
+
+/* Alternating row backgrounds */
+.comparison-value:nth-child(even) {
+  background: #fafbfc;
+}
+
+/* Empty value placeholder */
+.comparison-empty {
+  color: #cbd5e1;
+}
+
+/* Thumbnail image in comparison */
+.comparison-thumbnail {
+  width: 60px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+/* Override atom styles within comparison for compact display */
+.comparison-value .atom {
+  font-size: 13px;
+}
+
+.comparison-value .atom-heading {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.comparison-value h1,
+.comparison-value h2,
+.comparison-value h3,
+.comparison-value h4 {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.comparison-value .atom-price {
+  font-weight: 600;
+  color: #059669;
+}
+
+.comparison-value .atom-rating {
+  font-size: 13px;
+}
+
+/* Responsive: scroll hint on narrow screens */
+@media (max-width: 600px) {
+  .comparison-table {
+    /* inline style handles columns; just override cell sizes */
+  }
+
+  .comparison-cell {
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .comparison-thumbnail {
+    width: 48px;
+    height: 48px;
+  }
+}

@@ -98,6 +98,7 @@ const Agent2ToolSystemPrompt = `Ты — UI composition agent. Решаешь К
 - product_card: одна карточка, крупно
 - product_compact: компактный список
 - product_detail: полная детализация
+- product_comparison: таблица сравнения бок-о-бок (макс 4 товара, берёт первые из state)
 - service_card: сервисы в сетке
 - service_list: сервисы списком
 - service_detail: полная детализация сервиса
@@ -133,6 +134,7 @@ hero, badge, title, primary, price, secondary
 - 7+ → product_grid или product_compact, size=small/medium
 - Подробности → product_detail, включи description, tags, specs
 - Компактно → product_compact, минимум полей
+- Сравнение → product_comparison (макс 4 товара, берёт первые из state)
 - Оба типа (products + services) → вызови оба тула
 
 ## ПРИМЕРЫ
@@ -151,6 +153,9 @@ productCount=4, user_request="покажи только фотки и назва
 
 productCount=3, user_request="покажи в виде списка":
 → render_product_preset(preset="product_compact")
+
+productCount=4, user_request="сравни эти товары":
+→ render_product_preset(preset="product_comparison")
 
 ### freestyle
 ЗАРЕЗЕРВИРОВАН. Не используй этот тул. Он предназначен для рендеринга без пресетов, чисто на атомах. Будет доступен позже.`

@@ -68,6 +68,30 @@ var ProductCompactPreset = domain.Preset{
 	},
 }
 
+// ProductComparisonPreset for side-by-side comparison table (max 4 items)
+var ProductComparisonPreset = domain.Preset{
+	Name:        string(domain.PresetProductComparison),
+	EntityType:  domain.EntityTypeProduct,
+	Template:    domain.WidgetTemplateProductComparison,
+	DefaultMode: domain.FormationTypeComparison,
+	DefaultSize: domain.WidgetSizeLarge,
+	Displays: map[domain.AtomSlot]domain.AtomDisplay{
+		domain.AtomSlotHero:    domain.DisplayThumbnail,
+		domain.AtomSlotTitle:   domain.DisplayH3,
+		domain.AtomSlotPrimary: domain.DisplayBody,
+		domain.AtomSlotPrice:   domain.DisplayPrice,
+	},
+	Fields: []domain.FieldConfig{
+		{Name: "images", Slot: domain.AtomSlotHero, AtomType: domain.AtomTypeImage, Subtype: domain.SubtypeImageURL, Display: domain.DisplayThumbnail, Priority: 1, Required: false},
+		{Name: "name", Slot: domain.AtomSlotTitle, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayH3, Priority: 2, Required: true},
+		{Name: "brand", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayBody, Priority: 3, Required: false},
+		{Name: "category", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayBody, Priority: 4, Required: false},
+		{Name: "price", Slot: domain.AtomSlotPrice, AtomType: domain.AtomTypeNumber, Subtype: domain.SubtypeCurrency, Display: domain.DisplayPrice, Priority: 5, Required: true},
+		{Name: "rating", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeNumber, Subtype: domain.SubtypeRating, Display: domain.DisplayRatingCompact, Priority: 6, Required: false},
+		{Name: "description", Slot: domain.AtomSlotSecondary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayBodySm, Priority: 7, Required: false},
+	},
+}
+
 // WidgetTemplateProductDetail is the template name for product detail view
 const WidgetTemplateProductDetail = "ProductDetail"
 

@@ -1,6 +1,10 @@
+import { useState, useEffect, useRef } from 'react';
 import { FormationMode } from './formationModel';
 import { WidgetRenderer } from '../widget/WidgetRenderer';
+import { ComparisonTemplate } from '../widget/templates/ComparisonTemplate';
 import './Formation.css';
+
+const BATCH_SIZE = 12;
 
 export function FormationRenderer({ formation, onWidgetClick }) {
   if (!formation || !formation.widgets?.length) {
@@ -8,19 +12,79 @@ export function FormationRenderer({ formation, onWidgetClick }) {
   }
 
   const { mode, grid, widgets } = formation;
-  const cols = grid?.cols || 2;
+
+  // Comparison mode: pass all widgets to ComparisonTemplate
+  if (mode === 'comparison' || mode === FormationMode.COMPARISON) {
+    return (
+      <div className="formation-comparison">
+        <ComparisonTemplate widgets={widgets} onWidgetClick={onWidgetClick} />
+      </div>
+    );
+  }
+
+  return (
+    <WidgetList
+      mode={mode}
+      cols={grid?.cols || 2}
+      widgets={widgets}
+      onWidgetClick={onWidgetClick}
+    />
+  );
+}
+
+function WidgetList({ mode, cols, widgets, onWidgetClick }) {
+  const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
+  const sentinelRef = useRef(null);
+
+  // Reset visible count when widgets change (new search)
+  useEffect(() => {
+    setVisibleCount(BATCH_SIZE);
+  }, [widgets]);
+
+  // IntersectionObserver for lazy loading
+  useEffect(() => {
+    if (visibleCount >= widgets.length || !sentinelRef.current) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisibleCount((prev) => Math.min(prev + BATCH_SIZE, widgets.length));
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [widgets.length, visibleCount]);
 
   const layoutClass = getLayoutClass(mode, cols);
+  const visibleWidgets = widgets.slice(0, visibleCount);
+  const hasMore = visibleCount < widgets.length;
 
   return (
     <div className={layoutClass}>
-      {widgets.map((widget) => (
+      {visibleWidgets.map((widget) => (
         <WidgetRenderer
           key={widget.id}
           widget={widget}
           onClick={onWidgetClick}
         />
       ))}
+      {hasMore && (
+        <div ref={sentinelRef} className="formation-sentinel">
+          <span className="formation-counter">
+            {visibleCount} / {widgets.length}
+          </span>
+        </div>
+      )}
+      {!hasMore && widgets.length > BATCH_SIZE && (
+        <div className="formation-sentinel">
+          <span className="formation-counter">
+            Все {widgets.length} товаров
+          </span>
+        </div>
+      )}
     </div>
   );
 }

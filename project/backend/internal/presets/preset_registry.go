@@ -18,6 +18,7 @@ func NewPresetRegistry() *PresetRegistry {
 	r.Register(ProductCardPreset)
 	r.Register(ProductCompactPreset)
 	r.Register(ProductDetailPreset)
+	r.Register(ProductComparisonPreset)
 
 	// Register service presets
 	r.Register(ServiceCardPreset)

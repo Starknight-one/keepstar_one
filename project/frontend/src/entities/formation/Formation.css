@@ -63,3 +63,21 @@
   width: 100%;
   max-width: 100%;
 }
+
+/* Comparison mode */
+.formation-comparison {
+  padding: 8px 0;
+}
+
+/* Lazy load sentinel */
+.formation-sentinel {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  grid-column: 1 / -1;
+}
+
+.formation-counter {
+  font-size: 12px;
+  color: #94a3b8;
+}

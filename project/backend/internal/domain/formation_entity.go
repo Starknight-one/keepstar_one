@@ -7,7 +7,8 @@ const (
 	FormationTypeGrid     FormationType = "grid"
 	FormationTypeList     FormationType = "list"
 	FormationTypeCarousel FormationType = "carousel"
-	FormationTypeSingle   FormationType = "single"
+	FormationTypeSingle     FormationType = "single"
+	FormationTypeComparison FormationType = "comparison"
 )
 
 // Formation defines how widgets are laid out

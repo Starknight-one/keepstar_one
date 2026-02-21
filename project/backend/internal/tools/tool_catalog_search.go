@@ -112,7 +112,7 @@ func (t *CatalogSearchTool) Definition() domain.ToolDefinition {
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
-					"description": "Max results (default 10)",
+					"description": "Max results (default 50, 0 = no limit)",
 				},
 			},
 			"required": []string{"vector_query"},
@@ -132,9 +132,12 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	if entityType == "" {
 		entityType = "all"
 	}
-	limit := 10
+	limit := 50
 	if v, ok := input["limit"].(float64); ok {
 		limit = int(v)
+	}
+	if limit == 0 {
+		limit = 200 // safety cap
 	}
 
 	// Parse filters object

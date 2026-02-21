@@ -39,5 +39,6 @@ const (
 	PresetProductDetail  PresetName = "product_detail"
 	PresetServiceCard    PresetName = "service_card"
 	PresetServiceList    PresetName = "service_list"
-	PresetServiceDetail  PresetName = "service_detail"
+	PresetServiceDetail      PresetName = "service_detail"
+	PresetProductComparison  PresetName = "product_comparison"
 )

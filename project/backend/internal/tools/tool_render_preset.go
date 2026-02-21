@@ -141,8 +141,8 @@ func (t *RenderProductPresetTool) Definition() domain.ToolDefinition {
 			"properties": map[string]interface{}{
 				"preset": map[string]interface{}{
 					"type":        "string",
-					"enum":        []string{"product_grid", "product_card", "product_compact", "product_detail"},
-					"description": "Preset to use: product_grid (for multiple items), product_card (for single detail), product_compact (for list), product_detail (for full detail view)",
+					"enum":        []string{"product_grid", "product_card", "product_compact", "product_detail", "product_comparison"},
+					"description": "Preset to use: product_grid (for multiple items), product_card (for single detail), product_compact (for list), product_detail (for full detail view), product_comparison (for side-by-side comparison, max 4 items)",
 				},
 				"fields": map[string]interface{}{
 					"type":        "array",
@@ -185,6 +185,11 @@ func (t *RenderProductPresetTool) Execute(ctx context.Context, toolCtx ToolConte
 	products := state.Current.Data.Products
 	if len(products) == 0 {
 		return &domain.ToolResult{Content: "error: no products in state"}, nil
+	}
+
+	// Limit comparison to max 4 products
+	if presetName == "product_comparison" && len(products) > 4 {
+		products = products[:4]
 	}
 
 	// Override fields if provided (user has display preferences)
@@ -454,11 +459,12 @@ func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency C
 		}
 
 		atom := domain.Atom{
-			Type:    field.AtomType,
-			Subtype: field.Subtype,
-			Display: string(field.Display), // Use Display from FieldConfig
-			Value:   value,
-			Slot:    field.Slot,
+			Type:      field.AtomType,
+			Subtype:   field.Subtype,
+			Display:   string(field.Display), // Use Display from FieldConfig
+			Value:     value,
+			Slot:      field.Slot,
+			FieldName: field.Name,
 		}
 
 		// Add meta for backward compatibility and additional data

@@ -14,7 +14,8 @@ const (
 
 // WidgetTemplateName defines template names (new system)
 const (
-	WidgetTemplateProductCard = "ProductCard"
+	WidgetTemplateProductCard       = "ProductCard"
+	WidgetTemplateProductComparison = "ProductComparison"
 )
 
 // WidgetSize defines widget size constraints
