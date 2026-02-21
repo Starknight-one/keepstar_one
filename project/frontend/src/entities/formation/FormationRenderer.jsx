@@ -63,28 +63,26 @@ function WidgetList({ mode, cols, widgets, onWidgetClick }) {
   const hasMore = visibleCount < widgets.length;
 
   return (
-    <div className={layoutClass}>
-      {visibleWidgets.map((widget) => (
-        <WidgetRenderer
-          key={widget.id}
-          widget={widget}
-          onClick={onWidgetClick}
-        />
-      ))}
-      {hasMore && (
-        <div ref={sentinelRef} className="formation-sentinel">
-          <span className="formation-counter">
-            {visibleCount} / {widgets.length}
-          </span>
+    <div className="formation-wrapper">
+      {widgets.length > 1 && (
+        <div className="formation-status">
+          {hasMore
+            ? `${visibleCount} из ${widgets.length}`
+            : `${widgets.length} товаров`}
         </div>
       )}
-      {!hasMore && widgets.length > BATCH_SIZE && (
-        <div className="formation-sentinel">
-          <span className="formation-counter">
-            Все {widgets.length} товаров
-          </span>
-        </div>
-      )}
+      <div className={layoutClass}>
+        {visibleWidgets.map((widget) => (
+          <WidgetRenderer
+            key={widget.id}
+            widget={widget}
+            onClick={onWidgetClick}
+          />
+        ))}
+        {hasMore && (
+          <div ref={sentinelRef} className="formation-sentinel" />
+        )}
+      </div>
     </div>
   );
 }

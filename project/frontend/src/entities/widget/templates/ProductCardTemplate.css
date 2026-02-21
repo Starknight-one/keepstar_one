@@ -6,7 +6,8 @@
 .product-card-template {
   display: flex;
   flex-direction: column;
-  width: 220px;
+  width: 100%;
+  min-width: 0;
   background: var(--color-bg-secondary, #F4F4F5);
   border-radius: var(--border-radius-lg, 16px);
   overflow: hidden;
@@ -16,19 +17,6 @@
 .product-card-template:hover {
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.1));
   transform: translateY(-2px);
-}
-
-/* Size variants */
-.product-card-template.size-small {
-  width: 180px;
-}
-
-.product-card-template.size-medium {
-  width: 220px;
-}
-
-.product-card-template.size-large {
-  width: 280px;
 }
 
 /* =============================================================================

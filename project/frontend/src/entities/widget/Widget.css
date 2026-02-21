@@ -9,33 +9,21 @@
   overflow: hidden;
 }
 
-/* Widget sizes */
+/* Widget sizes — fluid, fill grid cell */
 .widget.size-tiny {
-  width: 80px;
-  min-width: 80px;
-  max-width: 110px;
   padding: 8px;
 }
 
 .widget.size-small {
-  width: 160px;
-  min-width: 160px;
-  max-width: 220px;
   padding: 12px;
 }
 
 .widget.size-medium {
-  width: 280px;
-  min-width: 280px;
-  max-width: 350px;
-  padding: 16px;
+  padding: 0;
 }
 
 .widget.size-large {
-  width: 384px;
-  min-width: 384px;
-  max-width: 460px;
-  padding: 20px;
+  padding: 0;
 }
 
 /* Widget types - extend .widget base class */
