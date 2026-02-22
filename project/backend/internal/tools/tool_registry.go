@@ -15,6 +15,7 @@ type ToolContext struct {
 	TurnID     string
 	ActorID    string
 	TenantSlug string
+	UserQuery  string // Original user query (for post-validation guards)
 }
 
 // ToolExecutor executes a tool and writes results to state

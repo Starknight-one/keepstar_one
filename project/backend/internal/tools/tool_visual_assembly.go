@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 
 	"github.com/google/uuid"
@@ -10,6 +11,9 @@ import (
 	"keepstar/internal/ports"
 	"keepstar/internal/presets"
 )
+
+// layoutKeywords matches user requests that explicitly ask for layout change
+var layoutKeywords = regexp.MustCompile(`(?i)(grid|грид|список|list|сравни|сравнение|compar|карусел|carousel|горизонтально|вертикально|horizontal|vertical)`)
 
 // VisualAssemblyTool renders entities using defaults engine + optional overrides
 type VisualAssemblyTool struct {
@@ -63,9 +67,7 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 					"description": "Field render order. Fields not listed go after in default order.",
 				},
 				"size": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"tiny", "small", "medium", "large"},
-					"description": "Widget size override.",
+					"description": "Widget size. String for uniform: \"large\". Object for per-field: {\"images\":\"xl\",\"price\":\"lg\"}.",
 				},
 				"color": map[string]interface{}{
 					"type":                 "object",
@@ -76,6 +78,11 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 					"type":        "string",
 					"enum":        []string{"vertical", "horizontal"},
 					"description": "Card direction: vertical (default) or horizontal (image left, content right).",
+				},
+				"shape": map[string]interface{}{
+					"type":                 "object",
+					"description":          "Field→shape map. E.g. {\"brand\":\"pill\",\"category\":\"rounded\"}. Values: pill, rounded, square, circle.",
+					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 			},
 		},
@@ -103,15 +110,37 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 		return &domain.ToolResult{Content: "error: no entities in state"}, nil
 	}
 
-	// Step 2: Get base defaults
+	// Step 2: Get base defaults (or patch from currentConfig if no data change)
 	resolved := AutoResolve(entityType, entityCount)
 	fields := resolved.Fields
 	displayOverrides := make(map[string]string)
 	layout := resolved.Layout
 	size := resolved.Size
 
-	// Step 3: If preset specified, load it as base (backward compat)
+	// Step 2.5: Formation diff/patch — if currentConfig exists, use it as base
+	// This preserves previous settings (color, size overrides) when user tweaks style
 	presetName, _ := input["preset"].(string)
+	if presetName == "" && state.Current.Template != nil {
+		if fData, ok := state.Current.Template["formation"]; ok {
+			if f, ok := fData.(*domain.FormationWithData); ok && f != nil && f.Config != nil {
+				prevConfig := f.Config
+				// Use previous fields as base
+				if len(prevConfig.Fields) > 0 {
+					fields = make([]string, 0, len(prevConfig.Fields))
+					for _, fs := range prevConfig.Fields {
+						fields = append(fields, fs.Name)
+						if fs.Display != "" {
+							displayOverrides[fs.Name] = fs.Display
+						}
+					}
+				}
+				layout = string(prevConfig.Mode)
+				size = prevConfig.Size
+			}
+		}
+	}
+
+	// Step 3: If preset specified, load it as base (backward compat)
 	if presetName != "" && t.presetRegistry != nil {
 		if preset, ok := t.presetRegistry.Get(domain.PresetName(presetName)); ok {
 			// Extract fields from preset
@@ -127,13 +156,28 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 
 	// Step 4: Apply show/hide
 	if showRaw, ok := input["show"].([]interface{}); ok && len(showRaw) > 0 {
-		// show replaces default fields entirely
-		fields = make([]string, 0, len(showRaw))
+		// show = add semantics: merge show fields with base fields, show-fields first (priority)
+		showFields := make([]string, 0, len(showRaw))
 		for _, s := range showRaw {
 			if name, ok := s.(string); ok {
-				fields = append(fields, name)
+				showFields = append(showFields, name)
 			}
 		}
+		seen := make(map[string]bool, len(showFields)+len(fields))
+		merged := make([]string, 0, len(showFields)+len(fields))
+		for _, f := range showFields {
+			if !seen[f] {
+				merged = append(merged, f)
+				seen[f] = true
+			}
+		}
+		for _, f := range fields {
+			if !seen[f] {
+				merged = append(merged, f)
+				seen[f] = true
+			}
+		}
+		fields = merged
 	}
 
 	if hideRaw, ok := input["hide"].([]interface{}); ok && len(hideRaw) > 0 {
@@ -185,11 +229,37 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 	}
 
 	// Step 7: Apply layout/size overrides
+	layoutExplicit := false
 	if layoutStr, ok := input["layout"].(string); ok && layoutStr != "" {
 		layout = layoutStr
+		layoutExplicit = true
 	}
+	// Per-atom size map (if size is object like {"images":"xl","price":"lg"})
+	perAtomSize := make(map[string]string)
 	if sizeStr, ok := input["size"].(string); ok && sizeStr != "" {
 		size = domain.WidgetSize(sizeStr)
+	} else if sizeObj, ok := input["size"].(map[string]interface{}); ok {
+		for field, s := range sizeObj {
+			if sv, ok := s.(string); ok {
+				perAtomSize[field] = sv
+			}
+		}
+	}
+
+	// Step 7.1: Layout post-validate guard — prevent LLM from changing layout without user intent
+	if layoutExplicit && toolCtx.UserQuery != "" {
+		var currentConfig *domain.RenderConfig
+		if state.Current.Template != nil {
+			if fData, ok := state.Current.Template["formation"]; ok {
+				if f, ok := fData.(*domain.FormationWithData); ok && f != nil && f.Config != nil {
+					currentConfig = f.Config
+				}
+			}
+		}
+		if currentConfig != nil && !layoutKeywords.MatchString(toolCtx.UserQuery) {
+			// User didn't ask for layout change — preserve current layout
+			layout = string(currentConfig.Mode)
+		}
 	}
 
 	// Step 7.5: Parse color and direction
@@ -202,6 +272,16 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 		}
 	}
 	direction, _ := input["direction"].(string)
+
+	// Parse shape map
+	shapeMap := make(map[string]string)
+	if shapeRaw, ok := input["shape"].(map[string]interface{}); ok {
+		for field, s := range shapeRaw {
+			if sv, ok := s.(string); ok {
+				shapeMap[field] = sv
+			}
+		}
+	}
 
 	// Limit comparison to max 4
 	if layout == "comparison" && len(products) > 4 {
@@ -265,10 +345,20 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 		}
 	}
 
-	// Step 11: Apply color and direction to widgets
+	// Step 11: Apply color, per-atom size, shape, and direction to widgets
 	if len(colorMap) > 0 {
 		for wi := range formation.Widgets {
 			applyAtomColors(formation.Widgets[wi].Atoms, colorMap)
+		}
+	}
+	if len(perAtomSize) > 0 {
+		for wi := range formation.Widgets {
+			applyAtomMeta(formation.Widgets[wi].Atoms, perAtomSize, "size")
+		}
+	}
+	if len(shapeMap) > 0 {
+		for wi := range formation.Widgets {
+			applyAtomMeta(formation.Widgets[wi].Atoms, shapeMap, "shape")
 		}
 	}
 	if direction != "" {
@@ -393,6 +483,18 @@ func applyAtomColors(atoms []domain.Atom, colorMap map[string]string) {
 				atoms[i].Meta = make(map[string]interface{})
 			}
 			atoms[i].Meta["color"] = color
+		}
+	}
+}
+
+// applyAtomMeta sets a meta key for atoms matching fields in the map
+func applyAtomMeta(atoms []domain.Atom, fieldMap map[string]string, metaKey string) {
+	for i := range atoms {
+		if val, ok := fieldMap[atoms[i].FieldName]; ok && val != "" {
+			if atoms[i].Meta == nil {
+				atoms[i].Meta = make(map[string]interface{})
+			}
+			atoms[i].Meta[metaKey] = val
 		}
 	}
 }

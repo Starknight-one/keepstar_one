@@ -218,6 +218,7 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 			SessionID: req.SessionID,
 			TurnID:    req.TurnID,
 			ActorID:   "agent2",
+			UserQuery: req.UserQuery,
 		}, toolCall)
 		toolDuration := time.Since(toolStart).Milliseconds()
 		if endToolSpan != nil {

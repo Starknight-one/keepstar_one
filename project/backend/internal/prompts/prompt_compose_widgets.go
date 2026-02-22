@@ -103,18 +103,19 @@ visual_assembly — единственный тул. Defaults Engine автом�
 
 ## ПАРАМЕТРЫ (все опциональные)
 
-- show: string[] — какие поля показать (заменяет дефолтные)
+- show: string[] — какие поля ДОБАВИТЬ к дефолтным (show-поля идут первыми по приоритету)
 - hide: string[] — какие поля убрать из дефолтных
 - display: object — стиль отображения поля: {"brand":"badge","price":"price-lg"}
 - layout: string — "grid" | "list" | "single" | "carousel" | "comparison"
-- size: string — "tiny" | "small" | "medium" | "large"
+- size: string | object — "large" для всего виджета ИЛИ {"images":"xl","price":"lg"} для per-field
 - order: string[] — порядок полей
 - color: object — цвет поля: {"brand":"red","price":"green"}. Именованные: green, red, blue, orange, purple, gray
 - direction: string — "vertical" (по умолчанию) | "horizontal" (картинка слева, контент справа)
+- shape: object — форма поля: {"brand":"pill","category":"rounded"}. Значения: pill, rounded, square, circle
 - preset: string — shortcut для точного набора полей (backward compat)
 
 ## ДОСТУПНЫЕ ПОЛЯ
-Product: images, name, price, rating, brand, category, description, tags, stockQuantity, attributes
+Product: images, name, price, rating, brand, category, description, tags, stockQuantity, attributes, productForm, skinType, concern, keyIngredients
 Service: images, name, price, rating, duration, provider, availability, description, attributes
 
 ## DISPLAY СТИЛИ
@@ -131,7 +132,8 @@ Service: images, name, price, rating, duration, provider, availability, descript
 2. Пользователь просит изменить отображение = передай ТОЛЬКО то что меняется.
 3. layout: "comparison" ТОЛЬКО если пользователь явно просит СРАВНИТЬ ("сравни", "сравнение", "compare").
 4. НИКОГДА не меняй layout если пользователь не просит layout. "покажи бренд бейджем" = display only, НЕ трогай layout.
-5. Если current_formation уже задан и пользователь меняет только стиль (display/color/size) — НЕ передавай layout.
+5. Если current_formation уже задан и пользователь меняет только стиль (display/color/size/shape) — НЕ передавай layout.
+6. Если data_change=null (данные не менялись) — НЕ передавай layout, НЕ передавай show/hide без явной просьбы.
 
 ## ПРИМЕРЫ
 
@@ -145,7 +147,7 @@ productCount=5, user_request="покажи покрупнее":
 → visual_assembly(size: "large")
 
 productCount=4, user_request="только фото и цена":
-→ visual_assembly(show: ["images","price"])
+→ visual_assembly(show: ["images","price"], hide: ["name","rating","brand"])
 
 productCount=3, user_request="покажи списком":
 → visual_assembly(layout: "list")
@@ -159,8 +161,8 @@ productCount=5, user_request="без рейтинга":
 productCount=5, user_request="бренд как бейдж":
 → visual_assembly(display: {"brand":"badge"})
 
-productCount=5, user_request="покажи покрупнее с описанием":
-→ visual_assembly(show: ["images","name","price","brand","description"], size: "large")
+productCount=5, user_request="покажи с описанием":
+→ visual_assembly(show: ["description"])
 
 productCount=5, user_request="покажи бренд красным":
 → visual_assembly(color: {"brand":"red"})
@@ -169,7 +171,16 @@ productCount=5, user_request="покажи горизонтально":
 → visual_assembly(direction: "horizontal")
 
 productCount=5, user_request="бренд зелёным бейджем горизонтально":
-→ visual_assembly(display: {"brand":"badge"}, color: {"brand":"green"}, direction: "horizontal")`
+→ visual_assembly(display: {"brand":"badge"}, color: {"brand":"green"}, direction: "horizontal")
+
+productCount=5, user_request="покажи тип кожи бейджами":
+→ visual_assembly(show: ["skinType"], display: {"skinType":"badge"})
+
+productCount=5, user_request="фотки побольше":
+→ visual_assembly(size: {"images":"xl"})
+
+productCount=5, user_request="бренд таблеткой":
+→ visual_assembly(shape: {"brand":"pill"})`
 
 // BuildHistorySummary creates a compact history summary from deltas for Agent2 context
 func BuildHistorySummary(deltas []domain.Delta) string {

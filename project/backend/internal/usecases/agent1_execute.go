@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,9 @@ import (
 	"keepstar/internal/prompts"
 	"keepstar/internal/tools"
 )
+
+// filterTriggers matches user queries that imply filtering existing data
+var filterTriggers = regexp.MustCompile(`(?i)(только|лишь|оставь|убери|исключи|дешевле|дороже|выше|ниже|от \d|до \d)`)
 
 // Agent1ExecuteRequest is the input for Agent 1
 type Agent1ExecuteRequest struct {
@@ -115,6 +119,66 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 			if f, ok := formationData.(*domain.FormationWithData); ok && f != nil && f.Config != nil {
 				currentConfig = f.Config
 			}
+		}
+	}
+
+	// Deterministic pre-check: if data loaded AND query has filter triggers → bypass LLM, call state_filter
+	if state.Current.Meta.ProductCount > 0 && filterTriggers.MatchString(req.Query) {
+		uc.log.Info("deterministic_state_filter",
+			"session_id", req.SessionID,
+			"query", req.Query,
+			"product_count", state.Current.Meta.ProductCount,
+		)
+
+		// Build filter input from query keywords
+		filterInput := map[string]interface{}{
+			"text_match": req.Query,
+		}
+
+		var endToolSpan func(...string)
+		if sc != nil {
+			endToolSpan = sc.Start("agent1.tool")
+		}
+		toolStart := time.Now()
+		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
+			SessionID:  req.SessionID,
+			TurnID:     req.TurnID,
+			ActorID:    "agent1",
+			TenantSlug: req.TenantSlug,
+		}, domain.ToolCall{
+			Name:  "_internal_state_filter",
+			Input: filterInput,
+		})
+		toolDuration := time.Since(toolStart).Milliseconds()
+		if endToolSpan != nil {
+			endToolSpan("_internal_state_filter")
+		}
+
+		if err != nil {
+			uc.log.Error("deterministic_filter_failed", "error", err)
+			// Fall through to LLM path on error
+		} else {
+			uc.log.ToolExecuted("_internal_state_filter", req.SessionID, result.Content, toolDuration)
+
+			// Update conversation history
+			state, _ = uc.statePort.GetState(ctx, req.SessionID)
+			newHistory := append(state.ConversationHistory,
+				domain.LLMMessage{Role: "user", Content: req.Query},
+			)
+			if err := uc.statePort.AppendConversation(ctx, req.SessionID, newHistory); err != nil {
+				uc.log.Error("append_conversation_failed", "error", err)
+			}
+
+			totalDuration := time.Since(start).Milliseconds()
+			return &Agent1ExecuteResponse{
+				LatencyMs:     int(totalDuration),
+				ToolExecuteMs: toolDuration,
+				ToolName:      "_internal_state_filter",
+				ToolInput:     fmt.Sprintf(`{"text_match":"%s"}`, req.Query),
+				ToolResult:    result.Content,
+				ProductsFound: state.Current.Meta.Count,
+				StopReason:    "deterministic_guard",
+			}, nil
 		}
 	}
 

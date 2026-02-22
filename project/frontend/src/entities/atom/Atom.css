@@ -465,3 +465,44 @@
 .atom-number.format-percent::after {
   content: '%';
 }
+
+/* =============================================================================
+   Per-Atom Size Classes
+   ============================================================================= */
+
+.atom-size-sm { transform: scale(0.85); transform-origin: left top; }
+.atom-size-md { /* default, no override */ }
+.atom-size-lg { transform: scale(1.15); transform-origin: left top; }
+.atom-size-xl { transform: scale(1.3); transform-origin: left top; }
+
+/* Size overrides for images */
+.atom-size-sm .atom-image { max-height: 120px; }
+.atom-size-lg .atom-image { max-height: 280px; }
+.atom-size-xl .atom-image { max-height: 380px; }
+
+/* Size overrides for text */
+.atom-size-sm .atom-text,
+.atom-size-sm .atom-heading { font-size: 0.85em; }
+.atom-size-lg .atom-text,
+.atom-size-lg .atom-heading { font-size: 1.15em; }
+.atom-size-xl .atom-text,
+.atom-size-xl .atom-heading { font-size: 1.3em; }
+
+/* =============================================================================
+   Shape Classes
+   ============================================================================= */
+
+.atom-shape-pill { border-radius: 20px !important; }
+.atom-shape-pill .atom-badge,
+.atom-shape-pill .atom-tag { border-radius: 20px; }
+
+.atom-shape-rounded { border-radius: 8px !important; }
+.atom-shape-rounded .atom-badge,
+.atom-shape-rounded .atom-tag { border-radius: 8px; }
+
+.atom-shape-square { border-radius: 0 !important; }
+.atom-shape-square .atom-badge,
+.atom-shape-square .atom-tag { border-radius: 0; }
+
+.atom-shape-circle { border-radius: 50% !important; }
+.atom-shape-circle .atom-image { border-radius: 50%; }

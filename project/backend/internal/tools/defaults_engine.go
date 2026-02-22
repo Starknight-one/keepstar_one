@@ -132,8 +132,8 @@ func AutoResolve(entityType string, entityCount int) ResolvedDefaults {
 			MaxFields: 10,
 			Fields:    ranking,
 		}
-	default:
-		// 2+ items: grid with top 5 fields
+	case entityCount <= 6:
+		// 2-6 items: grid with top 5 fields
 		maxF := 5
 		fields := ranking
 		if len(fields) > maxF {
@@ -142,6 +142,32 @@ func AutoResolve(entityType string, entityCount int) ResolvedDefaults {
 		return ResolvedDefaults{
 			Layout:    "grid",
 			Size:      domain.WidgetSizeMedium,
+			MaxFields: maxF,
+			Fields:    fields,
+		}
+	case entityCount <= 12:
+		// 7-12 items: list with top 4 fields
+		maxF := 4
+		fields := ranking
+		if len(fields) > maxF {
+			fields = fields[:maxF]
+		}
+		return ResolvedDefaults{
+			Layout:    "list",
+			Size:      domain.WidgetSizeSmall,
+			MaxFields: maxF,
+			Fields:    fields,
+		}
+	default:
+		// 13+ items: list with top 3 fields
+		maxF := 3
+		fields := ranking
+		if len(fields) > maxF {
+			fields = fields[:maxF]
+		}
+		return ResolvedDefaults{
+			Layout:    "list",
+			Size:      domain.WidgetSizeTiny,
 			MaxFields: maxF,
 			Fields:    fields,
 		}

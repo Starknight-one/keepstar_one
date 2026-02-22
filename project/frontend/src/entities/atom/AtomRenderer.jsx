@@ -23,9 +23,13 @@ export function AtomRenderer({ atom, onClick }) {
   const display = atom.display || LEGACY_TYPE_TO_DISPLAY[atom.type] || inferDisplay(atom);
   const resolvedColor = resolveColor(atom.meta?.color);
 
+  // Per-atom size and shape classes from meta
+  const sizeClass = atom.meta?.size ? `atom-size-${atom.meta.size}` : '';
+  const shapeClass = atom.meta?.shape ? `atom-shape-${atom.meta.shape}` : '';
+
   return (
     <span
-      className={`atom display-${display}`}
+      className={`atom display-${display} ${sizeClass} ${shapeClass}`.trim()}
       onClick={onClick}
       data-slot={atom.slot}
     >
