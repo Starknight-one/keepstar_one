@@ -5,6 +5,7 @@ export const FormationMode = {
   SINGLE: 'single',
   LIST: 'list',
   COMPARISON: 'comparison',
+  TABLE: 'table',
 };
 
 // Formation structure from backend:

@@ -41,4 +41,15 @@ const (
 	PresetServiceList    PresetName = "service_list"
 	PresetServiceDetail      PresetName = "service_detail"
 	PresetProductComparison  PresetName = "product_comparison"
+
+	// Visual Assembly presets (new system)
+	PresetProductCardGrid   PresetName = "product_card_grid"
+	PresetProductCardDetail PresetName = "product_card_detail"
+	PresetProductRow        PresetName = "product_row"
+	PresetProductSingleHero PresetName = "product_single_hero"
+	PresetSearchEmpty       PresetName = "search_empty"
+	PresetCategoryOverview  PresetName = "category_overview"
+	PresetAttributePicker   PresetName = "attribute_picker"
+	PresetCartSummary       PresetName = "cart_summary"
+	PresetInfoCard          PresetName = "info_card"
 )

@@ -25,6 +25,17 @@ func NewPresetRegistry() *PresetRegistry {
 	r.Register(ServiceListPreset)
 	r.Register(ServiceDetailPreset)
 
+	// Register visual assembly presets
+	r.Register(ProductCardGridPreset)
+	r.Register(ProductCardDetailPreset)
+	r.Register(ProductRowPreset)
+	r.Register(ProductSingleHeroPreset)
+	r.Register(SearchEmptyPreset)
+	r.Register(CategoryOverviewPreset)
+	r.Register(AttributePickerPreset)
+	r.Register(CartSummaryPreset)
+	r.Register(InfoCardPreset)
+
 	return r
 }
 

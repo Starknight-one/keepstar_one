@@ -38,6 +38,13 @@ type DigestSharedFilter struct {
 	Values []string `json:"values"`
 }
 
+// FieldDisplayHint describes how a field should be displayed by default
+type FieldDisplayHint struct {
+	Name     string `json:"name"`
+	Category string `json:"category"` // primary, badge, tag, detail_only, media
+	Default  string `json:"default"`
+}
+
 // ToPromptText returns ultra-compact text for LLM context (~300-400 tokens).
 func (d *CatalogDigest) ToPromptText() string {
 	if d == nil || d.TotalProducts == 0 {

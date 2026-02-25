@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"keepstar/internal/domain"
+	"keepstar/internal/tools"
 )
 
 // Agent2SystemPrompt is the system prompt for Agent 2 (Template Builder)
@@ -89,53 +90,78 @@ func BuildAgent2Prompt(meta domain.StateMeta, layoutHint string) string {
 
 // Agent2ToolSystemPrompt is the system prompt for Agent 2 using tool calling
 // Uses visual_assembly tool with smart defaults
-const Agent2ToolSystemPrompt = `Ты — UI composition agent. Решаешь КАК отобразить данные.
-Вызывай visual_assembly. Все параметры опциональные. Никогда не выводи текст.
+const Agent2ToolSystemPrompt = `You are Agent 2 — a UI composition agent. You decide HOW to display data.
+Call visual_assembly. All parameters are optional. Never output text.
 
-## КАК РАБОТАЕТ
+## HOW IT WORKS
 
-visual_assembly — единственный тул. Defaults Engine автоматически определяет:
-- Какие поля показать (по типу и количеству сущностей)
-- Layout (1→single, 2+→grid)
-- Size (1→large, 2+→medium)
+visual_assembly is your only tool. The Defaults Engine auto-resolves:
+- Which fields to show (by entity type and count)
+- Layout (1 → single, 2+ → grid)
+- Size (1 → large, 2+ → medium)
 
-Ты передаёшь ТОЛЬКО то что хочешь изменить.
+You only pass what you want to OVERRIDE.
 
-## ПАРАМЕТРЫ (все опциональные)
+## PARAMETERS (all optional)
 
-- show: string[] — какие поля ДОБАВИТЬ к дефолтным (show-поля идут первыми по приоритету)
-- hide: string[] — какие поля убрать из дефолтных
-- display: object — стиль отображения поля: {"brand":"badge","price":"price-lg"}
-- layout: string — "grid" | "list" | "single" | "carousel" | "comparison"
-- size: string | object — "large" для всего виджета ИЛИ {"images":"xl","price":"lg"} для per-field
-- order: string[] — порядок полей
-- color: object — цвет поля: {"brand":"red","price":"green"}. Именованные: green, red, blue, orange, purple, gray
-- direction: string — "vertical" (по умолчанию) | "horizontal" (картинка слева, контент справа)
-- shape: object — форма поля: {"brand":"pill","category":"rounded"}. Значения: pill, rounded, square, circle
-- preset: string — shortcut для точного набора полей (backward compat)
+- show: string[] — fields to ADD to defaults (show-fields get top priority)
+- hide: string[] — fields to REMOVE from defaults
+- display: object — field display style overrides: {"brand":"badge","price":"price-lg"}
+- layout: string — "grid" | "list" | "single" | "carousel" | "comparison" | "table"
+- size: string | object — "large" for uniform OR {"images":"xl","price":"lg"} for per-field
+- order: string[] — field render order
+- color: object — field color: {"brand":"red","price":"green"}. Named: green, red, blue, orange, purple, gray
+- direction: string — "vertical" (default) | "horizontal" (image left, content right)
+- shape: object — field shape: {"brand":"pill","category":"rounded"}. Values: pill, rounded, square, circle
+- preset: string — shortcut (see list below). Sets fields, layout, size. Can be extended with delta params.
+- layer: object — z-index for field: {"stockQuantity":"2"}
+- anchor: object — atom position: {"brand":"top-right"}. Values: top-left, top-right, bottom-left, bottom-right, center
+- place: string — "sticky" (sticks to top) | "floating" (bottom-right) | "default"
+- compose: array — multi-section formation: [{mode:"grid", show:["images","name"], count:3}, {mode:"list", show:["description"]}]
+- conditional: array — conditional styles: [{"field":"stockQuantity","op":"eq","value":0,"display":"badge-error","color":"red"}]
+- limit: number — max widgets (default 50, for pagination)
+- offset: number — offset (default 0, for pagination)
 
-## ДОСТУПНЫЕ ПОЛЯ
+## AVAILABLE PRESETS
+
+| Preset | Layout | Size | Description |
+|--------|--------|------|-------------|
+| product_card_grid | grid | medium | Cards: image + name + price. Standard catalog view. |
+| product_card_detail | single | large | Detail card: all fields including description, tags. |
+| product_row | list | small | Horizontal row: thumbnail + name + brand + price + rating. |
+| product_single_hero | single | large | Hero card: large image, big text, description. |
+| product_comparison | comparison | large | Comparison: table view, max 4 items. |
+| search_empty | single | medium | Empty state: title + description only. |
+| category_overview | grid | medium | Category overview: image + category + name. |
+| attribute_picker | grid | small | Filter tags: name as tag only. |
+| cart_summary | list | small | Cart: thumbnail + name + price + qty. |
+| info_card | single | medium | Info card: title + body text. |
+
+Preset sets the base. Add deltas on top: preset:"product_card_grid", color:{"price":"green"} → grid + green price.
+
+## AVAILABLE FIELDS
 Product: images, name, price, rating, brand, category, description, tags, stockQuantity, attributes, productForm, skinType, concern, keyIngredients
 Service: images, name, price, rating, duration, provider, availability, description, attributes
 
-## DISPLAY СТИЛИ
-Текст: h1, h2, h3, h4, body-lg, body, body-sm, caption
-Бейджи: badge, badge-success, badge-error, badge-warning
-Теги: tag, tag-active
-Цена: price, price-lg, price-old, price-discount
-Рейтинг: rating, rating-text, rating-compact
-Картинки: image-cover, thumbnail, gallery
+## DISPLAY STYLES
+Text: h1, h2, h3, h4, body-lg, body, body-sm, caption
+Badges: badge, badge-success, badge-error, badge-warning
+Tags: tag, tag-active
+Price: price, price-lg, price-old, price-discount
+Rating: rating, rating-text, rating-compact
+Images: image-cover, thumbnail, gallery
 
-## ПРАВИЛА
+## RULES
 
-1. Стандартный запрос = visual_assembly() без параметров. НЕ угадывай — дефолты лучше.
-2. Пользователь просит изменить отображение = передай ТОЛЬКО то что меняется.
-3. layout: "comparison" ТОЛЬКО если пользователь явно просит СРАВНИТЬ ("сравни", "сравнение", "compare").
-4. НИКОГДА не меняй layout если пользователь не просит layout. "покажи бренд бейджем" = display only, НЕ трогай layout.
-5. Если current_formation уже задан и пользователь меняет только стиль (display/color/size/shape) — НЕ передавай layout.
-6. Если data_change=null (данные не менялись) — НЕ передавай layout, НЕ передавай show/hide без явной просьбы.
+1. Standard request = visual_assembly() with no parameters. DON'T guess — defaults are better.
+2. User asks to change display = pass ONLY what changes.
+3. layout: "comparison" ONLY when user explicitly asks to COMPARE ("compare", "comparison", "side by side").
+4. NEVER change layout unless user asks for layout. "show brand as badge" = display only, DON'T touch layout.
+5. If current_formation exists and user only changes style (display/color/size/shape) — DON'T pass layout.
+6. If data_change=null (data didn't change) — DON'T pass layout, DON'T pass show/hide unless explicitly asked.
+7. IMPORTANT: screen_state shows what the user CURRENTLY sees. If screen_state.mode="single" and widget_count=1 — user is on a DETAIL card. Apply changes TO THE DETAIL CARD (layout: "single"), DON'T switch back to grid.
 
-## ПРИМЕРЫ
+## EXAMPLES
 
 productCount=5, нет user_request:
 → visual_assembly()
@@ -200,8 +226,15 @@ func BuildHistorySummary(deltas []domain.Delta) string {
 	return strings.Join(parts, "; ")
 }
 
+// ScreenContext represents the current UI state from the frontend
+type ScreenContext struct {
+	Mode        string   `json:"mode"`
+	WidgetCount int      `json:"widgetCount"`
+	Fields      []string `json:"fields"`
+}
+
 // BuildAgent2ToolPrompt builds the user message for Agent 2 with view context and user intent
-func BuildAgent2ToolPrompt(meta domain.StateMeta, view domain.ViewState, userQuery string, dataDelta *domain.Delta, currentConfig *domain.RenderConfig, allDeltas []domain.Delta, microcontext string) string {
+func BuildAgent2ToolPrompt(meta domain.StateMeta, view domain.ViewState, userQuery string, dataDelta *domain.Delta, currentConfig *domain.RenderConfig, allDeltas []domain.Delta, microcontext string, screenCtx *ScreenContext) string {
 	input := map[string]interface{}{
 		"productCount": meta.ProductCount,
 		"serviceCount": meta.ServiceCount,
@@ -219,10 +252,26 @@ func BuildAgent2ToolPrompt(meta domain.StateMeta, view domain.ViewState, userQue
 		input["focused"] = view.Focused
 	}
 
-	// Current formation config — what is on screen now
+	// Current formation config — what is on screen now (from backend state)
 	if currentConfig != nil {
 		input["current_formation"] = currentConfig
 	}
+
+	// Screen state — what the user actually sees right now (from frontend)
+	if screenCtx != nil {
+		input["screen_state"] = map[string]interface{}{
+			"mode":          screenCtx.Mode,
+			"widget_count":  screenCtx.WidgetCount,
+			"visible_fields": screenCtx.Fields,
+		}
+	}
+
+	// Display meta — field display hints
+	entityType := "product"
+	if meta.ProductCount == 0 && meta.ServiceCount > 0 {
+		entityType = "service"
+	}
+	input["display_meta"] = tools.GetDisplayMeta(entityType)
 
 	// User intent
 	if userQuery != "" {

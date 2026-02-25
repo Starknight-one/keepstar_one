@@ -15,23 +15,46 @@ const COLOR_PALETTE = {
 // Resolve named color or pass hex through
 function resolveColor(color) {
   if (!color) return null;
+  if (typeof color !== 'string') return null;
   return COLOR_PALETTE[color.toLowerCase()] || color;
 }
 
+// A3: Compute relative luminance and pick contrast text color
+function contrastText(hex) {
+  if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) return '#FFFFFF';
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const r = parseInt(full.substring(0, 2), 16) / 255;
+  const g = parseInt(full.substring(2, 4), 16) / 255;
+  const b = parseInt(full.substring(4, 6), 16) / 255;
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum > 0.5 ? '#18181B' : '#FFFFFF';
+}
+
 export function AtomRenderer({ atom, onClick }) {
+  // A6: Null value guard — skip atoms with no value (except images and explicit 0)
+  if (atom.value == null && atom.value !== 0 && atom.type !== 'image') return null;
+
   // Determine display: explicit display > legacy mapping > inferred from type/subtype
   const display = atom.display || LEGACY_TYPE_TO_DISPLAY[atom.type] || inferDisplay(atom);
   const resolvedColor = resolveColor(atom.meta?.color);
 
-  // Per-atom size and shape classes from meta
+  // Per-atom size, shape, and anchor classes from meta
   const sizeClass = atom.meta?.size ? `atom-size-${atom.meta.size}` : '';
   const shapeClass = atom.meta?.shape ? `atom-shape-${atom.meta.shape}` : '';
+  const anchorClass = atom.meta?.anchor ? `atom-anchor-${atom.meta.anchor}` : '';
+
+  // Layer style (z-index)
+  const layerStyle = atom.meta?.layer
+    ? { zIndex: parseInt(atom.meta.layer, 10) || 0, position: 'relative' }
+    : undefined;
 
   return (
     <span
-      className={`atom display-${display} ${sizeClass} ${shapeClass}`.trim()}
+      className={`atom display-${display} ${sizeClass} ${shapeClass} ${anchorClass}`.trim()}
       onClick={onClick}
       data-slot={atom.slot}
+      style={layerStyle}
     >
       {renderByDisplay(atom, display, resolvedColor)}
     </span>
@@ -68,7 +91,7 @@ function inferDisplay(atom) {
 function renderByDisplay(atom, display, color) {
   // Color style helpers
   const textColorStyle = color ? { color } : undefined;
-  const bgColorStyle = color ? { backgroundColor: color, color: 'white' } : undefined;
+  const bgColorStyle = color ? { backgroundColor: color, color: contrastText(color) } : undefined;
 
   // Heading displays
   if (['h1', 'h2', 'h3', 'h4'].includes(display)) {
@@ -151,8 +174,8 @@ function renderByDisplay(atom, display, color) {
     return <div className="atom-spacer" />;
   }
 
-  // Default: just render value
-  return <span>{String(atom.value)}</span>;
+  // A7: Default fallback — render with body class instead of bare span
+  return <span className="atom-text body">{String(atom.value)}</span>;
 }
 
 // Format text based on subtype
@@ -168,6 +191,7 @@ function formatText(atom) {
 
 // Format price with currency
 function formatPrice(atom) {
+  if (atom.value == null) return null;
   const currency = atom.meta?.currency || '$';
   const value = typeof atom.value === 'number'
     ? atom.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })

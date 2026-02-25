@@ -30,6 +30,11 @@ func SetupRoutes(mux *http.ServeMux, chat *ChatHandler, session *SessionHandler,
 	}
 }
 
+// SetupTestbenchRoutes configures testbench routes
+func SetupTestbenchRoutes(mux *http.ServeMux, testbench *TestbenchHandler) {
+	mux.HandleFunc("/api/v1/testbench", testbench.HandleTestbench)
+}
+
 // SetupNavigationRoutes configures navigation routes (expand/back)
 func SetupNavigationRoutes(mux *http.ServeMux, nav *NavigationHandler) {
 	mux.HandleFunc("/api/v1/navigation/expand", nav.HandleExpand)

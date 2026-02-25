@@ -14,12 +14,20 @@ import (
 	"keepstar/internal/tools"
 )
 
+// ScreenContext represents the current UI state from the frontend
+type ScreenContext struct {
+	Mode        string   `json:"mode"`
+	WidgetCount int      `json:"widgetCount"`
+	Fields      []string `json:"fields"`
+}
+
 // PipelineExecuteRequest is the input for the full pipeline
 type PipelineExecuteRequest struct {
-	SessionID  string
-	Query      string
-	TenantSlug string // Tenant context (default: "nike")
-	TurnID     string // Turn ID for delta grouping
+	SessionID     string
+	Query         string
+	TenantSlug    string         // Tenant context (default: "nike")
+	TurnID        string         // Turn ID for delta grouping
+	ScreenContext *ScreenContext  // Current UI state from frontend
 }
 
 // PipelineExecuteResponse is the output from the full pipeline
@@ -198,10 +206,11 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 
 	// Step 2: Agent 2 (Template Builder) - triggered after Agent 1
 	agent2Resp, err := uc.agent2UC.Execute(ctx, Agent2ExecuteRequest{
-		SessionID:    req.SessionID,
-		TurnID:       turnID,
-		UserQuery:    req.Query,
-		Microcontext: microcontext,
+		SessionID:     req.SessionID,
+		TurnID:        turnID,
+		UserQuery:     req.Query,
+		Microcontext:  microcontext,
+		ScreenContext: req.ScreenContext,
 	})
 	if err != nil {
 		trace.Error = fmt.Sprintf("agent2: %v", err)

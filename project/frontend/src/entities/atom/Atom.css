@@ -196,6 +196,7 @@
   font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
   font-weight: 700;
   color: var(--color-price, #18181B);
+  min-width: 4em; /* C3: prevent price from collapsing */
 }
 
 .atom-price.price {
@@ -506,3 +507,30 @@
 
 .atom-shape-circle { border-radius: 50% !important; }
 .atom-shape-circle .atom-image { border-radius: 50%; }
+
+/* =============================================================================
+   Anchor Position Classes
+   ============================================================================= */
+
+.atom-anchor-top-left { position: absolute; top: 8px; left: 8px; }
+.atom-anchor-top-right { position: absolute; top: 8px; right: 8px; }
+.atom-anchor-bottom-left { position: absolute; bottom: 8px; left: 8px; }
+.atom-anchor-bottom-right { position: absolute; bottom: 8px; right: 8px; }
+.atom-anchor-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+/* =============================================================================
+   C5: Line-clamp for headings in grid/list context
+   ============================================================================= */
+
+.formation-grid .atom.display-h2 .atom-heading,
+.formation-grid .atom.display-h3 .atom-heading {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.formation-grid .generic-card.size-small .atom.display-h2 .atom-heading,
+.formation-grid .generic-card.size-small .atom.display-h3 .atom-heading {
+  -webkit-line-clamp: 1;
+}

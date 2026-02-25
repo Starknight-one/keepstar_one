@@ -31,6 +31,12 @@
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
   width: 100%;
+  align-items: stretch; /* F1: equal-height cards in grid */
+}
+
+/* F1: content zone fills remaining space */
+.formation-grid .generic-card-content {
+  flex: 1;
 }
 
 /* Fixed column overrides — only above 600px */
@@ -52,6 +58,7 @@
 .formation-carousel > * {
   scroll-snap-align: start;
   flex-shrink: 0;
+  width: 85%; /* F5: carousel peek — show next card edge */
 }
 
 .formation-carousel::-webkit-scrollbar {
@@ -87,10 +94,54 @@
   max-width: 100%;
 }
 
+/* F6: alternating row backgrounds for list mode */
+.formation-list > *:nth-child(even) {
+  background: #fafafa;
+  border-radius: 8px;
+}
+
 /* Comparison mode */
 .formation-comparison {
   width: 100%;
   padding: 8px 0;
+}
+
+/* Composed formation (multi-section) */
+.formation-composed {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+}
+
+.formation-section {
+  width: 100%;
+}
+
+.formation-section-label {
+  font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary, #18181B);
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+/* Table mode */
+.formation-table {
+  width: 100%;
+  padding: 8px 0;
+}
+
+.formation-table .comparison-grid {
+  font-size: 13px;
+}
+
+/* F8: mobile grid fallback — single column on very narrow screens */
+@media (max-width: 300px) {
+  .formation-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Lazy load sentinel */

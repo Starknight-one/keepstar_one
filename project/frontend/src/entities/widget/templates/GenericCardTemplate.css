@@ -36,6 +36,18 @@
   height: 280px;
 }
 
+/* W4: Hide empty media zone */
+.generic-card-media:empty {
+  display: none;
+}
+
+/* Carousel image fills media zone */
+.carousel-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* --- Content zone --- */
 
 .generic-card-content {

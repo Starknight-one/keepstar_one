@@ -49,6 +49,7 @@ func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, prese
 	// Data tools (Agent1)
 	r.Register(NewCatalogSearchTool(statePort, catalogPort, embeddingPort))
 	r.Register(NewStateFilterTool(statePort))
+	r.Register(NewHistoryLookupTool(statePort))
 
 	// Render tools (Agent2)
 	r.Register(NewVisualAssemblyTool(statePort, presetRegistry))

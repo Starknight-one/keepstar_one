@@ -15,8 +15,12 @@ import (
 	"keepstar/internal/tools"
 )
 
-// filterTriggers matches user queries that imply filtering existing data
-var filterTriggers = regexp.MustCompile(`(?i)(только|лишь|оставь|убери|исключи|дешевле|дороже|выше|ниже|от \d|до \d)`)
+// filterTriggers matches user queries that imply filtering existing data (price/quantity filters)
+// NOTE: "убери/покажи/добавь/без" are NOT here — they are style requests when followed by field names
+var filterTriggers = regexp.MustCompile(`(?i)(только|лишь|оставь|исключи|дешевле|дороже|выше|ниже|от \d|до \d)`)
+
+// styleFieldNames are display field names — "убери <field>" = style request, not data filter
+var styleFieldNames = regexp.MustCompile(`(?i)(описани|рейтинг|бренд|цен[уыа]|фото|картинк|назван|изображ|тег|катего|рейт|rating|brand|price|image|name|description|tag)`)
 
 // Agent1ExecuteRequest is the input for Agent 1
 type Agent1ExecuteRequest struct {
@@ -123,7 +127,9 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	}
 
 	// Deterministic pre-check: if data loaded AND query has filter triggers → bypass LLM, call state_filter
-	if state.Current.Meta.ProductCount > 0 && filterTriggers.MatchString(req.Query) {
+	// But NOT if the query is about display fields (style request)
+	isFilterQuery := filterTriggers.MatchString(req.Query) && !styleFieldNames.MatchString(req.Query)
+	if state.Current.Meta.ProductCount > 0 && isFilterQuery {
 		uc.log.Info("deterministic_state_filter",
 			"session_id", req.SessionID,
 			"query", req.Query,
@@ -280,7 +286,8 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		state, _ = uc.statePort.GetState(ctx, req.SessionID)
 		productsFound = state.Current.Meta.Count
 	} else {
-		uc.log.Warn("no_tool_call",
+		// No tool call — style request or ambiguous query. Agent2 handles rendering.
+		uc.log.Info("no_tool_call",
 			"session_id", req.SessionID,
 			"stop_reason", llmResp.StopReason,
 			"text", llmResp.Text,

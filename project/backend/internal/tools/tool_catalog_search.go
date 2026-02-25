@@ -416,8 +416,18 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		merged = rrfMerge(keywordProducts, vectorProducts, limit, hasFilters)
 	}
 
+	// Normalize product data
+	for i := range merged {
+		NormalizeProduct(&merged[i])
+	}
+
 	// RRF merge for services
 	mergedServices := rrfMergeServices(keywordServices, vectorServices, limit, hasFilters)
+
+	// Normalize service data
+	for i := range mergedServices {
+		NormalizeService(&mergedServices[i])
+	}
 
 	total := len(merged) + len(mergedServices)
 	meta["merged_count"] = total

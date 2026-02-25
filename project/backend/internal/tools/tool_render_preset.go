@@ -463,6 +463,14 @@ func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency C
 			continue
 		}
 
+		// D7: validate image URLs
+		if field.AtomType == domain.AtomTypeImage {
+			value = ValidateImageURL(value)
+			if value == nil {
+				continue
+			}
+		}
+
 		atom := domain.Atom{
 			Type:      field.AtomType,
 			Subtype:   field.Subtype,
@@ -507,6 +515,9 @@ func productFieldGetter(p domain.Product) FieldGetter {
 		case "description":
 			return nonEmpty(p.Description)
 		case "price":
+			if p.Price == 0 {
+				return nil
+			}
 			return p.Price
 		case "images":
 			if len(p.Images) == 0 {
@@ -566,6 +577,9 @@ func serviceFieldGetter(s domain.Service) FieldGetter {
 		case "description":
 			return nonEmpty(s.Description)
 		case "price":
+			if s.Price == 0 {
+				return nil
+			}
 			return s.Price
 		case "images":
 			if len(s.Images) == 0 {
@@ -600,4 +614,14 @@ func nonEmpty(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// ExportProductFieldGetter is an exported wrapper for testbench usage
+func ExportProductFieldGetter(p domain.Product) FieldGetter {
+	return productFieldGetter(p)
+}
+
+// ExportBuildAtoms is an exported wrapper for testbench usage
+func ExportBuildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency CurrencyGetter) []domain.Atom {
+	return buildAtoms(fields, getField, getCurrency)
 }

@@ -46,10 +46,28 @@ type RenderConfig struct {
 	Fields     []FieldSpec   `json:"fields,omitempty"`
 }
 
-// FormationWithData is the final result after applying template
-type FormationWithData struct {
+// FormationSection represents a section within a composed formation
+type FormationSection struct {
 	Mode    FormationType `json:"mode"`
 	Grid    *GridConfig   `json:"grid,omitempty"`
 	Widgets []Widget      `json:"widgets"`
-	Config  *RenderConfig `json:"config,omitempty"`
+	Label   string        `json:"label,omitempty"`
+}
+
+// PaginationMeta contains pagination info for large result sets
+type PaginationMeta struct {
+	Total   int  `json:"total"`
+	Offset  int  `json:"offset"`
+	Limit   int  `json:"limit"`
+	HasMore bool `json:"hasMore"`
+}
+
+// FormationWithData is the final result after applying template
+type FormationWithData struct {
+	Mode       FormationType     `json:"mode"`
+	Grid       *GridConfig       `json:"grid,omitempty"`
+	Widgets    []Widget          `json:"widgets"`
+	Config     *RenderConfig     `json:"config,omitempty"`
+	Sections   []FormationSection `json:"sections,omitempty"`
+	Pagination *PaginationMeta   `json:"pagination,omitempty"`
 }

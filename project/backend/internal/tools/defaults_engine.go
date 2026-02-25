@@ -1,6 +1,8 @@
 package tools
 
-import "keepstar/internal/domain"
+import (
+	"keepstar/internal/domain"
+)
 
 // ResolvedDefaults holds auto-resolved layout, size, and field configuration
 type ResolvedDefaults struct {
@@ -159,19 +161,106 @@ func AutoResolve(entityType string, entityCount int) ResolvedDefaults {
 			Fields:    fields,
 		}
 	default:
-		// 13+ items: list with top 3 fields
+		// 13+ items: grid with top 3 fields (small size → 3 atoms: image, name, price)
 		maxF := 3
 		fields := ranking
 		if len(fields) > maxF {
 			fields = fields[:maxF]
 		}
 		return ResolvedDefaults{
-			Layout:    "list",
-			Size:      domain.WidgetSizeTiny,
+			Layout:    "grid",
+			Size:      domain.WidgetSizeSmall,
 			MaxFields: maxF,
 			Fields:    fields,
 		}
 	}
+}
+
+// DefaultSlotConstraints limits max atoms per slot
+var DefaultSlotConstraints = map[domain.AtomSlot]int{
+	domain.AtomSlotHero:      1,
+	domain.AtomSlotTitle:     1,
+	domain.AtomSlotPrice:     2,
+	domain.AtomSlotBadge:     3,
+	domain.AtomSlotPrimary:   4,
+	domain.AtomSlotSecondary: 5,
+}
+
+// ApplySlotConstraints limits the number of atoms per slot
+func ApplySlotConstraints(configs []domain.FieldConfig) []domain.FieldConfig {
+	slotCounts := make(map[domain.AtomSlot]int)
+	result := make([]domain.FieldConfig, 0, len(configs))
+	for _, fc := range configs {
+		maxForSlot, hasLimit := DefaultSlotConstraints[fc.Slot]
+		if !hasLimit {
+			result = append(result, fc)
+			continue
+		}
+		if slotCounts[fc.Slot] < maxForSlot {
+			result = append(result, fc)
+			slotCounts[fc.Slot]++
+		}
+	}
+	return result
+}
+
+// CalcGridConfig determines optimal grid columns from entity count and widget size
+func CalcGridConfig(entityCount int, size domain.WidgetSize) *domain.GridConfig {
+	var cols int
+	switch {
+	case entityCount <= 2:
+		cols = entityCount
+	case entityCount <= 4:
+		cols = 2
+	case entityCount <= 9:
+		switch size {
+		case domain.WidgetSizeLarge, domain.WidgetSizeMedium:
+			cols = 2
+		default:
+			cols = 3
+		}
+	default:
+		switch size {
+		case domain.WidgetSizeLarge:
+			cols = 3
+		case domain.WidgetSizeTiny:
+			cols = 4
+		default:
+			cols = 3
+		}
+	}
+	return &domain.GridConfig{Cols: cols}
+}
+
+// GetDisplayMeta returns display hints for all known fields of an entity type
+func GetDisplayMeta(entityType string) []domain.FieldDisplayHint {
+	ranking := fieldRanking[entityType]
+	if ranking == nil {
+		ranking = fieldRanking["product"]
+	}
+	hints := make([]domain.FieldDisplayHint, 0, len(ranking))
+	for _, name := range ranking {
+		slot := defaultSlot[name]
+		category := "detail_only"
+		switch slot {
+		case domain.AtomSlotHero:
+			category = "media"
+		case domain.AtomSlotTitle, domain.AtomSlotPrice:
+			category = "primary"
+		case domain.AtomSlotBadge:
+			category = "badge"
+		case domain.AtomSlotPrimary:
+			category = "tag"
+		case domain.AtomSlotSecondary:
+			category = "detail_only"
+		}
+		hints = append(hints, domain.FieldDisplayHint{
+			Name:     name,
+			Category: category,
+			Default:  defaultDisplay[name],
+		})
+	}
+	return hints
 }
 
 // BuildFieldConfigs converts field names + display overrides into FieldConfig slice

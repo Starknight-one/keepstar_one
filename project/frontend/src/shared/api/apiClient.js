@@ -114,10 +114,13 @@ export async function initSession() {
 }
 
 // Pipeline API - sends query through Agent 1 -> Agent 2 -> Formation
-export async function sendPipelineQuery(sessionId, query) {
+export async function sendPipelineQuery(sessionId, query, screenContext) {
   const body = { query };
   if (sessionId) {
     body.sessionId = sessionId;
+  }
+  if (screenContext) {
+    body.screenContext = screenContext;
   }
 
   const response = await timedFetch('POST', '/pipeline', { body: JSON.stringify(body) });

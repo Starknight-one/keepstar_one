@@ -27,10 +27,18 @@ func NewPipelineHandler(pipelineUC *usecases.PipelineExecuteUseCase, metricsStor
 	}
 }
 
+// ScreenContext represents the current UI state from the frontend
+type ScreenContext struct {
+	Mode        string   `json:"mode"`
+	WidgetCount int      `json:"widgetCount"`
+	Fields      []string `json:"fields"`
+}
+
 // PipelineRequest is the request body
 type PipelineRequest struct {
-	SessionID string `json:"sessionId"`
-	Query     string `json:"query"`
+	SessionID     string         `json:"sessionId"`
+	Query         string         `json:"query"`
+	ScreenContext *ScreenContext  `json:"screenContext,omitempty"`
 }
 
 // PipelineResponse is the response body
@@ -46,9 +54,11 @@ type PipelineResponse struct {
 
 // FormationResponse is the JSON-friendly formation for HTTP response
 type FormationResponse struct {
-	Mode    string             `json:"mode"`
-	Grid    *domain.GridConfig `json:"grid,omitempty"`
-	Widgets []domain.Widget    `json:"widgets"`
+	Mode       string                    `json:"mode"`
+	Grid       *domain.GridConfig        `json:"grid,omitempty"`
+	Widgets    []domain.Widget           `json:"widgets"`
+	Sections   []domain.FormationSection `json:"sections,omitempty"`
+	Pagination *domain.PaginationMeta    `json:"pagination,omitempty"`
 }
 
 // HandlePipeline handles POST /api/v1/pipeline
@@ -95,11 +105,23 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 	reqLog.Info("pipeline_start", "query", req.Query)
 
 	turnID := uuid.New().String()
+
+	// Build screen context from frontend
+	var screenCtx *usecases.ScreenContext
+	if req.ScreenContext != nil {
+		screenCtx = &usecases.ScreenContext{
+			Mode:        req.ScreenContext.Mode,
+			WidgetCount: req.ScreenContext.WidgetCount,
+			Fields:      req.ScreenContext.Fields,
+		}
+	}
+
 	result, err := h.pipelineUC.Execute(r.Context(), usecases.PipelineExecuteRequest{
-		SessionID:  sessionID,
-		Query:      req.Query,
-		TenantSlug: tenantSlug,
-		TurnID:     turnID,
+		SessionID:     sessionID,
+		Query:         req.Query,
+		TenantSlug:    tenantSlug,
+		TurnID:        turnID,
+		ScreenContext: screenCtx,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -169,9 +191,11 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 
 	if result.Formation != nil {
 		resp.Formation = &FormationResponse{
-			Mode:    string(result.Formation.Mode),
-			Grid:    result.Formation.Grid,
-			Widgets: result.Formation.Widgets,
+			Mode:       string(result.Formation.Mode),
+			Grid:       result.Formation.Grid,
+			Widgets:    result.Formation.Widgets,
+			Sections:   result.Formation.Sections,
+			Pagination: result.Formation.Pagination,
 		}
 	}
 
@@ -180,9 +204,11 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 		resp.AdjacentTemplates = make(map[string]*FormationResponse, len(result.AdjacentTemplates))
 		for key, f := range result.AdjacentTemplates {
 			resp.AdjacentTemplates[key] = &FormationResponse{
-				Mode:    string(f.Mode),
-				Grid:    f.Grid,
-				Widgets: f.Widgets,
+				Mode:       string(f.Mode),
+				Grid:       f.Grid,
+				Widgets:    f.Widgets,
+				Sections:   f.Sections,
+				Pagination: f.Pagination,
 			}
 		}
 	}
