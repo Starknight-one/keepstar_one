@@ -58,11 +58,26 @@ const (
 	AtomSlotSpecs       AtomSlot = "specs"       // Specifications table
 )
 
-// Atom is the smallest UI building block with type, subtype, and display
+// AtomFormat defines how the raw value is transformed into display text
+type AtomFormat string
+
+const (
+	FormatCurrency     AtomFormat = "currency"      // "$329.00"
+	FormatStars        AtomFormat = "stars"          // "★★★★☆"
+	FormatStarsText    AtomFormat = "stars-text"     // "4.2/5"
+	FormatStarsCompact AtomFormat = "stars-compact"  // "★ 4.2"
+	FormatPercent      AtomFormat = "percent"        // "85%"
+	FormatNumber       AtomFormat = "number"         // "329"
+	FormatDate         AtomFormat = "date"           // "Feb 25, 2026"
+	FormatText         AtomFormat = "text"           // as-is
+)
+
+// Atom is the smallest UI building block with type, subtype, format, and display
 type Atom struct {
 	Type      AtomType               `json:"type"`
 	Subtype   AtomSubtype            `json:"subtype,omitempty"`
-	Display   string                 `json:"display,omitempty"`   // Visual format (e.g., "h1", "price-lg", "badge-success")
+	Format    AtomFormat             `json:"format,omitempty"`    // Value transform (e.g., "currency", "stars-compact")
+	Display   string                 `json:"display,omitempty"`   // Visual wrapper (e.g., "h1", "badge", "tag")
 	Value     interface{}            `json:"value"`
 	FieldName string                 `json:"fieldName,omitempty"` // Source field name (only in template atoms)
 	Slot      AtomSlot               `json:"slot,omitempty"`      // Template slot hint

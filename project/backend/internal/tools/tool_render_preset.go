@@ -66,6 +66,7 @@ func parseFieldSpecs(rawFields interface{}) ([]domain.FieldConfig, []domain.Fiel
 		name, _ := fm["name"].(string)
 		slot, _ := fm["slot"].(string)
 		display, _ := fm["display"].(string)
+		format, _ := fm["format"].(string)
 
 		if name == "" || slot == "" {
 			continue
@@ -77,17 +78,21 @@ func parseFieldSpecs(rawFields interface{}) ([]domain.FieldConfig, []domain.Fiel
 			entry = fieldTypeEntry{domain.AtomTypeText, domain.SubtypeString}
 		}
 
+		inferredFormat := InferFormat(domain.AtomFormat(format), entry.Type, entry.Subtype)
+
 		configs = append(configs, domain.FieldConfig{
 			Name:     name,
 			Slot:     domain.AtomSlot(slot),
 			AtomType: entry.Type,
 			Subtype:  entry.Subtype,
+			Format:   inferredFormat,
 			Display:  domain.AtomDisplay(display),
 			Priority: i,
 		})
 		specs = append(specs, domain.FieldSpec{
 			Name:    name,
 			Slot:    slot,
+			Format:  string(inferredFormat),
 			Display: display,
 		})
 	}
@@ -113,6 +118,7 @@ func buildRenderConfig(entityType string, preset domain.Preset, size domain.Widg
 			specs = append(specs, domain.FieldSpec{
 				Name:    f.Name,
 				Slot:    string(f.Slot),
+				Format:  string(f.Format),
 				Display: string(f.Display),
 			})
 		}
@@ -421,6 +427,7 @@ func BuildTemplateFormation(preset domain.Preset) *domain.FormationWithData {
 		atom := domain.Atom{
 			Type:      field.AtomType,
 			Subtype:   field.Subtype,
+			Format:    field.Format,
 			Display:   string(field.Display),
 			Value:     nil,
 			FieldName: field.Name,
@@ -474,7 +481,8 @@ func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency C
 		atom := domain.Atom{
 			Type:      field.AtomType,
 			Subtype:   field.Subtype,
-			Display:   string(field.Display), // Use Display from FieldConfig
+			Format:    field.Format,
+			Display:   string(field.Display),
 			Value:     value,
 			Slot:      field.Slot,
 			FieldName: field.Name,

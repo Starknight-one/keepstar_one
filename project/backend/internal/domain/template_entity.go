@@ -32,9 +32,10 @@ type FormationTemplate struct {
 
 // FieldSpec describes a single field in RenderConfig (what Agent 2 decided to show)
 type FieldSpec struct {
-	Name    string `json:"name"`    // "images", "name", "price"
-	Slot    string `json:"slot"`    // "hero", "title", "price"
-	Display string `json:"display"` // "image-cover", "h2", "price-lg"
+	Name    string `json:"name"`              // "images", "name", "price"
+	Slot    string `json:"slot"`              // "hero", "title", "price"
+	Format  string `json:"format,omitempty"`  // value transform: "currency", "stars-compact"
+	Display string `json:"display"`           // visual wrapper: "badge", "h2", "tag"
 }
 
 // RenderConfig captures how Agent 2 rendered this formation (for next-turn context)

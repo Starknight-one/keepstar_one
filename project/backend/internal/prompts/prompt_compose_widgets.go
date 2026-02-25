@@ -106,7 +106,8 @@ You only pass what you want to OVERRIDE.
 
 - show: string[] — fields to ADD to defaults (show-fields get top priority)
 - hide: string[] — fields to REMOVE from defaults
-- display: object — field display style overrides: {"brand":"badge","price":"price-lg"}
+- display: object — field visual wrapper overrides: {"brand":"badge","price":"h2"}. Display = visual container only.
+- format: object — field value format overrides (auto-inferred, rarely needed): {"rating":"stars-text"}. Values: currency, stars, stars-text, stars-compact, percent, number, date, text.
 - layout: string — "grid" | "list" | "single" | "carousel" | "comparison" | "table"
 - size: string | object — "large" for uniform OR {"images":"xl","price":"lg"} for per-field
 - order: string[] — field render order
@@ -143,13 +144,17 @@ Preset sets the base. Add deltas on top: preset:"product_card_grid", color:{"pri
 Product: images, name, price, rating, brand, category, description, tags, stockQuantity, attributes, productForm, skinType, concern, keyIngredients
 Service: images, name, price, rating, duration, provider, availability, description, attributes
 
-## DISPLAY STYLES
+## DISPLAY STYLES (visual wrappers — universal, any wrapper for any data type)
 Text: h1, h2, h3, h4, body-lg, body, body-sm, caption
 Badges: badge, badge-success, badge-error, badge-warning
 Tags: tag, tag-active
 Price: price, price-lg, price-old, price-discount
 Rating: rating, rating-text, rating-compact
-Images: image-cover, thumbnail, gallery
+Images: image-cover, thumbnail, gallery (image-only)
+
+## FORMAT VALUES (auto-inferred from type+subtype — override only when needed)
+currency → "$329.00", stars → "★★★★☆", stars-text → "4.2/5", stars-compact → "★ 4.2"
+percent → "85%", number → "329", date → "Feb 25, 2026", text → as-is
 
 ## RULES
 
@@ -206,7 +211,16 @@ productCount=5, user_request="фотки побольше":
 → visual_assembly(size: {"images":"xl"})
 
 productCount=5, user_request="бренд таблеткой":
-→ visual_assembly(shape: {"brand":"pill"})`
+→ visual_assembly(shape: {"brand":"pill"})
+
+productCount=5, user_request="цену в бейдже":
+→ visual_assembly(display: {"price":"badge"})
+
+productCount=5, user_request="рейтинг текстом":
+→ visual_assembly(format: {"rating":"stars-text"})
+
+productCount=5, user_request="рейтинг звёздами в заголовке":
+→ visual_assembly(format: {"rating":"stars"}, display: {"rating":"h2"})`
 
 // BuildHistorySummary creates a compact history summary from deltas for Agent2 context
 func BuildHistorySummary(deltas []domain.Delta) string {

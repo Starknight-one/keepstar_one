@@ -68,7 +68,12 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 				},
 				"display": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Field→display style overrides. E.g. {\"brand\":\"badge\",\"price\":\"price-lg\"}.",
+					"description":          "Field→display wrapper overrides. E.g. {\"brand\":\"badge\",\"price\":\"h2\"}. Display is the visual container (badge, tag, h1, body, etc.).",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+				},
+				"format": map[string]interface{}{
+					"type":                 "object",
+					"description":          "Field→format overrides. Auto-inferred from type+subtype — rarely needed. E.g. {\"rating\":\"stars-text\"}. Values: currency, stars, stars-text, stars-compact, percent, number, date, text.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 				"order": map[string]interface{}{
@@ -484,8 +489,18 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 		products = products[:4]
 	}
 
-	// Step 8: Build FieldConfigs
-	fieldConfigs := BuildFieldConfigs(fields, displayOverrides)
+	// Step 7.6: Parse format overrides
+	formatOverrides := make(map[string]string)
+	if formatRaw, ok := input["format"].(map[string]interface{}); ok {
+		for field, f := range formatRaw {
+			if fs, ok := f.(string); ok {
+				formatOverrides[field] = fs
+			}
+		}
+	}
+
+	// Step 8: Build FieldConfigs (with format inference)
+	fieldConfigs := BuildFieldConfigsWithFormat(fields, displayOverrides, formatOverrides)
 
 	// Sort by priority
 	sort.Slice(fieldConfigs, func(i, j int) bool {
@@ -509,7 +524,7 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 
 	// Step 9.5: Check for compose (multi-section)
 	if composeRaw, ok := input["compose"].([]interface{}); ok && len(composeRaw) > 0 {
-		formation := t.buildComposedFormation(composeRaw, products, services, displayOverrides, template, size, entityType)
+		formation := t.buildComposedFormation(composeRaw, products, services, displayOverrides, formatOverrides, template, size, entityType)
 		formation = t.applyPostProcessing(formation, colorMap, perAtomSize, shapeMap, layerMap, anchorMap, direction, place, paginationLimit, paginationOffset)
 		return t.writeFormation(ctx, toolCtx, formation, entityType, presetName, formationMode, size, fieldConfigs, fields, layout, products, services, degraded)
 	}
@@ -524,7 +539,7 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 			return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 		}, domain.EntityTypeProduct)
 
-		sFieldConfigs := BuildFieldConfigs(resolveServiceFields(fields), displayOverrides)
+		sFieldConfigs := BuildFieldConfigsWithFormat(resolveServiceFields(fields), displayOverrides, formatOverrides)
 		sWidgets := buildVisualWidgets(sFieldConfigs, template, size, len(services), func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 			s := services[i]
 			return serviceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
@@ -645,6 +660,7 @@ func (t *VisualAssemblyTool) writeFormation(ctx context.Context, toolCtx ToolCon
 		fieldSpecs = append(fieldSpecs, domain.FieldSpec{
 			Name:    fc.Name,
 			Slot:    string(fc.Slot),
+			Format:  string(fc.Format),
 			Display: string(fc.Display),
 		})
 	}
@@ -683,7 +699,7 @@ func (t *VisualAssemblyTool) writeFormation(ctx context.Context, toolCtx ToolCon
 }
 
 // buildComposedFormation builds a multi-section formation from compose[] input
-func (t *VisualAssemblyTool) buildComposedFormation(composeRaw []interface{}, products []domain.Product, services []domain.Service, displayOverrides map[string]string, template string, size domain.WidgetSize, entityType string) *domain.FormationWithData {
+func (t *VisualAssemblyTool) buildComposedFormation(composeRaw []interface{}, products []domain.Product, services []domain.Service, displayOverrides map[string]string, formatOverrides map[string]string, template string, size domain.WidgetSize, entityType string) *domain.FormationWithData {
 	sections := make([]domain.FormationSection, 0, len(composeRaw))
 
 	// Track offsets across sections so each section gets unique entities
@@ -748,7 +764,7 @@ func (t *VisualAssemblyTool) buildComposedFormation(composeRaw []interface{}, pr
 			sectionFields = filtered
 		}
 
-		sectionFieldConfigs := BuildFieldConfigs(sectionFields, displayOverrides)
+		sectionFieldConfigs := BuildFieldConfigsWithFormat(sectionFields, displayOverrides, formatOverrides)
 		sort.Slice(sectionFieldConfigs, func(i, j int) bool {
 			return sectionFieldConfigs[i].Priority < sectionFieldConfigs[j].Priority
 		})

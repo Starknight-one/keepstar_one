@@ -16,12 +16,29 @@ const PRESETS = [
 const LAYOUTS = ['', 'grid', 'list', 'single', 'carousel', 'comparison']
 const SIZES = ['', 'tiny', 'small', 'medium', 'large', 'xl']
 const DIRECTIONS = ['', 'vertical', 'horizontal']
-const SHAPES = ['', 'pill', 'rounded', 'square', 'circle']
-const PLACES = ['', 'default', 'sticky', 'floating']
 const FIELDS = [
   'images', 'name', 'price', 'rating', 'brand', 'category',
   'description', 'tags', 'stockQuantity', 'attributes',
   'productForm', 'skinType', 'concern', 'keyIngredients',
+]
+
+const NAMED_COLORS = ['green', 'red', 'blue', 'orange', 'purple', 'gray']
+const SHAPE_VALUES = ['pill', 'rounded', 'square', 'circle']
+const ANCHOR_VALUES = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center']
+const LAYER_VALUES = ['1', '2', '3', '4', '5']
+const DISPLAY_VALUES = [
+  'h1', 'h2', 'h3', 'h4',
+  'body-lg', 'body', 'body-sm', 'caption',
+  'badge', 'badge-success', 'badge-error', 'badge-warning',
+  'tag', 'tag-active',
+  'price', 'price-lg', 'price-old', 'price-discount',
+  'rating', 'rating-text', 'rating-compact',
+  'image', 'image-cover', 'thumbnail', 'avatar', 'gallery',
+]
+
+const FORMAT_VALUES = [
+  'currency', 'stars', 'stars-text', 'stars-compact',
+  'percent', 'number', 'date', 'text',
 ]
 
 const API_BASE = 'http://localhost:8080'
@@ -32,16 +49,16 @@ export default function TestbenchPage() {
   const [layout, setLayout] = useState('')
   const [size, setSize] = useState('')
   const [direction, setDirection] = useState('')
-  const [place, setPlace] = useState('')
   const [count, setCount] = useState(6)
   const [showFields, setShowFields] = useState([])
   const [hideFields, setHideFields] = useState([])
-  const [orderFields, setOrderFields] = useState('')
-  const [colorOverrides, setColorOverrides] = useState('')
-  const [displayOverrides, setDisplayOverrides] = useState('')
-  const [shapeOverrides, setShapeOverrides] = useState('')
-  const [anchorOverrides, setAnchorOverrides] = useState('')
-  const [layerOverrides, setLayerOverrides] = useState('')
+  const [orderFields, setOrderFields] = useState([])
+  const [colorMap, setColorMap] = useState({})
+  const [displayMap, setDisplayMap] = useState({})
+  const [formatMap, setFormatMap] = useState({})
+  const [shapeMap, setShapeMap] = useState({})
+  const [anchorMap, setAnchorMap] = useState({})
+  const [layerMap, setLayerMap] = useState({})
   const [conditionalRaw, setConditionalRaw] = useState('')
 
   const [formation, setFormation] = useState(null)
@@ -58,6 +75,12 @@ export default function TestbenchPage() {
     )
   }, [])
 
+  const toggleOrderField = useCallback((field) => {
+    setOrderFields(prev =>
+      prev.includes(field) ? prev.filter(f => f !== field) : [...prev, field]
+    )
+  }, [])
+
   const handleSubmit = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -67,33 +90,26 @@ export default function TestbenchPage() {
     if (layout) params.layout = layout
     if (size) params.size = size
     if (direction) params.direction = direction
-    if (place && place !== 'default') params.place = place
     if (showFields.length > 0) params.show = showFields
     if (hideFields.length > 0) params.hide = hideFields
+    if (orderFields.length > 0) params.order = orderFields
 
-    // Order
-    if (orderFields.trim()) {
-      params.order = orderFields.split(',').map(s => s.trim()).filter(Boolean)
-    }
+    // Map overrides — only include non-empty maps
+    if (Object.keys(colorMap).length > 0) params.color = colorMap
+    if (Object.keys(displayMap).length > 0) params.display = displayMap
+    if (Object.keys(formatMap).length > 0) params.format = formatMap
+    if (Object.keys(shapeMap).length > 0) params.shape = shapeMap
+    if (Object.keys(anchorMap).length > 0) params.anchor = anchorMap
+    if (Object.keys(layerMap).length > 0) params.layer = layerMap
 
-    // JSON overrides
-    const jsonFields = [
-      ['color', colorOverrides],
-      ['display', displayOverrides],
-      ['shape', shapeOverrides],
-      ['anchor', anchorOverrides],
-      ['layer', layerOverrides],
-      ['conditional', conditionalRaw],
-    ]
-    for (const [key, val] of jsonFields) {
-      if (val.trim()) {
-        try {
-          params[key] = JSON.parse(val)
-        } catch {
-          setError(`Invalid ${key} JSON`)
-          setLoading(false)
-          return
-        }
+    // Conditional stays as JSON
+    if (conditionalRaw.trim()) {
+      try {
+        params.conditional = JSON.parse(conditionalRaw)
+      } catch {
+        setError('Invalid conditional JSON')
+        setLoading(false)
+        return
       }
     }
 
@@ -118,7 +134,7 @@ export default function TestbenchPage() {
     } finally {
       setLoading(false)
     }
-  }, [tenantSlug, preset, layout, size, direction, place, count, showFields, hideFields, orderFields, colorOverrides, displayOverrides, shapeOverrides, anchorOverrides, layerOverrides, conditionalRaw])
+  }, [tenantSlug, preset, layout, size, direction, count, showFields, hideFields, orderFields, colorMap, displayMap, formatMap, shapeMap, anchorMap, layerMap, conditionalRaw])
 
   return (
     <div className="testbench">
@@ -174,6 +190,25 @@ export default function TestbenchPage() {
               onChange={e => setCount(Number(e.target.value))} />
           </div>
 
+          <div className="button-row">
+            <button className="submit-btn" onClick={handleSubmit} disabled={loading}>
+              {loading ? 'Loading...' : 'Render'}
+            </button>
+            <button className="clear-btn" onClick={() => {
+              setPreset(''); setLayout(''); setSize(''); setDirection('')
+              setShowFields([]); setHideFields([]); setOrderFields([])
+              setColorMap({}); setDisplayMap({}); setFormatMap({}); setShapeMap({}); setAnchorMap({}); setLayerMap({})
+              setConditionalRaw(''); setCount(6)
+            }}>Clear</button>
+          </div>
+
+          {error && <div className="testbench-error">{error}</div>}
+          {warnings.length > 0 && (
+            <div className="testbench-warnings">
+              {warnings.map((w, i) => <div key={i}>{w}</div>)}
+            </div>
+          )}
+
           <div className="control-group">
             <label>Show Fields</label>
             <div className="field-chips">
@@ -201,57 +236,76 @@ export default function TestbenchPage() {
           </div>
 
           <div className="control-group">
-            <label>Order (comma-separated)</label>
-            <input type="text" placeholder="price, name, brand"
-              value={orderFields} onChange={e => setOrderFields(e.target.value)} />
+            <label>Order {orderFields.length > 0 && <span className="hint">({orderFields.join(' > ')})</span>}</label>
+            <div className="field-chips">
+              {FIELDS.map(f => {
+                const idx = orderFields.indexOf(f)
+                return (
+                  <button
+                    key={f}
+                    className={`chip order ${idx >= 0 ? 'active' : ''}`}
+                    onClick={() => toggleOrderField(f)}
+                  >{idx >= 0 ? `${idx + 1}. ` : ''}{f}</button>
+                )
+              })}
+            </div>
           </div>
 
-          <div className="control-group">
-            <label>Color (JSON)</label>
-            <input type="text" placeholder='{"price":"green","brand":"red"}'
-              value={colorOverrides} onChange={e => setColorOverrides(e.target.value)} />
-          </div>
+          <FieldOverridePicker
+            label="Color"
+            fields={FIELDS}
+            values={NAMED_COLORS}
+            map={colorMap}
+            setMap={setColorMap}
+            renderValue={(v) => <span className="color-dot" style={{ background: resolveColor(v) }} />}
+          />
+
+          <FieldOverridePicker
+            label="Display (wrapper)"
+            fields={FIELDS}
+            values={DISPLAY_VALUES}
+            map={displayMap}
+            setMap={setDisplayMap}
+          />
+
+          <FieldOverridePicker
+            label="Format (value transform)"
+            fields={FIELDS}
+            values={FORMAT_VALUES}
+            map={formatMap}
+            setMap={setFormatMap}
+          />
+
+          <FieldOverridePicker
+            label="Shape"
+            fields={FIELDS}
+            values={SHAPE_VALUES}
+            map={shapeMap}
+            setMap={setShapeMap}
+          />
+
+          <FieldOverridePicker
+            label="Anchor"
+            fields={FIELDS}
+            values={ANCHOR_VALUES}
+            map={anchorMap}
+            setMap={setAnchorMap}
+          />
+
+          <FieldOverridePicker
+            label="Layer"
+            fields={FIELDS}
+            values={LAYER_VALUES}
+            map={layerMap}
+            setMap={setLayerMap}
+          />
 
           <div className="control-group">
-            <label>Display (JSON)</label>
-            <input type="text" placeholder='{"brand":"badge","price":"price-lg"}'
-              value={displayOverrides} onChange={e => setDisplayOverrides(e.target.value)} />
-          </div>
-
-          <div className="control-group">
-            <label>Shape (JSON)</label>
-            <input type="text" placeholder='{"brand":"pill"}'
-              value={shapeOverrides} onChange={e => setShapeOverrides(e.target.value)} />
-          </div>
-
-          <div className="control-group">
-            <label>Anchor (JSON)</label>
-            <input type="text" placeholder='{"brand":"top-right"}'
-              value={anchorOverrides} onChange={e => setAnchorOverrides(e.target.value)} />
-          </div>
-
-          <div className="control-group">
-            <label>Layer (JSON)</label>
-            <input type="text" placeholder='{"stockQuantity":"2"}'
-              value={layerOverrides} onChange={e => setLayerOverrides(e.target.value)} />
-          </div>
-
-          <div className="control-group">
-            <label>Conditional (JSON array)</label>
+            <label>Conditional (JSON)</label>
             <input type="text" placeholder='[{"field":"stockQuantity","op":"eq","value":0,"color":"red"}]'
               value={conditionalRaw} onChange={e => setConditionalRaw(e.target.value)} />
           </div>
 
-          <button className="submit-btn" onClick={handleSubmit} disabled={loading}>
-            {loading ? 'Loading...' : 'Render'}
-          </button>
-
-          {error && <div className="testbench-error">{error}</div>}
-          {warnings.length > 0 && (
-            <div className="testbench-warnings">
-              {warnings.map((w, i) => <div key={i}>{w}</div>)}
-            </div>
-          )}
         </div>
 
         {/* Preview panel */}
@@ -271,9 +325,15 @@ export default function TestbenchPage() {
             </div>
           )}
 
-          {activeTab === 'data' && entities && (
+          {activeTab === 'data' && (
             <div className="preview-content">
-              <EntityDataTable entities={entities} />
+              {entities?.length ? (
+                <EntityDataTable entities={entities} />
+              ) : (
+                <div className="preview-empty">
+                  {formation ? 'No entity data in response — click Render' : 'Click "Render" to load entity data'}
+                </div>
+              )}
             </div>
           )}
 
@@ -281,11 +341,103 @@ export default function TestbenchPage() {
             <pre className="json-view">{rawJson}</pre>
           )}
 
-          {!formation && !loading && (
+          {!formation && !loading && activeTab === 'preview' && (
             <div className="preview-empty">Click "Render" to see the formation</div>
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Per-field override picker: click field → pick value from chips
+function FieldOverridePicker({ label, fields, values, map, setMap, renderValue }) {
+  const [activeField, setActiveField] = useState(null)
+  const assigned = Object.keys(map)
+
+  const handleFieldClick = (field) => {
+    if (activeField === field) {
+      setActiveField(null)
+    } else {
+      setActiveField(field)
+    }
+  }
+
+  const handleValueClick = (value) => {
+    if (!activeField) return
+    setMap(prev => {
+      if (prev[activeField] === value) {
+        const next = { ...prev }
+        delete next[activeField]
+        return next
+      }
+      return { ...prev, [activeField]: value }
+    })
+  }
+
+  const handleClear = (field, e) => {
+    e.stopPropagation()
+    setMap(prev => {
+      const next = { ...prev }
+      delete next[field]
+      return next
+    })
+    if (activeField === field) setActiveField(null)
+  }
+
+  return (
+    <div className="control-group">
+      <label>
+        {label}
+        {assigned.length > 0 && (
+          <button className="clear-all" onClick={() => { setMap({}); setActiveField(null) }}>clear all</button>
+        )}
+      </label>
+
+      {/* Assigned overrides */}
+      {assigned.length > 0 && (
+        <div className="override-tags">
+          {assigned.map(f => (
+            <span key={f} className="override-tag" onClick={() => handleFieldClick(f)}>
+              {renderValue && renderValue(map[f])}
+              {f}: {map[f]}
+              <span className="override-remove" onClick={(e) => handleClear(f, e)}>&times;</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Field chips */}
+      <div className="field-chips">
+        {fields.map(f => (
+          <button
+            key={f}
+            className={`chip picker ${activeField === f ? 'active' : ''} ${map[f] ? 'has-value' : ''}`}
+            onClick={() => handleFieldClick(f)}
+          >{f}</button>
+        ))}
+      </div>
+
+      {/* Value chips — shown when a field is active */}
+      {activeField && (
+        <div className="value-picker">
+          <div className="value-picker-label">
+            {activeField} =
+          </div>
+          <div className="field-chips">
+            {values.map(v => (
+              <button
+                key={v}
+                className={`chip value ${map[activeField] === v ? 'active' : ''}`}
+                onClick={() => handleValueClick(v)}
+              >
+                {renderValue && renderValue(v)}
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -342,9 +494,9 @@ function cellClass(val) {
 }
 
 function formatCell(val) {
-  if (val === true) return '✓'
-  if (val === false) return '—'
-  if (val === '' || val == null) return '—'
+  if (val === true) return '\u2713'
+  if (val === false) return '\u2014'
+  if (val === '' || val == null) return '\u2014'
   if (typeof val === 'number') return val.toLocaleString()
   if (typeof val === 'string' && val.length > 40) return val.slice(0, 37) + '...'
   return String(val)
@@ -400,28 +552,78 @@ function TestbenchAtom({ atom }) {
       : { color: resolveColor(color) }
   ) : undefined
 
+  // Format value based on atom.format (or infer from type+subtype)
+  const formatted = tbFormatValue(atom)
+
   if (['h1', 'h2', 'h3', 'h4'].includes(display)) {
     const Tag = display
-    return <Tag className="tb-heading" style={style}>{atom.value}</Tag>
+    return <Tag className="tb-heading" style={style}>{formatted}</Tag>
   }
   if (display.startsWith('price')) {
-    const currency = atom.meta?.currency || '$'
-    const formatted = typeof atom.value === 'number'
-      ? atom.value.toLocaleString(undefined, { minimumFractionDigits: 2 })
-      : atom.value
-    return <span className="tb-price" style={style}>{currency}{formatted}</span>
+    return <span className="tb-price" style={style}>{formatted}</span>
   }
   if (display.startsWith('rating')) {
-    const val = Number(atom.value) || 0
-    return <span className="tb-rating">{'★'.repeat(Math.round(val))}{'☆'.repeat(5 - Math.round(val))} {val.toFixed(1)}</span>
+    return <span className="tb-rating">{formatted}</span>
   }
   if (display.startsWith('badge')) {
-    return <span className="tb-badge" style={style}>{atom.value}</span>
+    return <span className="tb-badge" style={style}>{formatted}</span>
   }
   if (display.startsWith('tag')) {
-    return <span className="tb-tag" style={style}>{atom.value}</span>
+    return <span className="tb-tag" style={style}>{formatted}</span>
   }
-  return <span className="tb-text" style={style}>{String(atom.value)}</span>
+  return <span className="tb-text" style={style}>{String(formatted)}</span>
+}
+
+// Format value using atom.format or infer from type+subtype
+function tbFormatValue(atom) {
+  const format = atom.format || tbInferFormat(atom)
+  const value = atom.value
+
+  switch (format) {
+    case 'currency': {
+      if (value == null) return null
+      const currency = atom.meta?.currency || '$'
+      const f = typeof value === 'number'
+        ? value.toLocaleString(undefined, { minimumFractionDigits: 2 })
+        : value
+      return `${currency}${f}`
+    }
+    case 'stars': {
+      const v = Number(value) || 0
+      const full = Math.min(Math.round(v), 5)
+      return '\u2605'.repeat(full) + '\u2606'.repeat(Math.max(0, 5 - full))
+    }
+    case 'stars-text': {
+      const v = Number(value) || 0
+      return `${v.toFixed(1)}/5`
+    }
+    case 'stars-compact': {
+      const v = Number(value) || 0
+      return `\u2605 ${v.toFixed(1)}`
+    }
+    case 'percent':
+      return `${value}%`
+    case 'number':
+      return typeof value === 'number' ? value.toLocaleString() : String(value)
+    case 'date':
+      return value ? new Date(value).toLocaleDateString() : value
+    case 'text':
+    default:
+      return value
+  }
+}
+
+function tbInferFormat(atom) {
+  if (atom.type === 'number') {
+    if (atom.subtype === 'currency') return 'currency'
+    if (atom.subtype === 'rating') return 'stars-compact'
+    if (atom.subtype === 'percent') return 'percent'
+    return 'number'
+  }
+  if (atom.type === 'text') {
+    if (atom.subtype === 'date' || atom.subtype === 'datetime') return 'date'
+  }
+  return 'text'
 }
 
 const COLORS = { green: '#22C55E', red: '#EF4444', blue: '#3B82F6', orange: '#F97316', purple: '#8B5CF6', gray: '#6B7280' }

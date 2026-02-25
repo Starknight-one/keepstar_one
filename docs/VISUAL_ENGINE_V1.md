@@ -84,6 +84,77 @@ Pipeline: данные → атомы → виджеты → формации.
 
 ---
 
+### Phase 7: Split `display` into `format` + `wrapper`
+
+Атом `display` раньше смешивал две задачи: трансформация значения и визуальная обёртка.
+Теперь разделено:
+
+- **`format`** — как raw value превращается в текст. Авто-определяется из Type+Subtype, редко переопределяется.
+- **`display`** — визуальная обёртка (badge, tag, h1, body). Универсальна — любая обёртка для любого типа данных (кроме image-only/icon-only).
+
+**Пример — "цена в бейдже":**
+```
+{type: "number", subtype: "currency", format: "currency", display: "badge", value: 329}
+→ format currency: "$329.00"
+→ display badge: цветная пилюля с "$329.00"
+```
+
+#### Domain (Step 1)
+- `domain/atom_entity.go` — новый тип `AtomFormat` с 8 константами: `currency`, `stars`, `stars-text`, `stars-compact`, `percent`, `number`, `date`, `text`. Поле `Format` добавлено в `Atom` struct
+- `domain/preset_entity.go` — поле `Format` в `FieldConfig`
+- `domain/template_entity.go` — поле `Format` в `FieldSpec`
+
+#### Format table
+| Type+Subtype | Auto Format | Output |
+|---|---|---|
+| Number+Currency | `currency` | "$329.00" |
+| Number+Rating | `stars-compact` | "★ 4.2" |
+| Number+Percent | `percent` | "85%" |
+| Number+Int/Float | `number` | "329" |
+| Text+Date | `date` | "Feb 25, 2026" |
+| Text+String | `text` | as-is |
+
+Overridable: `stars` ("★★★★☆"), `stars-text` ("4.2/5"), `stars-compact` ("★ 4.2")
+
+#### Backend (Steps 2–5)
+- `defaults_engine.go`:
+  - `InferFormat(explicit, atomType, subtype)` — авто-определение формата
+  - `defaultFormatForTypeSubtype` map — Type+Subtype → AtomFormat
+  - `ValidateDisplay` переписан: универсальный — любой известный display valid для любого типа, кроме image-only/icon-only ограничений
+  - `BuildFieldConfigsWithFormat()` — новая функция с format overrides
+- `tool_render_preset.go` — `buildAtoms()` ставит `atom.Format`, `parseFieldSpecs()` парсит format, `BuildTemplateFormation()` несёт format
+- `tool_visual_assembly.go`:
+  - Новый параметр `format` в Definition schema (object, field→format map)
+  - Execute парсит `formatOverrides`, вызывает `BuildFieldConfigsWithFormat`
+  - `writeFormation` включает format в FieldSpec
+  - `buildComposedFormation` принимает formatOverrides
+- `constraints.go` — A5 (rating < 3 → compact) проверяет `atom.Format` + backward compat через `atom.Display`
+
+#### Agent2 prompt (Step 6)
+- Документирован параметр `format` (авто-определяется, редко override)
+- `display` уточнён как "visual wrapper, universal"
+- Добавлена секция FORMAT VALUES
+- Новые примеры: "цену в бейдже", "рейтинг текстом", "рейтинг звёздами в заголовке"
+
+#### Testbench handler (Step 7)
+- Парсит `params["format"]` map
+- Вызывает `BuildFieldConfigsWithFormat` с format overrides
+
+#### Frontend AtomRenderer (Step 8)
+- Новая функция `formatValue(atom)` — читает `atom.format` или инферит из type+subtype, возвращает отформатированную строку
+- Новая функция `inferFormat(atom)` — type+subtype → format (backward compat)
+- `renderByDisplay` переименован в `renderWrapper(formattedContent, display, atom, color)` — чисто визуальная обёртка
+- AtomRenderer: `formatValue()` → `renderWrapper()`, badges/tags/headings показывают уже отформатированный контент
+
+#### Testbench UI (Step 9)
+- `FORMAT_VALUES` константа с 8 значениями
+- `formatMap` state + `setFormatMap`
+- FieldOverridePicker "Format (value transform)"
+- `TestbenchAtom` — `tbFormatValue()`/`tbInferFormat()` вместо inline formatting
+- Clear handler чистит formatMap
+
+---
+
 ## Known issues / TODO
 
 - **Testbench Entity Data** — не показывает данные если нажать Entity Data после рендера (нужно нажать Render снова, т.к. entities приходят с каждым запросом)
@@ -96,17 +167,19 @@ Pipeline: данные → атомы → виджеты → формации.
 
 | File | What |
 |------|------|
-| `tools/tool_visual_assembly.go` | Main engine: Execute, compose, pagination, validation |
-| `tools/constraints.go` | 20 constraint rules in 4 levels |
-| `tools/tool_render_preset.go` | buildAtoms, field getters, D7 image validation |
-| `tools/defaults_engine.go` | AutoResolve, field rankings, slot constraints |
+| `tools/tool_visual_assembly.go` | Main engine: Execute, compose, pagination, validation, format param |
+| `tools/constraints.go` | 20 constraint rules in 4 levels, A5 uses Format |
+| `tools/tool_render_preset.go` | buildAtoms (with format), field getters, D7 image validation |
+| `tools/defaults_engine.go` | AutoResolve, InferFormat, universal ValidateDisplay, BuildFieldConfigsWithFormat |
 | `presets/visual_assembly_presets.go` | 9 new GenericCard presets |
 | `presets/preset_registry.go` | All presets registered |
-| `domain/preset_entity.go` | PresetName constants |
-| `prompts/prompt_compose_widgets.go` | Agent2 system prompt (EN) + examples (RU) |
-| `handlers/handler_testbench.go` | Testbench API endpoint |
-| `frontend/atom/AtomRenderer.jsx` | Null guard, resolveColor fix, formatPrice fix, A3 contrast |
+| `domain/atom_entity.go` | AtomType, AtomSubtype, AtomFormat, Atom struct |
+| `domain/preset_entity.go` | FieldConfig with Format field |
+| `domain/template_entity.go` | FieldSpec with Format field |
+| `prompts/prompt_compose_widgets.go` | Agent2 system prompt with format docs |
+| `handlers/handler_testbench.go` | Testbench API endpoint with format support |
+| `frontend/atom/AtomRenderer.jsx` | formatValue + renderWrapper split, inferFormat |
 | `frontend/atom/Atom.css` | C5 line-clamp, C3 price width |
 | `frontend/formation/Formation.css` | F1 stretch, F5 peek, F6 alternating, F8 mobile |
 | `frontend/widget/templates/GenericCardTemplate.css` | carousel-image, empty media |
-| `project_admin/frontend/testbench/` | Testbench UI page |
+| `project_admin/frontend/testbench/` | Testbench UI page with Format picker |

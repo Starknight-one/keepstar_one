@@ -83,6 +83,114 @@
   border-color: #EF4444;
 }
 
+.chip.order.active {
+  background: #3B82F6;
+  color: white;
+  border-color: #3B82F6;
+}
+
+.chip.picker.has-value {
+  border-color: #8B5CF6;
+  color: #8B5CF6;
+  font-weight: 600;
+}
+
+.chip.picker.active {
+  background: #8B5CF6;
+  color: white;
+  border-color: #8B5CF6;
+}
+
+.chip.value {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.chip.value.active {
+  background: #8B5CF6;
+  color: white;
+  border-color: #8B5CF6;
+}
+
+.override-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.override-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #EDE9FE;
+  color: #6D28D9;
+  cursor: pointer;
+}
+
+.override-tag:hover {
+  background: #DDD6FE;
+}
+
+.override-remove {
+  font-size: 13px;
+  font-weight: 700;
+  margin-left: 2px;
+  opacity: 0.6;
+}
+
+.override-remove:hover {
+  opacity: 1;
+}
+
+.color-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.value-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px dashed #cbd5e1;
+}
+
+.value-picker-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8B5CF6;
+}
+
+.clear-all {
+  font-size: 10px;
+  color: #94a3b8;
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-left: 8px;
+  text-decoration: underline;
+}
+
+.clear-all:hover {
+  color: #64748b;
+}
+
+.hint {
+  font-weight: 400;
+  color: #8B5CF6;
+  font-size: 10px;
+  margin-left: 6px;
+}
+
 .submit-btn {
   padding: 10px 20px;
   background: #8B5CF6;
@@ -97,6 +205,29 @@
 
 .submit-btn:hover { background: #7C3AED; }
 .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.button-row {
+  display: flex;
+  gap: 8px;
+}
+
+.button-row .submit-btn {
+  flex: 1;
+}
+
+.clear-btn {
+  padding: 10px 16px;
+  background: white;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.clear-btn:hover { background: #f1f5f9; color: #334155; }
 
 .testbench-error {
   padding: 8px 12px;

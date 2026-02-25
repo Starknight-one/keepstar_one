@@ -125,9 +125,11 @@ func ApplyAtomConstraints(atoms []domain.Atom) []domain.Atom {
 			}
 		}
 
-		// A5: rating < 3.0 → rating-compact
-		if atom.Display == "rating" || atom.Display == "rating-text" {
+		// A5: rating < 3.0 → stars-compact format (and rating-compact display for backward compat)
+		if atom.Format == domain.FormatStars || atom.Format == domain.FormatStarsText ||
+			atom.Display == "rating" || atom.Display == "rating-text" {
 			if fv, ok := toFloat(atom.Value); ok && fv < 3.0 {
+				atom.Format = domain.FormatStarsCompact
 				atom.Display = "rating-compact"
 			}
 		}

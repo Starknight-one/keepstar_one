@@ -70,45 +70,93 @@ var MaxAtomsPerSize = map[string]int{
 	"large":  10,
 }
 
-// validDisplaysForType maps AtomType → set of valid display strings
-var validDisplaysForType = map[domain.AtomType]map[string]bool{
-	domain.AtomTypeText: {
-		"h1": true, "h2": true, "h3": true, "h4": true,
-		"body-lg": true, "body": true, "body-sm": true, "caption": true,
-		"badge": true, "badge-success": true, "badge-error": true, "badge-warning": true,
-		"tag": true, "tag-active": true,
-		"button-primary": true, "button-secondary": true, "button-outline": true,
-		"divider": true, "spacer": true,
-	},
+// defaultFormatForTypeSubtype maps Type+Subtype → auto-inferred AtomFormat
+var defaultFormatForTypeSubtype = map[domain.AtomType]map[domain.AtomSubtype]domain.AtomFormat{
 	domain.AtomTypeNumber: {
-		"price": true, "price-lg": true, "price-old": true, "price-discount": true,
-		"rating": true, "rating-text": true, "rating-compact": true,
-		"percent": true, "progress": true,
-		"body": true, "body-sm": true, "h3": true, "h4": true,
+		domain.SubtypeCurrency: domain.FormatCurrency,
+		domain.SubtypeRating:   domain.FormatStarsCompact,
+		domain.SubtypePercent:  domain.FormatPercent,
+		domain.SubtypeInt:      domain.FormatNumber,
+		domain.SubtypeFloat:    domain.FormatNumber,
 	},
-	domain.AtomTypeImage: {
-		"image": true, "image-cover": true, "avatar": true, "avatar-sm": true, "avatar-lg": true,
-		"thumbnail": true, "gallery": true,
-	},
-	domain.AtomTypeIcon: {
-		"icon": true, "icon-sm": true, "icon-lg": true,
+	domain.AtomTypeText: {
+		domain.SubtypeDate:     domain.FormatDate,
+		domain.SubtypeDatetime: domain.FormatDate,
+		domain.SubtypeString:   domain.FormatText,
 	},
 }
 
+// InferFormat returns the format for an atom: explicit override > auto from type+subtype
+func InferFormat(explicit domain.AtomFormat, atomType domain.AtomType, subtype domain.AtomSubtype) domain.AtomFormat {
+	if explicit != "" {
+		return explicit
+	}
+	if subtypeMap, ok := defaultFormatForTypeSubtype[atomType]; ok {
+		if f, ok := subtypeMap[subtype]; ok {
+			return f
+		}
+	}
+	return domain.FormatText
+}
+
+// allValidDisplays is the universal set of valid display values.
+// Any display works with any data type (format handles the value transform).
+// Only image-only and icon-only displays are restricted to their types.
+var allValidDisplays = map[string]bool{
+	// text wrappers
+	"h1": true, "h2": true, "h3": true, "h4": true,
+	"body-lg": true, "body": true, "body-sm": true, "caption": true,
+	"badge": true, "badge-success": true, "badge-error": true, "badge-warning": true,
+	"tag": true, "tag-active": true,
+	"button-primary": true, "button-secondary": true, "button-outline": true,
+	"divider": true, "spacer": true,
+	// number-origin wrappers (now universal for formatted content)
+	"price": true, "price-lg": true, "price-old": true, "price-discount": true,
+	"rating": true, "rating-text": true, "rating-compact": true,
+	"percent": true, "progress": true,
+	// image-only wrappers
+	"image": true, "image-cover": true, "avatar": true, "avatar-sm": true, "avatar-lg": true,
+	"thumbnail": true, "gallery": true,
+	// icon-only wrappers
+	"icon": true, "icon-sm": true, "icon-lg": true,
+}
+
+// imageOnlyDisplays are displays that only make sense for image atoms
+var imageOnlyDisplays = map[string]bool{
+	"image": true, "image-cover": true, "avatar": true, "avatar-sm": true, "avatar-lg": true,
+	"thumbnail": true, "gallery": true,
+}
+
+// iconOnlyDisplays are displays that only make sense for icon atoms
+var iconOnlyDisplays = map[string]bool{
+	"icon": true, "icon-sm": true, "icon-lg": true,
+}
+
 // ValidateDisplay checks if a display value is valid for the given atom type.
-// Returns the display if valid, or the default display for the field if invalid.
+// Now universal: any known display is valid for any type, except image-only/icon-only restrictions.
 func ValidateDisplay(fieldName string, atomType domain.AtomType, display string) string {
 	if display == "" {
 		return defaultDisplay[fieldName]
 	}
-	validSet, ok := validDisplaysForType[atomType]
-	if !ok {
-		return display // unknown type, allow anything
+	// Check image-only restriction
+	if imageOnlyDisplays[display] && atomType != domain.AtomTypeImage {
+		if d := defaultDisplay[fieldName]; d != "" {
+			return d
+		}
+		return "body"
 	}
-	if validSet[display] {
+	// Check icon-only restriction
+	if iconOnlyDisplays[display] && atomType != domain.AtomTypeIcon {
+		if d := defaultDisplay[fieldName]; d != "" {
+			return d
+		}
+		return "body"
+	}
+	// Any known display is valid
+	if allValidDisplays[display] {
 		return display
 	}
-	// Fallback to default display for this field
+	// Unknown display — fallback
 	if d := defaultDisplay[fieldName]; d != "" {
 		return d
 	}
@@ -263,8 +311,13 @@ func GetDisplayMeta(entityType string) []domain.FieldDisplayHint {
 	return hints
 }
 
-// BuildFieldConfigs converts field names + display overrides into FieldConfig slice
+// BuildFieldConfigs converts field names + display/format overrides into FieldConfig slice
 func BuildFieldConfigs(fields []string, displayOverrides map[string]string) []domain.FieldConfig {
+	return BuildFieldConfigsWithFormat(fields, displayOverrides, nil)
+}
+
+// BuildFieldConfigsWithFormat converts field names + display/format overrides into FieldConfig slice
+func BuildFieldConfigsWithFormat(fields []string, displayOverrides map[string]string, formatOverrides map[string]string) []domain.FieldConfig {
 	configs := make([]domain.FieldConfig, 0, len(fields))
 
 	for i, name := range fields {
@@ -284,11 +337,21 @@ func BuildFieldConfigs(fields []string, displayOverrides map[string]string) []do
 			slot = domain.AtomSlotPrimary
 		}
 
+		// Infer format: explicit override > auto from type+subtype
+		var explicitFormat domain.AtomFormat
+		if formatOverrides != nil {
+			if f, ok := formatOverrides[name]; ok {
+				explicitFormat = domain.AtomFormat(f)
+			}
+		}
+		format := InferFormat(explicitFormat, entry.Type, entry.Subtype)
+
 		configs = append(configs, domain.FieldConfig{
 			Name:     name,
 			Slot:     slot,
 			AtomType: entry.Type,
 			Subtype:  entry.Subtype,
+			Format:   format,
 			Display:  domain.AtomDisplay(display),
 			Priority: i,
 		})

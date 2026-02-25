@@ -56,7 +56,7 @@ type TestbenchEntityData struct {
 
 type TestbenchResponse struct {
 	Formation *FormationResponse    `json:"formation,omitempty"`
-	Entities  []TestbenchEntityData `json:"entities,omitempty"`
+	Entities  []TestbenchEntityData `json:"entities"`
 	Warnings  []string              `json:"warnings,omitempty"`
 	Config    interface{}           `json:"config,omitempty"`
 }
@@ -172,6 +172,35 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 		fields = filtered
 	}
 
+	// Apply order — reorder fields based on user-specified order
+	hasExplicitShow := false
+	if showRaw, ok := params["show"].([]interface{}); ok && len(showRaw) > 0 {
+		hasExplicitShow = true
+	}
+	if orderRaw, ok := params["order"].([]interface{}); ok && len(orderRaw) > 0 {
+		ordered := make([]string, 0, len(fields))
+		inOrder := make(map[string]bool)
+		for _, o := range orderRaw {
+			if name, ok := o.(string); ok {
+				// Only include if field exists in current list
+				for _, f := range fields {
+					if f == name && !inOrder[name] {
+						ordered = append(ordered, name)
+						inOrder[name] = true
+						break
+					}
+				}
+			}
+		}
+		// Append remaining fields not in order list
+		for _, f := range fields {
+			if !inOrder[f] {
+				ordered = append(ordered, f)
+			}
+		}
+		fields = ordered
+	}
+
 	// Apply layout/size overrides
 	if l, ok := params["layout"].(string); ok && l != "" {
 		layout = l
@@ -189,8 +218,18 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Build field configs
-	fieldConfigs := tools.BuildFieldConfigs(fields, displayOverrides)
+	// Apply format overrides
+	formatOverrides := make(map[string]string)
+	if formatRaw, ok := params["format"].(map[string]interface{}); ok {
+		for field, f := range formatRaw {
+			if fs, ok := f.(string); ok {
+				formatOverrides[field] = fs
+			}
+		}
+	}
+
+	// Build field configs (with format inference)
+	fieldConfigs := tools.BuildFieldConfigsWithFormat(fields, displayOverrides, formatOverrides)
 	sort.Slice(fieldConfigs, func(i, j int) bool {
 		return fieldConfigs[i].Priority < fieldConfigs[j].Priority
 	})
@@ -226,8 +265,11 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 		widgets = append(widgets, widget)
 	}
 
-	// Apply cross-widget constraints
-	tools.ApplyCrossWidgetConstraints(widgets, formationMode)
+	// Apply cross-widget constraints — skip C1 when user explicitly specified show fields
+	// (user wants to see those fields regardless of data coverage)
+	if !hasExplicitShow {
+		tools.ApplyCrossWidgetConstraints(widgets, formationMode)
+	}
 
 	// Apply color, direction, shape
 	colorMap := make(map[string]string)
