@@ -57,7 +57,7 @@ var ProductRowPreset = domain.Preset{
 	},
 }
 
-// ProductSingleHeroPreset — single large hero card
+// ProductSingleHeroPreset — single large hero card with all key fields
 var ProductSingleHeroPreset = domain.Preset{
 	Name:        string(domain.PresetProductSingleHero),
 	EntityType:  domain.EntityTypeProduct,
@@ -68,9 +68,13 @@ var ProductSingleHeroPreset = domain.Preset{
 		{Name: "images", Slot: domain.AtomSlotHero, AtomType: domain.AtomTypeImage, Subtype: domain.SubtypeImageURL, Display: domain.DisplayImageCover, Priority: 0},
 		{Name: "name", Slot: domain.AtomSlotTitle, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayH1, Priority: 1},
 		{Name: "brand", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayBadge, Priority: 2},
-		{Name: "price", Slot: domain.AtomSlotPrice, AtomType: domain.AtomTypeNumber, Subtype: domain.SubtypeCurrency, Display: domain.DisplayPriceLg, Priority: 3},
-		{Name: "rating", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeNumber, Subtype: domain.SubtypeRating, Display: domain.DisplayRating, Priority: 4},
-		{Name: "description", Slot: domain.AtomSlotSecondary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayBodyLg, Priority: 5},
+		{Name: "category", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayTag, Priority: 3},
+		{Name: "price", Slot: domain.AtomSlotPrice, AtomType: domain.AtomTypeNumber, Subtype: domain.SubtypeCurrency, Display: domain.DisplayPriceLg, Priority: 4},
+		{Name: "rating", Slot: domain.AtomSlotPrimary, AtomType: domain.AtomTypeNumber, Subtype: domain.SubtypeRating, Display: domain.DisplayRating, Priority: 5},
+		{Name: "description", Slot: domain.AtomSlotSecondary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayBodyLg, Priority: 6},
+		{Name: "tags", Slot: domain.AtomSlotSecondary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayTag, Priority: 7},
+		{Name: "productForm", Slot: domain.AtomSlotSecondary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayTag, Priority: 8},
+		{Name: "skinType", Slot: domain.AtomSlotSecondary, AtomType: domain.AtomTypeText, Subtype: domain.SubtypeString, Display: domain.DisplayTag, Priority: 9},
 	},
 }
 

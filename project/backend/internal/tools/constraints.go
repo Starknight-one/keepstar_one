@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"fmt"
 	"net/url"
 	"strings"
 	"unicode"
@@ -252,13 +251,13 @@ func normalizeFieldSet(widgets []domain.Widget) {
 		}
 	}
 
-	// Apply: remove rare fields, add placeholder "—" for missing common fields
+	// Apply: remove rare fields, add placeholder for missing common fields
 	for wi := range widgets {
-		// Remove rare fields
+		// Remove rare fields, dedup by field name
 		filtered := make([]domain.Atom, 0, len(widgets[wi].Atoms))
 		presentFields := make(map[string]bool)
 		for _, a := range widgets[wi].Atoms {
-			if keepFields[a.FieldName] {
+			if keepFields[a.FieldName] && !presentFields[a.FieldName] {
 				filtered = append(filtered, a)
 				presentFields[a.FieldName] = true
 			}
@@ -275,13 +274,17 @@ func normalizeFieldSet(widgets []domain.Widget) {
 					Type:      entry.Type,
 					Subtype:   entry.Subtype,
 					Display:   defaultDisplay[field],
-					Value:     fmt.Sprintf("—"),
+					Value:     "—",
 					FieldName: field,
 					Slot:      defaultSlot[field],
 				}
-				// Number placeholders stay nil (null guard will handle)
-				if entry.Type == domain.AtomTypeNumber || entry.Type == domain.AtomTypeImage {
-					placeholder.Value = nil
+				// Number placeholders: use 0 instead of nil
+				if entry.Type == domain.AtomTypeNumber {
+					placeholder.Value = float64(0)
+				}
+				// Image placeholders: empty string signals "no image" to frontend
+				if entry.Type == domain.AtomTypeImage {
+					placeholder.Value = ""
 				}
 				filtered = append(filtered, placeholder)
 			}

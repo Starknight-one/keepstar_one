@@ -533,9 +533,6 @@ func productFieldGetter(p domain.Product) FieldGetter {
 			}
 			return p.Images
 		case "rating":
-			if p.Rating == 0 {
-				return nil
-			}
 			return p.Rating
 		case "brand":
 			return nonEmpty(p.Brand)
@@ -595,9 +592,6 @@ func serviceFieldGetter(s domain.Service) FieldGetter {
 			}
 			return s.Images
 		case "rating":
-			if s.Rating == 0 {
-				return nil
-			}
 			return s.Rating
 		case "duration":
 			return nonEmpty(s.Duration)

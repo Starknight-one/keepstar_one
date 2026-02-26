@@ -294,11 +294,11 @@ func TestProductFieldGetter_EmptyFieldsReturnNil(t *testing.T) {
 	}
 }
 
-func TestProductFieldGetter_ZeroRatingReturnsNil(t *testing.T) {
+func TestProductFieldGetter_ZeroRatingReturnsZero(t *testing.T) {
 	p := domain.Product{ID: "p1", Rating: 0}
 	fg := productFieldGetter(p)
-	if fg("rating") != nil {
-		t.Errorf("zero rating should return nil, got %v", fg("rating"))
+	if fg("rating") != float64(0) {
+		t.Errorf("zero rating should return 0, got %v", fg("rating"))
 	}
 }
 

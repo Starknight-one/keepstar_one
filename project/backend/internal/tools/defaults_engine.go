@@ -15,7 +15,8 @@ type ResolvedDefaults struct {
 // fieldRanking defines fields ordered by visual priority per entity type
 var fieldRanking = map[string][]string{
 	"product": {"images", "name", "price", "rating", "brand", "category",
-		"description", "tags", "stockQuantity", "attributes"},
+		"description", "tags", "stockQuantity",
+		"productForm", "skinType", "concern", "keyIngredients"},
 	"service": {"images", "name", "price", "rating", "duration", "provider",
 		"availability", "description", "attributes"},
 }
@@ -174,52 +175,47 @@ func AutoResolve(entityType string, entityCount int) ResolvedDefaults {
 		ranking = fieldRanking["product"] // fallback
 	}
 
+	// copyFields returns a safe copy to avoid slice aliasing with the global fieldRanking
+	copyFields := func(src []string, maxF int) []string {
+		if len(src) > maxF {
+			src = src[:maxF]
+		}
+		cp := make([]string, len(src))
+		copy(cp, src)
+		return cp
+	}
+
 	switch {
 	case entityCount == 1:
 		return ResolvedDefaults{
 			Layout:    "single",
 			Size:      domain.WidgetSizeLarge,
 			MaxFields: 10,
-			Fields:    ranking,
+			Fields:    copyFields(ranking, len(ranking)),
 		}
 	case entityCount <= 6:
 		// 2-6 items: grid with top 5 fields
-		maxF := 5
-		fields := ranking
-		if len(fields) > maxF {
-			fields = fields[:maxF]
-		}
 		return ResolvedDefaults{
 			Layout:    "grid",
 			Size:      domain.WidgetSizeMedium,
-			MaxFields: maxF,
-			Fields:    fields,
+			MaxFields: 5,
+			Fields:    copyFields(ranking, 5),
 		}
 	case entityCount <= 12:
 		// 7-12 items: list with top 4 fields
-		maxF := 4
-		fields := ranking
-		if len(fields) > maxF {
-			fields = fields[:maxF]
-		}
 		return ResolvedDefaults{
 			Layout:    "list",
 			Size:      domain.WidgetSizeSmall,
-			MaxFields: maxF,
-			Fields:    fields,
+			MaxFields: 4,
+			Fields:    copyFields(ranking, 4),
 		}
 	default:
 		// 13+ items: grid with top 3 fields (small size → 3 atoms: image, name, price)
-		maxF := 3
-		fields := ranking
-		if len(fields) > maxF {
-			fields = fields[:maxF]
-		}
 		return ResolvedDefaults{
 			Layout:    "grid",
 			Size:      domain.WidgetSizeSmall,
-			MaxFields: maxF,
-			Fields:    fields,
+			MaxFields: 3,
+			Fields:    copyFields(ranking, 3),
 		}
 	}
 }
