@@ -32,9 +32,10 @@ type FormationTemplate struct {
 
 // FieldSpec describes a single field in RenderConfig (what Agent 2 decided to show)
 type FieldSpec struct {
-	Name    string `json:"name"`    // "images", "name", "price"
-	Slot    string `json:"slot"`    // "hero", "title", "price"
-	Display string `json:"display"` // "image-cover", "h2", "price-lg"
+	Name    string `json:"name"`              // "images", "name", "price"
+	Slot    string `json:"slot"`              // "hero", "title", "price"
+	Format  string `json:"format,omitempty"`  // value transform: "currency", "stars-compact"
+	Display string `json:"display"`           // visual wrapper: "badge", "h2", "tag"
 }
 
 // RenderConfig captures how Agent 2 rendered this formation (for next-turn context)
@@ -46,10 +47,28 @@ type RenderConfig struct {
 	Fields     []FieldSpec   `json:"fields,omitempty"`
 }
 
-// FormationWithData is the final result after applying template
-type FormationWithData struct {
+// FormationSection represents a section within a composed formation
+type FormationSection struct {
 	Mode    FormationType `json:"mode"`
 	Grid    *GridConfig   `json:"grid,omitempty"`
 	Widgets []Widget      `json:"widgets"`
-	Config  *RenderConfig `json:"config,omitempty"`
+	Label   string        `json:"label,omitempty"`
+}
+
+// PaginationMeta contains pagination info for large result sets
+type PaginationMeta struct {
+	Total   int  `json:"total"`
+	Offset  int  `json:"offset"`
+	Limit   int  `json:"limit"`
+	HasMore bool `json:"hasMore"`
+}
+
+// FormationWithData is the final result after applying template
+type FormationWithData struct {
+	Mode       FormationType     `json:"mode"`
+	Grid       *GridConfig       `json:"grid,omitempty"`
+	Widgets    []Widget          `json:"widgets"`
+	Config     *RenderConfig     `json:"config,omitempty"`
+	Sections   []FormationSection `json:"sections,omitempty"`
+	Pagination *PaginationMeta   `json:"pagination,omitempty"`
 }

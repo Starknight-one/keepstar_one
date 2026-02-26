@@ -4,11 +4,12 @@ package domain
 type FormationType string
 
 const (
-	FormationTypeGrid     FormationType = "grid"
-	FormationTypeList     FormationType = "list"
-	FormationTypeCarousel FormationType = "carousel"
+	FormationTypeGrid       FormationType = "grid"
+	FormationTypeList       FormationType = "list"
+	FormationTypeCarousel   FormationType = "carousel"
 	FormationTypeSingle     FormationType = "single"
 	FormationTypeComparison FormationType = "comparison"
+	FormationTypeTable      FormationType = "table"
 )
 
 // Formation defines how widgets are laid out

@@ -14,7 +14,7 @@ function getProductWord(count) {
   return 'товаров';
 }
 
-export function useChatSubmit({ sessionId, addMessage, setLoading, setError, setSessionId, onFormationReceived }) {
+export function useChatSubmit({ sessionId, addMessage, setLoading, setError, setSessionId, onFormationReceived, lastFormationRef }) {
   // useRef to avoid stale closure — callback doesn't depend on sessionId re-renders
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
@@ -38,7 +38,19 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
     setError(null);
 
     try {
-      const response = await sendPipelineQuery(sessionIdRef.current, text);
+      // Build screen context from current formation for Agent2
+      let screenContext = null;
+      const currentFormation = lastFormationRef?.current;
+      if (currentFormation) {
+        const w0 = currentFormation.widgets?.[0];
+        screenContext = {
+          mode: currentFormation.mode || 'grid',
+          widgetCount: currentFormation.widgets?.length || 0,
+          fields: w0?.atoms?.map(a => a.fieldName).filter(Boolean) || [],
+        };
+      }
+
+      const response = await sendPipelineQuery(sessionIdRef.current, text, screenContext);
 
       // Save sessionId to localStorage if new
       if (response.sessionId && response.sessionId !== sessionIdRef.current) {

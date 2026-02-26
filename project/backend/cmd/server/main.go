@@ -276,6 +276,13 @@ func main() {
 		appLog.Info("trace_routes_enabled", "url", "/debug/traces/")
 	}
 
+	// Setup testbench routes (visual assembly testing)
+	if catalogAdapter != nil && presetRegistry != nil {
+		testbenchHandler := handlers.NewTestbenchHandler(catalogAdapter, presetRegistry)
+		handlers.SetupTestbenchRoutes(mux, testbenchHandler)
+		appLog.Info("testbench_routes_enabled", "url", "POST /api/v1/testbench")
+	}
+
 	// Setup catalog routes if database available
 	if catalogAdapter != nil {
 		listProductsUC := usecases.NewListProductsUseCase(catalogAdapter)

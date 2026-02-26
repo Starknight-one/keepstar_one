@@ -1,12 +1,13 @@
 import { WidgetType } from './widgetModel';
 import { AtomRenderer } from '../atom/AtomRenderer';
-import { ProductCardTemplate, ServiceCardTemplate, ProductDetailTemplate, ServiceDetailTemplate } from './templates';
+import { ProductCardTemplate, ServiceCardTemplate, ProductDetailTemplate, ServiceDetailTemplate, GenericCardTemplate } from './templates';
 import './Widget.css';
 
 export function WidgetRenderer({ widget, onClick }) {
   // Template-based rendering (new system)
   if (widget.template) {
     const content = renderTemplate(widget);
+    const placeClass = widget.meta?.place ? `widget-place-${widget.meta.place}` : '';
 
     // Make widget clickable if it has entityRef and onClick handler
     if (onClick && widget.entityRef) {
@@ -14,12 +15,15 @@ export function WidgetRenderer({ widget, onClick }) {
         onClick(widget.entityRef.type, widget.entityRef.id);
       };
       return (
-        <div className="widget-clickable" onClick={handleClick}>
+        <div className={`widget-clickable ${placeClass}`.trim()} onClick={handleClick}>
           {content}
         </div>
       );
     }
 
+    if (placeClass) {
+      return <div className={placeClass}>{content}</div>;
+    }
     return content;
   }
 
@@ -43,6 +47,8 @@ export function WidgetRenderer({ widget, onClick }) {
 
 function renderTemplate(widget) {
   switch (widget.template) {
+    case 'GenericCard':
+      return <GenericCardTemplate atoms={widget.atoms} size={widget.size} direction={widget.meta?.direction} />;
     case 'ProductCard':
       return <ProductCardTemplate atoms={widget.atoms} size={widget.size} />;
     case 'ServiceCard':

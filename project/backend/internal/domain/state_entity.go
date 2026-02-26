@@ -41,6 +41,7 @@ const (
 	ActionSort     ActionType = "SORT"
 	ActionLayout   ActionType = "LAYOUT"
 	ActionRollback ActionType = "ROLLBACK"
+	ActionClarify  ActionType = "CLARIFY"
 )
 
 // Action represents what happened in a delta

@@ -196,6 +196,7 @@
   font-family: var(--font-family-display, 'Plus Jakarta Sans', sans-serif);
   font-weight: 700;
   color: var(--color-price, #18181B);
+  min-width: 4em; /* C3: prevent price from collapsing */
 }
 
 .atom-price.price {
@@ -464,4 +465,72 @@
 
 .atom-number.format-percent::after {
   content: '%';
+}
+
+/* =============================================================================
+   Per-Atom Size Classes
+   ============================================================================= */
+
+.atom-size-sm { transform: scale(0.85); transform-origin: left top; }
+.atom-size-md { /* default, no override */ }
+.atom-size-lg { transform: scale(1.15); transform-origin: left top; }
+.atom-size-xl { transform: scale(1.3); transform-origin: left top; }
+
+/* Size overrides for images */
+.atom-size-sm .atom-image { max-height: 120px; }
+.atom-size-lg .atom-image { max-height: 280px; }
+.atom-size-xl .atom-image { max-height: 380px; }
+
+/* Size overrides for text */
+.atom-size-sm .atom-text,
+.atom-size-sm .atom-heading { font-size: 0.85em; }
+.atom-size-lg .atom-text,
+.atom-size-lg .atom-heading { font-size: 1.15em; }
+.atom-size-xl .atom-text,
+.atom-size-xl .atom-heading { font-size: 1.3em; }
+
+/* =============================================================================
+   Shape Classes
+   ============================================================================= */
+
+.atom-shape-pill { border-radius: 20px !important; }
+.atom-shape-pill .atom-badge,
+.atom-shape-pill .atom-tag { border-radius: 20px; }
+
+.atom-shape-rounded { border-radius: 8px !important; }
+.atom-shape-rounded .atom-badge,
+.atom-shape-rounded .atom-tag { border-radius: 8px; }
+
+.atom-shape-square { border-radius: 0 !important; }
+.atom-shape-square .atom-badge,
+.atom-shape-square .atom-tag { border-radius: 0; }
+
+.atom-shape-circle { border-radius: 50% !important; }
+.atom-shape-circle .atom-image { border-radius: 50%; }
+
+/* =============================================================================
+   Anchor Position Classes
+   ============================================================================= */
+
+.atom-anchor-top-left { position: absolute; top: 8px; left: 8px; }
+.atom-anchor-top-right { position: absolute; top: 8px; right: 8px; }
+.atom-anchor-bottom-left { position: absolute; bottom: 8px; left: 8px; }
+.atom-anchor-bottom-right { position: absolute; bottom: 8px; right: 8px; }
+.atom-anchor-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+/* =============================================================================
+   C5: Line-clamp for headings in grid/list context
+   ============================================================================= */
+
+.formation-grid .atom.display-h2 .atom-heading,
+.formation-grid .atom.display-h3 .atom-heading {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.formation-grid .generic-card.size-small .atom.display-h2 .atom-heading,
+.formation-grid .generic-card.size-small .atom.display-h3 .atom-heading {
+  -webkit-line-clamp: 1;
 }

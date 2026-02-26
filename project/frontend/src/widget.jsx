@@ -14,6 +14,8 @@ import productCardCss from './entities/widget/templates/ProductCardTemplate.css?
 import productDetailCss from './entities/widget/templates/ProductDetailTemplate.css?inline'
 import serviceCardCss from './entities/widget/templates/ServiceCardTemplate.css?inline'
 import serviceDetailCss from './entities/widget/templates/ServiceDetailTemplate.css?inline'
+import genericCardCss from './entities/widget/templates/GenericCardTemplate.css?inline'
+import comparisonCss from './entities/widget/templates/ComparisonTemplate.css?inline'
 import productGridCss from './features/catalog/ProductGrid.css?inline'
 import backButtonCss from './features/navigation/BackButton.css?inline'
 import stepperCss from './features/navigation/Stepper.css?inline'
@@ -30,6 +32,8 @@ const ALL_CSS = [
   productDetailCss,
   serviceCardCss,
   serviceDetailCss,
+  genericCardCss,
+  comparisonCss,
   productGridCss,
   backButtonCss,
   stepperCss,

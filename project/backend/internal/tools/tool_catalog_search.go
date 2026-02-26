@@ -416,8 +416,18 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 		merged = rrfMerge(keywordProducts, vectorProducts, limit, hasFilters)
 	}
 
+	// Normalize product data
+	for i := range merged {
+		NormalizeProduct(&merged[i])
+	}
+
 	// RRF merge for services
 	mergedServices := rrfMergeServices(keywordServices, vectorServices, limit, hasFilters)
+
+	// Normalize service data
+	for i := range mergedServices {
+		NormalizeService(&mergedServices[i])
+	}
 
 	total := len(merged) + len(mergedServices)
 	meta["merged_count"] = total
@@ -625,6 +635,24 @@ func catalogExtractProductFields(p domain.Product) []string {
 	}
 	if len(p.Images) > 0 {
 		fields = append(fields, "images")
+	}
+	if len(p.Tags) > 0 {
+		fields = append(fields, "tags")
+	}
+	if p.StockQuantity > 0 {
+		fields = append(fields, "stockQuantity")
+	}
+	if p.ProductForm != "" {
+		fields = append(fields, "productForm")
+	}
+	if len(p.SkinType) > 0 {
+		fields = append(fields, "skinType")
+	}
+	if len(p.Concern) > 0 {
+		fields = append(fields, "concern")
+	}
+	if len(p.KeyIngredients) > 0 {
+		fields = append(fields, "keyIngredients")
 	}
 	return fields
 }

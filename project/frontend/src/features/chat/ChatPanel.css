@@ -26,7 +26,6 @@
   padding: 16px 24px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 12px;
   max-height: 35vh;
   flex-shrink: 1;
@@ -34,6 +33,11 @@
 }
 .chat-history::-webkit-scrollbar {
   display: none;
+}
+/* Spacer pushes messages to bottom when few, collapses when overflowing */
+.chat-history-spacer {
+  flex: 1;
+  min-height: 0;
 }
 
 .chat-loading {

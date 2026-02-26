@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"keepstar/internal/domain"
@@ -38,9 +39,13 @@ var fieldTypeMap = map[string]fieldTypeEntry{
 	"stockQuantity": {domain.AtomTypeNumber, domain.SubtypeInt},
 	"tags":          {domain.AtomTypeText, domain.SubtypeString},
 	"attributes":    {domain.AtomTypeText, domain.SubtypeString},
-	"duration":      {domain.AtomTypeText, domain.SubtypeString},
-	"provider":      {domain.AtomTypeText, domain.SubtypeString},
-	"availability":  {domain.AtomTypeText, domain.SubtypeString},
+	"duration":       {domain.AtomTypeText, domain.SubtypeString},
+	"provider":       {domain.AtomTypeText, domain.SubtypeString},
+	"availability":   {domain.AtomTypeText, domain.SubtypeString},
+	"productForm":    {domain.AtomTypeText, domain.SubtypeString},
+	"skinType":       {domain.AtomTypeText, domain.SubtypeString},
+	"concern":        {domain.AtomTypeText, domain.SubtypeString},
+	"keyIngredients": {domain.AtomTypeText, domain.SubtypeString},
 }
 
 // parseFieldSpecs parses fields[] from tool input into []domain.FieldConfig
@@ -61,6 +66,7 @@ func parseFieldSpecs(rawFields interface{}) ([]domain.FieldConfig, []domain.Fiel
 		name, _ := fm["name"].(string)
 		slot, _ := fm["slot"].(string)
 		display, _ := fm["display"].(string)
+		format, _ := fm["format"].(string)
 
 		if name == "" || slot == "" {
 			continue
@@ -72,17 +78,21 @@ func parseFieldSpecs(rawFields interface{}) ([]domain.FieldConfig, []domain.Fiel
 			entry = fieldTypeEntry{domain.AtomTypeText, domain.SubtypeString}
 		}
 
+		inferredFormat := InferFormat(domain.AtomFormat(format), entry.Type, entry.Subtype)
+
 		configs = append(configs, domain.FieldConfig{
 			Name:     name,
 			Slot:     domain.AtomSlot(slot),
 			AtomType: entry.Type,
 			Subtype:  entry.Subtype,
+			Format:   inferredFormat,
 			Display:  domain.AtomDisplay(display),
 			Priority: i,
 		})
 		specs = append(specs, domain.FieldSpec{
 			Name:    name,
 			Slot:    slot,
+			Format:  string(inferredFormat),
 			Display: display,
 		})
 	}
@@ -108,6 +118,7 @@ func buildRenderConfig(entityType string, preset domain.Preset, size domain.Widg
 			specs = append(specs, domain.FieldSpec{
 				Name:    f.Name,
 				Slot:    string(f.Slot),
+				Format:  string(f.Format),
 				Display: string(f.Display),
 			})
 		}
@@ -416,6 +427,7 @@ func BuildTemplateFormation(preset domain.Preset) *domain.FormationWithData {
 		atom := domain.Atom{
 			Type:      field.AtomType,
 			Subtype:   field.Subtype,
+			Format:    field.Format,
 			Display:   string(field.Display),
 			Value:     nil,
 			FieldName: field.Name,
@@ -458,10 +470,19 @@ func buildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency C
 			continue
 		}
 
+		// D7: validate image URLs
+		if field.AtomType == domain.AtomTypeImage {
+			value = ValidateImageURL(value)
+			if value == nil {
+				continue
+			}
+		}
+
 		atom := domain.Atom{
 			Type:      field.AtomType,
 			Subtype:   field.Subtype,
-			Display:   string(field.Display), // Use Display from FieldConfig
+			Format:    field.Format,
+			Display:   string(field.Display),
 			Value:     value,
 			Slot:      field.Slot,
 			FieldName: field.Name,
@@ -502,6 +523,9 @@ func productFieldGetter(p domain.Product) FieldGetter {
 		case "description":
 			return nonEmpty(p.Description)
 		case "price":
+			if p.Price == 0 {
+				return nil
+			}
 			return p.Price
 		case "images":
 			if len(p.Images) == 0 {
@@ -509,9 +533,6 @@ func productFieldGetter(p domain.Product) FieldGetter {
 			}
 			return p.Images
 		case "rating":
-			if p.Rating == 0 {
-				return nil
-			}
 			return p.Rating
 		case "brand":
 			return nonEmpty(p.Brand)
@@ -527,6 +548,23 @@ func productFieldGetter(p domain.Product) FieldGetter {
 				return nil
 			}
 			return p.Tags
+		case "productForm":
+			return nonEmpty(p.ProductForm)
+		case "skinType":
+			if len(p.SkinType) == 0 {
+				return nil
+			}
+			return strings.Join(p.SkinType, ", ")
+		case "concern":
+			if len(p.Concern) == 0 {
+				return nil
+			}
+			return strings.Join(p.Concern, ", ")
+		case "keyIngredients":
+			if len(p.KeyIngredients) == 0 {
+				return nil
+			}
+			return strings.Join(p.KeyIngredients, ", ")
 		default:
 			return nil
 		}
@@ -544,6 +582,9 @@ func serviceFieldGetter(s domain.Service) FieldGetter {
 		case "description":
 			return nonEmpty(s.Description)
 		case "price":
+			if s.Price == 0 {
+				return nil
+			}
 			return s.Price
 		case "images":
 			if len(s.Images) == 0 {
@@ -551,9 +592,6 @@ func serviceFieldGetter(s domain.Service) FieldGetter {
 			}
 			return s.Images
 		case "rating":
-			if s.Rating == 0 {
-				return nil
-			}
 			return s.Rating
 		case "duration":
 			return nonEmpty(s.Duration)
@@ -578,4 +616,14 @@ func nonEmpty(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// ExportProductFieldGetter is an exported wrapper for testbench usage
+func ExportProductFieldGetter(p domain.Product) FieldGetter {
+	return productFieldGetter(p)
+}
+
+// ExportBuildAtoms is an exported wrapper for testbench usage
+func ExportBuildAtoms(fields []domain.FieldConfig, getField FieldGetter, getCurrency CurrencyGetter) []domain.Atom {
+	return buildAtoms(fields, getField, getCurrency)
 }

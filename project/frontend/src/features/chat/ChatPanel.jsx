@@ -50,6 +50,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     setLoading,
     setError,
     setSessionId,
+    lastFormationRef,
     onFormationReceived: useCallback((formation, adjacentTemplates, entities) => {
       // Use ref \u2014 always has the latest query text, avoids stale closure
       const label = lastQueryRef.current || 'Query';

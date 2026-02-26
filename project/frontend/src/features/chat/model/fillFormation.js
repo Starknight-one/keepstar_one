@@ -23,6 +23,7 @@ export function fillFormation(template, entity, entityType) {
       display: atom.display,
       value,
       slot: atom.slot,
+      fieldName: atom.fieldName,
     };
 
     // Resolve currency sentinel

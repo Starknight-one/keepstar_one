@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,13 @@ import (
 	"keepstar/internal/prompts"
 	"keepstar/internal/tools"
 )
+
+// filterTriggers matches user queries that imply filtering existing data (price/quantity filters)
+// NOTE: "убери/покажи/добавь/без" are NOT here — they are style requests when followed by field names
+var filterTriggers = regexp.MustCompile(`(?i)(только|лишь|оставь|исключи|дешевле|дороже|выше|ниже|от \d|до \d)`)
+
+// styleFieldNames are display field names — "убери <field>" = style request, not data filter
+var styleFieldNames = regexp.MustCompile(`(?i)(описани|рейтинг|бренд|цен[уыа]|фото|картинк|назван|изображ|тег|катего|рейт|rating|brand|price|image|name|description|tag)`)
 
 // Agent1ExecuteRequest is the input for Agent 1
 type Agent1ExecuteRequest struct {
@@ -118,6 +126,68 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		}
 	}
 
+	// Deterministic pre-check: if data loaded AND query has filter triggers → bypass LLM, call state_filter
+	// But NOT if the query is about display fields (style request)
+	isFilterQuery := filterTriggers.MatchString(req.Query) && !styleFieldNames.MatchString(req.Query)
+	if state.Current.Meta.ProductCount > 0 && isFilterQuery {
+		uc.log.Info("deterministic_state_filter",
+			"session_id", req.SessionID,
+			"query", req.Query,
+			"product_count", state.Current.Meta.ProductCount,
+		)
+
+		// Build filter input from query keywords
+		filterInput := map[string]interface{}{
+			"text_match": req.Query,
+		}
+
+		var endToolSpan func(...string)
+		if sc != nil {
+			endToolSpan = sc.Start("agent1.tool")
+		}
+		toolStart := time.Now()
+		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
+			SessionID:  req.SessionID,
+			TurnID:     req.TurnID,
+			ActorID:    "agent1",
+			TenantSlug: req.TenantSlug,
+		}, domain.ToolCall{
+			Name:  "_internal_state_filter",
+			Input: filterInput,
+		})
+		toolDuration := time.Since(toolStart).Milliseconds()
+		if endToolSpan != nil {
+			endToolSpan("_internal_state_filter")
+		}
+
+		if err != nil {
+			uc.log.Error("deterministic_filter_failed", "error", err)
+			// Fall through to LLM path on error
+		} else {
+			uc.log.ToolExecuted("_internal_state_filter", req.SessionID, result.Content, toolDuration)
+
+			// Update conversation history
+			state, _ = uc.statePort.GetState(ctx, req.SessionID)
+			newHistory := append(state.ConversationHistory,
+				domain.LLMMessage{Role: "user", Content: req.Query},
+			)
+			if err := uc.statePort.AppendConversation(ctx, req.SessionID, newHistory); err != nil {
+				uc.log.Error("append_conversation_failed", "error", err)
+			}
+
+			totalDuration := time.Since(start).Milliseconds()
+			return &Agent1ExecuteResponse{
+				LatencyMs:     int(totalDuration),
+				ToolExecuteMs: toolDuration,
+				ToolName:      "_internal_state_filter",
+				ToolInput:     fmt.Sprintf(`{"text_match":"%s"}`, req.Query),
+				ToolResult:    result.Content,
+				ProductsFound: state.Current.Meta.Count,
+				StopReason:    "deterministic_guard",
+			}, nil
+		}
+	}
+
 	// Build enriched query with state context for LLM (ephemeral, not saved to history)
 	// Note: catalog digest is already in conversation_history from session init — no per-turn loading
 	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, req.Query)
@@ -216,7 +286,8 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		state, _ = uc.statePort.GetState(ctx, req.SessionID)
 		productsFound = state.Current.Meta.Count
 	} else {
-		uc.log.Warn("no_tool_call",
+		// No tool call — style request or ambiguous query. Agent2 handles rendering.
+		uc.log.Info("no_tool_call",
 			"session_id", req.SessionID,
 			"stop_reason", llmResp.StopReason,
 			"text", llmResp.Text,

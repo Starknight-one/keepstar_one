@@ -15,6 +15,7 @@ type ToolContext struct {
 	TurnID     string
 	ActorID    string
 	TenantSlug string
+	UserQuery  string // Original user query (for post-validation guards)
 }
 
 // ToolExecutor executes a tool and writes results to state
@@ -47,11 +48,11 @@ func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, prese
 
 	// Data tools (Agent1)
 	r.Register(NewCatalogSearchTool(statePort, catalogPort, embeddingPort))
+	r.Register(NewStateFilterTool(statePort))
+	r.Register(NewHistoryLookupTool(statePort))
 
 	// Render tools (Agent2)
-	r.Register(NewRenderProductPresetTool(statePort, presetRegistry))
-	r.Register(NewRenderServicePresetTool(statePort, presetRegistry))
-	r.Register(NewFreestyleTool(statePort))
+	r.Register(NewVisualAssemblyTool(statePort, presetRegistry))
 
 	return r
 }

@@ -15,9 +15,11 @@ import (
 
 // Agent2ExecuteRequest is the input for Agent 2
 type Agent2ExecuteRequest struct {
-	SessionID string
-	TurnID    string // Turn ID for delta grouping
-	UserQuery string // User's original query (for style selection)
+	SessionID     string
+	TurnID        string         // Turn ID for delta grouping
+	UserQuery     string         // User's original query (for style selection)
+	Microcontext  string         // Pipeline-generated context signal (e.g. "new_search: 23 items found")
+	ScreenContext *ScreenContext  // Current UI state from frontend
 }
 
 // Agent2ExecuteResponse is the output from Agent 2
@@ -90,12 +92,30 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 				Widgets: []domain.Widget{{
 					ID:   "no-results",
 					Type: domain.WidgetTypeTextBlock,
-					Atoms: []domain.Atom{{
-						Type:    domain.AtomTypeText,
-						Subtype: domain.SubtypeString,
-						Slot:    domain.AtomSlotTitle,
-						Value:   "К сожалению, по вашему запросу ничего не найдено",
-					}},
+					Atoms: []domain.Atom{
+						{
+							Type:    domain.AtomTypeText,
+							Subtype: domain.SubtypeString,
+							Display: "h3",
+							Slot:    domain.AtomSlotTitle,
+							Value:   "Ничего не найдено",
+						},
+						{
+							Type:    domain.AtomTypeText,
+							Subtype: domain.SubtypeString,
+							Display: "body-sm",
+							Slot:    domain.AtomSlotSecondary,
+							Value:   "Попробуйте изменить запрос или уточнить категорию",
+						},
+						{
+							Type:    domain.AtomTypeText,
+							Subtype: domain.SubtypeString,
+							Display: "tag",
+							Slot:    domain.AtomSlotSecondary,
+							Value:   "Показать все товары",
+							Meta:    map[string]interface{}{"action": "show_all"},
+						},
+					},
 				}},
 			},
 			LatencyMs: int(time.Since(start).Milliseconds()),
@@ -124,8 +144,21 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		}
 	}
 
-	// Build user message with view context, user query, data delta, and current config
-	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig)
+	// Load all deltas for history summary
+	allDeltas, _ := uc.statePort.GetDeltas(ctx, req.SessionID)
+
+	// Build screen context for prompt
+	var screenCtx *prompts.ScreenContext
+	if req.ScreenContext != nil {
+		screenCtx = &prompts.ScreenContext{
+			Mode:        req.ScreenContext.Mode,
+			WidgetCount: req.ScreenContext.WidgetCount,
+			Fields:      req.ScreenContext.Fields,
+		}
+	}
+
+	// Build user message with view context, user query, data delta, current config, history, and microcontext
+	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx)
 
 	// Include recent user queries from conversation history for context (last 4 user messages max).
 	// Only take user messages with Content (skip assistant, tool_use, tool_result).
@@ -214,6 +247,7 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 			SessionID: req.SessionID,
 			TurnID:    req.TurnID,
 			ActorID:   "agent2",
+			UserQuery: req.UserQuery,
 		}, toolCall)
 		toolDuration := time.Since(toolStart).Milliseconds()
 		if endToolSpan != nil {
@@ -222,7 +256,18 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 
 		if err != nil {
 			uc.log.Error("tool_execution_failed", "error", err, "tool", toolCall.Name, "actor", "agent2")
-			return nil, fmt.Errorf("execute tool %s: %w", toolCall.Name, err)
+			// Graceful degradation: retry with no parameters
+			fallbackResult, fallbackErr := uc.toolRegistry.Execute(ctx, tools.ToolContext{
+				SessionID: req.SessionID,
+				TurnID:    req.TurnID,
+				ActorID:   "agent2",
+				UserQuery: req.UserQuery,
+			}, domain.ToolCall{Name: "visual_assembly", Input: map[string]interface{}{}})
+			if fallbackErr != nil {
+				return nil, fmt.Errorf("execute tool %s (fallback also failed): %w", toolCall.Name, err)
+			}
+			result = fallbackResult
+			uc.log.Info("graceful_degradation", "session_id", req.SessionID, "original_error", err.Error())
 		}
 
 		uc.log.ToolExecuted(toolCall.Name, req.SessionID, result.Content, toolDuration)
@@ -254,12 +299,12 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	return response, nil
 }
 
-// getAgent2Tools returns render_* and freestyle tools for Agent 2
+// getAgent2Tools returns visual_* tools for Agent 2
 func (uc *Agent2ExecuteUseCase) getAgent2Tools() []domain.ToolDefinition {
 	allTools := uc.toolRegistry.GetDefinitions()
 	var agent2Tools []domain.ToolDefinition
 	for _, t := range allTools {
-		if strings.HasPrefix(t.Name, "render_") || t.Name == "freestyle" {
+		if strings.HasPrefix(t.Name, "visual_") {
 			agent2Tools = append(agent2Tools, t)
 		}
 	}

@@ -2,13 +2,14 @@ package domain
 
 // FieldConfig defines how a field maps to an atom in a slot
 type FieldConfig struct {
-	Name     string      `json:"name"`     // field name: "price", "rating", "duration"
-	Slot     AtomSlot    `json:"slot"`     // target slot: hero, title, primary, etc.
-	AtomType AtomType    `json:"atomType"` // data type: text, number, image, icon
-	Subtype  AtomSubtype `json:"subtype"`  // data format: currency, rating, url, etc.
-	Display  AtomDisplay `json:"display"`  // visual format: h1, price-lg, badge, etc.
-	Priority int         `json:"priority"` // higher = show first
-	Required bool        `json:"required"` // must include
+	Name     string      `json:"name"`               // field name: "price", "rating", "duration"
+	Slot     AtomSlot    `json:"slot"`               // target slot: hero, title, primary, etc.
+	AtomType AtomType    `json:"atomType"`           // data type: text, number, image, icon
+	Subtype  AtomSubtype `json:"subtype"`            // data format: currency, rating, url, etc.
+	Format   AtomFormat  `json:"format,omitempty"`   // value transform: currency, stars-compact, etc.
+	Display  AtomDisplay `json:"display"`            // visual wrapper: h1, badge, tag, etc.
+	Priority int         `json:"priority"`           // higher = show first
+	Required bool        `json:"required"`           // must include
 }
 
 // SlotConfig defines constraints for a slot
@@ -41,4 +42,15 @@ const (
 	PresetServiceList    PresetName = "service_list"
 	PresetServiceDetail      PresetName = "service_detail"
 	PresetProductComparison  PresetName = "product_comparison"
+
+	// Visual Assembly presets (new system)
+	PresetProductCardGrid   PresetName = "product_card_grid"
+	PresetProductCardDetail PresetName = "product_card_detail"
+	PresetProductRow        PresetName = "product_row"
+	PresetProductSingleHero PresetName = "product_single_hero"
+	PresetSearchEmpty       PresetName = "search_empty"
+	PresetCategoryOverview  PresetName = "category_overview"
+	PresetAttributePicker   PresetName = "attribute_picker"
+	PresetCartSummary       PresetName = "cart_summary"
+	PresetInfoCard          PresetName = "info_card"
 )

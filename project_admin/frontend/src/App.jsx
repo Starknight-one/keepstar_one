@@ -8,6 +8,7 @@ import ProductDetailPage from './features/catalog/ProductDetailPage.jsx'
 import ImportPage from './features/import/ImportPage.jsx'
 import SettingsPage from './features/settings/SettingsPage.jsx'
 import WidgetPage from './features/widget/WidgetPage.jsx'
+import TestbenchPage from './features/testbench/TestbenchPage.jsx'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="catalog/:id" element={<ProductDetailPage />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="widget" element={<WidgetPage />} />
+        <Route path="testbench" element={<TestbenchPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>
