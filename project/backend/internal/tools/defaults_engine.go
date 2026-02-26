@@ -202,12 +202,12 @@ func AutoResolve(entityType string, entityCount int) ResolvedDefaults {
 			Fields:    copyFields(ranking, 5),
 		}
 	case entityCount <= 12:
-		// 7-12 items: list with top 4 fields
+		// 7-12 items: grid with top 3 fields (compact cards)
 		return ResolvedDefaults{
-			Layout:    "list",
+			Layout:    "grid",
 			Size:      domain.WidgetSizeSmall,
-			MaxFields: 4,
-			Fields:    copyFields(ranking, 4),
+			MaxFields: 3,
+			Fields:    copyFields(ranking, 3),
 		}
 	default:
 		// 13+ items: grid with top 3 fields (small size → 3 atoms: image, name, price)

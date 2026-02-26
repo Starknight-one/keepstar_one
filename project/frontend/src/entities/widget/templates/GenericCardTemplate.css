@@ -94,3 +94,69 @@
   flex: 1;
   min-width: 0;
 }
+
+/* --- Zone layout classes --- */
+
+.zone-hero {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: var(--color-bg-tertiary, #E4E4E7);
+}
+
+.zone-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.zone-row > * {
+  flex-shrink: 0;
+}
+
+.zone-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.zone-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.zone-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.zone-collapsed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* --- Fold toggle button --- */
+
+.zone-fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border, #E4E4E7);
+  border-radius: 12px;
+  background: var(--color-bg-primary, #FFFFFF);
+  color: var(--color-text-secondary, #71717A);
+  font-size: 12px;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.zone-fold-toggle:hover {
+  background: var(--color-bg-secondary, #F4F4F5);
+  color: var(--color-text-primary, #18181B);
+}

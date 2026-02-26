@@ -587,6 +587,12 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 		applyConditionalStyling(formation.Widgets, rules)
 	}
 
+	// Calculate layout zones for each widget
+	tokens := DefaultDesignTokens()
+	for i := range formation.Widgets {
+		formation.Widgets[i].Zones = CalculateZones(formation.Widgets[i].Atoms, tokens)
+	}
+
 	// Apply post-processing (meta, pagination)
 	formation = t.applyPostProcessing(formation, colorMap, perAtomSize, shapeMap, layerMap, anchorMap, direction, place, paginationLimit, paginationOffset)
 
@@ -811,6 +817,12 @@ func (t *VisualAssemblyTool) buildComposedFormation(composeRaw []interface{}, pr
 			}, domain.EntityTypeService)
 			sectionWidgets = append(sectionWidgets, sw...)
 			serviceOffset += remaining
+		}
+
+		// Calculate layout zones for section widgets
+		sTokens := DefaultDesignTokens()
+		for wi := range sectionWidgets {
+			sectionWidgets[wi].Zones = CalculateZones(sectionWidgets[wi].Atoms, sTokens)
 		}
 
 		sMode := parseFormationType(sectionMode)

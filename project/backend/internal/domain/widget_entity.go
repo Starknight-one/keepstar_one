@@ -28,6 +28,27 @@ const (
 	WidgetSizeLarge  WidgetSize = "large"  // 384-460px, max 10 atoms
 )
 
+// ZoneType defines the layout type for a group of atoms within a widget
+type ZoneType string
+
+const (
+	ZoneHero      ZoneType = "hero"
+	ZoneRow       ZoneType = "row"
+	ZoneStack     ZoneType = "stack"
+	ZoneFlow      ZoneType = "flow"
+	ZoneGrid      ZoneType = "grid"
+	ZoneCollapsed ZoneType = "collapsed"
+)
+
+// Zone groups atoms with a CSS layout strategy
+type Zone struct {
+	Type        ZoneType `json:"type"`
+	AtomIndices []int    `json:"atomIndices"`
+	Columns     int      `json:"columns,omitempty"`
+	MaxVisible  int      `json:"maxVisible,omitempty"`
+	FoldLabel   string   `json:"foldLabel,omitempty"`
+}
+
 // Widget is a composed UI element made of atoms
 // Template field defines the layout, atoms fill the slots
 type Widget struct {
@@ -37,6 +58,7 @@ type Widget struct {
 	Size      WidgetSize             `json:"size,omitempty"`
 	Priority  int                    `json:"priority,omitempty"`
 	Atoms     []Atom                 `json:"atoms"`
+	Zones     []Zone                 `json:"zones,omitempty"`
 	Children  []Widget               `json:"children,omitempty"`
 	Meta      map[string]interface{} `json:"meta,omitempty"`
 	EntityRef *EntityRef             `json:"entityRef,omitempty"` // For click handling

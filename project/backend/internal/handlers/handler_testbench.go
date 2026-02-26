@@ -262,6 +262,10 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 			},
 		}
 		tools.ApplyWidgetConstraints(&widget)
+
+		// Calculate layout zones
+		widget.Zones = tools.CalculateZones(widget.Atoms, tools.DefaultDesignTokens())
+
 		widgets = append(widgets, widget)
 	}
 

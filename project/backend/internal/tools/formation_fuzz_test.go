@@ -244,6 +244,12 @@ func runPipeline(params fuzzParams, products []domain.Product) ([]domain.Widget,
 		ApplyCrossWidgetConstraints(widgets, formationMode)
 	}
 
+	// Calculate layout zones
+	tokens := DefaultDesignTokens()
+	for i := range widgets {
+		widgets[i].Zones = CalculateZones(widgets[i].Atoms, tokens)
+	}
+
 	for i := range widgets {
 		for ai := range widgets[i].Atoms {
 			if color, ok := params.ColorMap[widgets[i].Atoms[ai].FieldName]; ok {
@@ -381,6 +387,78 @@ func checkInvariants(widgets []domain.Widget, mode domain.FormationType, params 
 	// I11: Widget count matches entity count
 	if len(widgets) != params.Count {
 		v.add(fmt.Sprintf("I11 widget count: [%s] expected=%d got=%d", params, params.Count, len(widgets)))
+	}
+
+	// --- Zone invariants ---
+	for wi, w := range widgets {
+		atomCount := len(w.Atoms)
+		if atomCount == 0 {
+			continue // no atoms → no zones expected
+		}
+
+		// I12: All indices in zones are valid (0 ≤ idx < len(atoms))
+		for zi, z := range w.Zones {
+			for _, idx := range z.AtomIndices {
+				if idx < 0 || idx >= atomCount {
+					v.add(fmt.Sprintf("I12 bad zone index: [%s] w[%d].z[%d] idx=%d atoms=%d", params, wi, zi, idx, atomCount))
+				}
+			}
+		}
+
+		// I13: Each atom in exactly one zone (no missing, no duplicates)
+		atomInZone := make(map[int]int) // atom index → zone count
+		for _, z := range w.Zones {
+			for _, idx := range z.AtomIndices {
+				atomInZone[idx]++
+			}
+		}
+		for ai := 0; ai < atomCount; ai++ {
+			count := atomInZone[ai]
+			if count == 0 {
+				v.add(fmt.Sprintf("I13 atom not in zone: [%s] w[%d] atom[%d](%s)", params, wi, ai, w.Atoms[ai].FieldName))
+			} else if count > 1 {
+				v.add(fmt.Sprintf("I13 atom in %d zones: [%s] w[%d] atom[%d](%s)", count, params, wi, ai, w.Atoms[ai].FieldName))
+			}
+		}
+
+		// I14: All zone types are valid
+		validZoneTypes := map[domain.ZoneType]bool{
+			domain.ZoneHero: true, domain.ZoneRow: true, domain.ZoneStack: true,
+			domain.ZoneFlow: true, domain.ZoneGrid: true, domain.ZoneCollapsed: true,
+		}
+		for zi, z := range w.Zones {
+			if !validZoneTypes[z.Type] {
+				v.add(fmt.Sprintf("I14 bad zone type: [%s] w[%d].z[%d] type=%q", params, wi, zi, z.Type))
+			}
+		}
+
+		// I15: Image atoms only in hero zones
+		for zi, z := range w.Zones {
+			if z.Type == domain.ZoneHero {
+				continue
+			}
+			for _, idx := range z.AtomIndices {
+				if idx < atomCount && w.Atoms[idx].Type == domain.AtomTypeImage {
+					v.add(fmt.Sprintf("I15 image in non-hero: [%s] w[%d].z[%d](%s) atom[%d]", params, wi, zi, z.Type, idx))
+				}
+			}
+		}
+
+		// I16: Collapsed zone only appears immediately after a flow zone
+		for zi, z := range w.Zones {
+			if z.Type == domain.ZoneCollapsed {
+				if zi == 0 || w.Zones[zi-1].Type != domain.ZoneFlow {
+					v.add(fmt.Sprintf("I16 collapsed without flow: [%s] w[%d].z[%d]", params, wi, zi))
+				}
+			}
+		}
+
+		// I17: No empty zones
+		for zi, z := range w.Zones {
+			if len(z.AtomIndices) == 0 {
+				v.add(fmt.Sprintf("I17 empty zone: [%s] w[%d].z[%d] type=%s", params, wi, zi, z.Type))
+			}
+		}
 	}
 }
 

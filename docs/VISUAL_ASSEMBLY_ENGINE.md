@@ -205,6 +205,44 @@
 
 ---
 
+---
+
+## Phase 6: Layout Engine (2026-02-26)
+
+**Branch:** `feature/layout-engine`
+
+### Что сделано
+
+Backend после constraints вычисляет `zones[]` для каждого виджета. 8 правил классификации (по display/type/slot) → 7 zone types (hero, row, stack, flow, grid, collapsed). Фронт маппит на 6 CSS-классов, zero логики.
+
+### Ключевые изменения
+
+| Файл | Что |
+|------|-----|
+| `domain/widget_entity.go` | ZoneType, Zone struct, Widget.Zones |
+| `tools/layout_engine.go` | CalculateZones + DesignTokens (NEW) |
+| `tools/tool_visual_assembly.go` | Вызов CalculateZones (стандартный + composed) |
+| `handlers/handler_testbench.go` | Вызов CalculateZones |
+| `tools/formation_fuzz_test.go` | +6 инвариантов (I12-I17) |
+| `GenericCardTemplate.jsx` | ZoneLayout + LegacyLayout (backward compat) |
+| `GenericCardTemplate.css` | 6 zone CSS-классов + fold toggle |
+| `WidgetRenderer.jsx` | zones prop |
+
+### Тестирование
+
+327K+ комбинаций, 17 инвариантов (11 existing + 6 zone), 0 failures.
+
+### Ограничения
+
+- Нет zone overrides для Agent 2 (нужен примитив `group`)
+- `order` работает внутри зоны, не между зонами
+- Один design token (FoldMaxVisible=9)
+- Нет responsive hints
+
+**Полная спека:** `docs/LAYOUT_ENGINE_SPEC.md`
+
+---
+
 ## Files
 
 ### Created (Phase 1-3)

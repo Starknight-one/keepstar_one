@@ -297,114 +297,19 @@
   margin: 0;
 }
 
-/* Testbench mini-renderer */
-.tb-grid {
-  display: grid;
-  gap: 16px;
-}
-.tb-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
-.tb-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
-.tb-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
-
-.tb-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* Preview hint */
+.preview-hint {
+  padding: 40px 20px;
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
 }
 
-.tb-single {
-  display: flex;
-  justify-content: center;
-}
-.tb-single > * { max-width: 400px; width: 100%; }
-
-.tb-carousel {
-  display: flex;
-  gap: 16px;
-  overflow-x: auto;
-}
-.tb-carousel > * { flex-shrink: 0; width: 85%; }
-
-.tb-card {
-  display: flex;
-  flex-direction: column;
-  background: #f4f4f5;
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-.tb-card-horizontal {
-  flex-direction: row;
-}
-
-.tb-card-media {
-  height: 160px;
-  overflow: hidden;
-  background: #e4e4e7;
-}
-
-.tb-card-horizontal .tb-card-media {
-  width: 120px;
-  min-width: 120px;
-  height: auto;
-}
-
-.tb-card-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.tb-card-content {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-}
-
-.tb-card.size-tiny .tb-card-media { height: 80px; }
-.tb-card.size-small .tb-card-media { height: 120px; }
-.tb-card.size-large .tb-card-media { height: 240px; }
-
-.tb-heading { margin: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
-h1.tb-heading { font-size: 28px; }
-h2.tb-heading { font-size: 22px; }
-h3.tb-heading { font-size: 18px; }
-h4.tb-heading { font-size: 15px; }
-
-.tb-price {
-  font-family: 'Plus Jakarta Sans', sans-serif;
-  font-weight: 700;
-  font-size: 18px;
-}
-
-.tb-rating {
-  color: #F97316;
-  font-size: 13px;
-}
-
-.tb-badge {
-  display: inline-block;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  background: #22C55E;
-  color: white;
-}
-
-.tb-tag {
-  display: inline-block;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  background: #e4e4e7;
-  color: #18181b;
-}
-
-.tb-text {
-  font-size: 13px;
-  color: #71717a;
+/* Full-screen preview — Shadow DOM renders the real widget overlay inside */
+.tb-fullscreen-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
 }
 
 /* Entity data table */

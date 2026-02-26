@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import './testbench.css'
 
 const PRESETS = [
@@ -68,6 +68,30 @@ export default function TestbenchPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [activeTab, setActiveTab] = useState('preview')
+  const [overlayOpen, setOverlayOpen] = useState(false)
+
+  const previewRef = useRef(null)
+  const previewReady = useRef(false)
+
+  // Load preview.js on mount
+  useEffect(() => {
+    if (window.__keepstar_preview) {
+      previewReady.current = true
+      return
+    }
+    const script = document.createElement('script')
+    script.src = '/lib/preview.js'
+    script.onload = () => { previewReady.current = true }
+    document.head.appendChild(script)
+  }, [])
+
+  // Render formation when it changes or overlay opens
+  useEffect(() => {
+    if (!overlayOpen || !formation || !previewRef.current || !previewReady.current) return
+    window.__keepstar_preview?.render(previewRef.current, formation, {
+      onClose: () => setOverlayOpen(false),
+    })
+  }, [overlayOpen, formation])
 
   const toggleField = useCallback((field, list, setList) => {
     setList(prev =>
@@ -129,12 +153,22 @@ export default function TestbenchPage() {
       setEntities(data.entities)
       setRawJson(JSON.stringify(data, null, 2))
       setWarnings(data.warnings || [])
+      setOverlayOpen(true)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
   }, [tenantSlug, preset, layout, size, direction, count, showFields, hideFields, orderFields, colorMap, displayMap, formatMap, shapeMap, anchorMap, layerMap, conditionalRaw])
+
+  // Close overlay on Escape key
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'Escape' && overlayOpen) setOverlayOpen(false)
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [overlayOpen])
 
   return (
     <div className="testbench">
@@ -308,20 +342,29 @@ export default function TestbenchPage() {
 
         </div>
 
-        {/* Preview panel */}
+        {/* Preview panel — tabs for data/json, overlay for visual */}
         <div className="testbench-preview">
           <div className="preview-tabs">
             <button className={activeTab === 'preview' ? 'tab active' : 'tab'}
-              onClick={() => setActiveTab('preview')}>Preview</button>
+              onClick={() => { setActiveTab('preview'); if (formation) setOverlayOpen(true) }}>Preview</button>
             <button className={activeTab === 'data' ? 'tab active' : 'tab'}
               onClick={() => setActiveTab('data')}>Entity Data</button>
             <button className={activeTab === 'json' ? 'tab active' : 'tab'}
               onClick={() => setActiveTab('json')}>JSON</button>
           </div>
 
-          {activeTab === 'preview' && formation && (
+          {activeTab === 'preview' && (
             <div className="preview-content">
-              <TestbenchFormation formation={formation} />
+              {formation ? (
+                <div className="preview-hint">
+                  Formation loaded ({formation.widgets?.length || 0} widgets).
+                  <button className="submit-btn" style={{ marginLeft: 12 }} onClick={() => setOverlayOpen(true)}>
+                    Open Preview
+                  </button>
+                </div>
+              ) : (
+                <div className="preview-empty">Click "Render" to see the formation</div>
+              )}
             </div>
           )}
 
@@ -331,7 +374,7 @@ export default function TestbenchPage() {
                 <EntityDataTable entities={entities} />
               ) : (
                 <div className="preview-empty">
-                  {formation ? 'No entity data in response — click Render' : 'Click "Render" to load entity data'}
+                  {formation ? 'No entity data in response' : 'Click "Render" to load entity data'}
                 </div>
               )}
             </div>
@@ -340,12 +383,13 @@ export default function TestbenchPage() {
           {activeTab === 'json' && rawJson && (
             <pre className="json-view">{rawJson}</pre>
           )}
-
-          {!formation && !loading && activeTab === 'preview' && (
-            <div className="preview-empty">Click "Render" to see the formation</div>
-          )}
         </div>
       </div>
+
+      {/* Full-screen widget preview — renders inside Shadow DOM with real overlay layout */}
+      {overlayOpen && (
+        <div ref={previewRef} className="tb-fullscreen-preview" />
+      )}
     </div>
   )
 }
@@ -502,141 +546,7 @@ function formatCell(val) {
   return String(val)
 }
 
-// Minimal formation renderer
-function TestbenchFormation({ formation }) {
-  if (!formation?.widgets?.length) return <div className="preview-empty">No widgets</div>
-
-  const layoutClass = getLayoutClass(formation.mode, formation.grid?.cols || 2)
-
-  return (
-    <div className={layoutClass}>
-      {formation.widgets.map((widget, wi) => (
-        <TestbenchWidget key={wi} widget={widget} />
-      ))}
-    </div>
-  )
-}
-
-function TestbenchWidget({ widget }) {
-  const direction = widget.meta?.direction || 'vertical'
-  const imageAtoms = (widget.atoms || []).filter(a => a.type === 'image')
-  const contentAtoms = (widget.atoms || []).filter(a => a.type !== 'image')
-  const images = imageAtoms.length > 0
-    ? (Array.isArray(imageAtoms[0].value) ? imageAtoms[0].value : [imageAtoms[0].value]).filter(Boolean)
-    : []
-
-  return (
-    <div className={`tb-card size-${widget.size || 'medium'} ${direction === 'horizontal' ? 'tb-card-horizontal' : ''}`}>
-      {images.length > 0 && (
-        <div className="tb-card-media">
-          <img src={images[0]} alt="" className="tb-card-img" />
-        </div>
-      )}
-      <div className="tb-card-content">
-        {contentAtoms.map((atom, i) => (
-          <TestbenchAtom key={i} atom={atom} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function TestbenchAtom({ atom }) {
-  if (atom.value == null && atom.type !== 'image') return null
-
-  const display = atom.display || 'body'
-  const color = atom.meta?.color
-  const style = color ? (
-    display.startsWith('badge') || display.startsWith('tag')
-      ? { backgroundColor: resolveColor(color), color: '#fff' }
-      : { color: resolveColor(color) }
-  ) : undefined
-
-  // Format value based on atom.format (or infer from type+subtype)
-  const formatted = tbFormatValue(atom)
-
-  if (['h1', 'h2', 'h3', 'h4'].includes(display)) {
-    const Tag = display
-    return <Tag className="tb-heading" style={style}>{formatted}</Tag>
-  }
-  if (display.startsWith('price')) {
-    return <span className="tb-price" style={style}>{formatted}</span>
-  }
-  if (display.startsWith('rating')) {
-    return <span className="tb-rating">{formatted}</span>
-  }
-  if (display.startsWith('badge')) {
-    return <span className="tb-badge" style={style}>{formatted}</span>
-  }
-  if (display.startsWith('tag')) {
-    return <span className="tb-tag" style={style}>{formatted}</span>
-  }
-  return <span className="tb-text" style={style}>{String(formatted)}</span>
-}
-
-// Format value using atom.format or infer from type+subtype
-function tbFormatValue(atom) {
-  const format = atom.format || tbInferFormat(atom)
-  const value = atom.value
-
-  switch (format) {
-    case 'currency': {
-      if (value == null) return null
-      const currency = atom.meta?.currency || '$'
-      const f = typeof value === 'number'
-        ? value.toLocaleString(undefined, { minimumFractionDigits: 2 })
-        : value
-      return `${currency}${f}`
-    }
-    case 'stars': {
-      const v = Number(value) || 0
-      const full = Math.min(Math.round(v), 5)
-      return '\u2605'.repeat(full) + '\u2606'.repeat(Math.max(0, 5 - full))
-    }
-    case 'stars-text': {
-      const v = Number(value) || 0
-      return `${v.toFixed(1)}/5`
-    }
-    case 'stars-compact': {
-      const v = Number(value) || 0
-      return `\u2605 ${v.toFixed(1)}`
-    }
-    case 'percent':
-      return `${value}%`
-    case 'number':
-      return typeof value === 'number' ? value.toLocaleString() : String(value)
-    case 'date':
-      return value ? new Date(value).toLocaleDateString() : value
-    case 'text':
-    default:
-      return value
-  }
-}
-
-function tbInferFormat(atom) {
-  if (atom.type === 'number') {
-    if (atom.subtype === 'currency') return 'currency'
-    if (atom.subtype === 'rating') return 'stars-compact'
-    if (atom.subtype === 'percent') return 'percent'
-    return 'number'
-  }
-  if (atom.type === 'text') {
-    if (atom.subtype === 'date' || atom.subtype === 'datetime') return 'date'
-  }
-  return 'text'
-}
-
 const COLORS = { green: '#22C55E', red: '#EF4444', blue: '#3B82F6', orange: '#F97316', purple: '#8B5CF6', gray: '#6B7280' }
 function resolveColor(c) {
   return COLORS[c] || c
-}
-
-function getLayoutClass(mode, cols) {
-  switch (mode) {
-    case 'grid': return `tb-grid cols-${cols}`
-    case 'carousel': return 'tb-carousel'
-    case 'single': return 'tb-single'
-    case 'list':
-    default: return 'tb-list'
-  }
 }

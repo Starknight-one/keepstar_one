@@ -48,7 +48,7 @@ export function WidgetRenderer({ widget, onClick }) {
 function renderTemplate(widget) {
   switch (widget.template) {
     case 'GenericCard':
-      return <GenericCardTemplate atoms={widget.atoms} size={widget.size} direction={widget.meta?.direction} />;
+      return <GenericCardTemplate atoms={widget.atoms} zones={widget.zones} size={widget.size} direction={widget.meta?.direction} />;
     case 'ProductCard':
       return <ProductCardTemplate atoms={widget.atoms} size={widget.size} />;
     case 'ServiceCard':

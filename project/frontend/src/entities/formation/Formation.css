@@ -3,19 +3,17 @@
   width: 100%;
 }
 
-/* Status bar — always visible at top */
+/* Status pill — floating count bubble */
 .formation-status {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background: rgba(248, 250, 252, 0.9);
-  backdrop-filter: blur(8px);
-  padding: 8px 16px;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 14px;
+  font-size: 12px;
   font-weight: 500;
-  color: #64748b;
-  border-bottom: 1px solid #e2e8f0;
-  text-align: center;
+  color: var(--color-text-secondary, #71717A);
+  background: var(--color-bg-secondary, #F4F4F5);
+  border-radius: 20px;
+  margin-bottom: 8px;
 }
 
 /* Formation layouts */
