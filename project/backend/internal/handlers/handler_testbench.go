@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"keepstar/internal/domain"
+	"keepstar/internal/engine"
 	"keepstar/internal/ports"
 	"keepstar/internal/presets"
-	"keepstar/internal/tools"
 )
 
 // TestbenchHandler handles testbench API requests
@@ -118,7 +118,7 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 
 	entityType := "product"
 	entityCount := len(products)
-	resolved := tools.AutoResolve(entityType, entityCount)
+	resolved := engine.AutoResolve(entityType, entityCount)
 	fields := resolved.Fields
 	displayOverrides := make(map[string]string)
 	layout := resolved.Layout
@@ -172,7 +172,7 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 		fields = filtered
 	}
 
-	// Apply order — reorder fields based on user-specified order
+	// Apply order
 	hasExplicitShow := false
 	if showRaw, ok := params["show"].([]interface{}); ok && len(showRaw) > 0 {
 		hasExplicitShow = true
@@ -182,7 +182,6 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 		inOrder := make(map[string]bool)
 		for _, o := range orderRaw {
 			if name, ok := o.(string); ok {
-				// Only include if field exists in current list
 				for _, f := range fields {
 					if f == name && !inOrder[name] {
 						ordered = append(ordered, name)
@@ -192,7 +191,6 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 				}
 			}
 		}
-		// Append remaining fields not in order list
 		for _, f := range fields {
 			if !inOrder[f] {
 				ordered = append(ordered, f)
@@ -229,7 +227,7 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Build field configs (with format inference)
-	fieldConfigs := tools.BuildFieldConfigsWithFormat(fields, displayOverrides, formatOverrides)
+	fieldConfigs := engine.BuildFieldConfigsWithFormat(fields, displayOverrides, formatOverrides)
 	sort.Slice(fieldConfigs, func(i, j int) bool {
 		return fieldConfigs[i].Priority < fieldConfigs[j].Priority
 	})
@@ -240,15 +238,15 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 	// Build widgets
 	widgets := make([]domain.Widget, 0, len(products))
 	for i, p := range products {
-		getter := tools.ExportProductFieldGetter(p)
+		getter := engine.ProductFieldGetter(p)
 		currency := p.Currency
 		if currency == "" {
 			currency = "$"
 		}
-		atoms := tools.ExportBuildAtoms(fieldConfigs, getter, func() string { return currency })
+		atoms := engine.BuildAtoms(fieldConfigs, getter, func() string { return currency })
 
 		// Apply constraints
-		atoms = tools.ApplyAtomConstraints(atoms)
+		atoms = engine.ApplyAtomConstraints(atoms)
 
 		widget := domain.Widget{
 			ID:       fmt.Sprintf("tb-%d", i),
@@ -261,18 +259,17 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 				ID:   p.ID,
 			},
 		}
-		tools.ApplyWidgetConstraints(&widget)
+		engine.ApplyWidgetConstraints(&widget)
 
 		// Calculate layout zones
-		widget.Zones = tools.CalculateZones(widget.Atoms, tools.DefaultDesignTokens())
+		widget.Zones = engine.CalculateZones(widget.Atoms, engine.DefaultDesignTokens())
 
 		widgets = append(widgets, widget)
 	}
 
-	// Apply cross-widget constraints — skip C1 when user explicitly specified show fields
-	// (user wants to see those fields regardless of data coverage)
+	// Apply cross-widget constraints
 	if !hasExplicitShow {
-		tools.ApplyCrossWidgetConstraints(widgets, formationMode)
+		engine.ApplyCrossWidgetConstraints(widgets, formationMode)
 	}
 
 	// Apply color, direction, shape
@@ -310,7 +307,7 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 		Widgets: widgets,
 	}
 	if formationMode == domain.FormationTypeGrid {
-		formation.Grid = tools.CalcGridConfig(len(widgets), size)
+		formation.Grid = engine.CalcGridConfig(len(widgets), size)
 	}
 
 	// Build entity data for debugging

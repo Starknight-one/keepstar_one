@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"keepstar/internal/domain"
+	"keepstar/internal/engine"
 	"keepstar/internal/ports"
 	"keepstar/internal/presets"
-	"keepstar/internal/tools"
 )
 
 // BackRequest is the request for going back to previous view
@@ -65,7 +65,7 @@ func (uc *BackUseCase) Execute(ctx context.Context, req BackRequest) (*BackRespo
 	// 3. Rebuild formation from state data using grid preset
 	formation := uc.rebuildFormationFromState(state)
 
-	// 4. Zone-write: UpdateView (view zone — restore previous)
+	// 4. Zone-write: UpdateView (view zone -- restore previous)
 	stack, _ := uc.statePort.GetViewStack(ctx, req.SessionID)
 	restoredView := domain.ViewState{
 		Mode:    snapshot.Mode,
@@ -117,18 +117,18 @@ func (uc *BackUseCase) rebuildFormationFromState(state *domain.SessionState) *do
 	// If we have products, use product_grid preset
 	if len(products) > 0 {
 		preset, _ := uc.presetRegistry.Get(domain.PresetProductGrid)
-		return tools.BuildFormation(preset, len(products), func(i int) (tools.FieldGetter, tools.CurrencyGetter, tools.IDGetter) {
+		return engine.BuildFormation(preset, len(products), func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
 			p := products[i]
-			return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+			return engine.ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 		})
 	}
 
 	// If we have services, use service_card preset
 	if len(services) > 0 {
 		preset, _ := uc.presetRegistry.Get(domain.PresetServiceCard)
-		return tools.BuildFormation(preset, len(services), func(i int) (tools.FieldGetter, tools.CurrencyGetter, tools.IDGetter) {
+		return engine.BuildFormation(preset, len(services), func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
 			s := services[i]
-			return serviceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
+			return engine.ServiceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
 		})
 	}
 

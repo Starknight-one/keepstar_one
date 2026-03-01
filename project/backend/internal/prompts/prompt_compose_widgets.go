@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"keepstar/internal/domain"
-	"keepstar/internal/tools"
+	"keepstar/internal/engine"
 )
 
 // Agent2SystemPrompt is the system prompt for Agent 2 (Template Builder)
@@ -285,7 +285,7 @@ func BuildAgent2ToolPrompt(meta domain.StateMeta, view domain.ViewState, userQue
 	if meta.ProductCount == 0 && meta.ServiceCount > 0 {
 		entityType = "service"
 	}
-	input["display_meta"] = tools.GetDisplayMeta(entityType)
+	input["display_meta"] = engine.GetDisplayMeta(entityType)
 
 	// User intent
 	if userQuery != "" {

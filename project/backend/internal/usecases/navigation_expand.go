@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"keepstar/internal/domain"
+	"keepstar/internal/engine"
 	"keepstar/internal/ports"
 	"keepstar/internal/presets"
-	"keepstar/internal/tools"
 )
 
 // ExpandRequest is the request for expanding a widget to detail view
@@ -178,101 +178,12 @@ func buildEntityRefs(data domain.StateData) []domain.EntityRef {
 func (uc *ExpandUseCase) buildDetailFormation(preset domain.Preset, entity interface{}, entityType domain.EntityType) *domain.FormationWithData {
 	if entityType == domain.EntityTypeProduct {
 		p := entity.(domain.Product)
-		return tools.BuildFormation(preset, 1, func(i int) (tools.FieldGetter, tools.CurrencyGetter, tools.IDGetter) {
-			return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+		return engine.BuildFormation(preset, 1, func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
+			return engine.ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 		})
 	}
 	s := entity.(domain.Service)
-	return tools.BuildFormation(preset, 1, func(i int) (tools.FieldGetter, tools.CurrencyGetter, tools.IDGetter) {
-		return serviceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
+	return engine.BuildFormation(preset, 1, func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
+		return engine.ServiceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
 	})
-}
-
-// productFieldGetter returns a FieldGetter for Product
-func productFieldGetter(p domain.Product) tools.FieldGetter {
-	return func(fieldName string) interface{} {
-		switch fieldName {
-		case "id":
-			return p.ID
-		case "name":
-			return nonEmpty(p.Name)
-		case "description":
-			return nonEmpty(p.Description)
-		case "price":
-			return p.Price
-		case "images":
-			if len(p.Images) == 0 {
-				return nil
-			}
-			return p.Images
-		case "rating":
-			if p.Rating == 0 {
-				return nil
-			}
-			return p.Rating
-		case "brand":
-			return nonEmpty(p.Brand)
-		case "category":
-			return nonEmpty(p.Category)
-		case "stockQuantity":
-			if p.StockQuantity == 0 {
-				return nil
-			}
-			return p.StockQuantity
-		case "tags":
-			if len(p.Tags) == 0 {
-				return nil
-			}
-			return p.Tags
-		default:
-			return nil
-		}
-	}
-}
-
-// serviceFieldGetter returns a FieldGetter for Service
-func serviceFieldGetter(s domain.Service) tools.FieldGetter {
-	return func(fieldName string) interface{} {
-		switch fieldName {
-		case "id":
-			return s.ID
-		case "name":
-			return nonEmpty(s.Name)
-		case "description":
-			return nonEmpty(s.Description)
-		case "price":
-			return s.Price
-		case "images":
-			if len(s.Images) == 0 {
-				return nil
-			}
-			return s.Images
-		case "rating":
-			if s.Rating == 0 {
-				return nil
-			}
-			return s.Rating
-		case "duration":
-			return nonEmpty(s.Duration)
-		case "provider":
-			return nonEmpty(s.Provider)
-		case "availability":
-			return nonEmpty(s.Availability)
-		case "attributes":
-			if len(s.Attributes) == 0 {
-				return nil
-			}
-			return s.Attributes
-		default:
-			return nil
-		}
-	}
-}
-
-// nonEmpty returns nil if string is empty, otherwise returns the string
-func nonEmpty(s string) interface{} {
-	if s == "" {
-		return nil
-	}
-	return s
 }

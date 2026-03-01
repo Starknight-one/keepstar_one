@@ -1,4 +1,4 @@
-package tools
+package engine
 
 import (
 	"fmt"
@@ -19,13 +19,13 @@ func DefaultDesignTokens() DesignTokens {
 
 // CalculateZones classifies atoms into layout zones based on display/type/slot.
 // Each atom is placed in exactly one bucket, then buckets are assembled into zones
-// in a fixed visual order: hero → headings → price+rating → body → flow → buttons → other.
+// in a fixed visual order: hero -> headings -> price+rating -> body -> flow -> buttons -> other.
 func CalculateZones(atoms []domain.Atom, tokens DesignTokens) []domain.Zone {
 	if len(atoms) == 0 {
 		return nil
 	}
 
-	// Classification buckets — each holds atom indices
+	// Classification buckets -- each holds atom indices
 	var (
 		heroIndices    []int
 		headingIndices []int
@@ -41,36 +41,36 @@ func CalculateZones(atoms []domain.Atom, tokens DesignTokens) []domain.Zone {
 		display := a.Display
 
 		switch {
-		// 1. Image atoms → hero
+		// 1. Image atoms -> hero
 		case a.Type == domain.AtomTypeImage:
 			heroIndices = append(heroIndices, i)
 
-		// 2. Headings → stack
+		// 2. Headings -> stack
 		case display == "h1" || display == "h2" || display == "h3" || display == "h4":
 			headingIndices = append(headingIndices, i)
 
-		// 3. Price slot or price display → price group
+		// 3. Price slot or price display -> price group
 		case a.Slot == domain.AtomSlotPrice || strings.HasPrefix(display, "price"):
 			priceIndices = append(priceIndices, i)
 
-		// 4. Rating display → rating group (merged with price into row)
+		// 4. Rating display -> rating group (merged with price into row)
 		case strings.HasPrefix(display, "rating"):
 			ratingIndices = append(ratingIndices, i)
 
-		// 5. Tags and badges → flow
+		// 5. Tags and badges -> flow
 		case strings.HasPrefix(display, "tag") || strings.HasPrefix(display, "badge"):
 			flowIndices = append(flowIndices, i)
 
-		// 6. Body text and utility displays → body stack
+		// 6. Body text and utility displays -> body stack
 		case display == "body-lg" || display == "body" || display == "body-sm" || display == "caption" ||
 			display == "divider" || display == "spacer" || display == "percent" || display == "progress":
 			bodyIndices = append(bodyIndices, i)
 
-		// 7. Buttons → button row
+		// 7. Buttons -> button row
 		case strings.HasPrefix(display, "button"):
 			buttonIndices = append(buttonIndices, i)
 
-		// 8. Everything else → other stack
+		// 8. Everything else -> other stack
 		default:
 			otherIndices = append(otherIndices, i)
 		}
@@ -112,7 +112,7 @@ func CalculateZones(atoms []domain.Atom, tokens DesignTokens) []domain.Zone {
 		})
 	}
 
-	// Flow zone (tags/badges) — with fold if exceeds threshold
+	// Flow zone (tags/badges) -- with fold if exceeds threshold
 	if len(flowIndices) > 0 {
 		if len(flowIndices) <= tokens.FoldMaxVisible {
 			zones = append(zones, domain.Zone{
@@ -131,7 +131,7 @@ func CalculateZones(atoms []domain.Atom, tokens DesignTokens) []domain.Zone {
 			zones = append(zones, domain.Zone{
 				Type:        domain.ZoneCollapsed,
 				AtomIndices: flowIndices[tokens.FoldMaxVisible:],
-				FoldLabel:   fmt.Sprintf("+%d ещё", remaining),
+				FoldLabel:   fmt.Sprintf("+%d \u0435\u0449\u0451", remaining),
 			})
 		}
 	}

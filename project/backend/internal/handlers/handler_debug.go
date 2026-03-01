@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"keepstar/internal/domain"
+	"keepstar/internal/engine"
 	"keepstar/internal/ports"
 	"keepstar/internal/presets"
-	"keepstar/internal/tools"
 )
 
 // PipelineMetrics stores metrics from last pipeline execution
@@ -332,9 +332,9 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 	// Build formation using product_grid preset
 	preset, _ := h.presetRegistry.Get(domain.PresetProductGrid)
 	products := state.Current.Data.Products
-	formation := tools.BuildFormation(preset, len(products), func(i int) (tools.FieldGetter, tools.CurrencyGetter, tools.IDGetter) {
+	formation := engine.BuildFormation(preset, len(products), func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
 		p := products[i]
-		return productFieldGetterDebug(p), func() string { return p.Currency }, func() string { return p.ID }
+		return engine.ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 	})
 
 	// Save formation to state
@@ -379,59 +379,6 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// productFieldGetterDebug is a simple field getter for debug seeding
-func productFieldGetterDebug(p domain.Product) tools.FieldGetter {
-	return func(fieldName string) interface{} {
-		switch fieldName {
-		case "id":
-			return p.ID
-		case "name":
-			if p.Name == "" {
-				return nil
-			}
-			return p.Name
-		case "description":
-			if p.Description == "" {
-				return nil
-			}
-			return p.Description
-		case "price":
-			return p.Price
-		case "images":
-			if len(p.Images) == 0 {
-				return nil
-			}
-			return p.Images
-		case "rating":
-			if p.Rating == 0 {
-				return nil
-			}
-			return p.Rating
-		case "brand":
-			if p.Brand == "" {
-				return nil
-			}
-			return p.Brand
-		case "category":
-			if p.Category == "" {
-				return nil
-			}
-			return p.Category
-		case "stockQuantity":
-			if p.StockQuantity == 0 {
-				return nil
-			}
-			return p.StockQuantity
-		case "tags":
-			if len(p.Tags) == 0 {
-				return nil
-			}
-			return p.Tags
-		default:
-			return nil
-		}
-	}
-}
 
 var templateFuncs = template.FuncMap{
 	"addFloat": func(a, b float64) float64 { return a + b },
