@@ -4,6 +4,36 @@
 
 ---
 
+## Alpha 0.0.3 — Engine Layer Extraction — 2026-03-01
+
+Рефакторинг: вынос бизнес-логики из `tools/` в `internal/engine/`. Гексагональная архитектура восстановлена — tools/ содержит только LLM tool адаптеры.
+
+### Что сделано:
+- **Новый пакет `internal/engine/`** (6 файлов, ~1400 LOC) — чистая бизнес-логика, импортирует только `domain/`
+  - `defaults.go` — AutoResolve, field ranking, display validation, CalcGridConfig, GetDisplayMeta, BuildFieldConfigs
+  - `constraints.go` — ApplyAtomConstraints, ApplyWidgetConstraints, ApplyCrossWidgetConstraints (30+ правил, 4 уровня)
+  - `layout.go` — CalculateZones, DesignTokens (zone-based widget layout)
+  - `field_types.go` — FieldTypeMap (field→AtomType/Subtype)
+  - `formation.go` — BuildFormation, BuildTemplateFormation, BuildAtoms, ProductFieldGetter, ServiceFieldGetter
+  - `assembly.go` — BuildVisualWidgets, BuildComposedFormation, ApplyPostProcessing, conditional styling
+- **tools/ облегчён** — удалены 3 файла целиком (defaults_engine.go, constraints.go, layout_engine.go), tool_visual_assembly.go и tool_render_preset.go делегируют в engine/
+- **Удалены дубли** — 90 LOC дублированных `productFieldGetter`/`serviceFieldGetter`/`nonEmpty` из `navigation_expand.go` + `productFieldGetterDebug` из `handler_debug.go`
+- **Обновлены 8 consumer-файлов** — handlers, usecases, prompts теперь импортируют engine/ вместо tools/
+- **Тесты перенесены** — formation_test.go и formation_fuzz_test.go (315k+ комбинаций) в engine/
+
+### Граф зависимостей после:
+```
+domain/ ←── engine/ (только domain)
+              ↑
+       tools/ (domain + engine + ports + presets)
+              ↑
+   usecases/ (domain + engine + tools[Registry] + ports)
+              ↑
+   handlers/ (domain + engine + usecases + ports)
+```
+
+---
+
 ## Frontend Polish (попытка) — 2026-02-21
 
 Бэкенд-часть работает, фронт — сломан. Нужна полная переработка CSS виджетов.

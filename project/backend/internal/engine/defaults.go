@@ -1,4 +1,4 @@
-package tools
+package engine
 
 import (
 	"keepstar/internal/domain"
@@ -71,7 +71,7 @@ var MaxAtomsPerSize = map[string]int{
 	"large":  10,
 }
 
-// defaultFormatForTypeSubtype maps Type+Subtype → auto-inferred AtomFormat
+// defaultFormatForTypeSubtype maps Type+Subtype -> auto-inferred AtomFormat
 var defaultFormatForTypeSubtype = map[domain.AtomType]map[domain.AtomSubtype]domain.AtomFormat{
 	domain.AtomTypeNumber: {
 		domain.SubtypeCurrency: domain.FormatCurrency,
@@ -100,10 +100,10 @@ func InferFormat(explicit domain.AtomFormat, atomType domain.AtomType, subtype d
 	return domain.FormatText
 }
 
-// allValidDisplays is the universal set of valid display values.
+// AllValidDisplays is the universal set of valid display values.
 // Any display works with any data type (format handles the value transform).
 // Only image-only and icon-only displays are restricted to their types.
-var allValidDisplays = map[string]bool{
+var AllValidDisplays = map[string]bool{
 	// text wrappers
 	"h1": true, "h2": true, "h3": true, "h4": true,
 	"body-lg": true, "body": true, "body-sm": true, "caption": true,
@@ -154,10 +154,10 @@ func ValidateDisplay(fieldName string, atomType domain.AtomType, display string)
 		return "body"
 	}
 	// Any known display is valid
-	if allValidDisplays[display] {
+	if AllValidDisplays[display] {
 		return display
 	}
-	// Unknown display — fallback
+	// Unknown display -- fallback
 	if d := defaultDisplay[fieldName]; d != "" {
 		return d
 	}
@@ -202,15 +202,15 @@ func AutoResolve(entityType string, entityCount int) ResolvedDefaults {
 			Fields:    copyFields(ranking, 5),
 		}
 	case entityCount <= 12:
-		// 7-12 items: list with top 4 fields
+		// 7-12 items: grid with top 3 fields (compact cards)
 		return ResolvedDefaults{
-			Layout:    "list",
+			Layout:    "grid",
 			Size:      domain.WidgetSizeSmall,
-			MaxFields: 4,
-			Fields:    copyFields(ranking, 4),
+			MaxFields: 3,
+			Fields:    copyFields(ranking, 3),
 		}
 	default:
-		// 13+ items: grid with top 3 fields (small size → 3 atoms: image, name, price)
+		// 13+ items: grid with top 3 fields (small size -> 3 atoms: image, name, price)
 		return ResolvedDefaults{
 			Layout:    "grid",
 			Size:      domain.WidgetSizeSmall,
@@ -317,9 +317,9 @@ func BuildFieldConfigsWithFormat(fields []string, displayOverrides map[string]st
 	configs := make([]domain.FieldConfig, 0, len(fields))
 
 	for i, name := range fields {
-		entry, known := fieldTypeMap[name]
+		entry, known := FieldTypeMap[name]
 		if !known {
-			entry = fieldTypeEntry{domain.AtomTypeText, domain.SubtypeString}
+			entry = FieldTypeEntry{domain.AtomTypeText, domain.SubtypeString}
 		}
 
 		display := defaultDisplay[name]

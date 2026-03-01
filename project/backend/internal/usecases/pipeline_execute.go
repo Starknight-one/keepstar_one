@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"keepstar/internal/domain"
+	"keepstar/internal/engine"
 	"keepstar/internal/logger"
 	"keepstar/internal/ports"
 	"keepstar/internal/presets"
@@ -343,17 +344,17 @@ func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionSt
 
 	// Product detail template via defaults engine
 	if len(state.Current.Data.Products) > 0 {
-		resolved := tools.AutoResolve("product", 1) // single item = detail view
-		fieldConfigs := tools.BuildFieldConfigs(resolved.Fields, nil)
-		formation := tools.BuildTemplateFormation(buildGenericPreset(fieldConfigs, resolved))
+		resolved := engine.AutoResolve("product", 1) // single item = detail view
+		fieldConfigs := engine.BuildFieldConfigs(resolved.Fields, nil)
+		formation := engine.BuildTemplateFormation(buildGenericPreset(fieldConfigs, resolved))
 		templates[string(domain.EntityTypeProduct)] = formation
 	}
 
 	// Service detail template via defaults engine
 	if len(state.Current.Data.Services) > 0 {
-		resolved := tools.AutoResolve("service", 1)
-		fieldConfigs := tools.BuildFieldConfigs(resolved.Fields, nil)
-		formation := tools.BuildTemplateFormation(buildGenericPreset(fieldConfigs, resolved))
+		resolved := engine.AutoResolve("service", 1)
+		fieldConfigs := engine.BuildFieldConfigs(resolved.Fields, nil)
+		formation := engine.BuildTemplateFormation(buildGenericPreset(fieldConfigs, resolved))
 		templates[string(domain.EntityTypeService)] = formation
 	}
 
@@ -370,7 +371,7 @@ func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionSt
 }
 
 // buildGenericPreset creates a Preset from field configs and resolved defaults for template building
-func buildGenericPreset(fieldConfigs []domain.FieldConfig, resolved tools.ResolvedDefaults) domain.Preset {
+func buildGenericPreset(fieldConfigs []domain.FieldConfig, resolved engine.ResolvedDefaults) domain.Preset {
 	mode := domain.FormationTypeSingle
 	switch resolved.Layout {
 	case "grid":

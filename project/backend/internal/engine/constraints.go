@@ -1,4 +1,4 @@
-package tools
+package engine
 
 import (
 	"net/url"
@@ -10,7 +10,7 @@ import (
 )
 
 // ============================================================================
-// Level 0 — Data Sanitization (applied in field getters / buildAtoms)
+// Level 0 -- Data Sanitization (applied in field getters / buildAtoms)
 // ============================================================================
 
 // D5: Truncate text by slot and layout
@@ -33,12 +33,12 @@ func TruncateBySlot(value string, slot domain.AtomSlot, layout string) string {
 	}
 	if maxLen > 0 && utf8.RuneCountInString(value) > maxLen {
 		runes := []rune(value)
-		return string(runes[:maxLen-1]) + "…"
+		return string(runes[:maxLen-1]) + "\u2026"
 	}
 	return value
 }
 
-// D6: Downgrade display for long names (h1 + >60 chars → h2)
+// D6: Downgrade display for long names (h1 + >60 chars -> h2)
 func DowngradeDisplayForLength(value string, display string) string {
 	length := utf8.RuneCountInString(value)
 	if display == "h1" && length > 60 {
@@ -50,7 +50,7 @@ func DowngradeDisplayForLength(value string, display string) string {
 	return display
 }
 
-// D7: Validate image URL — return empty string if invalid
+// D7: Validate image URL -- return empty string if invalid
 func ValidateImageURL(rawURL interface{}) interface{} {
 	switch v := rawURL.(type) {
 	case string:
@@ -97,7 +97,7 @@ func isValidImageURL(s string) bool {
 }
 
 // ============================================================================
-// Level 1 — Per-Atom Constraints (after atom creation)
+// Level 1 -- Per-Atom Constraints (after atom creation)
 // ============================================================================
 
 // ApplyAtomConstraints applies per-atom rules to all atoms in a widget
@@ -106,17 +106,17 @@ func ApplyAtomConstraints(atoms []domain.Atom) []domain.Atom {
 		atom := &atoms[i]
 		strVal, isStr := atom.Value.(string)
 
-		// A1: badge text > 20 chars → tag
+		// A1: badge text > 20 chars -> tag
 		if isStr && strings.HasPrefix(atom.Display, "badge") && utf8.RuneCountInString(strVal) > 20 {
 			atom.Display = "tag"
 		}
 
-		// A2: tag text > 40 chars → body-sm
+		// A2: tag text > 40 chars -> body-sm
 		if isStr && strings.HasPrefix(atom.Display, "tag") && utf8.RuneCountInString(strVal) > 40 {
 			atom.Display = "body-sm"
 		}
 
-		// A4: badge text → capitalize first letter
+		// A4: badge text -> capitalize first letter
 		if isStr && strings.HasPrefix(atom.Display, "badge") && len(strVal) > 0 {
 			r, size := utf8.DecodeRuneInString(strVal)
 			if unicode.IsLower(r) {
@@ -124,7 +124,7 @@ func ApplyAtomConstraints(atoms []domain.Atom) []domain.Atom {
 			}
 		}
 
-		// A5: rating < 3.0 → stars-compact format (and rating-compact display for backward compat)
+		// A5: rating < 3.0 -> stars-compact format (and rating-compact display for backward compat)
 		if atom.Format == domain.FormatStars || atom.Format == domain.FormatStarsText ||
 			atom.Display == "rating" || atom.Display == "rating-text" {
 			if fv, ok := toFloat(atom.Value); ok && fv < 3.0 {
@@ -147,12 +147,12 @@ func ApplyAtomConstraints(atoms []domain.Atom) []domain.Atom {
 }
 
 // ============================================================================
-// Level 2 — Per-Widget Constraints (after widget assembly)
+// Level 2 -- Per-Widget Constraints (after widget assembly)
 // ============================================================================
 
 // ApplyWidgetConstraints applies per-widget rules
 func ApplyWidgetConstraints(widget *domain.Widget) {
-	// W1: max 2 badges per widget, third → tag
+	// W1: max 2 badges per widget, third -> tag
 	badgeCount := 0
 	for i := range widget.Atoms {
 		if strings.HasPrefix(widget.Atoms[i].Display, "badge") {
@@ -174,7 +174,7 @@ func ApplyWidgetConstraints(widget *domain.Widget) {
 		}
 	}
 
-	// W4: one h1/h2 per widget, second → h3
+	// W4: one h1/h2 per widget, second -> h3
 	headingCount := 0
 	for i := range widget.Atoms {
 		d := widget.Atoms[i].Display
@@ -186,7 +186,7 @@ func ApplyWidgetConstraints(widget *domain.Widget) {
 		}
 	}
 
-	// W7: horizontal + >4 atoms → vertical
+	// W7: horizontal + >4 atoms -> vertical
 	if widget.Meta != nil {
 		if dir, ok := widget.Meta["direction"].(string); ok && dir == "horizontal" {
 			if len(widget.Atoms) > 4 {
@@ -195,7 +195,7 @@ func ApplyWidgetConstraints(widget *domain.Widget) {
 		}
 	}
 
-	// W8: tiny size → remove image atoms
+	// W8: tiny size -> remove image atoms
 	if widget.Size == domain.WidgetSizeTiny {
 		filtered := make([]domain.Atom, 0, len(widget.Atoms))
 		for _, a := range widget.Atoms {
@@ -208,7 +208,7 @@ func ApplyWidgetConstraints(widget *domain.Widget) {
 }
 
 // ============================================================================
-// Level 4 — Cross-Widget Constraints (after formation assembly)
+// Level 4 -- Cross-Widget Constraints (after formation assembly)
 // ============================================================================
 
 // ApplyCrossWidgetConstraints applies cross-widget rules for grid/list formations
@@ -217,7 +217,7 @@ func ApplyCrossWidgetConstraints(widgets []domain.Widget, mode domain.FormationT
 		return
 	}
 
-	// C1: uniform field set in grid — field present in <70% of widgets → remove
+	// C1: uniform field set in grid -- field present in <70% of widgets -> remove
 	if mode == domain.FormationTypeGrid || mode == domain.FormationTypeList {
 		normalizeFieldSet(widgets)
 	}
@@ -266,15 +266,15 @@ func normalizeFieldSet(widgets []domain.Widget) {
 		// Add placeholder for missing common fields
 		for field := range keepFields {
 			if !presentFields[field] {
-				entry, known := fieldTypeMap[field]
+				entry, known := FieldTypeMap[field]
 				if !known {
-					entry = fieldTypeEntry{domain.AtomTypeText, domain.SubtypeString}
+					entry = FieldTypeEntry{domain.AtomTypeText, domain.SubtypeString}
 				}
 				placeholder := domain.Atom{
 					Type:      entry.Type,
 					Subtype:   entry.Subtype,
 					Display:   defaultDisplay[field],
-					Value:     "—",
+					Value:     "\u2014",
 					FieldName: field,
 					Slot:      defaultSlot[field],
 				}

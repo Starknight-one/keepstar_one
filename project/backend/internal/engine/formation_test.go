@@ -1,4 +1,4 @@
-package tools
+package engine
 
 import (
 	"testing"
@@ -15,7 +15,7 @@ func TestBuildFormation_GridFourProducts(t *testing.T) {
 
 	formation := BuildFormation(preset, len(products), func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 		p := products[i]
-		return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+		return ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 	})
 
 	if formation.Mode != domain.FormationTypeGrid {
@@ -55,7 +55,7 @@ func TestBuildFormation_SingleProductDetail(t *testing.T) {
 
 	formation := BuildFormation(preset, 1, func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 		p := products[i]
-		return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+		return ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 	})
 
 	if formation.Mode != domain.FormationTypeSingle {
@@ -84,11 +84,11 @@ func TestBuildFormation_NilFieldsSkipped(t *testing.T) {
 		ID:    "empty-1",
 		Name:  "Only Name",
 		Price: 0, // will be set to 0
-		// All other fields empty → nil from field getter
+		// All other fields empty -> nil from field getter
 	}
 
 	formation := BuildFormation(preset, 1, func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
-		return productFieldGetter(emptyProduct), func() string { return "" }, func() string { return emptyProduct.ID }
+		return ProductFieldGetter(emptyProduct), func() string { return "" }, func() string { return emptyProduct.ID }
 	})
 
 	if len(formation.Widgets) != 1 {
@@ -99,7 +99,7 @@ func TestBuildFormation_NilFieldsSkipped(t *testing.T) {
 	w := formation.Widgets[0]
 	for _, a := range w.Atoms {
 		if a.Value == nil {
-			t.Error("nil value should have been skipped in buildAtoms")
+			t.Error("nil value should have been skipped in BuildAtoms")
 		}
 	}
 }
@@ -115,7 +115,7 @@ func TestBuildFormation_CurrencyMeta(t *testing.T) {
 	}
 
 	formation := BuildFormation(preset, 1, func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
-		return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+		return ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 	})
 
 	found := false
@@ -139,7 +139,7 @@ func TestBuildFormation_EmptyCurrencyFallback(t *testing.T) {
 	p := domain.Product{ID: "p1", Name: "Test", Price: 100, Currency: ""}
 
 	formation := BuildFormation(preset, 1, func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
-		return productFieldGetter(p), func() string { return "" }, func() string { return p.ID }
+		return ProductFieldGetter(p), func() string { return "" }, func() string { return p.ID }
 	})
 
 	for _, a := range formation.Widgets[0].Atoms {
@@ -157,7 +157,7 @@ func TestBuildFormation_Services(t *testing.T) {
 
 	formation := BuildFormation(preset, len(services), func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 		s := services[i]
-		return serviceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
+		return ServiceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
 	})
 
 	if formation.Mode != domain.FormationTypeGrid {
@@ -253,7 +253,7 @@ func TestProductFieldGetter_AllFields(t *testing.T) {
 		Tags:          []string{"new"},
 	}
 
-	fg := productFieldGetter(p)
+	fg := ProductFieldGetter(p)
 
 	tests := []struct {
 		field string
@@ -270,7 +270,7 @@ func TestProductFieldGetter_AllFields(t *testing.T) {
 	for _, tc := range tests {
 		val := fg(tc.field)
 		if val != tc.want {
-			t.Errorf("productFieldGetter(%q): want %v, got %v", tc.field, tc.want, val)
+			t.Errorf("ProductFieldGetter(%q): want %v, got %v", tc.field, tc.want, val)
 		}
 	}
 
@@ -284,7 +284,7 @@ func TestProductFieldGetter_AllFields(t *testing.T) {
 
 func TestProductFieldGetter_EmptyFieldsReturnNil(t *testing.T) {
 	p := domain.Product{ID: "p1"}
-	fg := productFieldGetter(p)
+	fg := ProductFieldGetter(p)
 
 	nilFields := []string{"name", "description", "brand", "category", "images", "tags"}
 	for _, f := range nilFields {
@@ -296,7 +296,7 @@ func TestProductFieldGetter_EmptyFieldsReturnNil(t *testing.T) {
 
 func TestProductFieldGetter_ZeroRatingReturnsZero(t *testing.T) {
 	p := domain.Product{ID: "p1", Rating: 0}
-	fg := productFieldGetter(p)
+	fg := ProductFieldGetter(p)
 	if fg("rating") != float64(0) {
 		t.Errorf("zero rating should return 0, got %v", fg("rating"))
 	}
@@ -304,7 +304,7 @@ func TestProductFieldGetter_ZeroRatingReturnsZero(t *testing.T) {
 
 func TestProductFieldGetter_UnknownField(t *testing.T) {
 	p := domain.Product{ID: "p1"}
-	fg := productFieldGetter(p)
+	fg := ProductFieldGetter(p)
 	if fg("nonexistent") != nil {
 		t.Errorf("unknown field should return nil, got %v", fg("nonexistent"))
 	}
@@ -324,7 +324,7 @@ func TestServiceFieldGetter_AllFields(t *testing.T) {
 		Attributes:   map[string]interface{}{"level": "beginner"},
 	}
 
-	fg := serviceFieldGetter(s)
+	fg := ServiceFieldGetter(s)
 
 	if fg("name") != "Yoga Class" {
 		t.Errorf("name: want Yoga Class, got %v", fg("name"))
@@ -342,7 +342,7 @@ func TestServiceFieldGetter_AllFields(t *testing.T) {
 
 func TestServiceFieldGetter_EmptyFieldsReturnNil(t *testing.T) {
 	s := domain.Service{ID: "s1"}
-	fg := serviceFieldGetter(s)
+	fg := ServiceFieldGetter(s)
 
 	nilFields := []string{"name", "description", "duration", "provider", "availability", "images", "attributes"}
 	for _, f := range nilFields {
@@ -354,24 +354,23 @@ func TestServiceFieldGetter_EmptyFieldsReturnNil(t *testing.T) {
 
 func TestServiceFieldGetter_UnknownField(t *testing.T) {
 	s := domain.Service{ID: "s1"}
-	fg := serviceFieldGetter(s)
+	fg := ServiceFieldGetter(s)
 	if fg("brand") != nil {
 		t.Errorf("services don't have 'brand', should return nil")
 	}
 }
 
-// --- formatPrice is in postgres adapter, not here ---
 // --- nonEmpty helper test ---
 
 func TestNonEmpty_EmptyString(t *testing.T) {
-	if nonEmpty("") != nil {
-		t.Error("nonEmpty('') should return nil")
+	if NonEmpty("") != nil {
+		t.Error("NonEmpty('') should return nil")
 	}
 }
 
 func TestNonEmpty_NonEmptyString(t *testing.T) {
-	if nonEmpty("hello") != "hello" {
-		t.Error("nonEmpty('hello') should return 'hello'")
+	if NonEmpty("hello") != "hello" {
+		t.Error("NonEmpty('hello') should return 'hello'")
 	}
 }
 

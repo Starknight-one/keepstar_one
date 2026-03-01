@@ -1,4 +1,4 @@
-package tools
+package engine
 
 import (
 	"fmt"
@@ -13,10 +13,10 @@ import (
 // Property-based tests for the visual assembly pipeline.
 //
 // Strategy:
-//   1. Exhaustive on structural axes (count × layout × size × direction × show × hide)
-//      = 20 × 5 × 5 × 3 × 15 × 14 = 315,000 combinations
-//   2. Exhaustive on per-atom transforms (display × format × field)
-//      = 23 × 8 × 13 = 2,392 combinations
+//   1. Exhaustive on structural axes (count x layout x size x direction x show x hide)
+//      = 20 x 5 x 5 x 3 x 15 x 14 = 315,000 combinations
+//   2. Exhaustive on per-atom transforms (display x format x field)
+//      = 23 x 8 x 13 = 2,392 combinations
 //   3. Random fuzz for combined overrides (10,000 iterations)
 //
 // Every combination must satisfy ALL invariants.
@@ -230,9 +230,9 @@ func runPipeline(params fuzzParams, products []domain.Product) ([]domain.Widget,
 		formationMode = domain.FormationTypeGrid
 	}
 
-	widgets := buildVisualWidgets(fieldConfigs, "GenericCard", size, entityCount, func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
+	widgets := BuildVisualWidgets(fieldConfigs, "GenericCard", size, entityCount, func(i int) (FieldGetter, CurrencyGetter, IDGetter) {
 		p := products[i]
-		return productFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+		return ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
 	}, domain.EntityTypeProduct)
 
 	for i := range widgets {
@@ -242,6 +242,12 @@ func runPipeline(params fuzzParams, products []domain.Product) ([]domain.Widget,
 
 	if !hasExplicitShow {
 		ApplyCrossWidgetConstraints(widgets, formationMode)
+	}
+
+	// Calculate layout zones
+	tokens := DefaultDesignTokens()
+	for i := range widgets {
+		widgets[i].Zones = CalculateZones(widgets[i].Atoms, tokens)
 	}
 
 	for i := range widgets {
@@ -265,7 +271,7 @@ func runPipeline(params fuzzParams, products []domain.Product) ([]domain.Widget,
 }
 
 // =============================================================================
-// INVARIANT CHECKS — must hold for ALL parameter combinations
+// INVARIANT CHECKS -- must hold for ALL parameter combinations
 // =============================================================================
 
 type violations struct {
@@ -292,7 +298,7 @@ func checkInvariants(widgets []domain.Widget, mode domain.FormationType, params 
 		// I2: All display values are known
 		for ai, a := range w.Atoms {
 			d := string(a.Display)
-			if d != "" && !allValidDisplays[d] {
+			if d != "" && !AllValidDisplays[d] {
 				v.add(fmt.Sprintf("I2 bad display: [%s] w[%d].a[%d](%s) display=%q", params, wi, ai, a.FieldName, d))
 			}
 		}
@@ -382,11 +388,83 @@ func checkInvariants(widgets []domain.Widget, mode domain.FormationType, params 
 	if len(widgets) != params.Count {
 		v.add(fmt.Sprintf("I11 widget count: [%s] expected=%d got=%d", params, params.Count, len(widgets)))
 	}
+
+	// --- Zone invariants ---
+	for wi, w := range widgets {
+		atomCount := len(w.Atoms)
+		if atomCount == 0 {
+			continue // no atoms -> no zones expected
+		}
+
+		// I12: All indices in zones are valid (0 <= idx < len(atoms))
+		for zi, z := range w.Zones {
+			for _, idx := range z.AtomIndices {
+				if idx < 0 || idx >= atomCount {
+					v.add(fmt.Sprintf("I12 bad zone index: [%s] w[%d].z[%d] idx=%d atoms=%d", params, wi, zi, idx, atomCount))
+				}
+			}
+		}
+
+		// I13: Each atom in exactly one zone (no missing, no duplicates)
+		atomInZone := make(map[int]int) // atom index -> zone count
+		for _, z := range w.Zones {
+			for _, idx := range z.AtomIndices {
+				atomInZone[idx]++
+			}
+		}
+		for ai := 0; ai < atomCount; ai++ {
+			count := atomInZone[ai]
+			if count == 0 {
+				v.add(fmt.Sprintf("I13 atom not in zone: [%s] w[%d] atom[%d](%s)", params, wi, ai, w.Atoms[ai].FieldName))
+			} else if count > 1 {
+				v.add(fmt.Sprintf("I13 atom in %d zones: [%s] w[%d] atom[%d](%s)", count, params, wi, ai, w.Atoms[ai].FieldName))
+			}
+		}
+
+		// I14: All zone types are valid
+		validZoneTypes := map[domain.ZoneType]bool{
+			domain.ZoneHero: true, domain.ZoneRow: true, domain.ZoneStack: true,
+			domain.ZoneFlow: true, domain.ZoneGrid: true, domain.ZoneCollapsed: true,
+		}
+		for zi, z := range w.Zones {
+			if !validZoneTypes[z.Type] {
+				v.add(fmt.Sprintf("I14 bad zone type: [%s] w[%d].z[%d] type=%q", params, wi, zi, z.Type))
+			}
+		}
+
+		// I15: Image atoms only in hero zones
+		for zi, z := range w.Zones {
+			if z.Type == domain.ZoneHero {
+				continue
+			}
+			for _, idx := range z.AtomIndices {
+				if idx < atomCount && w.Atoms[idx].Type == domain.AtomTypeImage {
+					v.add(fmt.Sprintf("I15 image in non-hero: [%s] w[%d].z[%d](%s) atom[%d]", params, wi, zi, z.Type, idx))
+				}
+			}
+		}
+
+		// I16: Collapsed zone only appears immediately after a flow zone
+		for zi, z := range w.Zones {
+			if z.Type == domain.ZoneCollapsed {
+				if zi == 0 || w.Zones[zi-1].Type != domain.ZoneFlow {
+					v.add(fmt.Sprintf("I16 collapsed without flow: [%s] w[%d].z[%d]", params, wi, zi))
+				}
+			}
+		}
+
+		// I17: No empty zones
+		for zi, z := range w.Zones {
+			if len(z.AtomIndices) == 0 {
+				v.add(fmt.Sprintf("I17 empty zone: [%s] w[%d].z[%d] type=%s", params, wi, zi, z.Type))
+			}
+		}
+	}
 }
 
 // =============================================================================
 // TEST 1: Exhaustive structural axes
-// count(20) × layout(5) × size(5) × direction(3) × show(15) × hide(14) = 315,000
+// count(20) x layout(5) x size(5) x direction(3) x show(15) x hide(14) = 315,000
 // =============================================================================
 
 func TestExhaustiveStructural(t *testing.T) {
@@ -434,7 +512,7 @@ func TestExhaustiveStructural(t *testing.T) {
 
 // =============================================================================
 // TEST 2: Exhaustive per-atom transforms
-// display(23) × format(8) × field(13) = 2,392 — each applied to 6-product grid
+// display(23) x format(8) x field(13) = 2,392 -- each applied to 6-product grid
 // =============================================================================
 
 func TestExhaustiveAtomTransforms(t *testing.T) {
