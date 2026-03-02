@@ -196,6 +196,12 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
       });
     }).catch((err) => {
       log.warn('Session init failed:', err);
+      addMessage({
+        id: 'init-error',
+        role: MessageRole.ASSISTANT,
+        content: 'Извините, у нас небольшая техническая заминка. Зайдите, пожалуйста, попозже :)',
+        timestamp: new Date(),
+      });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
