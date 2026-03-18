@@ -59,7 +59,7 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
       )}
       <div className="generic-card-content">
         {layout ? (
-          <LayoutTreeRenderer node={layout} atoms={atomsV2} />
+          <LayoutTreeRenderer node={layout} atoms={atomsV2} skipHero={images.length > 0} />
         ) : (
           // Fallback: render atomsV2 sequentially
           atomsV2.filter(a => a.slot !== 'hero').map((atom, i) => (

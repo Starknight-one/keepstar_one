@@ -16,17 +16,24 @@ function resolveSpacing(token) {
  *   flow → flex-wrap: wrap (inline flow)
  *   span → full-width block
  */
-export function LayoutTreeRenderer({ node, atoms }) {
+export function LayoutTreeRenderer({ node, atoms, skipHero = false }) {
   if (!node || !node.children || node.children.length === 0) return null;
+
+  // Filter out hero nodes at root level (already rendered by ImageCarousel)
+  const children = skipHero
+    ? node.children.filter(c => !(c.node && c.node.name === 'hero'))
+    : node.children;
+
+  if (children.length === 0) return null;
 
   // GroupWrapper: collapse → expandable section
   if (node.groupWrapper === 'collapse') {
-    return <CollapseGroup node={node} atoms={atoms} />;
+    return <CollapseGroup node={node} atoms={atoms} children={children} />;
   }
 
   // GroupWrapper: carousel → horizontal scroll
   if (node.groupWrapper === 'carousel') {
-    return <CarouselGroup node={node} atoms={atoms} />;
+    return <CarouselGroup node={node} atoms={atoms} children={children} />;
   }
 
   const style = buildNodeStyle(node);
@@ -34,7 +41,7 @@ export function LayoutTreeRenderer({ node, atoms }) {
 
   return (
     <div className={className} style={style}>
-      {node.children.map((child, i) => (
+      {children.map((child, i) => (
         <LayoutChild key={i} child={child} atoms={atoms} />
       ))}
     </div>
@@ -57,15 +64,16 @@ function LayoutChild({ child, atoms }) {
   return null;
 }
 
-function CollapseGroup({ node, atoms }) {
+function CollapseGroup({ node, atoms, children }) {
   const [expanded, setExpanded] = useState(false);
   const style = buildNodeStyle(node);
+  const items = children || node.children;
 
   return (
     <div className="layout-collapse">
       {expanded && (
         <div className={`layout-${node.type || 'flow'}`} style={style}>
-          {node.children.map((child, i) => (
+          {items.map((child, i) => (
             <LayoutChild key={i} child={child} atoms={atoms} />
           ))}
         </div>
@@ -80,16 +88,17 @@ function CollapseGroup({ node, atoms }) {
   );
 }
 
-function CarouselGroup({ node, atoms }) {
+function CarouselGroup({ node, atoms, children }) {
   const style = {
     ...buildNodeStyle(node),
     overflowX: 'auto',
     flexWrap: 'nowrap',
   };
+  const items = children || node.children;
 
   return (
     <div className="layout-carousel" style={style}>
-      {node.children.map((child, i) => (
+      {items.map((child, i) => (
         <LayoutChild key={i} child={child} atoms={atoms} />
       ))}
     </div>

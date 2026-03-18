@@ -207,16 +207,10 @@
   display: none;
 }
 
-/* V2 card variant */
-.generic-card-v2 {
-  /* Hover/active states via CSS custom properties */
-}
+/* V2 card variant — only apply hover/active when custom properties are set */
 .generic-card-v2:hover {
-  background: var(--hover-background, inherit);
-  box-shadow: var(--hover-boxShadow, inherit);
-  transform: var(--hover-transform, none);
+  box-shadow: var(--hover-boxShadow, none);
 }
 .generic-card-v2:active {
-  background: var(--active-background, inherit);
   transform: var(--active-transform, none);
 }
