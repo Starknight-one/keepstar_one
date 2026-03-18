@@ -1,3 +1,5 @@
+import { clearActionCache } from '../actions/actionCache';
+
 const CACHE_KEY = 'chatSessionCache';
 
 /**
@@ -53,4 +55,5 @@ export function loadSessionCache() {
 export function clearSessionCache() {
   localStorage.removeItem(CACHE_KEY);
   localStorage.removeItem('chatSessionId');
+  clearActionCache();
 }

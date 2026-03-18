@@ -1,3 +1,132 @@
+/* ======= Sessions panel ======= */
+.sessions-panel {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+  box-shadow: var(--shadow);
+}
+
+.sessions-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.sessions-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.sessions-count {
+  font-size: 0.8rem;
+  background: #dbeafe;
+  color: #1d4ed8;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.sessions-loading {
+  text-align: center;
+  padding: 1rem;
+}
+
+.sessions-empty {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  padding: 0.25rem 0;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.session-row:last-child {
+  border-bottom: none;
+}
+
+.session-row--closed {
+  opacity: 0.5;
+}
+
+.session-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.session-id {
+  font-size: 0.8rem;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.session-status {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.session-status--active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.session-status--closed {
+  background: #f1f5f9;
+  color: #6b7280;
+}
+
+.session-time {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+}
+
+.sessions-closed-details {
+  margin-top: 0.5rem;
+}
+
+.sessions-closed-summary {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.btn-sm {
+  font-size: 0.75rem;
+  padding: 3px 10px;
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+}
+
 /* ======= List page ======= */
 .traces-header {
   display: flex;

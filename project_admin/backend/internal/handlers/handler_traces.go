@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,4 +69,45 @@ func (h *TracesHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, trace)
+}
+
+// HandleSessions returns list of chat sessions.
+func (h *TracesHandler) HandleSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+
+	sessions, err := h.traces.ListSessions(r.Context())
+	if err != nil {
+		h.log.Error("sessions_list_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+// HandleKillSession marks a chat session as closed.
+func (h *TracesHandler) HandleKillSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+
+	var body struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "sessionId required")
+		return
+	}
+
+	if err := h.traces.KillSession(r.Context(), body.SessionID); err != nil {
+		h.log.Error("kill_session_failed", "error", err, "session_id", body.SessionID)
+		writeError(w, http.StatusInternalServerError, "failed to kill session")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

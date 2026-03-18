@@ -172,7 +172,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
       // Async validate \u2014 if session is dead on backend, clear everything
       getSession(cached.sessionId).then(session => {
         if (!session || session.status !== 'active') {
-          clearSessionCache();
+          clearSessionCache(); // also clears action cache (likes/cart)
           setSessionId(null);
           setMessages([]);
           lastFormationRef.current = null;

@@ -13,6 +13,16 @@ function formatTime(ts) {
   return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+function timeAgo(ts) {
+  const diff = Date.now() - new Date(ts).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
 function extractAgent1Tool(traceData) {
   try {
     const data = typeof traceData === 'string' ? JSON.parse(traceData) : traceData
@@ -41,7 +51,7 @@ function extractWidgetCount(traceData) {
   } catch { return '—' }
 }
 
-const columns = [
+const traceColumns = [
   {
     key: 'timestamp',
     label: 'Time',
@@ -99,6 +109,85 @@ const columns = [
   },
 ]
 
+function SessionsPanel({ onKill }) {
+  const [sessions, setSessions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [killing, setKilling] = useState(null)
+
+  const fetchSessions = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await api.get('/sessions')
+      setSessions(data.sessions || [])
+    } catch { /* ignore */ }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { fetchSessions() }, [fetchSessions])
+
+  async function handleKill(sessionId) {
+    if (!confirm(`Kill session ${sessionId.substring(0, 8)}…?`)) return
+    setKilling(sessionId)
+    try {
+      await api.post('/sessions/kill', { sessionId })
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, status: 'closed' } : s
+      ))
+      onKill?.()
+    } catch { /* ignore */ }
+    finally { setKilling(null) }
+  }
+
+  const active = sessions.filter(s => s.status === 'active')
+  const closed = sessions.filter(s => s.status !== 'active')
+
+  if (loading) return <div className="sessions-loading"><Spinner /></div>
+
+  return (
+    <div className="sessions-panel">
+      <div className="sessions-panel-header">
+        <h2 className="sessions-title">Sessions</h2>
+        <span className="sessions-count">{active.length} active</span>
+        <button className="btn btn-secondary btn-sm" onClick={fetchSessions}>Refresh</button>
+      </div>
+
+      {active.length === 0 && <div className="sessions-empty">No active sessions</div>}
+
+      {active.map(s => (
+        <div key={s.id} className="session-row">
+          <div className="session-info">
+            <code className="session-id">{s.id.substring(0, 8)}</code>
+            <span className="session-status session-status--active">active</span>
+            <span className="session-time">{timeAgo(s.lastActivityAt)}</span>
+          </div>
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={() => handleKill(s.id)}
+            disabled={killing === s.id}
+          >
+            {killing === s.id ? '...' : 'Kill'}
+          </button>
+        </div>
+      ))}
+
+      {closed.length > 0 && (
+        <details className="sessions-closed-details">
+          <summary className="sessions-closed-summary">{closed.length} closed sessions</summary>
+          {closed.slice(0, 10).map(s => (
+            <div key={s.id} className="session-row session-row--closed">
+              <div className="session-info">
+                <code className="session-id">{s.id.substring(0, 8)}</code>
+                <span className="session-status session-status--closed">closed</span>
+                <span className="session-time">{timeAgo(s.lastActivityAt)}</span>
+              </div>
+            </div>
+          ))}
+        </details>
+      )}
+    </div>
+  )
+}
+
 export default function TracesPage() {
   const navigate = useNavigate()
   const [traces, setTraces] = useState([])
@@ -133,12 +222,14 @@ export default function TracesPage() {
         </button>
       </div>
 
+      <SessionsPanel onKill={fetchTraces} />
+
       {loading ? (
         <div className="center-spinner"><Spinner /></div>
       ) : (
         <>
           <Table
-            columns={columns}
+            columns={traceColumns}
             data={traces}
             onRowClick={(row) => navigate(`/traces/${row.id}`)}
           />
