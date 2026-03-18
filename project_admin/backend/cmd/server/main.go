@@ -136,7 +136,7 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"widgetUrl":"%s"}`, cfg.WidgetBaseURL)
+		fmt.Fprintf(w, `{"widgetUrl":"%s","chatApiUrl":"%s"}`, cfg.WidgetBaseURL, cfg.ChatAPIURL)
 	})
 	protected.HandleFunc("/admin/api/products", productsHandler.HandleList)
 	protected.HandleFunc("/admin/api/products/", func(w http.ResponseWriter, r *http.Request) {

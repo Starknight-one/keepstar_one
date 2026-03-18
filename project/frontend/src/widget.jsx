@@ -20,6 +20,7 @@ import productGridCss from './features/catalog/ProductGrid.css?inline'
 import backButtonCss from './features/navigation/BackButton.css?inline'
 import stepperCss from './features/navigation/Stepper.css?inline'
 import actionCss from './features/actions/ActionContext.css?inline'
+import atomV2Css from './entities/atom/AtomV2.css?inline'
 
 const ALL_CSS = [
   widgetCss,
@@ -39,6 +40,7 @@ const ALL_CSS = [
   backButtonCss,
   stepperCss,
   actionCss,
+  atomV2Css,
 ].join('\n')
 
 ;(function () {

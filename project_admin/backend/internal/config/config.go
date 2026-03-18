@@ -13,6 +13,7 @@ type Config struct {
 	EnrichmentModel string
 	LogLevel        string
 	WidgetBaseURL   string
+	ChatAPIURL      string
 }
 
 func Load() *Config {
@@ -27,6 +28,7 @@ func Load() *Config {
 		EnrichmentModel: getEnv("ENRICHMENT_MODEL", "claude-haiku-4-5-20251001"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		WidgetBaseURL:  getEnv("WIDGET_BASE_URL", ""),
+		ChatAPIURL:     getEnv("CHAT_API_URL", ""),
 	}
 }
 
