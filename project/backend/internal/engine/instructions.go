@@ -16,8 +16,9 @@ type AgentInstructions struct {
 	Atoms map[string]AtomOverride `json:"atoms,omitempty"`
 
 	// Layout/formation overrides
-	Layout string `json:"layout,omitempty"` // "grid","list","single","carousel","comparison"
-	Size   string `json:"size,omitempty"`   // "tiny","small","medium","large"
+	Layout    string `json:"layout,omitempty"`    // "grid","list","single","carousel","comparison"
+	Size      string `json:"size,omitempty"`      // "tiny","small","medium","large"
+	Direction string `json:"direction,omitempty"` // "vertical","horizontal"
 
 	// Pagination
 	Limit  int `json:"limit,omitempty"`

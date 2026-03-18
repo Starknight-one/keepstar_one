@@ -83,8 +83,14 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 		}
 	}
 
-	// Auto-resolve layout/size from entity count
-	resolved := AutoResolve(string(input.EntityType), entityCount)
+	// Determine effective count for AutoResolve (limit takes priority if set)
+	effectiveCount := entityCount
+	if input.Instructions != nil && input.Instructions.Limit > 0 && input.Instructions.Limit < entityCount {
+		effectiveCount = input.Instructions.Limit
+	}
+
+	// Auto-resolve layout/size from effective entity count
+	resolved := AutoResolve(string(input.EntityType), effectiveCount)
 
 	// Apply instructions overrides if present
 	if input.Instructions != nil {
@@ -349,6 +355,10 @@ func applyInstructionOverrides(instr *AgentInstructions, fields []string, resolv
 			}
 		}
 		fields = merged
+		// Agent explicitly requested fields — raise MaxFields to honor them
+		if len(instr.Show) > resolved.MaxFields {
+			resolved.MaxFields = len(instr.Show)
+		}
 	}
 
 	// Apply hide fields

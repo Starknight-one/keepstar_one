@@ -842,6 +842,11 @@ func convertV1ParamsToV2(input map[string]interface{}) *engine.AgentInstructions
 		hasAny = true
 	}
 
+	if dir, ok := input["direction"].(string); ok && dir != "" {
+		instr.Direction = dir
+		hasAny = true
+	}
+
 	if v, ok := input["limit"].(float64); ok && v > 0 {
 		instr.Limit = int(v)
 		hasAny = true

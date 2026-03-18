@@ -299,10 +299,11 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		}
 		toolStart := time.Now()
 		result, err := uc.toolRegistry.Execute(ctx, tools.ToolContext{
-			SessionID: req.SessionID,
-			TurnID:    req.TurnID,
-			ActorID:   "agent2",
-			UserQuery: req.UserQuery,
+			SessionID:  req.SessionID,
+			TurnID:     req.TurnID,
+			ActorID:    "agent2",
+			TenantSlug: req.TenantSlug,
+			UserQuery:  req.UserQuery,
 		}, toolCall)
 		toolDuration := time.Since(toolStart).Milliseconds()
 		if endToolSpan != nil {
@@ -313,10 +314,11 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 			uc.log.Error("tool_execution_failed", "error", err, "tool", toolCall.Name, "actor", "agent2")
 			// Graceful degradation: retry with no parameters
 			fallbackResult, fallbackErr := uc.toolRegistry.Execute(ctx, tools.ToolContext{
-				SessionID: req.SessionID,
-				TurnID:    req.TurnID,
-				ActorID:   "agent2",
-				UserQuery: req.UserQuery,
+				SessionID:  req.SessionID,
+				TurnID:     req.TurnID,
+				ActorID:    "agent2",
+				TenantSlug: req.TenantSlug,
+				UserQuery:  req.UserQuery,
 			}, domain.ToolCall{Name: "visual_assembly", Input: map[string]interface{}{}})
 			if fallbackErr != nil {
 				return nil, fmt.Errorf("execute tool %s (fallback also failed): %w", toolCall.Name, err)
