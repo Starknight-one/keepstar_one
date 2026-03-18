@@ -318,6 +318,190 @@ func BuildAgent2ToolPrompt(meta domain.StateMeta, view domain.ViewState, userQue
 	return prompt
 }
 
+// Agent2ToolSystemPromptV2 is the v2 system prompt for Agent 2.
+// Key differences from v1:
+// - Semantic tokens for fontSize/fontWeight (not raw values)
+// - Labels (human-readable) instead of field names where possible
+// - Separate textStyle vs wrapper (not merged "display")
+// - Rigidity on overrides
+const Agent2ToolSystemPromptV2 = `You are Agent 2 — a UI composition agent. You decide HOW to display data.
+Call visual_assembly. All parameters are optional. Never output text.
+
+## HOW IT WORKS
+
+visual_assembly is your only tool. The Defaults Engine auto-resolves:
+- Which fields to show (by entity type and count)
+- Layout (1 → single, 2+ → grid)
+- Size (1 → large, 2+ → medium)
+- TextStyle and wrapper for each field
+
+You only pass what you want to OVERRIDE.
+
+## PARAMETERS (all optional)
+
+- show: string[] — fields to ADD (use field names: "price", "brand", etc.)
+- hide: string[] — fields to REMOVE
+- order: string[] — field render order
+- layout: string — "grid" | "list" | "single" | "carousel" | "comparison" | "table"
+- size: string — "tiny" | "small" | "medium" | "large"
+- preset: string — preset name (see list below)
+- limit: number — max widgets (default 50)
+- offset: number — offset (default 0)
+- atoms: object — per-field overrides (keyed by field name), each with:
+  - textStyle: { fontSize, fontWeight, color, textDecoration }
+  - wrapper: { type, variant }
+  - format: string
+  - color: string
+  - rigidity: "locked" — use ONLY for explicit user requests
+
+### fontSize tokens (use these, NOT pixel values):
+xs (10px), sm (12px), md (14px), lg (18px), xl (24px), 2xl (30px), 3xl (36px)
+
+### fontWeight tokens:
+light, normal, medium, semibold, bold
+
+### wrapper types:
+none, badge, tag, pill, avatar, tooltip, alert, link, progress, button
+
+### wrapper variants (optional):
+badge: success, error, warning
+button: primary, secondary, outline
+tag: active
+
+### format values (auto-inferred — override only when needed):
+currency, stars, stars-text, stars-compact, percent, number, date, text
+
+## AVAILABLE PRESETS
+
+| Preset | Layout | Size | Description |
+|--------|--------|------|-------------|
+| product_card_grid | grid | medium | Cards: image + name + price. Standard catalog view. |
+| product_card_detail | single | large | Detail card: all fields including description, tags. |
+| product_row | list | small | Horizontal row: name + price. Compact list. |
+| service_card | grid | medium | Service cards: image + name + price + provider. |
+| service_detail | single | large | Service detail: all fields. |
+
+Preset sets the base. Add per-atom overrides on top.
+
+## EXAMPLES
+
+productCount=5, no user request:
+→ visual_assembly()
+
+productCount=1, user_request="show details":
+→ visual_assembly(show: ["images","name","price","brand","description","rating","tags"], size: "large", layout: "single")
+
+productCount=5, user_request="brand as badge":
+→ visual_assembly(atoms: {"brand": {"wrapper": {"type": "badge"}}})
+
+productCount=5, user_request="bigger price":
+→ visual_assembly(atoms: {"price": {"textStyle": {"fontSize": "2xl", "fontWeight": "bold"}}})
+
+productCount=5, user_request="rating as text":
+→ visual_assembly(atoms: {"rating": {"format": "stars-text"}})
+
+productCount=5, user_request="green price badge":
+→ visual_assembly(atoms: {"price": {"wrapper": {"type": "badge", "variant": "success"}, "color": "green"}})
+
+productCount=5, user_request="show brand as red tag" (explicit user request):
+→ visual_assembly(atoms: {"brand": {"wrapper": {"type": "tag"}, "color": "red", "rigidity": "locked"}})
+
+## RULES
+
+1. Standard request = visual_assembly() with no parameters. DON'T guess — defaults are better.
+2. User asks to change style = pass ONLY what changes via atoms overrides.
+3. layout: "comparison" ONLY when user explicitly asks to COMPARE.
+4. NEVER change layout unless user asks for layout.
+5. If current_formation exists and user only changes style — DON'T pass layout.
+6. If data_change=null — DON'T pass layout, DON'T pass show/hide unless explicitly asked.
+7. screen_state shows what user CURRENTLY sees. Respect it.
+8. Use rigidity: "locked" ONLY for explicit user requests (e.g. "make price red" → locked).`
+
+// BuildAgent2ToolPromptV2 builds the user message for Agent 2 v2 with field labels context
+func BuildAgent2ToolPromptV2(
+	meta domain.StateMeta,
+	view domain.ViewState,
+	userQuery string,
+	dataDelta *domain.Delta,
+	currentConfig *domain.RenderConfig,
+	allDeltas []domain.Delta,
+	microcontext string,
+	screenCtx *ScreenContext,
+	fieldLabels map[string]string, // fieldName → human label (e.g. "price" → "Цена")
+) string {
+	input := map[string]interface{}{
+		"productCount": meta.ProductCount,
+		"serviceCount": meta.ServiceCount,
+		"fields":       meta.Fields,
+	}
+
+	// Field labels context — helps agent use human-readable labels
+	if len(fieldLabels) > 0 {
+		input["field_labels"] = fieldLabels
+	}
+
+	// Aliases
+	if len(meta.Aliases) > 0 {
+		input["aliases"] = meta.Aliases
+	}
+
+	// View context
+	input["view_mode"] = string(view.Mode)
+	if view.Focused != nil {
+		input["focused"] = view.Focused
+	}
+
+	// Current formation config
+	if currentConfig != nil {
+		input["current_formation"] = currentConfig
+	}
+
+	// Screen state
+	if screenCtx != nil {
+		input["screen_state"] = map[string]interface{}{
+			"mode":           screenCtx.Mode,
+			"widget_count":   screenCtx.WidgetCount,
+			"visible_fields": screenCtx.Fields,
+		}
+	}
+
+	// Display meta
+	entityType := "product"
+	if meta.ProductCount == 0 && meta.ServiceCount > 0 {
+		entityType = "service"
+	}
+	input["display_meta"] = engine.GetDisplayMeta(entityType)
+
+	// User intent
+	if userQuery != "" {
+		input["user_request"] = userQuery
+	}
+
+	// Data change
+	if dataDelta != nil {
+		input["data_change"] = map[string]interface{}{
+			"tool":   dataDelta.Action.Tool,
+			"count":  dataDelta.Result.Count,
+			"fields": dataDelta.Result.Fields,
+		}
+	} else {
+		input["data_change"] = nil
+	}
+
+	// History summary
+	if historySummary := BuildHistorySummary(allDeltas); historySummary != "" {
+		input["history_summary"] = historySummary
+	}
+
+	jsonBytes, _ := json.Marshal(input)
+
+	prompt := fmt.Sprintf("Render the data using appropriate tool:\n%s", string(jsonBytes))
+	if microcontext != "" {
+		prompt = fmt.Sprintf("<context>%s</context>\n%s", microcontext, prompt)
+	}
+	return prompt
+}
+
 // Legacy prompts (kept for backward compatibility)
 
 // ComposeWidgetsSystemPrompt is the legacy system prompt for widget composition

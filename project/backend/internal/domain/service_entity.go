@@ -18,4 +18,8 @@ type Service struct {
 	Availability    string                 `json:"availability,omitempty"` // "available", "busy"
 	Tags            []string               `json:"tags,omitempty"`
 	Attributes      map[string]interface{} `json:"attributes,omitempty"`
+
+	// Extra holds extensible fields not captured by typed struct fields.
+	// Engine V2 uses this for tenant-defined custom fields.
+	Extra map[string]interface{} `json:"extra,omitempty"`
 }

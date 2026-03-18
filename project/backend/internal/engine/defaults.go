@@ -307,6 +307,92 @@ func GetDisplayMeta(entityType string) []domain.FieldDisplayHint {
 	return hints
 }
 
+// BuildFieldConfigsFromDefinitions builds FieldConfig slice from FieldDefinitions (engine v2 path).
+// Falls back to FieldTypeMap for any field not in definitions.
+func BuildFieldConfigsFromDefinitions(defs []FieldDefinitionEntry, fields []string, displayOverrides map[string]string, formatOverrides map[string]string) []domain.FieldConfig {
+	// Index definitions by field name for O(1) lookup
+	defMap := make(map[string]FieldDefinitionEntry, len(defs))
+	for _, d := range defs {
+		defMap[d.FieldName] = d
+	}
+
+	configs := make([]domain.FieldConfig, 0, len(fields))
+	for i, name := range fields {
+		var atomType domain.AtomType
+		var subtype domain.AtomSubtype
+		var display string
+		var slot domain.AtomSlot
+
+		if d, ok := defMap[name]; ok {
+			// V2 path: use field definition metadata
+			atomType = d.AtomType
+			subtype = d.AtomSubtype
+			display = d.DefaultDisplay
+			slot = d.DefaultSlot
+		} else {
+			// Fallback to legacy FieldTypeMap
+			entry, known := FieldTypeMap[name]
+			if !known {
+				entry = FieldTypeEntry{domain.AtomTypeText, domain.SubtypeString}
+			}
+			atomType = entry.Type
+			subtype = entry.Subtype
+			display = defaultDisplay[name]
+			slot = defaultSlot[name]
+		}
+
+		if override, ok := displayOverrides[name]; ok {
+			display = override
+		}
+		display = ValidateDisplay(name, atomType, display)
+
+		if slot == "" {
+			slot = domain.AtomSlotPrimary
+		}
+
+		var explicitFormat domain.AtomFormat
+		if formatOverrides != nil {
+			if f, ok := formatOverrides[name]; ok {
+				explicitFormat = domain.AtomFormat(f)
+			}
+		}
+		format := InferFormat(explicitFormat, atomType, subtype)
+
+		configs = append(configs, domain.FieldConfig{
+			Name:     name,
+			Slot:     slot,
+			AtomType: atomType,
+			Subtype:  subtype,
+			Format:   format,
+			Display:  domain.AtomDisplay(display),
+			Priority: i,
+		})
+	}
+
+	return configs
+}
+
+// FieldDefinitionEntry is a lightweight struct used by the engine to avoid importing ports.
+// Populated from ports.FieldDefinition at the use-case layer.
+type FieldDefinitionEntry struct {
+	FieldName      string
+	AtomType       domain.AtomType
+	AtomSubtype    domain.AtomSubtype
+	DefaultDisplay string
+	DefaultSlot    domain.AtomSlot
+	Label          string
+	Priority       int
+}
+
+// FieldRankingFromDefinitions extracts an ordered field name list from definitions.
+func FieldRankingFromDefinitions(defs []FieldDefinitionEntry) []string {
+	result := make([]string, len(defs))
+	for i, d := range defs {
+		result[i] = d.FieldName
+	}
+	return result
+}
+
 // BuildFieldConfigs converts field names + display/format overrides into FieldConfig slice
 func BuildFieldConfigs(fields []string, displayOverrides map[string]string) []domain.FieldConfig {
 	return BuildFieldConfigsWithFormat(fields, displayOverrides, nil)

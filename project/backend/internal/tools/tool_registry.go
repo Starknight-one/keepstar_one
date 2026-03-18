@@ -57,6 +57,32 @@ func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, prese
 	return r
 }
 
+// NewRegistryV2 creates a tool registry with v2 engine support.
+// If engineVersion is "v2" and fieldDefPort is provided, uses the v2 visual assembly tool.
+func NewRegistryV2(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry, embeddingPort ports.EmbeddingPort, fieldDefPort ports.FieldDefinitionPort, engineVersion string) *Registry {
+	r := &Registry{
+		tools:          make(map[string]ToolExecutor),
+		statePort:      statePort,
+		catalogPort:    catalogPort,
+		presetRegistry: presetRegistry,
+		embeddingPort:  embeddingPort,
+	}
+
+	// Data tools (Agent1)
+	r.Register(NewCatalogSearchTool(statePort, catalogPort, embeddingPort))
+	r.Register(NewStateFilterTool(statePort))
+	r.Register(NewHistoryLookupTool(statePort))
+
+	// Render tools (Agent2) — v1 or v2 based on engine version
+	if engineVersion == "v2" && fieldDefPort != nil {
+		r.Register(NewVisualAssemblyToolV2(statePort, presetRegistry, fieldDefPort, engineVersion))
+	} else {
+		r.Register(NewVisualAssemblyTool(statePort, presetRegistry))
+	}
+
+	return r
+}
+
 // Register adds a tool to the registry
 func (r *Registry) Register(tool ToolExecutor) {
 	def := tool.Definition()

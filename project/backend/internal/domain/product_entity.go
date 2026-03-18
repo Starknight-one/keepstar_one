@@ -27,4 +27,8 @@ type Product struct {
 	TargetArea     []string `json:"targetArea,omitempty"`
 	MarketingClaim string   `json:"marketingClaim,omitempty"`
 	Benefits       []string `json:"benefits,omitempty"`
+
+	// Extra holds extensible fields not captured by typed struct fields.
+	// Engine V2 uses this for tenant-defined custom fields.
+	Extra map[string]interface{} `json:"extra,omitempty"`
 }

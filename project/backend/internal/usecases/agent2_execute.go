@@ -3,6 +3,7 @@ package usecases
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 type Agent2ExecuteRequest struct {
 	SessionID     string
 	TurnID        string         // Turn ID for delta grouping
+	TenantSlug    string         // Tenant context (for v2 field definitions lookup)
 	UserQuery     string         // User's original query (for style selection)
 	Microcontext  string         // Pipeline-generated context signal (e.g. "new_search: 23 items found")
 	ScreenContext *ScreenContext  // Current UI state from frontend
@@ -41,10 +43,12 @@ type Agent2ExecuteResponse struct {
 
 // Agent2ExecuteUseCase executes Agent 2 (Preset Selector)
 type Agent2ExecuteUseCase struct {
-	llm          ports.LLMPort
-	statePort    ports.StatePort
-	toolRegistry *tools.Registry
-	log          *logger.Logger
+	llm            ports.LLMPort
+	statePort      ports.StatePort
+	toolRegistry   *tools.Registry
+	log            *logger.Logger
+	fieldDefPort   ports.FieldDefinitionPort // V2: field definitions (nil = v1 mode)
+	promptVersion  string                    // "v1" or "v2" (from AGENT2_PROMPT_VERSION env)
 }
 
 // NewAgent2ExecuteUseCase creates Agent 2 use case
@@ -55,10 +59,33 @@ func NewAgent2ExecuteUseCase(
 	log *logger.Logger,
 ) *Agent2ExecuteUseCase {
 	return &Agent2ExecuteUseCase{
-		llm:          llm,
-		statePort:    statePort,
-		toolRegistry: toolRegistry,
-		log:          log,
+		llm:           llm,
+		statePort:     statePort,
+		toolRegistry:  toolRegistry,
+		log:           log,
+		promptVersion: "v1",
+	}
+}
+
+// NewAgent2ExecuteUseCaseV2 creates Agent 2 use case with v2 prompt support
+func NewAgent2ExecuteUseCaseV2(
+	llm ports.LLMPort,
+	statePort ports.StatePort,
+	toolRegistry *tools.Registry,
+	log *logger.Logger,
+	fieldDefPort ports.FieldDefinitionPort,
+) *Agent2ExecuteUseCase {
+	version := os.Getenv("AGENT2_PROMPT_VERSION")
+	if version == "" {
+		version = "v1"
+	}
+	return &Agent2ExecuteUseCase{
+		llm:           llm,
+		statePort:     statePort,
+		toolRegistry:  toolRegistry,
+		log:           log,
+		fieldDefPort:  fieldDefPort,
+		promptVersion: version,
 	}
 }
 
@@ -157,8 +184,19 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		}
 	}
 
-	// Build user message with view context, user query, data delta, current config, history, and microcontext
-	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx)
+	// Build user message — v1 or v2 depending on prompt version
+	var userPrompt string
+	var systemPrompt string
+
+	if uc.promptVersion == "v2" {
+		systemPrompt = prompts.Agent2ToolSystemPromptV2
+		// Load field labels from field_definitions for v2 context
+		fieldLabels := uc.loadFieldLabels(ctx, req.TenantSlug, state)
+		userPrompt = prompts.BuildAgent2ToolPromptV2(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx, fieldLabels)
+	} else {
+		systemPrompt = prompts.Agent2ToolSystemPrompt
+		userPrompt = prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx)
+	}
 
 	// Include recent user queries from conversation history for context (last 4 user messages max).
 	// Only take user messages with Content (skip assistant, tool_use, tool_result).
@@ -191,7 +229,7 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	llmStart := time.Now()
 	llmResp, err := uc.llm.ChatWithToolsCached(
 		ctx,
-		prompts.Agent2ToolSystemPrompt,
+		systemPrompt,
 		messages,
 		toolDefs,
 		&ports.CacheConfig{
@@ -309,6 +347,48 @@ func (uc *Agent2ExecuteUseCase) getAgent2Tools() []domain.ToolDefinition {
 		}
 	}
 	return agent2Tools
+}
+
+// loadFieldLabels loads field name → label mapping from field_definitions for v2 prompt context.
+func (uc *Agent2ExecuteUseCase) loadFieldLabels(ctx context.Context, tenantSlug string, state *domain.SessionState) map[string]string {
+	if uc.fieldDefPort == nil || tenantSlug == "" {
+		return nil
+	}
+
+	labels := make(map[string]string)
+
+	// Load product field labels
+	if state.Current.Meta.ProductCount > 0 {
+		defs, err := uc.fieldDefPort.ListFieldDefinitions(ctx, tenantSlug, domain.EntityTypeProduct)
+		if err != nil {
+			uc.log.Warn("failed to load product field definitions for v2 prompt", "error", err)
+		} else {
+			for _, d := range defs {
+				if d.Label != "" {
+					labels[d.FieldName] = d.Label
+				}
+			}
+		}
+	}
+
+	// Load service field labels
+	if state.Current.Meta.ServiceCount > 0 {
+		defs, err := uc.fieldDefPort.ListFieldDefinitions(ctx, tenantSlug, domain.EntityTypeService)
+		if err != nil {
+			uc.log.Warn("failed to load service field definitions for v2 prompt", "error", err)
+		} else {
+			for _, d := range defs {
+				if d.Label != "" {
+					labels[d.FieldName] = d.Label
+				}
+			}
+		}
+	}
+
+	if len(labels) == 0 {
+		return nil
+	}
+	return labels
 }
 
 // Note: convertToFormation is defined in pipeline_execute.go and reused here

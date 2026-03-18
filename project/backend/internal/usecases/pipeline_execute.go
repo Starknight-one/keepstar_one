@@ -209,6 +209,7 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	agent2Resp, err := uc.agent2UC.Execute(ctx, Agent2ExecuteRequest{
 		SessionID:     req.SessionID,
 		TurnID:        turnID,
+		TenantSlug:    req.TenantSlug,
 		UserQuery:     req.Query,
 		Microcontext:  microcontext,
 		ScreenContext: req.ScreenContext,

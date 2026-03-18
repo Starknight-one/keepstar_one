@@ -133,17 +133,29 @@ func main() {
 	presetRegistry := presets.NewPresetRegistry()
 	appLog.Info("preset_registry_initialized", "presets", presetRegistry.List())
 
+	// Initialize field definition adapter (v2 engine)
+	var fieldDefAdapter ports.FieldDefinitionPort
+	engineVersion := os.Getenv("ENGINE_VERSION") // "v1" or "v2"
+	if dbClient != nil && engineVersion == "v2" {
+		fieldDefAdapter = postgres.NewFieldDefinitionAdapter(dbClient)
+		appLog.Info("field_definition_adapter_initialized", "engine_version", "v2")
+	}
+
 	// Initialize tool registry (requires state and catalog adapters)
 	var toolRegistry *tools.Registry
 	if stateAdapter != nil && catalogAdapter != nil {
-		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, embeddingClient)
+		if engineVersion == "v2" && fieldDefAdapter != nil {
+			toolRegistry = tools.NewRegistryV2(stateAdapter, catalogAdapter, presetRegistry, embeddingClient, fieldDefAdapter, engineVersion)
+		} else {
+			toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, embeddingClient)
+		}
 		toolNames := make([]string, 0)
 		for _, def := range toolRegistry.GetDefinitions() {
 			if !strings.HasPrefix(def.Name, "_internal_") {
 				toolNames = append(toolNames, def.Name)
 			}
 		}
-		appLog.Info("tool_registry_initialized", "tools", strings.Join(toolNames, ", "), "count", len(toolNames))
+		appLog.Info("tool_registry_initialized", "tools", strings.Join(toolNames, ", "), "count", len(toolNames), "engine_version", engineVersion)
 	}
 
 	// Initialize Agent 1 use case (Two-Agent Pipeline)
@@ -157,8 +169,13 @@ func main() {
 	// Initialize Agent 2 use case (Preset Selector)
 	var agent2UC *usecases.Agent2ExecuteUseCase
 	if stateAdapter != nil && toolRegistry != nil {
-		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog)
-		appLog.Info("agent2_usecase_initialized", "status", "ok")
+		if engineVersion == "v2" && fieldDefAdapter != nil {
+			agent2UC = usecases.NewAgent2ExecuteUseCaseV2(llmClient, stateAdapter, toolRegistry, appLog, fieldDefAdapter)
+			appLog.Info("agent2_usecase_initialized", "status", "ok", "prompt_version", os.Getenv("AGENT2_PROMPT_VERSION"))
+		} else {
+			agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog)
+			appLog.Info("agent2_usecase_initialized", "status", "ok")
+		}
 	}
 	_ = agent2UC // Available for direct Agent 2 calls
 
@@ -197,6 +214,14 @@ func main() {
 		appLog.Info("navigation_handler_initialized", "status", "ok")
 	}
 
+	// Initialize Action handler (like, cart)
+	var actionHandler *handlers.ActionHandler
+	if stateAdapter != nil {
+		actionUC := usecases.NewActionUseCase(stateAdapter)
+		actionHandler = handlers.NewActionHandler(actionUC, appLog)
+		appLog.Info("action_handler_initialized", "status", "ok")
+	}
+
 	// Initialize Debug handler
 	var debugHandler *handlers.DebugHandler
 	if stateAdapter != nil {
@@ -218,6 +243,12 @@ func main() {
 	if navigationHandler != nil {
 		handlers.SetupNavigationRoutes(mux, navigationHandler)
 		appLog.Info("navigation_routes_enabled", "status", "ok")
+	}
+
+	// Setup action routes (like, cart)
+	if actionHandler != nil {
+		handlers.SetupActionRoutes(mux, actionHandler)
+		appLog.Info("action_routes_enabled", "status", "ok")
 	}
 
 	// Setup debug routes

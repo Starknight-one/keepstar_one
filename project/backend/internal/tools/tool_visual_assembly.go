@@ -20,6 +20,8 @@ var layoutKeywords = regexp.MustCompile(`(?i)(grid|грид|список|list|с
 type VisualAssemblyTool struct {
 	statePort      ports.StatePort
 	presetRegistry *presets.PresetRegistry
+	fieldDefPort   ports.FieldDefinitionPort // V2: field definitions (nil = legacy mode)
+	engineVersion  string                    // "v1" (default) or "v2"
 }
 
 // NewVisualAssemblyTool creates the visual assembly tool
@@ -27,6 +29,20 @@ func NewVisualAssemblyTool(statePort ports.StatePort, presetRegistry *presets.Pr
 	return &VisualAssemblyTool{
 		statePort:      statePort,
 		presetRegistry: presetRegistry,
+		engineVersion:  "v1",
+	}
+}
+
+// NewVisualAssemblyToolV2 creates the v2 visual assembly tool with field definitions support.
+func NewVisualAssemblyToolV2(statePort ports.StatePort, presetRegistry *presets.PresetRegistry, fieldDefPort ports.FieldDefinitionPort, engineVersion string) *VisualAssemblyTool {
+	if engineVersion == "" {
+		engineVersion = "v1"
+	}
+	return &VisualAssemblyTool{
+		statePort:      statePort,
+		presetRegistry: presetRegistry,
+		fieldDefPort:   fieldDefPort,
+		engineVersion:  engineVersion,
 	}
 }
 
@@ -237,6 +253,11 @@ func isValidHex(s string) bool {
 
 // Execute renders entities with visual assembly and writes formation to state
 func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
+	// Route to v2 engine if configured
+	if t.engineVersion == "v2" {
+		return t.executeV2(ctx, toolCtx, input)
+	}
+
 	degraded := false
 
 	// Step 0: Validate and sanitize input
@@ -619,4 +640,243 @@ func (t *VisualAssemblyTool) writeFormation(ctx context.Context, toolCtx ToolCon
 		msg += " (degraded: unsupported options ignored)"
 	}
 	return &domain.ToolResult{Content: msg}, nil
+}
+
+// executeV2 runs the v2 engine pipeline.
+func (t *VisualAssemblyTool) executeV2(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
+	validateInput(input)
+
+	state, err := t.statePort.GetState(ctx, toolCtx.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get state: %w", err)
+	}
+
+	products := state.Current.Data.Products
+	services := state.Current.Data.Services
+	entityCount := len(products) + len(services)
+	if entityCount == 0 {
+		return &domain.ToolResult{Content: "error: no entities in state"}, nil
+	}
+
+	entityType := domain.EntityTypeProduct
+	if len(products) == 0 && len(services) > 0 {
+		entityType = domain.EntityTypeService
+	}
+
+	// Load field definitions from DB (v2 path)
+	var fieldDefs []engine.FieldDefinitionEntry
+	if t.fieldDefPort != nil && toolCtx.TenantSlug != "" {
+		defs, err := t.fieldDefPort.ListFieldDefinitions(ctx, toolCtx.TenantSlug, entityType)
+		if err == nil && len(defs) > 0 {
+			fieldDefs = make([]engine.FieldDefinitionEntry, len(defs))
+			for i, d := range defs {
+				fieldDefs[i] = engine.FieldDefinitionEntry{
+					FieldName:      d.FieldName,
+					AtomType:       d.AtomType,
+					AtomSubtype:    d.AtomSubtype,
+					DefaultDisplay: d.DefaultDisplay,
+					DefaultSlot:    d.DefaultSlot,
+					Label:          d.Label,
+					Priority:       d.Priority,
+				}
+			}
+		}
+	}
+
+	// Convert v1 input params to v2 AgentInstructions
+	instructions := convertV1ParamsToV2(input)
+
+	// Run v2 engine
+	eng := engine.NewEngineV2()
+	output := eng.Execute(engine.EngineV2Input{
+		EntityType:   entityType,
+		Products:     products,
+		Services:     services,
+		FieldDefs:    fieldDefs,
+		Instructions: instructions,
+	})
+
+	formation := output.Formation
+
+	// Parse and apply conditional styling (still uses v1 atoms after compat conversion)
+	if condRaw, ok := input["conditional"].([]interface{}); ok && len(condRaw) > 0 {
+		rules := engine.ParseConditionalRules(condRaw)
+		engine.ApplyConditionalStyling(formation.Widgets, rules)
+	}
+
+	// Apply post-processing (color, shape, etc.)
+	colorMap := parseStringMap(input, "color")
+	perAtomSize := parseStringMap(input, "size_map") // size as map variant
+	shapeMap := parseStringMap(input, "shape")
+	layerMap := parseStringMap(input, "layer")
+	anchorMap := parseStringMap(input, "anchor")
+	direction, _ := input["direction"].(string)
+	place, _ := input["place"].(string)
+
+	paginationLimit := 50
+	paginationOffset := 0
+	if v, ok := input["limit"].(float64); ok && v > 0 {
+		paginationLimit = int(v)
+	}
+	if v, ok := input["offset"].(float64); ok {
+		paginationOffset = int(v)
+	}
+
+	formation = engine.ApplyPostProcessing(formation, colorMap, perAtomSize, shapeMap, layerMap, anchorMap, direction, place, paginationLimit, paginationOffset)
+
+	// Build render config
+	fieldSpecs := make([]domain.FieldSpec, 0)
+	for _, w := range formation.Widgets {
+		for _, a := range w.AtomsV2 {
+			fieldSpecs = append(fieldSpecs, domain.FieldSpec{
+				Name:    a.FieldName,
+				Slot:    string(a.Slot),
+				Format:  string(a.Format),
+				Display: inferLegacyDisplayFromAtomV2(a),
+			})
+		}
+		break // Use first widget's atoms as field spec
+	}
+
+	presetName, _ := input["preset"].(string)
+	formation.Config = &domain.RenderConfig{
+		EntityType: string(entityType),
+		Preset:     presetName,
+		Mode:       formation.Mode,
+		Size:       formation.Widgets[0].Size,
+		Fields:     fieldSpecs,
+	}
+
+	// Write to state
+	templateMap := map[string]interface{}{"formation": formation}
+	info := domain.DeltaInfo{
+		TurnID:    toolCtx.TurnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   toolCtx.ActorID,
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
+		Action:    domain.Action{Type: domain.ActionLayout, Tool: "visual_assembly"},
+	}
+	if _, err := t.statePort.UpdateTemplate(ctx, toolCtx.SessionID, templateMap, info); err != nil {
+		return nil, fmt.Errorf("update template: %w", err)
+	}
+
+	msg := fmt.Sprintf("ok: rendered %d entities with visual_assembly_v2 layout=%s size=%s", entityCount, formation.Mode, formation.Widgets[0].Size)
+	if len(output.Warnings) > 0 {
+		msg += fmt.Sprintf(" warnings=%v", output.Warnings)
+	}
+	return &domain.ToolResult{Content: msg}, nil
+}
+
+// convertV1ParamsToV2 converts legacy tool parameters to v2 AgentInstructions.
+func convertV1ParamsToV2(input map[string]interface{}) *engine.AgentInstructions {
+	instr := &engine.AgentInstructions{}
+	hasAny := false
+
+	if preset, ok := input["preset"].(string); ok && preset != "" {
+		instr.Preset = preset
+		hasAny = true
+	}
+
+	if showRaw, ok := input["show"].([]interface{}); ok && len(showRaw) > 0 {
+		for _, s := range showRaw {
+			if name, ok := s.(string); ok {
+				instr.Show = append(instr.Show, name)
+			}
+		}
+		hasAny = true
+	}
+
+	if hideRaw, ok := input["hide"].([]interface{}); ok && len(hideRaw) > 0 {
+		for _, h := range hideRaw {
+			if name, ok := h.(string); ok {
+				instr.Hide = append(instr.Hide, name)
+			}
+		}
+		hasAny = true
+	}
+
+	if orderRaw, ok := input["order"].([]interface{}); ok && len(orderRaw) > 0 {
+		for _, o := range orderRaw {
+			if name, ok := o.(string); ok {
+				instr.Order = append(instr.Order, name)
+			}
+		}
+		hasAny = true
+	}
+
+	if layout, ok := input["layout"].(string); ok && layout != "" {
+		instr.Layout = layout
+		hasAny = true
+	}
+
+	if sizeStr, ok := input["size"].(string); ok && sizeStr != "" {
+		instr.Size = sizeStr
+		hasAny = true
+	}
+
+	if v, ok := input["limit"].(float64); ok && v > 0 {
+		instr.Limit = int(v)
+		hasAny = true
+	}
+	if v, ok := input["offset"].(float64); ok && v > 0 {
+		instr.Offset = int(v)
+		hasAny = true
+	}
+
+	// Convert display overrides to per-atom textStyle/wrapper overrides
+	if displayRaw, ok := input["display"].(map[string]interface{}); ok && len(displayRaw) > 0 {
+		if instr.Atoms == nil {
+			instr.Atoms = make(map[string]engine.AtomOverride)
+		}
+		for field, disp := range displayRaw {
+			if d, ok := disp.(string); ok {
+				override := instr.Atoms[field]
+				ts, wr := engine.DisplayToTextStyleWrapper(d)
+				override.TextStyle = ts
+				override.Wrapper = wr
+				instr.Atoms[field] = override
+			}
+		}
+		hasAny = true
+	}
+
+	// Convert color overrides
+	if colorRaw, ok := input["color"].(map[string]interface{}); ok && len(colorRaw) > 0 {
+		if instr.Atoms == nil {
+			instr.Atoms = make(map[string]engine.AtomOverride)
+		}
+		for field, c := range colorRaw {
+			if cs, ok := c.(string); ok {
+				override := instr.Atoms[field]
+				override.Color = cs
+				instr.Atoms[field] = override
+			}
+		}
+		hasAny = true
+	}
+
+	if !hasAny {
+		return nil
+	}
+	return instr
+}
+
+// parseStringMap extracts a map[string]string from input at a given key.
+func parseStringMap(input map[string]interface{}, key string) map[string]string {
+	result := make(map[string]string)
+	if raw, ok := input[key].(map[string]interface{}); ok {
+		for k, v := range raw {
+			if s, ok := v.(string); ok {
+				result[k] = s
+			}
+		}
+	}
+	return result
+}
+
+// inferLegacyDisplayFromAtomV2 converts v2 atom textStyle+wrapper back to legacy display string.
+func inferLegacyDisplayFromAtomV2(a domain.AtomV2) string {
+	return string(engine.AtomV2ToLegacy(a).Display)
 }

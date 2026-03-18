@@ -62,4 +62,10 @@ type Widget struct {
 	Children  []Widget               `json:"children,omitempty"`
 	Meta      map[string]interface{} `json:"meta,omitempty"`
 	EntityRef *EntityRef             `json:"entityRef,omitempty"` // For click handling
+
+	// Engine V2 fields (coexist with v1 Zones for backward compatibility)
+	Layout  *LayoutNode  `json:"layout,omitempty"`  // V2: recursive layout tree (replaces Zones)
+	AtomsV2 []AtomV2     `json:"atomsV2,omitempty"` // V2: atoms with textStyle/wrapper separation
+	Actions []ActionDef  `json:"actions,omitempty"` // V2: interactive actions
+	States  *WidgetStates `json:"states,omitempty"` // V2: hover/active state overrides
 }

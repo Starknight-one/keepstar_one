@@ -26,6 +26,8 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		migrationCatalogPIMIndexes,
 		migrationCatalogVolumeColumns,
 		migrationCatalogDropLegacyColumns,
+		migrationCatalogFieldDefinitions,
+		migrationCatalogFieldDefinitionsSeed,
 	}
 
 	for i, migration := range migrations {
@@ -287,4 +289,61 @@ ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS volume;
 ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS attributes;
 ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS inci_text;
 DROP INDEX IF EXISTS idx_catalog_mp_short_name;
+`
+
+// --- Engine V2: field_definitions table ---
+
+const migrationCatalogFieldDefinitions = `
+CREATE TABLE IF NOT EXISTS catalog.field_definitions (
+    tenant_id UUID NOT NULL REFERENCES catalog.tenants(id),
+    field_name VARCHAR(100) NOT NULL,
+    entity_type VARCHAR(20) NOT NULL DEFAULT 'product',
+    atom_type VARCHAR(20) NOT NULL DEFAULT 'text',
+    atom_subtype VARCHAR(20) NOT NULL DEFAULT 'string',
+    unit VARCHAR(20),
+    label VARCHAR(200) NOT NULL,
+    default_display VARCHAR(50) NOT NULL DEFAULT 'body',
+    default_slot VARCHAR(50) NOT NULL DEFAULT 'primary',
+    priority INT NOT NULL DEFAULT 100,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, entity_type, field_name)
+);
+CREATE INDEX IF NOT EXISTS idx_field_defs_tenant_type
+    ON catalog.field_definitions(tenant_id, entity_type, priority);
+`
+
+// Seed all currently hardcoded fields for every existing tenant.
+// Uses INSERT ... ON CONFLICT DO NOTHING so it's idempotent.
+const migrationCatalogFieldDefinitionsSeed = `
+INSERT INTO catalog.field_definitions (tenant_id, field_name, entity_type, atom_type, atom_subtype, unit, label, default_display, default_slot, priority)
+SELECT t.id, v.field_name, v.entity_type, v.atom_type, v.atom_subtype, v.unit, v.label, v.default_display, v.default_slot, v.priority
+FROM catalog.tenants t
+CROSS JOIN (VALUES
+    -- Product fields
+    ('images',         'product', 'image',  'url',      NULL,  'Images',         'image-cover',    'hero',      0),
+    ('name',           'product', 'text',   'string',   NULL,  'Name',           'h2',             'title',     1),
+    ('price',          'product', 'number', 'currency', NULL,  'Price',          'price',          'price',     2),
+    ('rating',         'product', 'number', 'rating',   NULL,  'Rating',         'rating-compact', 'primary',   3),
+    ('brand',          'product', 'text',   'string',   NULL,  'Brand',          'tag',            'primary',   4),
+    ('category',       'product', 'text',   'string',   NULL,  'Category',       'tag',            'primary',   5),
+    ('description',    'product', 'text',   'string',   NULL,  'Description',    'body-sm',        'secondary', 6),
+    ('tags',           'product', 'text',   'string',   NULL,  'Tags',           'tag',            'secondary', 7),
+    ('stockQuantity',  'product', 'number', 'int',      NULL,  'Stock',          'body-sm',        'secondary', 8),
+    ('productForm',    'product', 'text',   'string',   NULL,  'Product Form',   'tag',            'secondary', 9),
+    ('skinType',       'product', 'text',   'string',   NULL,  'Skin Type',      'tag',            'secondary', 10),
+    ('concern',        'product', 'text',   'string',   NULL,  'Concern',        'tag',            'secondary', 11),
+    ('keyIngredients', 'product', 'text',   'string',   NULL,  'Key Ingredients','body-sm',        'secondary', 12),
+    -- Service fields
+    ('images',         'service', 'image',  'url',      NULL,  'Images',         'image-cover',    'hero',      0),
+    ('name',           'service', 'text',   'string',   NULL,  'Name',           'h2',             'title',     1),
+    ('price',          'service', 'number', 'currency', NULL,  'Price',          'price',          'price',     2),
+    ('rating',         'service', 'number', 'rating',   NULL,  'Rating',         'rating-compact', 'primary',   3),
+    ('duration',       'service', 'text',   'string',   NULL,  'Duration',       'body',           'primary',   4),
+    ('provider',       'service', 'text',   'string',   NULL,  'Provider',       'body',           'primary',   5),
+    ('availability',   'service', 'text',   'string',   NULL,  'Availability',   'body',           'primary',   6),
+    ('description',    'service', 'text',   'string',   NULL,  'Description',    'body-sm',        'secondary', 7),
+    ('attributes',     'service', 'text',   'string',   NULL,  'Attributes',     'body-sm',        'secondary', 8)
+) AS v(field_name, entity_type, atom_type, atom_subtype, unit, label, default_display, default_slot, priority)
+ON CONFLICT DO NOTHING;
 `

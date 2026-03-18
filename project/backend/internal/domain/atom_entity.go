@@ -84,6 +84,56 @@ type Atom struct {
 	Meta      map[string]interface{} `json:"meta,omitempty"`
 }
 
+// ============================================================================
+// Engine V2 types
+// ============================================================================
+
+// Rigidity controls how the engine may adjust an atom/group/widget value.
+type Rigidity string
+
+const (
+	RigidityLocked    Rigidity = "locked"    // User explicitly asked — engine never touches
+	RigidityPreferred Rigidity = "preferred" // Preset set — engine can adjust if needed
+	RigidityFlexible  Rigidity = "flexible"  // Default — engine freely adjusts
+)
+
+// TextStyle defines typography without visual container (engine v2).
+// Separates "how text looks" from "what wraps it".
+type TextStyle struct {
+	FontSize       string `json:"fontSize,omitempty"`       // Semantic token: "xs","sm","md","lg","xl","2xl","3xl"
+	FontWeight     string `json:"fontWeight,omitempty"`     // "light","normal","medium","semibold","bold"
+	Color          string `json:"color,omitempty"`          // Semantic color token or hex
+	TextDecoration string `json:"textDecoration,omitempty"` // "none","underline","line-through"
+	TextTransform  string `json:"textTransform,omitempty"`  // "none","uppercase","lowercase","capitalize"
+	LineClamp      int    `json:"lineClamp,omitempty"`      // Max visible lines (0 = unlimited)
+	Truncate       int    `json:"truncate,omitempty"`       // Max chars (0 = unlimited)
+}
+
+// WrapperConfig defines the visual container around an atom value (engine v2).
+// Separates "what wraps it" from "how text looks".
+type WrapperConfig struct {
+	Type      string `json:"type"`                // "none","badge","tag","pill","avatar","tooltip","alert","link","progress","button"
+	Variant   string `json:"variant,omitempty"`   // Wrapper-specific: "success","error","warning","primary","secondary","outline"
+	Rigidity  Rigidity `json:"rigidity,omitempty"`
+}
+
+// AtomV2 is the engine v2 atom with separated textStyle and wrapper.
+type AtomV2 struct {
+	Type      AtomType               `json:"type"`
+	Subtype   AtomSubtype            `json:"subtype,omitempty"`
+	Value     interface{}            `json:"value"`
+	Label     string                 `json:"label,omitempty"`     // Human-readable field label ("Price", "Brand")
+	Unit      string                 `json:"unit,omitempty"`      // "RUB", "USD", "min", "kg"
+	Format    AtomFormat             `json:"format,omitempty"`    // Value transform: "currency", "stars-compact"
+	TextStyle *TextStyle             `json:"textStyle,omitempty"` // Typography (separated from wrapper)
+	Wrapper   *WrapperConfig         `json:"wrapper,omitempty"`   // Visual container (separated from textStyle)
+	Slot      AtomSlot               `json:"slot,omitempty"`
+	Rigidity  Rigidity               `json:"rigidity,omitempty"`  // How freely engine can adjust this atom
+	FieldName string                 `json:"fieldName,omitempty"`
+	Priority  int                    `json:"priority,omitempty"`
+	Meta      map[string]interface{} `json:"meta,omitempty"`
+}
+
 // Legacy type mappings for backward compatibility
 // These map old atom types to new type + subtype combinations
 var LegacyTypeMapping = map[string]struct {
