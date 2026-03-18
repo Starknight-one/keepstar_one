@@ -145,14 +145,21 @@ func applyWidgetV2Constraints(w *domain.Widget) {
 // ============================================================================
 
 // applyCrossWidgetV2Constraints applies cross-widget consistency rules.
-func applyCrossWidgetV2Constraints(widgets []domain.Widget, mode domain.FormationType) {
+// protectedFields are exempt from C1 normalization (e.g. agent-requested show fields).
+func applyCrossWidgetV2Constraints(widgets []domain.Widget, mode domain.FormationType, protectedFields ...string) {
 	if len(widgets) < 2 {
 		return
 	}
 
+	protectedSet := make(map[string]bool, len(protectedFields))
+	for _, f := range protectedFields {
+		protectedSet[f] = true
+	}
+
 	if mode == domain.FormationTypeGrid || mode == domain.FormationTypeList {
 		// C1: field consistency — field in <70% of widgets → remove from all
-		normalizeFieldSetV2(widgets)
+		// Protected fields (from agent show) are exempt
+		normalizeFieldSetV2(widgets, protectedSet)
 
 		// C3: format consistency — same field uses same format everywhere
 		normalizeFormatsV2(widgets)
@@ -160,7 +167,8 @@ func applyCrossWidgetV2Constraints(widgets []domain.Widget, mode domain.Formatio
 }
 
 // normalizeFieldSetV2 ensures all widgets in a grid have the same fields (v2 version).
-func normalizeFieldSetV2(widgets []domain.Widget) {
+// protectedFields are always kept regardless of threshold (agent-requested show fields).
+func normalizeFieldSetV2(widgets []domain.Widget, protectedFields map[string]bool) {
 	if len(widgets) < 2 {
 		return
 	}
@@ -181,7 +189,7 @@ func normalizeFieldSetV2(widgets []domain.Widget) {
 
 	keepFields := make(map[string]bool)
 	for field, count := range fieldCounts {
-		if count >= threshold {
+		if count >= threshold || protectedFields[field] {
 			keepFields[field] = true
 		}
 	}

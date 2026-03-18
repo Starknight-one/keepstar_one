@@ -104,8 +104,15 @@ You only pass what you want to OVERRIDE.
 
 ## PARAMETERS (all optional)
 
-- show: string[] — fields to ADD to defaults (show-fields get top priority)
-- hide: string[] — fields to REMOVE from defaults
+- show: string[] — fields to ADD to defaults. Use when user wants EXTRA fields on top of auto-resolved.
+- hide: string[] — fields to REMOVE from defaults. Use when user wants FEWER fields.
+
+CRITICAL: show vs hide decision:
+- "покажи с описанием / добавь рейтинг" → show: ["description"] / show: ["rating"] (ADD to existing)
+- "ТОЛЬКО имя и цена / только X и Y" → hide ALL other fields: hide: ["images","rating","brand","category",...] (REMOVE everything except X and Y)
+- "убери фотки / без рейтинга" → hide: ["images"] / hide: ["rating"] (REMOVE specific)
+- "крупнее / покрупнее / крупными карточками" → size: "large" (NOT comparison! NOT limit!)
+- NEVER use show to mean "only these fields". Show ADDS, it never replaces.
 - display: object — field visual wrapper overrides: {"brand":"badge","price":"h2"}. Display = visual container only.
 - format: object — field value format overrides (auto-inferred, rarely needed): {"rating":"stars-text"}. Values: currency, stars, stars-text, stars-compact, percent, number, date, text.
 - layout: string — "grid" | "list" | "single" | "carousel" | "comparison" | "table"
@@ -178,7 +185,16 @@ productCount=5, user_request="покажи покрупнее":
 → visual_assembly(size: "large")
 
 productCount=4, user_request="только фото и цена":
-→ visual_assembly(show: ["images","price"], hide: ["name","rating","brand"])
+→ visual_assembly(hide: ["name","rating","brand","category","description","tags","stockQuantity","productForm","skinType","concern","keyIngredients"])
+
+productCount=4, user_request="только названия и цены":
+→ visual_assembly(hide: ["images","rating","brand","category","description","tags","stockQuantity","productForm","skinType","concern","keyIngredients"])
+
+productCount=5, user_request="покажи крупными карточками":
+→ visual_assembly(size: "large")
+
+productCount=5, user_request="мельче / поменьше":
+→ visual_assembly(size: "small")
 
 productCount=3, user_request="покажи списком":
 → visual_assembly(layout: "list")
@@ -339,8 +355,15 @@ You only pass what you want to OVERRIDE.
 
 ## PARAMETERS (all optional)
 
-- show: string[] — fields to ADD (use field names: "price", "brand", etc.)
-- hide: string[] — fields to REMOVE
+- show: string[] — fields to ADD to defaults (use field names: "price", "brand", etc.)
+- hide: string[] — fields to REMOVE from defaults
+
+CRITICAL: show vs hide decision:
+- "покажи с описанием / добавь рейтинг" → show: ["description"] / show: ["rating"] (ADD to existing)
+- "ТОЛЬКО X и Y" → hide ALL other fields (REMOVE everything except X and Y)
+- "убери фотки / без рейтинга" → hide: ["images"] / hide: ["rating"]
+- "крупнее / покрупнее / крупными карточками" → size: "large" (NOT comparison!)
+- NEVER use show to mean "only these fields". Show ADDS, it never replaces.
 - order: string[] — field render order
 - layout: string — "grid" | "list" | "single" | "carousel" | "comparison" | "table"
 - size: string — "tiny" | "small" | "medium" | "large"
@@ -402,6 +425,18 @@ productCount=5, user_request="rating as text":
 
 productCount=5, user_request="green price badge":
 → visual_assembly(atoms: {"price": {"wrapper": {"type": "badge", "variant": "success"}, "color": "green"}})
+
+productCount=4, user_request="только названия и цены":
+→ visual_assembly(hide: ["images","rating","brand","category","description","tags","stockQuantity","productForm","skinType","concern","keyIngredients"])
+
+productCount=5, user_request="покажи крупными карточками":
+→ visual_assembly(size: "large")
+
+productCount=5, user_request="покажи с описанием":
+→ visual_assembly(show: ["description"])
+
+productCount=5, user_request="мельче / поменьше":
+→ visual_assembly(size: "small")
 
 productCount=5, user_request="show brand as red tag" (explicit user request):
 → visual_assembly(atoms: {"brand": {"wrapper": {"type": "tag"}, "color": "red", "rigidity": "locked"}})

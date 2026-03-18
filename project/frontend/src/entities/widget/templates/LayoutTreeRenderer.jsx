@@ -16,13 +16,10 @@ function resolveSpacing(token) {
  *   flow → flex-wrap: wrap (inline flow)
  *   span → full-width block
  */
-export function LayoutTreeRenderer({ node, atoms, skipHero = false }) {
+export function LayoutTreeRenderer({ node, atoms }) {
   if (!node || !node.children || node.children.length === 0) return null;
 
-  // Filter out hero nodes at root level (already rendered by ImageCarousel)
-  const children = skipHero
-    ? node.children.filter(c => !(c.node && c.node.name === 'hero'))
-    : node.children;
+  const children = node.children;
 
   if (children.length === 0) return null;
 

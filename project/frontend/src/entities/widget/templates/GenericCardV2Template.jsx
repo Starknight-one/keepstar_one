@@ -35,9 +35,24 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
   return (
     <div
       className={`generic-card generic-card-v2 size-${size} ${directionClass}`}
-      style={stateStyles}
+      style={{ ...stateStyles, position: 'relative' }}
     >
-      {images.length > 0 && (
+      {/* Like button overlay when layout tree handles hero rendering */}
+      {layout && entityId && (
+        <button
+          className={`product-card-favorite${liked ? ' liked' : ''}`}
+          style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
+          onClick={(e) => { e.stopPropagation(); toggleLike(entityId); }}
+          aria-label={liked ? 'Unlike' : 'Like'}
+        >
+          <svg viewBox="0 0 24 24" fill={liked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+          </svg>
+        </button>
+      )}
+      {/* Hero images: only render separately when there's NO layout tree (fallback mode).
+          When layout tree exists, it handles hero rendering via the hero node. */}
+      {!layout && images.length > 0 && (
         <div className="generic-card-media" style={{ position: 'relative' }}>
           <ImageCarousel
             images={images}
@@ -59,7 +74,7 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
       )}
       <div className="generic-card-content">
         {layout ? (
-          <LayoutTreeRenderer node={layout} atoms={atomsV2} skipHero={images.length > 0} />
+          <LayoutTreeRenderer node={layout} atoms={atomsV2} />
         ) : (
           // Fallback: render atomsV2 sequentially
           atomsV2.filter(a => a.slot !== 'hero').map((atom, i) => (

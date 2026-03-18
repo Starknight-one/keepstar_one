@@ -4,6 +4,206 @@
 
 ---
 
+## Alpha 0.0.6 — V2 Engine Critical Fixes — 2026-03-18
+
+Результат тестирования 15 запросов на production. 4 критических бага найдены и исправлены.
+
+### Fix 1: TenantSlug → tenant_id mismatch (fieldDefCount=0 ВСЕГДА)
+
+**Проблема**: `field_definition_adapter.go` делал `WHERE tenant_id = $1` со slug строкой ("hey-babes-cosmetics"), а `tenant_id` — UUID. Результат: 0 field definitions → движок не знал поля каталога → detail view неполный (9 из 13 полей), preset не выбирался.
+
+**Фикс**: SQL теперь делает JOIN на `catalog.tenants` и матчит `fd.tenant_id::text = $1 OR t.slug = $1`. Работает и с UUID и со slug.
+
+**Файл**: `adapters/postgres/field_definition_adapter.go` — оба метода (List + Get)
+
+### Fix 2: C1 Rule удаляла явно запрошенные show-поля
+
+**Проблема**: Cross-widget constraint C1 удаляла поля присутствующие менее чем в 70% виджетов. Если у части продуктов нет rating/description (null), C1 удаляла их из ВСЕХ виджетов — даже когда Agent2 явно запросил через show. Пример: "топ-5 с рейтингом и описанием" → 4 поля вместо 6.
+
+**Фикс**: `applyCrossWidgetV2Constraints` принимает `protectedFields` (show-поля агента). `normalizeFieldSetV2` всегда сохраняет protected поля. `engine_v2.go` прокидывает `input.Instructions.Show` в constraints.
+
+**Файлы**: `engine/rules.go`, `engine/engine_v2.go`
+
+### Fix 3: Agent2 промпт — show vs hide семантика
+
+**Проблема**: Agent2 слал `show=["name","price"]` когда пользователь говорил "ТОЛЬКО name и price". Show additive (добавляет к дефолтам) → images/brand/rating оставались. Также "крупными карточками" → comparison+limit=3 вместо grid+size=large.
+
+**Фикс**: Добавлен CRITICAL блок в оба промпта (v1/v2):
+- "только X и Y" → hide всё остальное (не show)
+- "крупнее/крупными карточками" → size: "large" (не comparison)
+- Новые примеры для обоих кейсов
+
+**Файл**: `prompts/prompt_compose_widgets.go` — Agent2ToolSystemPrompt + Agent2ToolSystemPromptV2
+
+### Fix 4: Двойные hero-картинки в карточках
+
+**Проблема**: GenericCardV2Template рендерил ImageCarousel (фото #1), затем LayoutTreeRenderer рендерил тот же hero node из layout tree (фото #2). skipHero фильтр не срабатывал надёжно.
+
+**Фикс**: ImageCarousel рендерится ТОЛЬКО в fallback (без layout tree). При наличии layout tree — LayoutTreeRenderer единственный источник hero. Like кнопка вынесена как absolute overlay. skipHero механизм удалён.
+
+**Файлы**:
+- `frontend/src/entities/widget/templates/GenericCardV2Template.jsx`
+- `frontend/src/entities/widget/templates/LayoutTreeRenderer.jsx`
+
+### Документация
+
+- `docs/V2_ENGINE_ISSUES.md` — Known Issues: MaxFields как концепция, Agent2 интерпретация, Comparison preset
+
+### Как тестировать
+
+Сессия из 15 запросов (одна цепочка):
+
+**Базовый поиск + авторезолв:**
+1. "Привет, покажи кремы для лица" → grid, small, images+name+price
+2. "Покажи их списком" → list
+3. "Покажи детально первый товар" → single, large, 9-13 полей
+
+**Show/Hide:**
+4. "Покажи только названия и цены" → name+price БЕЗ images
+5. "Добавь рейтинг" → name+price+rating
+6. "Убери цены" → name+rating
+7. "Покажи всё как было" → дефолты
+
+**Визуальные примитивы:**
+8. "Покажи крупными карточками" → size=large, НЕ comparison
+9. "Покажи каруселью" → carousel с картинками
+10. "Покажи таблицей" → table
+
+**Сложные комбинации:**
+11. "Покажи топ-5 с рейтингом, брендом и описанием, крупно" → limit=5, 6 полей, без двойных фоток
+12. "Сравни первые 3" → comparison
+
+**Фильтрация + бренд:**
+13. "Покажи только COSRX" → state_filter, 3-5 товаров
+14. "Покажи их с составом и типом кожи" → show добавляет keyIngredients+skinType
+
+**Стресс:**
+15. "Сравни два самых дешёвых — только цена, бренд и состав" → comparison, price+brand+keyIngredients
+
+---
+
+## Alpha 0.0.5 — Pipeline Traces + Admin UI + Engine V2 Bugfixes — 2026-03-18
+
+### Часть 1: Обогащение трейсов (chat backend)
+
+Agent2 трейсы были неполными — не было tool input, system prompt, engine breakdown. Теперь записывается полная цепочка.
+
+**Новые поля в `AgentTrace` (agent2):**
+- `SystemPrompt` / `SystemPromptChars` — какой промпт использовался (v1/v2)
+- `ToolInput` — JSON параметров visual_assembly (THE KEY DATA)
+- `ToolBreakdown` — что решил движок (preset, layout, size, entityCount, warnings)
+- `MessageCount` / `ToolDefCount`
+
+**Обогащённая FormationTrace:**
+- `Widgets []WidgetTrace` — ID, template, size, atomCount, entityRef для каждого виджета
+- `FullJSON json.RawMessage` — полная formation (до 100KB)
+
+**Engine Metadata:**
+- V1 `writeFormation()` и V2 `executeV2()` теперь возвращают `ToolResult.Metadata` с breakdown (engineVersion, preset, layout, size, entityType, entityCount, widgetCount, warnings)
+
+**Файлы:**
+- `domain/trace_entity.go` — `WidgetTrace`, `FormationTrace.FullJSON`
+- `usecases/agent2_execute.go` — новые поля + `json.Marshal(toolCall.Input)` + `result.Metadata`
+- `usecases/pipeline_execute.go` — wire всех новых полей Agent2 + widget details + fullJSON
+- `tools/tool_visual_assembly.go` — Metadata в return для v1 и v2
+
+### Часть 2: Admin API для трейсов
+
+Админ-бэкенд читает ту же таблицу `pipeline_traces` (shared Neon DB).
+
+**Endpoints:**
+- `GET /admin/api/traces?limit=50&offset=0` — список трейсов (пагинация + total)
+- `GET /admin/api/traces/{id}` — полный trace JSON
+- `GET /admin/api/sessions` — список chat sessions (active/closed)
+- `POST /admin/api/sessions/kill` — убить сессию `{"sessionId": "..."}`
+
+**Файлы:**
+- `project_admin/backend/internal/adapters/postgres/postgres_trace.go` — TraceAdapter (List, Get, ListSessions, KillSession)
+- `project_admin/backend/internal/handlers/handler_traces.go` — TracesHandler
+- `project_admin/backend/internal/adapters/postgres/catalog_migrations.go` — idempotent pipeline_traces migration
+- `project_admin/backend/cmd/server/main.go` — wiring + routes
+
+### Часть 3: Admin Frontend — Traces UI
+
+**TracesPage** (`/traces`):
+- Sessions panel наверху — active sessions с кнопкой Kill, closed в `<details>`
+- Таблица трейсов: Time, Query, Agent1/Agent2 Tool, Mode, Widgets, Duration, Cost, Status
+- Клик → детальный вид
+
+**TraceDetail** (`/traces/:id`):
+- Hero-карточка с запросом и метриками
+- Цветные collapsible секции (синяя=Agent1, фиолетовая=Agent2, зелёная=Formation)
+- Tokens bar (визуальная полоска input/output)
+- JSON блоки: тёмная тема, collapsible, auto-prettyprint, Tool Input + Engine Breakdown раскрыты по умолчанию
+- Таблицы: deltas, widget details
+- Waterfall: цветные span bars
+
+**Файлы:**
+- `project_admin/frontend/src/features/traces/TracesPage.jsx`
+- `project_admin/frontend/src/features/traces/TraceDetail.jsx`
+- `project_admin/frontend/src/features/traces/traces.css`
+- `project_admin/frontend/src/App.jsx` — routes
+- `project_admin/frontend/src/features/layout/DashboardLayout.jsx` — nav link (Activity icon)
+
+### Часть 4: Bugfixes
+
+**Лайки/корзина не очищались между сессиями:**
+- `actionStateCache` (24h TTL) жил дольше сессии (30min TTL)
+- Новая сессия подхватывала старые лайки/корзину
+- Фикс: `clearSessionCache()` теперь вызывает `clearActionCache()` автоматически
+- Файлы: `sessionCache.js`, `ChatPanel.jsx`
+
+**V2 Engine — 3 критических бага:**
+
+1. **`TenantSlug` не передавался в ToolContext** (agent2_execute.go строка 301) → `fieldDefCount: 0` ВСЕГДА, field definitions никогда не загружались из БД. Фикс: добавлен `TenantSlug: req.TenantSlug`.
+
+2. **Size всегда `small` для detail view**: `AutoResolve` вызывался с полным entityCount (23), даже когда agent послал `limit: 1`. Получалось 23 → small (MaxFields=3). Фикс: V2 engine теперь использует `effectiveCount = min(limit, entityCount)` перед AutoResolve. Один товар → `large`, 10 полей.
+
+3. **MaxFields обрезал явные show поля**: Agent просил `show: ["name","price","rating","brand"]` (4 поля), но MaxFields=3 (для 23 items) молча обрезал до 3. Фикс: если agent явно указал `show`, `MaxFields` поднимается до `len(show)`.
+
+**Также:** `CHAT_API_URL` добавлен в `.env` (embed code генерировал placeholder `YOUR_CHAT_SERVER`).
+
+### Как тестировать V2 движок
+
+Убедись что в `.env` стоит `ENGINE_VERSION=v2` и `AGENT2_PROMPT_VERSION=v2`.
+
+**Базовые запросы (проверка авторезолва):**
+1. "покажи кремы для лица" → grid, small cards, 3 поля (images, name, price)
+2. "покажи их списком" → list layout, те же данные
+3. "покажи детально первый товар" → single, LARGE card, 10+ полей (описание, ингредиенты, рейтинг...)
+4. "сравни первые 3" → comparison layout
+
+**Show/hide/order (проверка override-ов агентом):**
+5. "покажи только названия и цены" → show: [name, price], NO images
+6. "добавь рейтинг и бренд" → show добавляет поля к текущим
+7. "убери фотки" → hide: [images]
+8. "покажи цену первой, потом название" → order: [price, name]
+
+**Direction/size/layout (визуальные примитивы):**
+9. "покажи горизонтальными карточками" → direction: horizontal (image left, content right)
+10. "покажи крупными карточками" → size: large
+11. "покажи каруселью" → layout: carousel
+12. "покажи таблицей" → layout: table
+
+**Кастомные комбинации (стресс-тест агента):**
+13. "покажи топ-5 по цене с рейтингом, брендом и описанием, крупно" → limit:5, show:[price,rating,brand,description], size:large
+14. "сравни два самых дешёвых крема — только цена, бренд и состав" → comparison, limit:2, show:[price,brand,keyIngredients]
+15. "покажи все кремы COSRX одной строкой — имя и цена" → layout:list, show:[name,price], filter by brand
+
+**На что смотреть в трейсах:**
+- Agent2 → Tool Input: что агент реально послал движку (layout, show, size, limit)
+- Agent2 → Engine Breakdown: что решил движок (engineVersion, preset, size, widgetCount, fieldDefCount)
+- Formation → Widgets table: сколько виджетов, какой size, сколько атомов
+- Formation → Full JSON: полная структура (для отладки)
+- Waterfall: сколько времени на LLM vs tool execution
+
+### Известные ограничения
+- Трейсы показываются все (без фильтрации по тенанту) — для мультитенант нужна колонка `tenant_slug` в `pipeline_traces`
+- Старые трейсы (до Alpha 0.0.5) не содержат Agent2 toolInput/systemPrompt/breakdown — показывают null
+- `fieldDefCount: 0` до редеплоя chat backend (TenantSlug фикс)
+
+---
+
 ## Alpha 0.0.4 — Engine V2: Metadata-Driven Visual Assembly — 2026-03-18
 
 Полная замена visual assembly engine. 6 фаз, ~3500 LOC нового кода (backend + frontend).

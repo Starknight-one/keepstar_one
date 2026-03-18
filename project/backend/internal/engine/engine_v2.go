@@ -147,8 +147,12 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 		formation.Grid = CalcGridConfig(len(widgets), resolved.Size)
 	}
 
-	// Step 10: Cross-widget constraints
-	applyCrossWidgetV2Constraints(formation.Widgets, mode)
+	// Step 10: Cross-widget constraints (show-fields are protected from C1 normalization)
+	var protectedFields []string
+	if input.Instructions != nil {
+		protectedFields = input.Instructions.Show
+	}
+	applyCrossWidgetV2Constraints(formation.Widgets, mode, protectedFields...)
 
 	// Generate v1 compat (Atoms + Zones from AtomsV2 + Layout)
 	for i := range formation.Widgets {
