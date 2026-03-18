@@ -4,62 +4,99 @@ import { api } from '../../shared/api/apiClient.js'
 import Spinner from '../../shared/ui/Spinner.jsx'
 import './traces.css'
 
-function Section({ title, defaultOpen = false, children }) {
+function Section({ title, badge, color = 'gray', defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="trace-section">
+    <div className={`trace-section trace-section--${color}`}>
       <div className="trace-section-header" onClick={() => setOpen(!open)}>
         <span className="trace-section-arrow">{open ? '▾' : '▸'}</span>
         <span className="trace-section-title">{title}</span>
+        {badge && <span className={`trace-badge trace-badge--${color}`}>{badge}</span>}
       </div>
       {open && <div className="trace-section-body">{children}</div>}
     </div>
   )
 }
 
-function KV({ label, value }) {
-  if (value === undefined || value === null || value === '') return null
+function MetricCard({ label, value, sub, accent }) {
+  if (value === undefined || value === null) return null
   return (
-    <div className="trace-kv">
-      <span className="trace-kv-label">{label}</span>
-      <span className="trace-kv-value">{typeof value === 'number' ? value : String(value)}</span>
+    <div className={`trace-metric ${accent ? 'trace-metric--accent' : ''}`}>
+      <div className="trace-metric-value">{value}</div>
+      <div className="trace-metric-label">{label}</div>
+      {sub && <div className="trace-metric-sub">{sub}</div>}
     </div>
   )
 }
 
-function JsonBlock({ data, label }) {
-  const [expanded, setExpanded] = useState(false)
+function Tag({ children, color }) {
+  return <span className={`trace-tag ${color ? `trace-tag--${color}` : ''}`}>{children}</span>
+}
+
+function tryPrettyJson(str) {
+  if (!str) return str
+  try {
+    const parsed = JSON.parse(str)
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return str
+  }
+}
+
+function JsonBlock({ data, label, defaultExpanded = false }) {
+  const [expanded, setExpanded] = useState(defaultExpanded)
   if (!data) return null
-  const str = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
-  const isLong = str.length > 500
+
+  let str
+  if (typeof data === 'string') {
+    str = tryPrettyJson(data)
+  } else {
+    str = JSON.stringify(data, null, 2)
+  }
+
+  const isLong = str.length > 300
+
   return (
     <div className="trace-json-block">
-      {label && <div className="trace-json-label">{label}</div>}
-      <pre className="trace-json">{isLong && !expanded ? str.substring(0, 500) + '…' : str}</pre>
-      {isLong && (
-        <button className="trace-json-toggle" onClick={() => setExpanded(!expanded)}>
-          {expanded ? 'Collapse' : 'Expand'} ({str.length} chars)
-        </button>
+      <div className="trace-json-header" onClick={() => setExpanded(!expanded)}>
+        <span className="trace-json-arrow">{expanded ? '▾' : '▸'}</span>
+        <span className="trace-json-label">{label}</span>
+        <span className="trace-json-size">{str.length.toLocaleString()} chars</span>
+      </div>
+      {expanded && (
+        <pre className="trace-json">{isLong && !expanded ? str.substring(0, 300) + '…' : str}</pre>
       )}
     </div>
   )
 }
 
-function TokensRow({ agent }) {
+function TokensBar({ agent }) {
   if (!agent) return null
+  const total = (agent.inputTokens || 0) + (agent.outputTokens || 0)
+  if (total === 0) return null
+  const inputPct = (agent.inputTokens / total) * 100
+  const outputPct = (agent.outputTokens / total) * 100
+
   return (
-    <div className="trace-tokens">
-      <span>Input: {agent.inputTokens}</span>
-      <span>Output: {agent.outputTokens}</span>
-      {agent.cacheRead > 0 && <span>Cache Read: {agent.cacheRead}</span>}
-      {agent.cacheWrite > 0 && <span>Cache Write: {agent.cacheWrite}</span>}
-      <span>Cost: ${agent.costUsd?.toFixed(4)}</span>
+    <div className="trace-tokens-bar">
+      <div className="trace-tokens-visual">
+        <div className="trace-tokens-segment trace-tokens-input" style={{ width: `${inputPct}%` }} title={`Input: ${agent.inputTokens}`} />
+        <div className="trace-tokens-segment trace-tokens-output" style={{ width: `${outputPct}%` }} title={`Output: ${agent.outputTokens}`} />
+      </div>
+      <div className="trace-tokens-legend">
+        <span><span className="trace-dot trace-dot--input" /> Input {agent.inputTokens?.toLocaleString()}</span>
+        <span><span className="trace-dot trace-dot--output" /> Output {agent.outputTokens?.toLocaleString()}</span>
+        {agent.cacheRead > 0 && <span><span className="trace-dot trace-dot--cache" /> Cache read {agent.cacheRead?.toLocaleString()}</span>}
+        {agent.cacheWrite > 0 && <span><span className="trace-dot trace-dot--cachewrite" /> Cache write {agent.cacheWrite?.toLocaleString()}</span>}
+        <span className="trace-tokens-cost">${agent.costUsd?.toFixed(4)}</span>
+      </div>
     </div>
   )
 }
 
 function WaterfallBar({ spans, totalMs }) {
   if (!spans || spans.length === 0) return null
+  const colors = ['#8B5CF6', '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#EC4899']
   return (
     <div className="trace-waterfall">
       {spans.map((span, i) => {
@@ -68,10 +105,14 @@ function WaterfallBar({ spans, totalMs }) {
         return (
           <div key={i} className="trace-waterfall-row">
             <span className="trace-waterfall-label">{span.name}</span>
-            <div className="trace-waterfall-bar-container">
+            <div className="trace-waterfall-track">
               <div
                 className="trace-waterfall-bar"
-                style={{ left: `${leftPct}%`, width: `${Math.max(widthPct, 1)}%` }}
+                style={{
+                  left: `${leftPct}%`,
+                  width: `${Math.max(widthPct, 1)}%`,
+                  background: colors[i % colors.length],
+                }}
               />
             </div>
             <span className="trace-waterfall-ms">{span.durationMs}ms</span>
@@ -108,32 +149,59 @@ export default function TraceDetail() {
   return (
     <div className="trace-detail">
       <button className="btn btn-secondary trace-back" onClick={() => navigate('/traces')}>
-        ← Back to Traces
+        ← Traces
       </button>
 
-      <Section title="Summary" defaultOpen={true}>
-        <div className="trace-summary-grid">
-          <KV label="Query" value={trace.query} />
-          <KV label="Session" value={trace.sessionId} />
-          <KV label="Total" value={`${trace.totalMs}ms`} />
-          <KV label="Cost" value={`$${trace.costUsd?.toFixed(4)}`} />
-          {trace.error && <KV label="Error" value={trace.error} />}
-          <KV label="Timestamp" value={new Date(trace.timestamp).toLocaleString()} />
+      {/* Hero summary */}
+      <div className="trace-hero">
+        <div className="trace-hero-query">"{trace.query}"</div>
+        <div className="trace-hero-metrics">
+          <MetricCard label="Total" value={`${trace.totalMs}ms`} />
+          <MetricCard label="Cost" value={`$${trace.costUsd?.toFixed(4)}`} />
+          <MetricCard label="Agent1" value={agent1 ? `${agent1.totalMs}ms` : '—'} sub={agent1?.toolName} />
+          <MetricCard label="Agent2" value={agent2 ? `${agent2.totalMs}ms` : '—'} sub={agent2?.toolName} />
+          <MetricCard label="Formation" value={formation?.mode} sub={`${formation?.widgetCount || 0} widgets`} />
         </div>
-      </Section>
+        {trace.error && <div className="trace-hero-error">{trace.error}</div>}
+        <div className="trace-hero-meta">
+          <span>Session: <code>{trace.sessionId?.substring(0, 8)}</code></span>
+          <span>{new Date(trace.timestamp).toLocaleString()}</span>
+        </div>
+      </div>
 
-      <Section title={`Agent1 — ${agent1?.model || '?'}`} defaultOpen={true}>
-        <div className="trace-agent-grid">
-          <KV label="LLM Time" value={`${agent1?.llmMs}ms`} />
-          <KV label="Tool Time" value={agent1?.toolMs ? `${agent1.toolMs}ms` : '—'} />
-          <KV label="Total" value={`${agent1?.totalMs}ms`} />
-          <KV label="Stop Reason" value={agent1?.stopReason} />
-          <KV label="System Prompt" value={agent1?.systemPromptChars ? `${agent1.systemPromptChars} chars` : '—'} />
-          <KV label="Messages" value={agent1?.messageCount} />
-          <KV label="Tool Defs" value={agent1?.toolDefCount} />
+      {/* Waterfall */}
+      {spans && spans.length > 0 && (
+        <Section title="Waterfall" color="purple" defaultOpen={true}>
+          <WaterfallBar spans={spans} totalMs={trace.totalMs} />
+        </Section>
+      )}
+
+      {/* Agent 1 */}
+      <Section
+        title="Agent 1 — NLU / Data"
+        badge={agent1?.model?.replace('claude-', '').replace('-20251001', '')}
+        color="blue"
+        defaultOpen={true}
+      >
+        <div className="trace-metrics-row">
+          <MetricCard label="LLM" value={`${agent1?.llmMs}ms`} />
+          <MetricCard label="Tool" value={agent1?.toolMs ? `${agent1.toolMs}ms` : '—'} />
+          <MetricCard label="Total" value={`${agent1?.totalMs}ms`} />
+          <MetricCard label="Prompt" value={agent1?.systemPromptChars ? `${agent1.systemPromptChars}c` : '—'} />
+          <MetricCard label="Messages" value={agent1?.messageCount} />
+          <MetricCard label="Tools" value={agent1?.toolDefCount} />
         </div>
-        <TokensRow agent={agent1} />
-        <KV label="Tool" value={agent1?.toolName} />
+        <TokensBar agent={agent1} />
+
+        {agent1?.toolName && (
+          <div className="trace-tool-call">
+            <div className="trace-tool-name">
+              <Tag color="blue">{agent1.toolName}</Tag>
+              {agent1?.stopReason && <Tag>{agent1.stopReason}</Tag>}
+            </div>
+          </div>
+        )}
+
         <JsonBlock data={agent1?.toolInput} label="Tool Input" />
         <JsonBlock data={agent1?.toolResult} label="Tool Result" />
         <JsonBlock data={agent1?.toolBreakdown} label="Tool Breakdown" />
@@ -141,16 +209,22 @@ export default function TraceDetail() {
         <JsonBlock data={agent1?.systemPrompt} label="System Prompt" />
       </Section>
 
-      <Section title={`State after Agent1 — ${stateAfter?.productCount || 0} products, ${stateAfter?.serviceCount || 0} services`}>
-        <div className="trace-agent-grid">
-          <KV label="Products" value={stateAfter?.productCount} />
-          <KV label="Services" value={stateAfter?.serviceCount} />
-          <KV label="Fields" value={stateAfter?.fields?.join(', ')} />
-          <KV label="Has Template" value={stateAfter?.hasTemplate ? 'yes' : 'no'} />
-          <KV label="Deltas" value={stateAfter?.deltaCount} />
+      {/* State snapshot */}
+      <Section
+        title="State after Agent 1"
+        badge={`${stateAfter?.productCount || 0}p / ${stateAfter?.serviceCount || 0}s`}
+        color="gray"
+      >
+        <div className="trace-state-info">
+          {stateAfter?.fields && stateAfter.fields.length > 0 && (
+            <div className="trace-fields-list">
+              <span className="trace-fields-label">Fields:</span>
+              {stateAfter.fields.map((f, i) => <Tag key={i}>{f}</Tag>)}
+            </div>
+          )}
         </div>
         {stateAfter?.deltas && stateAfter.deltas.length > 0 && (
-          <table className="trace-deltas-table">
+          <table className="trace-table">
             <thead>
               <tr>
                 <th>Step</th>
@@ -165,10 +239,10 @@ export default function TraceDetail() {
               {stateAfter.deltas.map((d, i) => (
                 <tr key={i}>
                   <td>{d.step}</td>
-                  <td>{d.actorId}</td>
-                  <td>{d.deltaType}</td>
-                  <td>{d.path}</td>
-                  <td>{d.tool || '—'}</td>
+                  <td><code>{d.actorId}</code></td>
+                  <td><Tag color={d.deltaType === 'add' ? 'green' : d.deltaType === 'remove' ? 'red' : 'gray'}>{d.deltaType}</Tag></td>
+                  <td><code>{d.path}</code></td>
+                  <td>{d.tool ? <code>{d.tool}</code> : '—'}</td>
                   <td>{d.count || '—'}</td>
                 </tr>
               ))}
@@ -177,59 +251,77 @@ export default function TraceDetail() {
         )}
       </Section>
 
-      <Section title={`Agent2 — ${agent2?.model || '?'}`} defaultOpen={true}>
-        <div className="trace-agent-grid">
-          <KV label="LLM Time" value={`${agent2?.llmMs}ms`} />
-          <KV label="Total" value={`${agent2?.totalMs}ms`} />
-          <KV label="System Prompt" value={agent2?.systemPromptChars ? `${agent2.systemPromptChars} chars` : '—'} />
-          <KV label="Messages" value={agent2?.messageCount} />
-          <KV label="Tool Defs" value={agent2?.toolDefCount} />
+      {/* Agent 2 */}
+      <Section
+        title="Agent 2 — Render"
+        badge={agent2?.model?.replace('claude-', '').replace('-20251001', '')}
+        color="purple"
+        defaultOpen={true}
+      >
+        <div className="trace-metrics-row">
+          <MetricCard label="LLM" value={`${agent2?.llmMs}ms`} />
+          <MetricCard label="Total" value={`${agent2?.totalMs}ms`} />
+          <MetricCard label="Prompt" value={agent2?.systemPromptChars ? `${agent2.systemPromptChars}c` : '—'} />
+          <MetricCard label="Messages" value={agent2?.messageCount} />
+          <MetricCard label="Tools" value={agent2?.toolDefCount} />
         </div>
-        <TokensRow agent={agent2} />
-        <KV label="Tool" value={agent2?.toolName} />
-        <JsonBlock data={agent2?.toolInput} label="Tool Input (visual_assembly params)" />
-        <JsonBlock data={agent2?.toolBreakdown} label="Engine Breakdown" />
-        <JsonBlock data={agent2?.promptSent} label="Prompt Sent" />
+        <TokensBar agent={agent2} />
+
+        {agent2?.toolName && (
+          <div className="trace-tool-call">
+            <Tag color="purple">{agent2.toolName}</Tag>
+          </div>
+        )}
+
+        <JsonBlock data={agent2?.toolInput} label="Tool Input (visual_assembly params)" defaultExpanded={true} />
+        <JsonBlock data={agent2?.toolBreakdown} label="Engine Breakdown" defaultExpanded={true} />
+        <JsonBlock data={agent2?.promptSent} label="Prompt Sent to Agent 2" />
         <JsonBlock data={agent2?.rawResponse} label="Raw Response" />
         <JsonBlock data={agent2?.systemPrompt} label="System Prompt" />
       </Section>
 
-      <Section title={`Formation — ${formation?.mode || '?'} (${formation?.widgetCount || 0} widgets)`} defaultOpen={true}>
-        <div className="trace-agent-grid">
-          <KV label="Mode" value={formation?.mode} />
-          <KV label="Widget Count" value={formation?.widgetCount} />
-          <KV label="Cols" value={formation?.cols} />
-          <KV label="First Widget" value={formation?.firstWidget} />
+      {/* Formation */}
+      <Section
+        title="Formation Result"
+        badge={formation?.mode}
+        color="green"
+        defaultOpen={true}
+      >
+        <div className="trace-metrics-row">
+          <MetricCard label="Mode" value={formation?.mode} />
+          <MetricCard label="Widgets" value={formation?.widgetCount} />
+          {formation?.cols > 0 && <MetricCard label="Cols" value={formation?.cols} />}
+          <MetricCard label="First" value={formation?.firstWidget?.substring(0, 30)} />
         </div>
+
         {formation?.widgets && formation.widgets.length > 0 && (
-          <table className="trace-deltas-table">
+          <table className="trace-table">
             <thead>
               <tr>
-                <th>ID</th>
+                <th>#</th>
                 <th>Template</th>
                 <th>Size</th>
                 <th>Atoms</th>
-                <th>Entity Ref</th>
+                <th>Entity</th>
               </tr>
             </thead>
             <tbody>
-              {formation.widgets.map((w, i) => (
+              {formation.widgets.slice(0, 20).map((w, i) => (
                 <tr key={i}>
-                  <td className="trace-mono">{w.id?.substring(0, 8)}</td>
-                  <td>{w.template}</td>
-                  <td>{w.size || '—'}</td>
+                  <td className="trace-mono">{i + 1}</td>
+                  <td>{w.template || '—'}</td>
+                  <td><Tag>{w.size || '—'}</Tag></td>
                   <td>{w.atomCount}</td>
-                  <td className="trace-mono">{w.entityRef ? w.entityRef.substring(0, 8) : '—'}</td>
+                  <td><code>{w.entityRef ? w.entityRef.substring(0, 12) : '—'}</code></td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+        {formation?.widgets && formation.widgets.length > 20 && (
+          <div className="trace-truncated">Showing 20 of {formation.widgets.length} widgets</div>
+        )}
         <JsonBlock data={formation?.fullJson} label="Full Formation JSON" />
-      </Section>
-
-      <Section title="Waterfall">
-        <WaterfallBar spans={spans} totalMs={trace.totalMs} />
       </Section>
     </div>
   )
