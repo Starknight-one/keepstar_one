@@ -36,12 +36,17 @@ const (
 type ActionType string
 
 const (
-	ActionSearch   ActionType = "SEARCH"
-	ActionFilter   ActionType = "FILTER"
-	ActionSort     ActionType = "SORT"
-	ActionLayout   ActionType = "LAYOUT"
-	ActionRollback ActionType = "ROLLBACK"
-	ActionClarify  ActionType = "CLARIFY"
+	ActionSearch     ActionType = "SEARCH"
+	ActionFilter     ActionType = "FILTER"
+	ActionSort       ActionType = "SORT"
+	ActionLayout     ActionType = "LAYOUT"
+	ActionRollback   ActionType = "ROLLBACK"
+	ActionClarify    ActionType = "CLARIFY"
+	ActionLike       ActionType = "LIKE"
+	ActionUnlike     ActionType = "UNLIKE"
+	ActionCartAdd    ActionType = "CART_ADD"
+	ActionCartRemove ActionType = "CART_REMOVE"
+	ActionCartUpdate ActionType = "CART_UPDATE"
 )
 
 // Action represents what happened in a delta
@@ -99,6 +104,19 @@ func (di DeltaInfo) ToDelta() *Delta {
 		Result:    di.Result,
 		CreatedAt: time.Now(),
 	}
+}
+
+// CartItem represents an item in the user's cart
+type CartItem struct {
+	EntityType EntityType `json:"entityType"`
+	EntityId   string     `json:"entityId"`
+	Quantity   int        `json:"quantity"`
+}
+
+// StateActions holds user action state (likes, cart)
+type StateActions struct {
+	LikedIds  []string   `json:"likedIds"`
+	CartItems []CartItem `json:"cartItems"`
 }
 
 // StateMeta contains metadata for Agent 2
@@ -161,6 +179,7 @@ type SessionState struct {
 	Current             StateCurrent   `json:"current"`
 	View                ViewState      `json:"view"`                          // Current view configuration
 	ViewStack           []ViewSnapshot `json:"view_stack"`                    // Navigation history for back/forward
+	Actions             StateActions   `json:"actions"`                       // User actions (likes, cart)
 	ConversationHistory []LLMMessage   `json:"conversation_history,omitempty"` // LLM conversation history for caching
 	Step                int            `json:"step"`                          // Current step number
 	CreatedAt           time.Time      `json:"created_at"`

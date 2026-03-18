@@ -18,6 +18,21 @@ export function syncExpand(sessionId, entityType, entityId) {
 }
 
 /**
+ * Fire-and-forget sync of user action (like, cart) to backend.
+ * Frontend already updated local state; this keeps backend in sync.
+ */
+export function syncAction(sessionId, action, entityType, entityId, quantity) {
+  const body = { sessionId, action, entityType, entityId };
+  if (quantity != null) body.quantity = quantity;
+  fetch(`${API_BASE}/actions?sync=true`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify(body),
+    keepalive: true,
+  }).catch((err) => log.warn('syncAction failed:', err));
+}
+
+/**
  * Fire-and-forget sync of back action to backend.
  * Frontend already popped formation from stack;
  * this call keeps backend view stack in sync.

@@ -147,6 +147,36 @@ export async function expandView(sessionId, entityType, entityId) {
   return response.json();
 }
 
+// Actions API - sync action to backend
+export async function syncActionApi(sessionId, action, entityType, entityId, quantity) {
+  const body = { sessionId, action, entityType, entityId };
+  if (quantity != null) body.quantity = quantity;
+
+  const response = await timedFetch('POST', '/actions?sync=true', {
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// Actions API - get action view (liked/cart) as formation from backend
+export async function getActionView(sessionId, view) {
+  const response = await timedFetch('POST', '/actions/view', {
+    body: JSON.stringify({ sessionId, view }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  // Response: { success, formation, actions }
+  return response.json();
+}
+
 // Navigation API - go back to previous view
 export async function goBack(sessionId) {
   const response = await timedFetch('POST', '/navigation/back', {

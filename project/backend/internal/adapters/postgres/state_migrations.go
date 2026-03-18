@@ -74,6 +74,12 @@ ALTER TABLE chat_session_deltas
     ADD COLUMN IF NOT EXISTS turn_id TEXT;
 `
 
+// User actions (likes, cart) zone
+const migrationActions = `
+ALTER TABLE chat_session_state
+    ADD COLUMN IF NOT EXISTS actions JSONB DEFAULT '{"likedIds":[],"cartItems":[]}';
+`
+
 // RunStateMigrations executes state-related migrations
 func (c *Client) RunStateMigrations(ctx context.Context) error {
 	migrations := []string{
@@ -83,6 +89,7 @@ func (c *Client) RunStateMigrations(ctx context.Context) error {
 		migrationDeltaStateExtension,
 		migrationConversationHistory,
 		migrationDeltaTurnID,
+		migrationActions,
 	}
 
 	for i, migration := range migrations {

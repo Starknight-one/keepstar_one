@@ -190,7 +190,7 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 
 	// Build enriched query with state context for LLM (ephemeral, not saved to history)
 	// Note: catalog digest is already in conversation_history from session init — no per-turn loading
-	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, req.Query)
+	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, &state.Actions, req.Query)
 
 	// Build messages with conversation history
 	messages := state.ConversationHistory

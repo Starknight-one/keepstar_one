@@ -41,6 +41,12 @@ func SetupNavigationRoutes(mux *http.ServeMux, nav *NavigationHandler) {
 	mux.HandleFunc("/api/v1/navigation/back", nav.HandleBack)
 }
 
+// SetupActionRoutes configures action routes (like, cart)
+func SetupActionRoutes(mux *http.ServeMux, action *ActionHandler) {
+	mux.HandleFunc("/api/v1/actions", action.HandleAction)
+	mux.HandleFunc("/api/v1/actions/view", action.HandleActionView)
+}
+
 // SetupCatalogRoutes configures catalog routes with tenant middleware
 func SetupCatalogRoutes(mux *http.ServeMux, catalog *CatalogHandler, tenantMw *TenantMiddleware) {
 	// Catalog API - products

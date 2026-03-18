@@ -42,6 +42,10 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 			Mode: domain.ViewModeGrid,
 		},
 		ViewStack: []domain.ViewSnapshot{},
+		Actions: domain.StateActions{
+			LikedIds:  []string{},
+			CartItems: []domain.CartItem{},
+		},
 		Step:      0,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -63,12 +67,16 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 	if err != nil {
 		return nil, fmt.Errorf("marshal conversation history: %w", err)
 	}
+	actionsJSON, err := json.Marshal(state.Actions)
+	if err != nil {
+		return nil, fmt.Errorf("marshal actions: %w", err)
+	}
 
 	err = a.client.pool.QueryRow(ctx, `
-		INSERT INTO chat_session_state (session_id, current_data, current_meta, step, view_mode, view_stack, conversation_history)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO chat_session_state (session_id, current_data, current_meta, step, view_mode, view_stack, conversation_history, actions)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at
-	`, sessionID, dataJSON, metaJSON, state.Step, state.View.Mode, viewStackJSON, conversationHistoryJSON).Scan(
+	`, sessionID, dataJSON, metaJSON, state.Step, state.View.Mode, viewStackJSON, conversationHistoryJSON, actionsJSON).Scan(
 		&state.ID, &state.CreatedAt, &state.UpdatedAt,
 	)
 	if err != nil {
@@ -85,17 +93,17 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 		defer endSpan()
 	}
 	var state domain.SessionState
-	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON []byte
+	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON, actionsJSON []byte
 	var viewMode *string
 
 	err := a.client.pool.QueryRow(ctx, `
 		SELECT id, session_id, current_data, current_meta, current_template,
-		       view_mode, view_focused, view_stack, conversation_history, step, created_at, updated_at
+		       view_mode, view_focused, view_stack, conversation_history, actions, step, created_at, updated_at
 		FROM chat_session_state
 		WHERE session_id = $1
 	`, sessionID).Scan(
 		&state.ID, &state.SessionID, &dataJSON, &metaJSON, &templateJSON,
-		&viewMode, &viewFocusedJSON, &viewStackJSON, &conversationHistoryJSON,
+		&viewMode, &viewFocusedJSON, &viewStackJSON, &conversationHistoryJSON, &actionsJSON,
 		&state.Step, &state.CreatedAt, &state.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -142,6 +150,18 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 			a.log.Warn("unmarshal conversation history", "session_id", sessionID, "error", err)
 		}
 	}
+	if len(actionsJSON) > 0 {
+		if err := json.Unmarshal(actionsJSON, &state.Actions); err != nil {
+			a.log.Warn("unmarshal actions", "session_id", sessionID, "error", err)
+		}
+	}
+	// Ensure non-nil slices
+	if state.Actions.LikedIds == nil {
+		state.Actions.LikedIds = []string{}
+	}
+	if state.Actions.CartItems == nil {
+		state.Actions.CartItems = []domain.CartItem{}
+	}
 
 	return &state, nil
 }
@@ -176,16 +196,20 @@ func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionSta
 	if err != nil {
 		return fmt.Errorf("marshal conversation history: %w", err)
 	}
+	actionsJSON, err := json.Marshal(state.Actions)
+	if err != nil {
+		return fmt.Errorf("marshal actions: %w", err)
+	}
 
 	_, err = a.client.pool.Exec(ctx, `
 		UPDATE chat_session_state
 		SET current_data = $1, current_meta = $2, current_template = $3,
 		    view_mode = $4, view_focused = $5, view_stack = $6,
-		    conversation_history = $7, step = $8, updated_at = NOW()
-		WHERE session_id = $9
+		    conversation_history = $7, actions = $8, step = $9, updated_at = NOW()
+		WHERE session_id = $10
 	`, dataJSON, metaJSON, templateJSON,
 		state.View.Mode, viewFocusedJSON, viewStackJSON,
-		conversationHistoryJSON, state.Step, state.SessionID)
+		conversationHistoryJSON, actionsJSON, state.Step, state.SessionID)
 	if err != nil {
 		return fmt.Errorf("update state: %w", err)
 	}
@@ -322,6 +346,24 @@ func (a *StateAdapter) UpdateView(ctx context.Context, sessionID string, view do
 		SET view_mode = $1, view_focused = $2, view_stack = $3, updated_at = NOW()
 		WHERE session_id = $4
 	`, view.Mode, viewFocusedJSON, viewStackJSON, sessionID)
+}
+
+// UpdateActions updates the actions zone (likes, cart) and creates a delta
+func (a *StateAdapter) UpdateActions(ctx context.Context, sessionID string, actions domain.StateActions, info domain.DeltaInfo) (int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.update_actions")
+		defer endSpan()
+	}
+	actionsJSON, err := json.Marshal(actions)
+	if err != nil {
+		return 0, fmt.Errorf("marshal actions: %w", err)
+	}
+	delta := info.ToDelta()
+	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
+		UPDATE chat_session_state
+		SET actions = $1, updated_at = NOW()
+		WHERE session_id = $2
+	`, actionsJSON, sessionID)
 }
 
 // AppendConversation updates conversation history (no delta — append-only for LLM cache)

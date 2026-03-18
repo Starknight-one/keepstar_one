@@ -42,6 +42,9 @@ type StatePort interface {
 	// UpdateView updates the view zone (mode, focused, stack) and creates a delta
 	UpdateView(ctx context.Context, sessionID string, view domain.ViewState, stack []domain.ViewSnapshot, info domain.DeltaInfo) (int, error)
 
+	// UpdateActions updates the actions zone (likes, cart) and creates a delta
+	UpdateActions(ctx context.Context, sessionID string, actions domain.StateActions, info domain.DeltaInfo) (int, error)
+
 	// AppendConversation updates conversation history (no delta — append-only for LLM cache)
 	AppendConversation(ctx context.Context, sessionID string, messages []domain.LLMMessage) error
 

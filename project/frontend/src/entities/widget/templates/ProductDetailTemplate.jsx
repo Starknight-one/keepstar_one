@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AtomRenderer } from '../../atom/AtomRenderer';
 import { groupAtomsBySlot, normalizeImages } from './templateUtils';
+import { useActions } from '../../../features/actions/ActionContext';
 import './ProductDetailTemplate.css';
 
 // Slot names match backend domain.AtomSlot
@@ -15,8 +16,12 @@ const SLOTS = {
   SPECS: 'specs',
 };
 
-export function ProductDetailTemplate({ atoms = [] }) {
+export function ProductDetailTemplate({ atoms = [], entityRef }) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const { toggleLike, isLiked, addToCart, getCartQuantity } = useActions();
+  const entityId = entityRef?.id;
+  const liked = entityId ? isLiked(entityId) : false;
+  const cartQty = entityId ? getCartQuantity(entityId) : 0;
 
   // Group atoms by slot
   const slots = groupAtomsBySlot(atoms);
@@ -67,6 +72,31 @@ export function ProductDetailTemplate({ atoms = [] }) {
           {priceAtoms.length > 0 && (
             <div className="product-detail-price">
               <AtomRenderer atom={priceAtoms[0]} />
+            </div>
+          )}
+
+          {/* Action buttons */}
+          {entityId && (
+            <div className="detail-actions-row">
+              <button
+                className={`detail-cart-btn${cartQty > 0 ? ' in-cart' : ''}`}
+                onClick={(e) => { e.stopPropagation(); addToCart(entityRef.type, entityId); }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+                </svg>
+                {cartQty > 0 ? `In cart (${cartQty})` : 'Add to cart'}
+              </button>
+              <button
+                className={`detail-favorite-btn${liked ? ' liked' : ''}`}
+                onClick={(e) => { e.stopPropagation(); toggleLike(entityId); }}
+                aria-label={liked ? 'Unlike' : 'Like'}
+              >
+                <svg viewBox="0 0 24 24" fill={liked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                </svg>
+              </button>
             </div>
           )}
 

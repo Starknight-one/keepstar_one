@@ -19,6 +19,7 @@ import comparisonCss from './entities/widget/templates/ComparisonTemplate.css?in
 import productGridCss from './features/catalog/ProductGrid.css?inline'
 import backButtonCss from './features/navigation/BackButton.css?inline'
 import stepperCss from './features/navigation/Stepper.css?inline'
+import actionCss from './features/actions/ActionContext.css?inline'
 
 const ALL_CSS = [
   widgetCss,
@@ -37,6 +38,7 @@ const ALL_CSS = [
   productGridCss,
   backButtonCss,
   stepperCss,
+  actionCss,
 ].join('\n')
 
 ;(function () {

@@ -13,7 +13,7 @@ import { saveSessionCache, loadSessionCache, clearSessionCache } from './session
 import { MessageRole } from '../../entities/message/messageModel';
 import './ChatPanel.css';
 
-export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChange, hideFormation }) {
+export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChange, onEntitiesReceived, hideFormation }) {
   const {
     sessionId,
     messages,
@@ -60,8 +60,9 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
       // Store adjacent templates + entities for instant expand
       adjacentTemplatesRef.current = adjacentTemplates || null;
       entitiesRef.current = entities || null;
+      onEntitiesReceived?.(adjacentTemplates || null, entities || null);
       onFormationReceived?.(formation);
-    }, [onFormationReceived, historyPush]),
+    }, [onFormationReceived, onEntitiesReceived, historyPush]),
   });
 
   // Wrap submit to capture query text in ref before sending
@@ -166,6 +167,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
       // Restore adjacent templates + entities for instant expand after F5
       adjacentTemplatesRef.current = cached.adjacentTemplates || null;
       entitiesRef.current = cached.entities || null;
+      onEntitiesReceived?.(cached.adjacentTemplates || null, cached.entities || null);
 
       // Async validate \u2014 if session is dead on backend, clear everything
       getSession(cached.sessionId).then(session => {

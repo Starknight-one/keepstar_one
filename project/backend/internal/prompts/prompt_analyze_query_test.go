@@ -9,7 +9,7 @@ import (
 
 func TestBuildAgent1ContextPrompt_NoState(t *testing.T) {
 	meta := domain.StateMeta{ProductCount: 0, ServiceCount: 0}
-	result := BuildAgent1ContextPrompt(meta, nil, "покажи кроссовки")
+	result := BuildAgent1ContextPrompt(meta, nil, nil, "покажи кроссовки")
 
 	// Should just return the raw query (digest is now in conversation_history, not here)
 	if result != "покажи кроссовки" {
@@ -19,7 +19,7 @@ func TestBuildAgent1ContextPrompt_NoState(t *testing.T) {
 
 func TestBuildAgent1ContextPrompt_WithState(t *testing.T) {
 	meta := domain.StateMeta{ProductCount: 5, ServiceCount: 0, Fields: []string{"id", "name", "price"}}
-	result := BuildAgent1ContextPrompt(meta, nil, "покажи дешевле")
+	result := BuildAgent1ContextPrompt(meta, nil, nil, "покажи дешевле")
 
 	if !strings.Contains(result, "<state>") {
 		t.Error("expected <state> block when data is loaded")
@@ -35,7 +35,7 @@ func TestBuildAgent1ContextPrompt_StateAndQuery(t *testing.T) {
 		ServiceCount: 0,
 		Fields:       []string{"id", "name", "price", "brand"},
 	}
-	result := BuildAgent1ContextPrompt(meta, nil, "а теперь Adidas")
+	result := BuildAgent1ContextPrompt(meta, nil, nil, "а теперь Adidas")
 
 	if !strings.Contains(result, "<state>") {
 		t.Error("expected <state> block")

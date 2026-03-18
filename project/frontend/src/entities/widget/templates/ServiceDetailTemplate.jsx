@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AtomRenderer } from '../../atom/AtomRenderer';
 import { groupAtomsBySlot, normalizeImages } from './templateUtils';
+import { useActions } from '../../../features/actions/ActionContext';
 import './ServiceDetailTemplate.css';
 
 // Slot names match backend domain.AtomSlot
@@ -14,8 +15,11 @@ const SLOTS = {
   SPECS: 'specs',
 };
 
-export function ServiceDetailTemplate({ atoms = [] }) {
+export function ServiceDetailTemplate({ atoms = [], entityRef }) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const { toggleLike, isLiked } = useActions();
+  const entityId = entityRef?.id;
+  const liked = entityId ? isLiked(entityId) : false;
 
   // Group atoms by slot
   const slots = groupAtomsBySlot(atoms);
@@ -72,6 +76,21 @@ export function ServiceDetailTemplate({ atoms = [] }) {
           {priceAtoms.length > 0 && (
             <div className="service-detail-price">
               <AtomRenderer atom={priceAtoms[0]} />
+            </div>
+          )}
+
+          {/* Like button */}
+          {entityId && (
+            <div className="detail-actions-row">
+              <button
+                className={`detail-favorite-btn${liked ? ' liked' : ''}`}
+                onClick={(e) => { e.stopPropagation(); toggleLike(entityId); }}
+                aria-label={liked ? 'Unlike' : 'Like'}
+              >
+                <svg viewBox="0 0 24 24" fill={liked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                </svg>
+              </button>
             </div>
           )}
 

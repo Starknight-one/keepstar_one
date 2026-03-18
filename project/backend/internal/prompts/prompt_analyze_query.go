@@ -72,8 +72,8 @@ JSON response:`
 // Catalog digest is already in conversation_history from session init — not injected here.
 // If no data is loaded (ProductCount=0, ServiceCount=0), returns raw query.
 // Otherwise wraps state summary in <state> block before the query.
-func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.RenderConfig, userQuery string) string {
-	if meta.ProductCount == 0 && meta.ServiceCount == 0 {
+func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.RenderConfig, actions *domain.StateActions, userQuery string) string {
+	if meta.ProductCount == 0 && meta.ServiceCount == 0 && (actions == nil || (len(actions.LikedIds) == 0 && len(actions.CartItems) == 0)) {
 		return userQuery
 	}
 
@@ -81,6 +81,16 @@ func BuildAgent1ContextPrompt(meta domain.StateMeta, currentConfig *domain.Rende
 		"loaded_products":  meta.ProductCount,
 		"loaded_services":  meta.ServiceCount,
 		"available_fields": meta.Fields,
+	}
+
+	if actions != nil {
+		if len(actions.LikedIds) > 0 {
+			stateInfo["liked_count"] = len(actions.LikedIds)
+			stateInfo["liked_ids"] = actions.LikedIds
+		}
+		if len(actions.CartItems) > 0 {
+			stateInfo["cart_count"] = len(actions.CartItems)
+		}
 	}
 
 	if currentConfig != nil {
