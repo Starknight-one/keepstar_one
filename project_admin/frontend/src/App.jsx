@@ -9,6 +9,8 @@ import ImportPage from './features/import/ImportPage.jsx'
 import SettingsPage from './features/settings/SettingsPage.jsx'
 import WidgetPage from './features/widget/WidgetPage.jsx'
 import TestbenchPage from './features/testbench/TestbenchPage.jsx'
+import TracesPage from './features/traces/TracesPage.jsx'
+import TraceDetail from './features/traces/TraceDetail.jsx'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -36,6 +38,8 @@ export default function App() {
         <Route path="import" element={<ImportPage />} />
         <Route path="widget" element={<WidgetPage />} />
         <Route path="testbench" element={<TestbenchPage />} />
+        <Route path="traces" element={<TracesPage />} />
+        <Route path="traces/:id" element={<TraceDetail />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>

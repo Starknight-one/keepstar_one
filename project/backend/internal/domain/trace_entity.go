@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // PipelineTrace captures the full trace of one pipeline execution
 type PipelineTrace struct {
@@ -91,8 +94,19 @@ type DeltaTrace struct {
 
 // FormationTrace captures the formation output
 type FormationTrace struct {
-	Mode        string `json:"mode"`
-	WidgetCount int    `json:"widgetCount"`
-	Cols        int    `json:"cols,omitempty"`
-	FirstWidget string `json:"firstWidget,omitempty"` // name of first widget for quick check
+	Mode        string          `json:"mode"`
+	WidgetCount int             `json:"widgetCount"`
+	Cols        int             `json:"cols,omitempty"`
+	FirstWidget string          `json:"firstWidget,omitempty"` // name of first widget for quick check
+	Widgets     []WidgetTrace   `json:"widgets,omitempty"`
+	FullJSON    json.RawMessage `json:"fullJson,omitempty"` // full formation JSON (up to 100KB)
+}
+
+// WidgetTrace captures key info about a single widget
+type WidgetTrace struct {
+	ID        string `json:"id"`
+	Template  string `json:"template"`
+	Size      string `json:"size,omitempty"`
+	AtomCount int    `json:"atomCount"`
+	EntityRef string `json:"entityRef,omitempty"`
 }

@@ -639,7 +639,20 @@ func (t *VisualAssemblyTool) writeFormation(ctx context.Context, toolCtx ToolCon
 	if degraded {
 		msg += " (degraded: unsupported options ignored)"
 	}
-	return &domain.ToolResult{Content: msg}, nil
+
+	metadata := map[string]interface{}{
+		"engineVersion": "v1",
+		"preset":        presetName,
+		"layout":        layout,
+		"size":          string(size),
+		"entityType":    entityType,
+		"entityCount":   totalEntities,
+		"widgetCount":   len(formation.Widgets),
+		"fieldCount":    len(fieldConfigs),
+		"degraded":      degraded,
+	}
+
+	return &domain.ToolResult{Content: msg, Metadata: metadata}, nil
 }
 
 // executeV2 runs the v2 engine pipeline.
@@ -766,7 +779,20 @@ func (t *VisualAssemblyTool) executeV2(ctx context.Context, toolCtx ToolContext,
 	if len(output.Warnings) > 0 {
 		msg += fmt.Sprintf(" warnings=%v", output.Warnings)
 	}
-	return &domain.ToolResult{Content: msg}, nil
+
+	metadata := map[string]interface{}{
+		"engineVersion": "v2",
+		"preset":        presetName,
+		"layout":        string(formation.Mode),
+		"size":          string(formation.Widgets[0].Size),
+		"entityType":    string(entityType),
+		"entityCount":   entityCount,
+		"widgetCount":   len(formation.Widgets),
+		"fieldDefCount": len(fieldDefs),
+		"warnings":      output.Warnings,
+	}
+
+	return &domain.ToolResult{Content: msg, Metadata: metadata}, nil
 }
 
 // convertV1ParamsToV2 converts legacy tool parameters to v2 AgentInstructions.

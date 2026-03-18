@@ -86,6 +86,7 @@ func main() {
 	authAdapter := postgres.NewAuthAdapter(dbClient)
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient, log)
 	importAdapter := postgres.NewImportAdapter(dbClient)
+	traceAdapter := postgres.NewTraceAdapter(dbClient)
 
 	// Initialize use cases
 	authUC := usecases.NewAuthUseCase(authAdapter, catalogAdapter, cfg.JWTSecret)
@@ -106,6 +107,7 @@ func main() {
 	importHandler := handlers.NewImportHandler(importUC, log)
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
 	stockHandler := handlers.NewStockHandler(stockUC, log)
+	tracesHandler := handlers.NewTracesHandler(traceAdapter, log)
 
 	var enrichmentHandler *handlers.EnrichmentHandler
 	if enrichUC != nil {
@@ -170,6 +172,8 @@ func main() {
 		}
 	})
 	protected.HandleFunc("/admin/api/stock/bulk", stockHandler.HandleBulkUpdate)
+	protected.HandleFunc("/admin/api/traces", tracesHandler.HandleList)
+	protected.HandleFunc("/admin/api/traces/", tracesHandler.HandleGet)
 	if enrichmentHandler != nil {
 		protected.HandleFunc("/admin/api/catalog/enrich", enrichmentHandler.HandleEnrich)
 		protected.HandleFunc("/admin/api/catalog/enrich-v2", enrichmentHandler.HandleEnrichV2)
@@ -186,6 +190,8 @@ func main() {
 	mux.Handle("/admin/api/catalog/imports", authMW(protected))
 	mux.Handle("/admin/api/settings", authMW(protected))
 	mux.Handle("/admin/api/stock/bulk", authMW(protected))
+	mux.Handle("/admin/api/traces", authMW(protected))
+	mux.Handle("/admin/api/traces/", authMW(protected))
 	if enrichmentHandler != nil {
 		mux.Handle("/admin/api/catalog/enrich", authMW(protected))
 		mux.Handle("/admin/api/catalog/enrich-v2", authMW(protected))

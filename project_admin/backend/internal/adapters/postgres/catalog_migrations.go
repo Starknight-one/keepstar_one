@@ -205,6 +205,25 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`DROP INDEX IF EXISTS idx_catalog_mp_short_name;`,
 	}
 
+	// pipeline_traces table (idempotent, same as chat backend)
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS pipeline_traces (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			session_id TEXT NOT NULL,
+			query TEXT NOT NULL,
+			turn_id TEXT,
+			timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			trace_data JSONB NOT NULL,
+			total_ms INTEGER NOT NULL DEFAULT 0,
+			cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+			error TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_pipeline_traces_timestamp
+			ON pipeline_traces(timestamp DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_pipeline_traces_session_id
+			ON pipeline_traces(session_id);`,
+	)
+
 	for i, m := range migrations {
 		if _, err := c.pool.Exec(ctx, m); err != nil {
 			return fmt.Errorf("catalog migration %d failed: %w", i+1, err)

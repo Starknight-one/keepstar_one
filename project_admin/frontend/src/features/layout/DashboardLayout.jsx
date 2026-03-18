@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Package, Upload, Code, Settings, LogOut, FlaskConical } from 'lucide-react'
+import { Package, Upload, Code, Settings, LogOut, FlaskConical, Activity } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider.jsx'
 import './layout.css'
 
@@ -28,6 +28,9 @@ export default function DashboardLayout() {
           </NavLink>
           <NavLink to="/testbench" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <FlaskConical size={18} /> Testbench
+          </NavLink>
+          <NavLink to="/traces" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+            <Activity size={18} /> Traces
           </NavLink>
           <NavLink to="/settings" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Settings size={18} /> Settings

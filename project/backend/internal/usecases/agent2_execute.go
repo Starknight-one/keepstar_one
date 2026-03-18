@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -39,6 +40,13 @@ type Agent2ExecuteResponse struct {
 	TemplateJSON string   `json:"templateJson"`
 	MetaCount    int      `json:"metaCount"`
 	MetaFields   []string `json:"metaFields"`
+	// Trace enrichment
+	SystemPrompt      string                 `json:"systemPrompt,omitempty"`
+	SystemPromptChars int                    `json:"systemPromptChars,omitempty"`
+	ToolInput         string                 `json:"toolInput,omitempty"`
+	ToolBreakdown     map[string]interface{} `json:"toolBreakdown,omitempty"`
+	MessageCount      int                    `json:"messageCount,omitempty"`
+	ToolDefCount      int                    `json:"toolDefCount,omitempty"`
 }
 
 // Agent2ExecuteUseCase executes Agent 2 (Preset Selector)
@@ -256,18 +264,27 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	)
 
 	response := &Agent2ExecuteResponse{
-		Usage:      llmResp.Usage,
-		LatencyMs:  int(time.Since(start).Milliseconds()),
-		LLMCallMs:  llmDuration,
-		PromptSent: userPrompt,
-		MetaCount:  state.Current.Meta.Count,
-		MetaFields: state.Current.Meta.Fields,
+		Usage:             llmResp.Usage,
+		LatencyMs:         int(time.Since(start).Milliseconds()),
+		LLMCallMs:         llmDuration,
+		PromptSent:        userPrompt,
+		MetaCount:         state.Current.Meta.Count,
+		MetaFields:        state.Current.Meta.Fields,
+		SystemPrompt:      systemPrompt,
+		SystemPromptChars: len(systemPrompt),
+		MessageCount:      len(messages),
+		ToolDefCount:      len(toolDefs),
 	}
 
 	// Execute tool calls — tools create deltas via zone-write internally
 	for _, toolCall := range llmResp.ToolCalls {
 		response.ToolCalled = true
 		response.ToolName = toolCall.Name
+
+		// Capture tool input for tracing
+		if inputJSON, err := json.Marshal(toolCall.Input); err == nil {
+			response.ToolInput = string(inputJSON)
+		}
 
 		uc.log.Debug("tool_call_received",
 			"tool", toolCall.Name,
@@ -311,6 +328,9 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		uc.log.ToolExecuted(toolCall.Name, req.SessionID, result.Content, toolDuration)
 
 		response.RawResponse = result.Content
+		if result.Metadata != nil {
+			response.ToolBreakdown = result.Metadata
+		}
 
 		// Tool writes formation to state
 		if result.IsError {

@@ -226,19 +226,25 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 
 	// Fill Agent2 trace
 	trace.Agent2 = &domain.AgentTrace{
-		Name:         "agent2",
-		LLMMs:        agent2Resp.LLMCallMs,
-		TotalMs:      agent2Resp.LatencyMs,
-		Model:        agent2Resp.Usage.Model,
-		InputTokens:  agent2Resp.Usage.InputTokens,
-		OutputTokens: agent2Resp.Usage.OutputTokens,
-		CacheRead:    agent2Resp.Usage.CacheReadInputTokens,
-		CacheWrite:   agent2Resp.Usage.CacheCreationInputTokens,
-		CostUSD:      agent2Resp.Usage.CostUSD,
-		ToolName:     agent2Resp.ToolName,
-		ToolResult:   agent2Resp.RawResponse,
-		PromptSent:   agent2Resp.PromptSent,
-		RawResponse:  agent2Resp.RawResponse,
+		Name:              "agent2",
+		LLMMs:             agent2Resp.LLMCallMs,
+		TotalMs:           agent2Resp.LatencyMs,
+		Model:             agent2Resp.Usage.Model,
+		InputTokens:       agent2Resp.Usage.InputTokens,
+		OutputTokens:      agent2Resp.Usage.OutputTokens,
+		CacheRead:         agent2Resp.Usage.CacheReadInputTokens,
+		CacheWrite:        agent2Resp.Usage.CacheCreationInputTokens,
+		CostUSD:           agent2Resp.Usage.CostUSD,
+		SystemPrompt:      agent2Resp.SystemPrompt,
+		SystemPromptChars: agent2Resp.SystemPromptChars,
+		ToolName:          agent2Resp.ToolName,
+		ToolInput:         agent2Resp.ToolInput,
+		ToolResult:        agent2Resp.RawResponse,
+		ToolBreakdown:     agent2Resp.ToolBreakdown,
+		MessageCount:      agent2Resp.MessageCount,
+		ToolDefCount:      agent2Resp.ToolDefCount,
+		PromptSent:        agent2Resp.PromptSent,
+		RawResponse:       agent2Resp.RawResponse,
 	}
 
 	// Step 3: Get formation from state (built by Agent 2 tool call)
@@ -292,6 +298,23 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 					break
 				}
 			}
+		}
+		// Widget details
+		for _, w := range formation.Widgets {
+			wt := domain.WidgetTrace{
+				ID:        w.ID,
+				Template:  w.Template,
+				Size:      string(w.Size),
+				AtomCount: len(w.Atoms),
+			}
+			if w.EntityRef != nil {
+				wt.EntityRef = w.EntityRef.ID
+			}
+			ft.Widgets = append(ft.Widgets, wt)
+		}
+		// Full formation JSON (cap at 100KB)
+		if raw, err := json.Marshal(formation); err == nil && len(raw) < 100_000 {
+			ft.FullJSON = raw
 		}
 		trace.FormationResult = ft
 	}

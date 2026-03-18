@@ -4,6 +4,104 @@
 
 ---
 
+## Alpha 0.0.4 — Engine V2: Metadata-Driven Visual Assembly — 2026-03-18
+
+Полная замена visual assembly engine. 6 фаз, ~3500 LOC нового кода (backend + frontend).
+Активируется через `ENGINE_VERSION=v2` + `AGENT2_PROMPT_VERSION=v2` в `.env`. По умолчанию — v1.
+Полная спецификация: `docs/ENGINE_V2_IMPLEMENTATION.md`.
+
+### Что решает:
+- Хардкод 14 полей → DB-driven `field_definitions` (22 поля, расширяемо per-tenant)
+- Единый `display` string → раздельные `TextStyle` (типография) + `WrapperConfig` (контейнер)
+- Плоские `Zone[]` → рекурсивное `LayoutNode` дерево (row/column/flow/span)
+- Пиксели в промптах → семантические токены (`fontSize: "lg"`, `fontWeight: "bold"`)
+- Switch-case field access → `ProductToMap`/`ServiceToMap` + `GenericFieldGetter`
+
+### Фазы:
+- **Phase 0**: `catalog.field_definitions` таблица + seed, `FieldDefinitionPort`, postgres adapter, generic field access
+- **Phase 1**: `AtomV2` (textStyle/wrapper), `Rigidity` (locked/preferred/flexible), `LayoutNode`, `DesignTokensV2`
+- **Phase 2**: `EngineV2.Execute()` — 10-step pipeline, `AutoLayout`, `BudgetDown`/`NeedsUp`, 15 правил на 5 стыках
+- **Phase 3**: `executeV2` в visual_assembly tool, `convertV1ParamsToV2`, `PresetV2Registry` (5 пресетов)
+- **Phase 4**: `Agent2ToolSystemPromptV2` (токены+лейблы), `BuildAgent2ToolPromptV2(fieldLabels)`, feature flag
+- **Phase 5**: `AtomV2Renderer.jsx`, `LayoutTreeRenderer.jsx`, `GenericCardV2Template.jsx`, v2 routing
+- **Phase 6**: `NewRegistryV2`, wiring в `main.go`, env-based activation
+
+### Ключевые файлы (куда смотреть для доработки):
+
+**Backend engine (бизнес-логика V2):**
+- `engine/engine_v2.go` — 10-step pipeline, `DisplayToTextStyleWrapper`
+- `engine/auto_layout.go` — `AutoLayout` (группировка атомов в layout tree)
+- `engine/rules.go` — 15 constraint rules (atom, widget, cross-widget, junction)
+- `engine/layout_pass.go` — `BudgetDown`/`NeedsUp` (двупроходный layout)
+- `engine/tokens.go` — `DesignTokensV2` (fontSize, fontWeight, spacing)
+- `engine/compat.go` — v2→v1 конвертеры (AtomV2ToLegacy, LayoutToZones)
+
+**Backend tool/prompt:**
+- `tools/tool_visual_assembly.go` — `executeV2()` (строки ~645+), `convertV1ParamsToV2`
+- `prompts/prompt_compose_widgets.go` — `Agent2ToolSystemPromptV2`, `BuildAgent2ToolPromptV2`
+- `usecases/agent2_execute.go` — `NewAgent2ExecuteUseCaseV2`, `loadFieldLabels`
+
+**Backend domain/infra:**
+- `domain/atom_entity.go` — `AtomV2`, `Rigidity`, `TextStyle`, `WrapperConfig`
+- `domain/layout_entity.go` — `LayoutNode`, `LayoutChild`, `ActionDef`, `WidgetStates`
+- `domain/preset_v2_entity.go` — `PresetV2`, `PresetV2Field`
+- `presets/preset_v2.go` — `PresetV2Registry` (5 пресетов)
+- `ports/field_definition_port.go` — `FieldDefinitionPort`
+- `adapters/postgres/field_definition_adapter.go` — postgres impl
+
+**Frontend V2 rendering:**
+- `entities/atom/AtomV2Renderer.jsx` — textStyle→CSS, wrapper→component (10 wrapper types)
+- `entities/atom/AtomV2.css` — стили для всех wrappers + layout tree
+- `entities/widget/templates/LayoutTreeRenderer.jsx` — рекурсивный рендер LayoutNode
+- `entities/widget/templates/GenericCardV2Template.jsx` — v2 card template
+- `entities/widget/WidgetRenderer.jsx` — v2 routing (`widget.layout || widget.atomsV2`)
+- `widget.jsx` — **ВАЖНО**: CSS для Shadow DOM, все `?inline` импорты здесь
+
+### Известные проблемы (исправлено):
+- CSS `AtomV2.css` не попадал в Shadow DOM бандл → добавлен `?inline` импорт в `widget.jsx`
+- Двойная hero-картинка → `LayoutTreeRenderer` теперь пропускает hero nodes через `skipHero`
+- Hover ломал фон → убран `var(--hover-background, inherit)`
+
+### Тесты:
+- 12 тестов в `engine/engine_v2_test.go`
+- Pre-existing failures в tools/usecases (UpdateActions mock) — НЕ связано с V2
+
+---
+
+## Alpha 0.0.4a — Actions System + Widget Templates Polish — 2026-03-18
+
+Actions (like/cart) + улучшения шаблонов виджетов.
+
+### Что сделано:
+- **Actions system:** like, cart — `ActionHandler`, `ActionContext` (frontend), `action_execute.go`
+- **Widget templates:** favorite button, cart button, image carousel во всех карточках
+- **State:** `UpdateActions` port + postgres adapter + migration
+- **Agent1:** minor prompt + test adjustments
+- **Frontend:** backgroundSync, sessionCache, apiClient improvements
+
+### Файлы:
+- `handlers/handler_action.go`, `usecases/action_execute.go`, `usecases/action_view.go`
+- `frontend/src/features/actions/` — ActionContext, ActionToolbar, CartView, LikedView, actionCache
+
+---
+
+## Admin Widget Embed Fix — 2026-03-18
+
+Embed code в админке генерировался без `data-api` и с относительным путём `/widget.js`.
+
+### Что исправлено:
+- Admin config: добавлен `CHAT_API_URL` env var
+- Widget-config endpoint возвращает `chatApiUrl`
+- WidgetPage генерирует JS-сниппет с `createElement` + полными URL + `data-api`
+- **ВАЖНО**: На Railway для admin нужна переменная `CHAT_API_URL=https://chat-production-005e.up.railway.app/api/v1`
+
+### Файлы:
+- `project_admin/backend/internal/config/config.go` — `ChatAPIURL`
+- `project_admin/backend/cmd/server/main.go` — widget-config endpoint
+- `project_admin/frontend/src/features/widget/WidgetPage.jsx` — embed code generation
+
+---
+
 ## Alpha 0.0.3 — Engine Layer Extraction — 2026-03-01
 
 Рефакторинг: вынос бизнес-логики из `tools/` в `internal/engine/`. Гексагональная архитектура восстановлена — tools/ содержит только LLM tool адаптеры.
