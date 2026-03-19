@@ -62,16 +62,18 @@ func AutoLayout(atoms []domain.AtomV2) *domain.LayoutNode {
 
 	// Build root layout (vertical column of groups)
 	root := &domain.LayoutNode{
-		Type: domain.LayoutNodeColumn,
-		Gap:  "sm",
-		Name: "root",
+		Type:    domain.LayoutNodeColumn,
+		Gap:     "sm",
+		Name:    "root",
+		Padding: "sm",
 	}
 
 	// Hero (span)
 	if len(heroIndices) > 0 {
 		heroNode := &domain.LayoutNode{
-			Type: domain.LayoutNodeSpan,
-			Name: "hero",
+			Type:         domain.LayoutNodeSpan,
+			Name:         "hero",
+			BorderRadius: "md",
 		}
 		for _, idx := range heroIndices {
 			heroNode.Children = append(heroNode.Children, domain.NewAtomChild(idx))
@@ -96,10 +98,11 @@ func AutoLayout(atoms []domain.AtomV2) *domain.LayoutNode {
 	priceRatingIndices := append(priceIndices, ratingIndices...)
 	if len(priceRatingIndices) > 0 {
 		priceNode := &domain.LayoutNode{
-			Type:  domain.LayoutNodeRow,
-			Gap:   "sm",
-			Align: "center",
-			Name:  "price-rating",
+			Type:         domain.LayoutNodeRow,
+			Gap:          "sm",
+			Align:        "center",
+			Name:         "price-rating",
+			Distribution: "between",
 		}
 		for _, idx := range priceRatingIndices {
 			priceNode.Children = append(priceNode.Children, domain.NewAtomChild(idx))
@@ -143,9 +146,10 @@ func AutoLayout(atoms []domain.AtomV2) *domain.LayoutNode {
 	// Buttons (row)
 	if len(buttonIndices) > 0 {
 		buttonNode := &domain.LayoutNode{
-			Type: domain.LayoutNodeRow,
-			Gap:  "sm",
-			Name: "actions",
+			Type:         domain.LayoutNodeRow,
+			Gap:          "sm",
+			Name:         "actions",
+			Distribution: "start",
 		}
 		for _, idx := range buttonIndices {
 			buttonNode.Children = append(buttonNode.Children, domain.NewAtomChild(idx))

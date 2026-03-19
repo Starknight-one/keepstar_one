@@ -368,6 +368,7 @@ CRITICAL: show vs hide decision:
 - layout: string — "grid" | "list" | "single" | "carousel" | "comparison" | "table"
 - size: string — "tiny" | "small" | "medium" | "large"
 - preset: string — preset name (see list below)
+- direction: string — "vertical" (default) | "horizontal" (image left, content right)
 - limit: number — max widgets (default 50)
 - offset: number — offset (default 0)
 - atoms: object — per-field overrides (keyed by field name), each with:
@@ -499,13 +500,6 @@ func BuildAgent2ToolPromptV2(
 			"visible_fields": screenCtx.Fields,
 		}
 	}
-
-	// Display meta
-	entityType := "product"
-	if meta.ProductCount == 0 && meta.ServiceCount > 0 {
-		entityType = "service"
-	}
-	input["display_meta"] = engine.GetDisplayMeta(entityType)
 
 	// User intent
 	if userQuery != "" {

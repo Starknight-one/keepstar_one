@@ -133,11 +133,13 @@ func main() {
 	presetRegistry := presets.NewPresetRegistry()
 	appLog.Info("preset_registry_initialized", "presets", presetRegistry.List())
 
-	// Initialize field definition adapter (v2 engine)
+	// Initialize field definition adapter and v2 preset registry
 	var fieldDefAdapter ports.FieldDefinitionPort
+	var presetV2Registry *presets.PresetV2Registry
 	engineVersion := os.Getenv("ENGINE_VERSION") // "v1" or "v2"
 	if dbClient != nil && engineVersion == "v2" {
 		fieldDefAdapter = postgres.NewFieldDefinitionAdapter(dbClient)
+		presetV2Registry = presets.NewPresetV2Registry()
 		appLog.Info("field_definition_adapter_initialized", "engine_version", "v2")
 	}
 
@@ -145,7 +147,7 @@ func main() {
 	var toolRegistry *tools.Registry
 	if stateAdapter != nil && catalogAdapter != nil {
 		if engineVersion == "v2" && fieldDefAdapter != nil {
-			toolRegistry = tools.NewRegistryV2(stateAdapter, catalogAdapter, presetRegistry, embeddingClient, fieldDefAdapter, engineVersion)
+			toolRegistry = tools.NewRegistryV2(stateAdapter, catalogAdapter, presetRegistry, embeddingClient, fieldDefAdapter, presetV2Registry, engineVersion)
 		} else {
 			toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, embeddingClient)
 		}

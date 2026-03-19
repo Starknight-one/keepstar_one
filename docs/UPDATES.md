@@ -4,6 +4,110 @@
 
 ---
 
+## V2 Engine Completion — Участок 1+2 — 2026-03-20
+
+Двойной участок: движок оживлён (Участок 1) + tool schema переведена на V2-нативную (Участок 2).
+
+### Участок 1 — Движок оживлён
+
+V2 движок существовал но не применял пресеты, не обрабатывал atom overrides, не конвертировал format/media/containers/distribution. Исправлено:
+
+**Engine pipeline fixes:**
+- `applyPresetV2Fields` — preset TextStyle/Wrapper/Format/Slot теперь реально мержится в атомы
+- `applyAtomOverrides` — agent atom overrides (textStyle, wrapper, format, color, rigidity) применяются
+- `applyDefaultMediaStyle` — image atoms получают AspectRatio/ObjectFit по размеру виджета
+- `DisplayToTextStyleWrapper` — 25+ маппингов legacy display → TextStyle+WrapperConfig
+- `applyAtomV2Constraints` — lineClamp defaults (title=2, description=4, body=3)
+- `ValidateImageURL` — фильтрация невалидных image URLs
+
+**Domain расширения:**
+- `AtomV2.MediaStyle` — aspectRatio, objectFit для image/video
+- `LayoutNode` — `Spacing`, `AlignItems`, `JustifyContent` поля для flex-контроля
+- `DesignTokensV2` — `SpacingScale`, `RadiusScale`, `MediaDefaults`
+
+**Auto Layout:**
+- Row/column группировка по слотам (hero→row, badges→row, title→row, price+rating→row, etc.)
+- Flex-свойства: `spacing`, `alignItems`, `justifyContent` на группах
+
+**Frontend:**
+- `AtomV2Renderer.jsx` — wrapper rendering (badge, tag, pill, button, progress, link, alert, avatar, tooltip)
+- `LayoutTreeRenderer.jsx` — рекурсивный рендер с flex properties, image carousel для hero nodes
+
+**Presets:**
+- 5 V2 пресетов с полными TextStyle/Wrapper/Slot/Priority/Rigidity: `product_card_grid`, `product_card_detail`, `product_row`, `service_card`, `service_detail`
+
+**Engine tests:**
+- 10 тестов: empty input, single/multi products, field definitions, show/hide, V1 compat, presets, atom overrides, media style, preset+override combo
+
+### Участок 2 — V2-нативная tool schema
+
+Проблема: Agent2 видел V1 tool schema (18 параметров: display, color, shape, layer, anchor...), а V2 движок принимал AgentInstructions с atoms map. Между ними — `convertV1ParamsToV2` костыль.
+
+**Chunk 2 — V1 код извлечён в отдельный файл:**
+- Новый `tool_visual_assembly_v1.go`: `definitionV1()`, `executeV1()`, `validateInput()`, `isValidHex()`, `layoutKeywords`
+- Главный файл стал чистым роутером v1/v2
+
+**Chunk 1 — V2 schema + direct parser:**
+- `definitionV2()` — V2-нативная schema с `atoms` параметром, без V1-only параметров (display, color, shape, layer, anchor, place, compose, conditional, format)
+- `parseV2Input()` — прямой парсинг в `AgentInstructions` (без bridge через convertV1ParamsToV2)
+- `parseAtomOverride()` — парсинг textStyle/wrapper/format/color/rigidity из JSON
+- `executeV2()` упрощён — нет validateInput для V1, нет V1-only maps, пустые maps в ApplyPostProcessing
+- `convertV1ParamsToV2()` **удалён**
+
+**Chunk 3 — Prompt alignment:**
+- Добавлен `direction` в PARAMETERS секцию V2 промпта (был в schema, отсутствовал в промпте)
+- Убран `display_meta` из `BuildAgent2ToolPromptV2` (V2 не нужны V1 display hints)
+
+### V2 Schema (что видит Agent2)
+
+```
+visual_assembly:
+  preset:    string (5 V2 пресетов)
+  layout:    grid/list/single/carousel/comparison/table
+  size:      tiny/small/medium/large
+  direction: vertical/horizontal
+  show:      string[]
+  hide:      string[]
+  order:     string[]
+  limit:     number
+  offset:    number
+  atoms:     object (per-field overrides)
+    {field}: { textStyle, wrapper, format, color, rigidity }
+```
+
+**Убрано из V2** (V1-only): display, color (top-level), format (top-level), shape, layer, anchor, place, compose, conditional.
+
+### Файлы
+
+**Новые:**
+- `tools/tool_visual_assembly_v1.go` — V1 код изолирован
+
+**Изменённые (Участок 2):**
+- `tools/tool_visual_assembly.go` — чистый роутер + V2 schema + V2 parser + V2 execute
+- `prompts/prompt_compose_widgets.go` — direction в промпте, убран display_meta
+
+**Изменённые (Участок 1 — ранее не закоммичено):**
+- `engine/engine_v2.go` — applyPresetV2Fields, applyAtomOverrides, applyDefaultMediaStyle, DisplayToTextStyleWrapper
+- `engine/auto_layout.go` — row/column группировка, flex properties
+- `engine/tokens.go` — SpacingScale, RadiusScale, MediaDefaults
+- `engine/engine_v2_test.go` — 10 тестов
+- `domain/atom_entity.go` — MediaStyle struct
+- `domain/layout_entity.go` — Spacing, AlignItems, JustifyContent
+- `presets/preset_v2.go` — 5 полных пресетов
+- `tools/tool_registry.go` — minor cleanup
+- `cmd/server/main.go` — wiring
+- `frontend/src/entities/atom/AtomV2Renderer.jsx` — wrapper rendering
+- `frontend/src/entities/widget/templates/LayoutTreeRenderer.jsx` — flex layout + hero carousel
+
+### Верификация
+
+- `go build ./...` ✓
+- `go test ./internal/engine/... ./internal/tools/... ./internal/domain/...` ✓
+- `ENGINE_VERSION=v1`: V1 schema без изменений, V1 execute path работает
+- `ENGINE_VERSION=v2`: V2 schema с `atoms`, прямой парсинг, без bridge
+
+---
+
 ## Аудит V2 Engine — 2026-03-20
 
 Полный аудит V2 движка: сравнение оригинальной спеки (`design_system_architecture_final.md`) с реализацией. Обнаружен значительный разрыв между спецификацией и реальным состоянием.

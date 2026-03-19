@@ -47,6 +47,9 @@ export function AtomV2Renderer({ atom }) {
   return content;
 }
 
+const LINE_HEIGHT_TOKENS = { tight: 1.25, normal: 1.5, relaxed: 1.625, loose: 2 };
+const LETTER_SPACING_TOKENS = { tight: '-0.025em', normal: '0', wide: '0.05em' };
+
 function resolveTextStyle(ts) {
   if (!ts) return {};
   const style = {};
@@ -64,6 +67,12 @@ function resolveTextStyle(ts) {
   }
   if (ts.textTransform) {
     style.textTransform = ts.textTransform;
+  }
+  if (ts.lineHeight) {
+    style.lineHeight = LINE_HEIGHT_TOKENS[ts.lineHeight] || ts.lineHeight;
+  }
+  if (ts.letterSpacing) {
+    style.letterSpacing = LETTER_SPACING_TOKENS[ts.letterSpacing] || ts.letterSpacing;
   }
   if (ts.lineClamp && ts.lineClamp > 0) {
     style.display = '-webkit-box';
@@ -125,7 +134,16 @@ function renderV2Content(formatted, atom, textStyles) {
   // Image types
   if (atom.type === AtomType.IMAGE || atom.type === 'image') {
     const src = Array.isArray(atom.value) ? atom.value[0] : atom.value;
-    return <img src={src} alt={atom.label || ''} className="atom-v2-image" />;
+    const imgStyle = {};
+    if (atom.mediaStyle) {
+      if (atom.mediaStyle.aspectRatio) {
+        imgStyle.aspectRatio = atom.mediaStyle.aspectRatio.replace(':', '/');
+      }
+      if (atom.mediaStyle.objectFit) {
+        imgStyle.objectFit = atom.mediaStyle.objectFit;
+      }
+    }
+    return <img src={src} alt={atom.label || ''} className="atom-v2-image" style={Object.keys(imgStyle).length > 0 ? imgStyle : undefined} />;
   }
 
   // Icon

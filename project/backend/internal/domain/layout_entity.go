@@ -21,6 +21,15 @@ type LayoutNode struct {
 	GroupWrapper string         `json:"groupWrapper,omitempty"` // "collapse","carousel" (v1 scope)
 	Rigidity     Rigidity       `json:"rigidity,omitempty"`
 	Name         string         `json:"name,omitempty"`         // Optional semantic name for debugging
+
+	// Visual container properties
+	Background   string `json:"background,omitempty"`   // CSS background value
+	BorderRadius string `json:"borderRadius,omitempty"` // Token: "none","sm","md","lg","xl","full"
+	Shadow       string `json:"shadow,omitempty"`       // Token: "none","sm","md","lg"
+	Padding      string `json:"padding,omitempty"`      // Token: "none","xs","sm","md","lg","xl"
+
+	// Layout distribution
+	Distribution string `json:"distribution,omitempty"` // "start","center","end","between","around","evenly"
 }
 
 // LayoutChild is either an atom reference or a nested layout node.
@@ -28,6 +37,8 @@ type LayoutNode struct {
 type LayoutChild struct {
 	AtomIndex *int        `json:"atomIndex,omitempty"` // Index into widget's AtomV2 slice
 	Node      *LayoutNode `json:"node,omitempty"`      // Nested layout group
+	Grow      int         `json:"grow,omitempty"`      // flex-grow
+	SelfAlign string      `json:"selfAlign,omitempty"` // align-self override
 }
 
 // NewAtomChild creates a LayoutChild referencing an atom by index.

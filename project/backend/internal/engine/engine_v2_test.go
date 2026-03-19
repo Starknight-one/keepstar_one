@@ -308,3 +308,203 @@ func TestGenericFieldGetter(t *testing.T) {
 		t.Error("expected nil for unknown field")
 	}
 }
+
+func TestEngineV2_WithPreset(t *testing.T) {
+	e := NewEngineV2()
+	preset := &domain.PresetV2{
+		Name:        "test_preset",
+		EntityType:  domain.EntityTypeProduct,
+		Template:    "GenericCard",
+		DefaultMode: domain.FormationTypeGrid,
+		DefaultSize: domain.WidgetSizeMedium,
+		Fields: []domain.PresetV2Field{
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "xl", FontWeight: "bold", LetterSpacing: "tight"}, Slot: domain.AtomSlotTitle, Priority: 1},
+			{FieldName: "price", Format: domain.FormatCurrency, TextStyle: &domain.TextStyle{FontSize: "lg", FontWeight: "bold"}, Slot: domain.AtomSlotPrice, Priority: 2},
+		},
+	}
+
+	out := e.Execute(EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Preset:     preset,
+		Products: []domain.Product{
+			{ID: "p1", Name: "Test", Price: 2999, Images: []string{"https://example.com/img.jpg"}},
+		},
+	})
+
+	w := out.Formation.Widgets[0]
+	// Find name atom — should have preset's fontSize "xl"
+	for _, a := range w.AtomsV2 {
+		if a.FieldName == "name" {
+			if a.TextStyle == nil {
+				t.Fatal("name atom should have textStyle from preset")
+			}
+			if a.TextStyle.FontSize != "xl" {
+				t.Errorf("expected name fontSize=xl from preset, got %q", a.TextStyle.FontSize)
+			}
+			if a.TextStyle.LetterSpacing != "tight" {
+				t.Errorf("expected name letterSpacing=tight from preset, got %q", a.TextStyle.LetterSpacing)
+			}
+		}
+		if a.FieldName == "price" {
+			if a.Format != domain.FormatCurrency {
+				t.Errorf("expected price format=currency from preset, got %q", a.Format)
+			}
+		}
+	}
+}
+
+func TestEngineV2_AtomOverrides(t *testing.T) {
+	e := NewEngineV2()
+	out := e.Execute(EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Instructions: &AgentInstructions{
+			Atoms: map[string]AtomOverride{
+				"price": {Color: "red", Format: "currency"},
+				"name":  {TextStyle: &domain.TextStyle{FontSize: "3xl"}},
+			},
+		},
+		Products: []domain.Product{
+			{ID: "p1", Name: "Test", Price: 100, Images: []string{"https://example.com/img.jpg"}},
+		},
+	})
+
+	w := out.Formation.Widgets[0]
+	for _, a := range w.AtomsV2 {
+		if a.FieldName == "price" {
+			if a.TextStyle == nil || a.TextStyle.Color != "red" {
+				t.Errorf("expected price color=red from override, got %v", a.TextStyle)
+			}
+			if a.Format != "currency" {
+				t.Errorf("expected price format=currency from override, got %q", a.Format)
+			}
+		}
+		if a.FieldName == "name" {
+			if a.TextStyle == nil || a.TextStyle.FontSize != "3xl" {
+				t.Errorf("expected name fontSize=3xl from override, got %v", a.TextStyle)
+			}
+		}
+	}
+}
+
+func TestEngineV2_MediaStyleDefaults(t *testing.T) {
+	e := NewEngineV2()
+	out := e.Execute(EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Products: []domain.Product{
+			{ID: "p1", Name: "Test", Price: 100, Images: []string{"https://example.com/img.jpg"}},
+		},
+	})
+
+	w := out.Formation.Widgets[0]
+	for _, a := range w.AtomsV2 {
+		if a.Type == domain.AtomTypeImage {
+			if a.MediaStyle == nil {
+				t.Fatal("image atom should have default mediaStyle")
+			}
+			if a.MediaStyle.ObjectFit != "cover" {
+				t.Errorf("expected objectFit=cover, got %q", a.MediaStyle.ObjectFit)
+			}
+			if a.MediaStyle.AspectRatio == "" {
+				t.Error("expected non-empty aspectRatio")
+			}
+		}
+	}
+}
+
+func TestEngineV2_PresetThenOverride(t *testing.T) {
+	e := NewEngineV2()
+	preset := &domain.PresetV2{
+		Name:       "test",
+		EntityType: domain.EntityTypeProduct,
+		Fields: []domain.PresetV2Field{
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "xl", FontWeight: "semibold"}},
+			{FieldName: "price", TextStyle: &domain.TextStyle{FontSize: "lg", FontWeight: "bold"}},
+		},
+	}
+
+	out := e.Execute(EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Preset:     preset,
+		Instructions: &AgentInstructions{
+			Atoms: map[string]AtomOverride{
+				"name": {TextStyle: &domain.TextStyle{FontSize: "3xl"}}, // Override preset's xl → 3xl
+			},
+		},
+		Products: []domain.Product{
+			{ID: "p1", Name: "Test", Price: 100},
+		},
+	})
+
+	w := out.Formation.Widgets[0]
+	for _, a := range w.AtomsV2 {
+		if a.FieldName == "name" {
+			if a.TextStyle == nil {
+				t.Fatal("expected textStyle on name")
+			}
+			// fontSize should be overridden to 3xl (agent > preset)
+			if a.TextStyle.FontSize != "3xl" {
+				t.Errorf("expected fontSize=3xl (override wins), got %q", a.TextStyle.FontSize)
+			}
+			// fontWeight should remain semibold from preset (not wiped by override)
+			if a.TextStyle.FontWeight != "semibold" {
+				t.Errorf("expected fontWeight=semibold (preset preserved), got %q", a.TextStyle.FontWeight)
+			}
+		}
+	}
+}
+
+func TestAutoSelectPreset(t *testing.T) {
+	tests := []struct {
+		entityType domain.EntityType
+		layout     string
+		size       domain.WidgetSize
+		expected   string
+	}{
+		{domain.EntityTypeProduct, "grid", domain.WidgetSizeMedium, "product_card_grid"},
+		{domain.EntityTypeProduct, "single", domain.WidgetSizeLarge, "product_card_detail"},
+		{domain.EntityTypeProduct, "list", domain.WidgetSizeSmall, "product_row"},
+		{domain.EntityTypeService, "grid", domain.WidgetSizeMedium, "service_card"},
+		{domain.EntityTypeService, "single", domain.WidgetSizeLarge, "service_detail"},
+	}
+
+	for _, tt := range tests {
+		got := AutoSelectPreset(tt.entityType, tt.layout, tt.size)
+		if got != tt.expected {
+			t.Errorf("AutoSelectPreset(%s, %s, %s) = %q, want %q", tt.entityType, tt.layout, tt.size, got, tt.expected)
+		}
+	}
+}
+
+func TestAutoLayout_ContainerDefaults(t *testing.T) {
+	atoms := []domain.AtomV2{
+		{Type: domain.AtomTypeImage, FieldName: "images"},
+		{Type: domain.AtomTypeText, FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl"}},
+		{Type: domain.AtomTypeNumber, Subtype: domain.SubtypeCurrency, FieldName: "price", Slot: domain.AtomSlotPrice},
+		{Type: domain.AtomTypeNumber, Subtype: domain.SubtypeRating, FieldName: "rating"},
+	}
+
+	layout := AutoLayout(atoms)
+	if layout == nil {
+		t.Fatal("expected non-nil layout")
+	}
+
+	// Root should have padding
+	if layout.Padding != "sm" {
+		t.Errorf("expected root padding=sm, got %q", layout.Padding)
+	}
+
+	// Find hero node — should have borderRadius
+	for _, child := range layout.Children {
+		if child.Node != nil && child.Node.Name == "hero" {
+			if child.Node.BorderRadius != "md" {
+				t.Errorf("expected hero borderRadius=md, got %q", child.Node.BorderRadius)
+			}
+		}
+		// Find price-rating node — should have distribution=between
+		if child.Node != nil && child.Node.Name == "price-rating" {
+			if child.Node.Distribution != "between" {
+				t.Errorf("expected price-rating distribution=between, got %q", child.Node.Distribution)
+			}
+		}
+	}
+}

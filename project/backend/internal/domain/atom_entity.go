@@ -107,6 +107,14 @@ type TextStyle struct {
 	TextTransform  string `json:"textTransform,omitempty"`  // "none","uppercase","lowercase","capitalize"
 	LineClamp      int    `json:"lineClamp,omitempty"`      // Max visible lines (0 = unlimited)
 	Truncate       int    `json:"truncate,omitempty"`       // Max chars (0 = unlimited)
+	LineHeight     string `json:"lineHeight,omitempty"`     // "tight","normal","relaxed","loose"
+	LetterSpacing  string `json:"letterSpacing,omitempty"`  // "tight","normal","wide"
+}
+
+// MediaStyle defines styling for image/video atoms (engine v2).
+type MediaStyle struct {
+	AspectRatio string `json:"aspectRatio,omitempty"` // "1:1", "4:3", "16:9", "auto"
+	ObjectFit   string `json:"objectFit,omitempty"`   // "cover", "contain", "fill"
 }
 
 // WrapperConfig defines the visual container around an atom value (engine v2).
@@ -119,19 +127,20 @@ type WrapperConfig struct {
 
 // AtomV2 is the engine v2 atom with separated textStyle and wrapper.
 type AtomV2 struct {
-	Type      AtomType               `json:"type"`
-	Subtype   AtomSubtype            `json:"subtype,omitempty"`
-	Value     interface{}            `json:"value"`
-	Label     string                 `json:"label,omitempty"`     // Human-readable field label ("Price", "Brand")
-	Unit      string                 `json:"unit,omitempty"`      // "RUB", "USD", "min", "kg"
-	Format    AtomFormat             `json:"format,omitempty"`    // Value transform: "currency", "stars-compact"
-	TextStyle *TextStyle             `json:"textStyle,omitempty"` // Typography (separated from wrapper)
-	Wrapper   *WrapperConfig         `json:"wrapper,omitempty"`   // Visual container (separated from textStyle)
-	Slot      AtomSlot               `json:"slot,omitempty"`
-	Rigidity  Rigidity               `json:"rigidity,omitempty"`  // How freely engine can adjust this atom
-	FieldName string                 `json:"fieldName,omitempty"`
-	Priority  int                    `json:"priority,omitempty"`
-	Meta      map[string]interface{} `json:"meta,omitempty"`
+	Type       AtomType               `json:"type"`
+	Subtype    AtomSubtype            `json:"subtype,omitempty"`
+	Value      interface{}            `json:"value"`
+	Label      string                 `json:"label,omitempty"`      // Human-readable field label ("Price", "Brand")
+	Unit       string                 `json:"unit,omitempty"`       // "RUB", "USD", "min", "kg"
+	Format     AtomFormat             `json:"format,omitempty"`     // Value transform: "currency", "stars-compact"
+	TextStyle  *TextStyle             `json:"textStyle,omitempty"`  // Typography (separated from wrapper)
+	Wrapper    *WrapperConfig         `json:"wrapper,omitempty"`    // Visual container (separated from textStyle)
+	MediaStyle *MediaStyle            `json:"mediaStyle,omitempty"` // Image/video styling
+	Slot       AtomSlot               `json:"slot,omitempty"`
+	Rigidity   Rigidity               `json:"rigidity,omitempty"`   // How freely engine can adjust this atom
+	FieldName  string                 `json:"fieldName,omitempty"`
+	Priority   int                    `json:"priority,omitempty"`
+	Meta       map[string]interface{} `json:"meta,omitempty"`
 }
 
 // Legacy type mappings for backward compatibility

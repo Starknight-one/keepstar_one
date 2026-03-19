@@ -105,6 +105,25 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 	// Step 1: Build typed atoms for each entity
 	widgets := e.buildWidgets(input, fieldNames, resolved)
 
+	// Step 1.5: Apply PresetV2 field styling (preset overrides auto-defaults)
+	if input.Preset != nil {
+		for i := range widgets {
+			widgets[i].AtomsV2 = applyPresetV2Fields(widgets[i].AtomsV2, input.Preset)
+		}
+	}
+
+	// Step 2: Apply per-atom overrides from agent instructions (highest priority)
+	if input.Instructions != nil && len(input.Instructions.Atoms) > 0 {
+		for i := range widgets {
+			widgets[i].AtomsV2 = applyAtomOverrides(widgets[i].AtomsV2, input.Instructions.Atoms)
+		}
+	}
+
+	// Step 2.5: Set default MediaStyle for image atoms
+	for i := range widgets {
+		applyDefaultMediaStyle(widgets[i].AtomsV2, resolved.Size)
+	}
+
 	// Steps 3-7: Apply constraints and layout passes
 	for i := range widgets {
 		// Step 3: Per-atom constraints
@@ -414,4 +433,153 @@ func applyInstructionOverrides(instr *AgentInstructions, fields []string, resolv
 	}
 
 	return fields, resolved
+}
+
+// mergeTextStyle merges src into dst (src overrides non-zero fields in dst).
+func mergeTextStyle(dst, src *domain.TextStyle) {
+	if src.FontSize != "" {
+		dst.FontSize = src.FontSize
+	}
+	if src.FontWeight != "" {
+		dst.FontWeight = src.FontWeight
+	}
+	if src.Color != "" {
+		dst.Color = src.Color
+	}
+	if src.TextDecoration != "" {
+		dst.TextDecoration = src.TextDecoration
+	}
+	if src.TextTransform != "" {
+		dst.TextTransform = src.TextTransform
+	}
+	if src.LineClamp > 0 {
+		dst.LineClamp = src.LineClamp
+	}
+	if src.Truncate > 0 {
+		dst.Truncate = src.Truncate
+	}
+	if src.LineHeight != "" {
+		dst.LineHeight = src.LineHeight
+	}
+	if src.LetterSpacing != "" {
+		dst.LetterSpacing = src.LetterSpacing
+	}
+}
+
+// applyPresetV2Fields applies PresetV2 field styling to atoms.
+// Preset values override auto-defaults but are overridden by agent instructions.
+func applyPresetV2Fields(atoms []domain.AtomV2, preset *domain.PresetV2) []domain.AtomV2 {
+	fieldMap := make(map[string]domain.PresetV2Field, len(preset.Fields))
+	for _, f := range preset.Fields {
+		fieldMap[f.FieldName] = f
+	}
+	for i := range atoms {
+		pf, ok := fieldMap[atoms[i].FieldName]
+		if !ok {
+			continue
+		}
+		// TextStyle: merge (preset overrides defaults, doesn't wipe)
+		if pf.TextStyle != nil {
+			if atoms[i].TextStyle == nil {
+				atoms[i].TextStyle = &domain.TextStyle{}
+			}
+			mergeTextStyle(atoms[i].TextStyle, pf.TextStyle)
+		}
+		// Wrapper: replace
+		if pf.Wrapper != nil {
+			atoms[i].Wrapper = pf.Wrapper
+		}
+		// Format: override if set
+		if pf.Format != "" {
+			atoms[i].Format = pf.Format
+		}
+		// Slot: override if set
+		if pf.Slot != "" {
+			atoms[i].Slot = pf.Slot
+		}
+		// Priority + Rigidity
+		atoms[i].Priority = pf.Priority
+		if pf.Rigidity != "" {
+			atoms[i].Rigidity = pf.Rigidity
+		}
+	}
+	return atoms
+}
+
+// applyAtomOverrides applies per-atom overrides from AgentInstructions.
+// These have the highest priority (agent explicitly requested).
+func applyAtomOverrides(atoms []domain.AtomV2, overrides map[string]AtomOverride) []domain.AtomV2 {
+	if len(overrides) == 0 {
+		return atoms
+	}
+	for i := range atoms {
+		ov, ok := overrides[atoms[i].FieldName]
+		if !ok {
+			continue
+		}
+		if ov.TextStyle != nil {
+			if atoms[i].TextStyle == nil {
+				atoms[i].TextStyle = &domain.TextStyle{}
+			}
+			mergeTextStyle(atoms[i].TextStyle, ov.TextStyle)
+		}
+		if ov.Wrapper != nil {
+			atoms[i].Wrapper = ov.Wrapper
+		}
+		if ov.Format != "" {
+			atoms[i].Format = domain.AtomFormat(ov.Format)
+		}
+		if ov.Color != "" {
+			if atoms[i].TextStyle == nil {
+				atoms[i].TextStyle = &domain.TextStyle{}
+			}
+			atoms[i].TextStyle.Color = ov.Color
+		}
+		if ov.Rigidity != "" {
+			atoms[i].Rigidity = ov.Rigidity
+		}
+	}
+	return atoms
+}
+
+// applyDefaultMediaStyle sets default MediaStyle for image atoms based on widget size.
+func applyDefaultMediaStyle(atoms []domain.AtomV2, size domain.WidgetSize) {
+	for i := range atoms {
+		if atoms[i].Type != domain.AtomTypeImage {
+			continue
+		}
+		if atoms[i].MediaStyle != nil {
+			continue // Already set (by preset or override)
+		}
+		switch size {
+		case domain.WidgetSizeLarge, "xl":
+			atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "16:9", ObjectFit: "cover"}
+		case domain.WidgetSizeMedium:
+			atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "4:3", ObjectFit: "cover"}
+		default: // small, tiny
+			atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "1:1", ObjectFit: "cover"}
+		}
+	}
+}
+
+// AutoSelectPreset chooses a default preset based on entity type, layout and size.
+// Used when the agent doesn't explicitly specify a preset.
+func AutoSelectPreset(entityType domain.EntityType, layout string, size domain.WidgetSize) string {
+	if entityType == domain.EntityTypeService {
+		switch {
+		case layout == "single" || size == domain.WidgetSizeLarge:
+			return "service_detail"
+		default:
+			return "service_card"
+		}
+	}
+	// Default: product
+	switch {
+	case layout == "single" || size == domain.WidgetSizeLarge:
+		return "product_card_detail"
+	case layout == "list":
+		return "product_row"
+	default:
+		return "product_card_grid"
+	}
 }

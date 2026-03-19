@@ -59,7 +59,7 @@ func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, prese
 
 // NewRegistryV2 creates a tool registry with v2 engine support.
 // If engineVersion is "v2" and fieldDefPort is provided, uses the v2 visual assembly tool.
-func NewRegistryV2(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry, embeddingPort ports.EmbeddingPort, fieldDefPort ports.FieldDefinitionPort, engineVersion string) *Registry {
+func NewRegistryV2(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry, embeddingPort ports.EmbeddingPort, fieldDefPort ports.FieldDefinitionPort, presetV2Registry *presets.PresetV2Registry, engineVersion string) *Registry {
 	r := &Registry{
 		tools:          make(map[string]ToolExecutor),
 		statePort:      statePort,
@@ -75,7 +75,7 @@ func NewRegistryV2(statePort ports.StatePort, catalogPort ports.CatalogPort, pre
 
 	// Render tools (Agent2) — v1 or v2 based on engine version
 	if engineVersion == "v2" && fieldDefPort != nil {
-		r.Register(NewVisualAssemblyToolV2(statePort, presetRegistry, fieldDefPort, engineVersion))
+		r.Register(NewVisualAssemblyToolV2(statePort, presetRegistry, presetV2Registry, fieldDefPort, engineVersion))
 	} else {
 		r.Register(NewVisualAssemblyTool(statePort, presetRegistry))
 	}

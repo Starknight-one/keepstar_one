@@ -39,7 +39,7 @@ func (r *PresetV2Registry) registerDefaults() {
 		DefaultSize: domain.WidgetSizeMedium,
 		Fields: []domain.PresetV2Field{
 			{FieldName: "images", Slot: domain.AtomSlotHero, Priority: 0, Rigidity: domain.RigidityPreferred},
-			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold", LetterSpacing: "tight"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
 			{FieldName: "brand", Wrapper: &domain.WrapperConfig{Type: "tag"}, Slot: domain.AtomSlotPrimary, Priority: 4, Rigidity: domain.RigidityFlexible},
 			{FieldName: "price", Format: domain.FormatCurrency, TextStyle: &domain.TextStyle{FontSize: "lg", FontWeight: "bold"}, Slot: domain.AtomSlotPrice, Priority: 2, Rigidity: domain.RigidityPreferred},
 			{FieldName: "rating", Format: domain.FormatStarsCompact, TextStyle: &domain.TextStyle{FontSize: "sm"}, Slot: domain.AtomSlotPrimary, Priority: 3, Rigidity: domain.RigidityFlexible},
@@ -55,12 +55,12 @@ func (r *PresetV2Registry) registerDefaults() {
 		DefaultSize: domain.WidgetSizeLarge,
 		Fields: []domain.PresetV2Field{
 			{FieldName: "images", Slot: domain.AtomSlotHero, Priority: 0, Rigidity: domain.RigidityPreferred},
-			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold", LetterSpacing: "tight"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
 			{FieldName: "brand", Wrapper: &domain.WrapperConfig{Type: "tag"}, Slot: domain.AtomSlotPrimary, Priority: 4, Rigidity: domain.RigidityFlexible},
 			{FieldName: "category", Wrapper: &domain.WrapperConfig{Type: "tag"}, Slot: domain.AtomSlotPrimary, Priority: 5, Rigidity: domain.RigidityFlexible},
 			{FieldName: "price", Format: domain.FormatCurrency, TextStyle: &domain.TextStyle{FontSize: "xl", FontWeight: "bold"}, Slot: domain.AtomSlotPrice, Priority: 2, Rigidity: domain.RigidityPreferred},
 			{FieldName: "rating", Format: domain.FormatStarsCompact, TextStyle: &domain.TextStyle{FontSize: "sm"}, Slot: domain.AtomSlotPrimary, Priority: 3, Rigidity: domain.RigidityFlexible},
-			{FieldName: "description", TextStyle: &domain.TextStyle{FontSize: "sm"}, Slot: domain.AtomSlotSecondary, Priority: 6, Rigidity: domain.RigidityFlexible},
+			{FieldName: "description", TextStyle: &domain.TextStyle{FontSize: "sm", LineHeight: "relaxed"}, Slot: domain.AtomSlotSecondary, Priority: 6, Rigidity: domain.RigidityFlexible},
 			{FieldName: "tags", Wrapper: &domain.WrapperConfig{Type: "tag"}, Slot: domain.AtomSlotSecondary, Priority: 7, Rigidity: domain.RigidityFlexible},
 			{FieldName: "stockQuantity", TextStyle: &domain.TextStyle{FontSize: "sm"}, Slot: domain.AtomSlotSecondary, Priority: 8, Rigidity: domain.RigidityFlexible},
 		},
@@ -88,7 +88,7 @@ func (r *PresetV2Registry) registerDefaults() {
 		DefaultSize: domain.WidgetSizeMedium,
 		Fields: []domain.PresetV2Field{
 			{FieldName: "images", Slot: domain.AtomSlotHero, Priority: 0, Rigidity: domain.RigidityPreferred},
-			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold", LetterSpacing: "tight"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
 			{FieldName: "provider", TextStyle: &domain.TextStyle{FontSize: "md"}, Slot: domain.AtomSlotPrimary, Priority: 4, Rigidity: domain.RigidityFlexible},
 			{FieldName: "duration", TextStyle: &domain.TextStyle{FontSize: "md"}, Slot: domain.AtomSlotPrimary, Priority: 5, Rigidity: domain.RigidityFlexible},
 			{FieldName: "price", Format: domain.FormatCurrency, TextStyle: &domain.TextStyle{FontSize: "lg", FontWeight: "bold"}, Slot: domain.AtomSlotPrice, Priority: 2, Rigidity: domain.RigidityPreferred},
@@ -105,13 +105,13 @@ func (r *PresetV2Registry) registerDefaults() {
 		DefaultSize: domain.WidgetSizeLarge,
 		Fields: []domain.PresetV2Field{
 			{FieldName: "images", Slot: domain.AtomSlotHero, Priority: 0, Rigidity: domain.RigidityPreferred},
-			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold", LetterSpacing: "tight"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
 			{FieldName: "provider", TextStyle: &domain.TextStyle{FontSize: "md"}, Slot: domain.AtomSlotPrimary, Priority: 4, Rigidity: domain.RigidityFlexible},
 			{FieldName: "duration", TextStyle: &domain.TextStyle{FontSize: "md"}, Slot: domain.AtomSlotPrimary, Priority: 5, Rigidity: domain.RigidityFlexible},
 			{FieldName: "availability", TextStyle: &domain.TextStyle{FontSize: "md"}, Slot: domain.AtomSlotPrimary, Priority: 6, Rigidity: domain.RigidityFlexible},
 			{FieldName: "price", Format: domain.FormatCurrency, TextStyle: &domain.TextStyle{FontSize: "xl", FontWeight: "bold"}, Slot: domain.AtomSlotPrice, Priority: 2, Rigidity: domain.RigidityPreferred},
 			{FieldName: "rating", Format: domain.FormatStarsCompact, TextStyle: &domain.TextStyle{FontSize: "sm"}, Slot: domain.AtomSlotPrimary, Priority: 3, Rigidity: domain.RigidityFlexible},
-			{FieldName: "description", TextStyle: &domain.TextStyle{FontSize: "sm"}, Slot: domain.AtomSlotSecondary, Priority: 7, Rigidity: domain.RigidityFlexible},
+			{FieldName: "description", TextStyle: &domain.TextStyle{FontSize: "sm", LineHeight: "relaxed"}, Slot: domain.AtomSlotSecondary, Priority: 7, Rigidity: domain.RigidityFlexible},
 			{FieldName: "attributes", TextStyle: &domain.TextStyle{FontSize: "sm"}, Slot: domain.AtomSlotSecondary, Priority: 8, Rigidity: domain.RigidityFlexible},
 		},
 	})

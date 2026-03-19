@@ -46,15 +46,26 @@ export function LayoutTreeRenderer({ node, atoms }) {
 }
 
 function LayoutChild({ child, atoms }) {
+  const childStyle = {};
+  if (child.grow) childStyle.flexGrow = child.grow;
+  if (child.selfAlign) childStyle.alignSelf = child.selfAlign;
+  const hasStyle = Object.keys(childStyle).length > 0;
+
   // AtomIndex reference
   if (child.atomIndex != null) {
     const atom = atoms[child.atomIndex];
     if (!atom) return null;
+    if (hasStyle) {
+      return <div style={childStyle}><AtomV2Renderer atom={atom} /></div>;
+    }
     return <AtomV2Renderer atom={atom} />;
   }
 
   // Nested node
   if (child.node) {
+    if (hasStyle) {
+      return <div style={childStyle}><LayoutTreeRenderer node={child.node} atoms={atoms} /></div>;
+    }
     return <LayoutTreeRenderer node={child.node} atoms={atoms} />;
   }
 
@@ -102,6 +113,18 @@ function CarouselGroup({ node, atoms, children }) {
   );
 }
 
+const RADIUS_TOKENS = { none: '0', sm: '4px', md: '8px', lg: '12px', xl: '16px', full: '9999px' };
+const SHADOW_TOKENS = {
+  none: 'none',
+  sm: '0 1px 2px rgba(0,0,0,0.05)',
+  md: '0 4px 6px rgba(0,0,0,0.1)',
+  lg: '0 10px 15px rgba(0,0,0,0.1)',
+};
+const DISTRIBUTION_MAP = {
+  start: 'flex-start', center: 'center', end: 'flex-end',
+  between: 'space-between', around: 'space-around', evenly: 'space-evenly',
+};
+
 function buildNodeStyle(node) {
   const style = {};
 
@@ -134,6 +157,26 @@ function buildNodeStyle(node) {
   // Gap
   if (node.gap) {
     style.gap = resolveSpacing(node.gap) + 'px';
+  }
+
+  // Distribution (justify-content)
+  if (node.distribution) {
+    style.justifyContent = DISTRIBUTION_MAP[node.distribution] || node.distribution;
+  }
+
+  // Visual container properties
+  if (node.borderRadius) {
+    style.borderRadius = RADIUS_TOKENS[node.borderRadius] || node.borderRadius;
+    style.overflow = 'hidden';
+  }
+  if (node.shadow) {
+    style.boxShadow = SHADOW_TOKENS[node.shadow] || node.shadow;
+  }
+  if (node.padding) {
+    style.padding = resolveSpacing(node.padding) + 'px';
+  }
+  if (node.background) {
+    style.background = node.background;
   }
 
   return style;
