@@ -80,6 +80,12 @@ ALTER TABLE chat_session_state
     ADD COLUMN IF NOT EXISTS actions JSONB DEFAULT '{"likedIds":[],"cartItems":[]}';
 `
 
+// Agent2 tool call history for multi-turn rendering context
+const migrationAgent2History = `
+ALTER TABLE chat_session_state
+    ADD COLUMN IF NOT EXISTS agent2_history JSONB DEFAULT '[]';
+`
+
 // RunStateMigrations executes state-related migrations
 func (c *Client) RunStateMigrations(ctx context.Context) error {
 	migrations := []string{
@@ -90,6 +96,7 @@ func (c *Client) RunStateMigrations(ctx context.Context) error {
 		migrationConversationHistory,
 		migrationDeltaTurnID,
 		migrationActions,
+		migrationAgent2History,
 	}
 
 	for i, migration := range migrations {

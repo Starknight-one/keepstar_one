@@ -79,7 +79,13 @@ func (m *mockStatePort) UpdateTemplate(_ context.Context, _ string, template map
 func (m *mockStatePort) UpdateView(_ context.Context, _ string, _ domain.ViewState, _ []domain.ViewSnapshot, _ domain.DeltaInfo) (int, error) {
 	return 1, nil
 }
+func (m *mockStatePort) UpdateActions(_ context.Context, _ string, _ domain.StateActions, _ domain.DeltaInfo) (int, error) {
+	return 1, nil
+}
 func (m *mockStatePort) AppendConversation(_ context.Context, _ string, _ []domain.LLMMessage) error {
+	return nil
+}
+func (m *mockStatePort) AppendAgent2History(_ context.Context, _ string, _ []domain.LLMMessage) error {
 	return nil
 }
 func (m *mockStatePort) PushView(_ context.Context, _ string, _ *domain.ViewSnapshot) error {

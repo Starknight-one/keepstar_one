@@ -3,8 +3,10 @@
    ============================================================================= */
 
 .atom-v2-text {
-  display: inline;
+  display: block;
   font-family: inherit;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .atom-v2-image {

@@ -101,11 +101,29 @@ func (m *mockStatePort) UpdateView(ctx context.Context, sessionID string, view d
 	return step, nil
 }
 
+func (m *mockStatePort) UpdateActions(ctx context.Context, sessionID string, actions domain.StateActions, info domain.DeltaInfo) (int, error) {
+	if m.state != nil {
+		m.state.Actions = actions
+	}
+	delta := info.ToDelta()
+	step := len(m.deltas) + 1
+	delta.Step = step
+	m.deltas = append(m.deltas, *delta)
+	return step, nil
+}
+
 func (m *mockStatePort) AppendConversation(ctx context.Context, sessionID string, messages []domain.LLMMessage) error {
 	m.AppendConversationCalls++
 	m.LastConversation = messages
 	if m.state != nil {
 		m.state.ConversationHistory = messages
+	}
+	return nil
+}
+
+func (m *mockStatePort) AppendAgent2History(ctx context.Context, sessionID string, messages []domain.LLMMessage) error {
+	if m.state != nil {
+		m.state.Agent2History = messages
 	}
 	return nil
 }

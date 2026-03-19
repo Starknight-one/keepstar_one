@@ -79,6 +79,10 @@
   max-width: 400px;
 }
 
+.formation-single > .size-large {
+  max-width: 100%;
+}
+
 /* List mode */
 .formation-list {
   display: flex;
@@ -96,6 +100,24 @@
 .formation-list > *:nth-child(even) {
   background: #fafafa;
   border-radius: 8px;
+}
+
+/* P3: List mode — horizontal compact cards */
+.formation-list .generic-card-v2 {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.formation-list .layout-span {
+  width: 120px;
+  min-width: 120px;
+  max-width: 120px;
+}
+
+.formation-list .atom-v2-image {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
 }
 
 /* Comparison mode */

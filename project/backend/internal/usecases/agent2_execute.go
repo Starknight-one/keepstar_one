@@ -206,24 +206,16 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		userPrompt = prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx)
 	}
 
-	// Include recent user queries from conversation history for context (last 4 user messages max).
-	// Only take user messages with Content (skip assistant, tool_use, tool_result).
-	// Agent1 ConversationHistory contains tool_use/tool_result blocks from Agent1's tools,
-	// which would confuse Agent2 (it has different tools: render_* and freestyle).
+	// Agent2's own tool call history (last 2 turns = 4 messages: assistant:tool_use + user:tool_result × 2).
+	// This replaces the old approach of including Agent1's text user messages which caused stale parameters.
 	var messages []domain.LLMMessage
-	if len(state.ConversationHistory) > 0 {
-		var userMessages []domain.LLMMessage
-		for _, msg := range state.ConversationHistory {
-			if msg.Role == "user" && msg.Content != "" && msg.ToolResult == nil {
-				userMessages = append(userMessages, msg)
-			}
-		}
-		historyLimit := 4
-		start := len(userMessages) - historyLimit
+	if len(state.Agent2History) > 0 {
+		historyLimit := 4 // 2 turns × 2 messages (assistant:tool_use + user:tool_result)
+		start := len(state.Agent2History) - historyLimit
 		if start < 0 {
 			start = 0
 		}
-		messages = append(messages, userMessages[start:]...)
+		messages = append(messages, state.Agent2History[start:]...)
 	}
 	messages = append(messages, domain.LLMMessage{
 		Role:    "user",
@@ -337,6 +329,21 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		// Tool writes formation to state
 		if result.IsError {
 			return nil, fmt.Errorf("tool error: %s", result.Content)
+		}
+
+		// Save Agent2's tool call + result for multi-turn history
+		agent2Messages := append(state.Agent2History,
+			domain.LLMMessage{Role: "assistant", ToolCalls: llmResp.ToolCalls},
+			domain.LLMMessage{
+				Role: "user",
+				ToolResult: &domain.ToolResult{
+					ToolUseID: toolCall.ID,
+					Content:   result.Content,
+				},
+			},
+		)
+		if err := uc.statePort.AppendAgent2History(ctx, req.SessionID, agent2Messages); err != nil {
+			uc.log.Error("append_agent2_history_failed", "error", err)
 		}
 	}
 

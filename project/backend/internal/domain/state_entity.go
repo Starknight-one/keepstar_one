@@ -181,6 +181,7 @@ type SessionState struct {
 	ViewStack           []ViewSnapshot `json:"view_stack"`                    // Navigation history for back/forward
 	Actions             StateActions   `json:"actions"`                       // User actions (likes, cart)
 	ConversationHistory []LLMMessage   `json:"conversation_history,omitempty"` // LLM conversation history for caching
+	Agent2History       []LLMMessage   `json:"agent2_history,omitempty"`       // Agent2 tool call history for multi-turn rendering
 	Step                int            `json:"step"`                          // Current step number
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`

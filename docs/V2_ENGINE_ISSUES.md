@@ -1,63 +1,89 @@
 # V2 Engine — Known Issues & Future Work
 
-Дата: 2026-03-18. Источник: тестирование 15 запросов на production (Alpha 0.0.5).
+Обновлено: 2026-03-20. Три раунда: тестирование + полный аудит движка.
+
+> **Аудит V2 движка (2026-03-20)**: сравнение спеки с реализацией выявило что из 41 операции спеки реализовано ~13, tool schema — V1 интерфейс с костылём-конвертером, 7 из 18 параметров не работают в V2. Подробности: `docs/UPDATES.md` → "Аудит V2 Engine".
 
 ---
 
-## ИСПРАВЛЕНО (в этом цикле)
+## ИСПРАВЛЕНО (Alpha 0.0.6)
 
 ### 1. TenantSlug → tenant_id mismatch (fieldDefCount=0)
-`field_definition_adapter.go` делает `WHERE tenant_id = $1` со slug строкой ("hey-babes-cosmetics"), а `tenant_id` — UUID. Результат: 0 field definitions всегда → движок не знает поля каталога → detail view неполный (9 из 13 полей).
+`field_definition_adapter.go` делал `WHERE tenant_id = $1` со slug строкой, а `tenant_id` — UUID. Теперь JOIN на `catalog.tenants`, матчит slug или UUID. **fieldDefCount=13 на проде.**
 
 ### 2. Agent2 промпт: show vs hide семантика
-Agent2 шлёт `show=["name","price"]` когда пользователь говорит "ТОЛЬКО name и price". Show — additive (добавляет к дефолтам), а нужен hide (убирает всё кроме). Фикс: уточнить в промпте что "только X" = hide, "добавь X" = show.
+"Только X и Y" теперь корректно маппится на hide (убирает всё кроме), а не show. Добавлены примеры и CRITICAL блок в оба промпта (v1/v2).
 
 ### 3. Двойные hero-картинки
-GenericCardV2Template рендерит hero ImageCarousel отдельно + LayoutTreeRenderer рендерит тот же hero из layout tree. skipHero фильтр не срабатывает.
+GenericCardV2Template рендерил hero ImageCarousel + LayoutTreeRenderer рендерил hero из layout tree. Теперь ImageCarousel только в fallback (без layout tree), LayoutTreeRenderer единственный источник hero.
 
-### 4. C1 Rule удаляет явно запрошенные show-поля
-`rules.go` constraint C1 удаляет поля присутствующие менее чем в 70% виджетов. Если у части продуктов нет rating/description (null), C1 удаляет их даже когда Agent2 явно запросил через show. Фикс: exempt show-полей от C1.
-
----
-
-## ТРЕБУЕТ ПРОРАБОТКИ
-
-### A. MaxFields — ограничение количества полей на виджет
-**Проблема**: MaxFields (3 для small, 5 для medium, ~10 для large) жёстко режет количество атомов. Это сильно ограничивает возможности:
-- small карточка ВСЕГДА 3 поля — нельзя показать 4 даже если они влезают
-- Agent2 запрашивает 6 полей, MaxFields режет до 4 — пользователь не получает то что просил
-
-**Текущий workaround**: show-поля поднимают MaxFields до len(show). Но это хак — MaxFields как концепция слишком грубая.
-
-**Нужно подумать**:
-- Может MaxFields заменить на MaxArea (площадь)? Один image = 3 text полей
-- Может adaptive MaxFields на основе контента? Если поля короткие (brand="COSRX") — больше влезает
-- Может убрать жёсткий cap и оставить только CSS overflow?
-- Или MaxFields только для AUTO-выбора (дефолт), а явные show-поля всегда проходят?
-
-### B. Agent2 интерпретация запросов
-**Проблема**: Agent2 (Haiku) периодически неверно интерпретирует визуальные команды:
-- "крупными карточками" → послал comparison+limit=3 вместо grid+size=large. Грубая ошибка.
-- "каруселью" → не включил images в show (карусель без фоток)
-- Нет хорошего примера для "покажи крупнее" vs "сравни"
-
-**Что можно сделать**:
-- Больше примеров в промпте (особенно для "крупно", "мельче", "побольше")
-- Few-shot примеры неверных интерпретаций (anti-patterns)
-- Возможно валидация на уровне движка: если layout=comparison но нет явного "сравни" в запросе → warning
-- Перейти на более мощную модель для Agent2? (Sonnet вместо Haiku)
-
-### C. Comparison preset / layout выглядит плохо
-**Проблема**: comparison отображается как обычные карточки рядом, а не как сравнительная таблица. Нет:
-- Общих строк для одинаковых полей (цена vs цена рядом)
-- Выделения отличий
-- Таблично-строчной структуры
-
-**Нужно**: переделать ComparisonTemplate или сделать новый v2-comparison preset с табличным layout.
+### 4. C1 Rule удаляла явно запрошенные show-поля
+show-поля теперь protected от cross-widget normalization (C1 70% threshold).
 
 ---
 
-## Контекст тестирования
+## ИСПРАВЛЕНО (Стабилизация — фаза 1, uncommitted)
 
-Тестовые запросы и результаты — в трейсах на https://admin-production-4ae4.up.railway.app/traces
-Сессия 3c23736c (12 запросов), сессия ef229e2b (4 запроса), сессия e4a5b7d9 (3 запроса).
+### P1. Agent2 тянет контекст из предыдущих запросов — FIXED
+**Было**: Agent2 тащил show/hide/layout из предыдущих запросов через conversation history.
+**Фикс**: Заменена источник истории. Теперь `state.Agent2History` — отдельное JSONB поле с tool_use/tool_result самого Agent2 (не user-сообщения из Agent1). Лимит: 4 сообщения (2 турна). Agent2 видит свои прошлые вызовы и делает точные дельты.
+**Файлы**: `domain/state_entity.go`, `ports/state_port.go`, `adapters/postgres/postgres_state.go`, `adapters/postgres/state_migrations.go`, `usecases/agent2_execute.go`
+
+### P2. Description + пустые строки в данных — FIXED
+**Было**: пустые строки от отсутствующих полей ломали рендер.
+**Фикс**: engine_v2.go пропускает поля с пустыми строками. Добавлен LineClamp в `DisplayToTextStyleWrapper` для длинных текстов (h1/h2→2, h3/h4→3, body-sm→4). AtomV2.css — `display: block` + `word-break: break-word`.
+**Файлы**: `engine/engine_v2.go`, `entities/atom/AtomV2.css`
+
+### P3. List layout — фотки на весь экран — FIXED
+**Было**: list mode = карточки одна под одной, images 100% ширины.
+**Фикс**: CSS — list карточки `flex-direction: row`, images 120×120px (thumbnail), layout spans фиксированы на 120px.
+**Файл**: `entities/formation/Formation.css`
+
+### P4. Single/detail карточка не full-width — FIXED
+**Было**: size=large карточка ограничена max-width контейнера.
+**Фикс**: `.formation-single > .size-large { max-width: 100% }`.
+**Файл**: `entities/formation/Formation.css`
+
+---
+
+## ТРЕБУЕТ ПРОРАБОТКИ (не блокеры для демо)
+
+### A. MaxFields — ограничение количества полей
+MaxFields жёстко режет количество атомов (3 для small, 5 для medium). Show-поля теперь поднимают MaxFields, но сама концепция грубая.
+
+**Идеи**: MaxArea вместо MaxFields, adaptive по контенту, cap только для auto-выбора.
+
+### B. Agent2 интерпретация (помимо P1)
+- "Крупными карточками" → до фикса давал comparison. После фикса size=large работает, но контекст портит.
+- Позиционный выбор ("первый и два последних") не поддерживается — limit/offset не позволяет.
+- Compose ("карточка + карусель рядом") — Agent2 не использует параметр compose.
+
+### C. Comparison preset выглядит плохо
+Отображается как обычные карточки рядом. Нет: общих строк, выделения отличий, табличной структуры.
+
+### D. Table layout некрасивый
+Работает, но визуально "всратый" (цитата из тестирования).
+
+### E. Agent2 не имеет своей conversation history — SOLVED (P1 fix)
+Решено в рамках P1: `Agent2History` добавлена в state, накапливает tool_use + tool_result.
+
+### F. Нет полного LLM request в трейсах (observability)
+Трейсы записывают `promptSent`, `toolInput`, `toolResult` — но НЕ записывают полный LLM request: все messages (включая 4 user-сообщения из истории), system prompt, tool definitions, raw response. Приходится реверс-инжинирить из кода что агент видит.
+
+**Решение**: в `agent1_execute.go` и `agent2_execute.go` перед вызовом LLM логировать полный request (messages array, system prompt, tools). Сохранять в trace как `fullLLMRequest`. Тогда в админке видно ровно то что видит агент — никаких догадок.
+
+### G. Длинные названия продуктов — PARTIALLY SOLVED (P2 fix)
+LineClamp добавлен в `DisplayToTextStyleWrapper` (h1→2 строки, h3→3, body-sm→4). CSS `text-overflow: ellipsis` + `word-break: break-word` в AtomV2.css. Для полного решения может потребоваться truncate на уровне движка (не только CSS).
+
+---
+
+## Тестовые сессии
+
+| Сессия | Кол-во | Дата | Контекст |
+|--------|--------|------|----------|
+| e4a5b7d9 | 3 | 2026-03-18 | Первый тест, до enriched traces |
+| 3c23736c | 12 | 2026-03-18 | Основной тест Alpha 0.0.5 |
+| ef229e2b | 4 | 2026-03-18 | Второй тест Alpha 0.0.5 |
+| e160151c | 17 | 2026-03-18 | Тест Alpha 0.0.6 (после 4 фиксов) |
+
+Трейсы: https://admin-production-4ae4.up.railway.app/traces

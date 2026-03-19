@@ -48,6 +48,9 @@ type StatePort interface {
 	// AppendConversation updates conversation history (no delta — append-only for LLM cache)
 	AppendConversation(ctx context.Context, sessionID string, messages []domain.LLMMessage) error
 
+	// AppendAgent2History updates Agent2 tool call history (no delta — append-only for multi-turn rendering)
+	AppendAgent2History(ctx context.Context, sessionID string, messages []domain.LLMMessage) error
+
 	// PushView pushes a view snapshot onto the navigation stack
 	PushView(ctx context.Context, sessionID string, snapshot *domain.ViewSnapshot) error
 

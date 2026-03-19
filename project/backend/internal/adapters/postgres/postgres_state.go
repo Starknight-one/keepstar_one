@@ -67,16 +67,20 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 	if err != nil {
 		return nil, fmt.Errorf("marshal conversation history: %w", err)
 	}
+	agent2HistoryJSON, err := json.Marshal(state.Agent2History)
+	if err != nil {
+		return nil, fmt.Errorf("marshal agent2 history: %w", err)
+	}
 	actionsJSON, err := json.Marshal(state.Actions)
 	if err != nil {
 		return nil, fmt.Errorf("marshal actions: %w", err)
 	}
 
 	err = a.client.pool.QueryRow(ctx, `
-		INSERT INTO chat_session_state (session_id, current_data, current_meta, step, view_mode, view_stack, conversation_history, actions)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO chat_session_state (session_id, current_data, current_meta, step, view_mode, view_stack, conversation_history, agent2_history, actions)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, created_at, updated_at
-	`, sessionID, dataJSON, metaJSON, state.Step, state.View.Mode, viewStackJSON, conversationHistoryJSON, actionsJSON).Scan(
+	`, sessionID, dataJSON, metaJSON, state.Step, state.View.Mode, viewStackJSON, conversationHistoryJSON, agent2HistoryJSON, actionsJSON).Scan(
 		&state.ID, &state.CreatedAt, &state.UpdatedAt,
 	)
 	if err != nil {
@@ -93,17 +97,17 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 		defer endSpan()
 	}
 	var state domain.SessionState
-	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON, actionsJSON []byte
+	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON, agent2HistoryJSON, actionsJSON []byte
 	var viewMode *string
 
 	err := a.client.pool.QueryRow(ctx, `
 		SELECT id, session_id, current_data, current_meta, current_template,
-		       view_mode, view_focused, view_stack, conversation_history, actions, step, created_at, updated_at
+		       view_mode, view_focused, view_stack, conversation_history, agent2_history, actions, step, created_at, updated_at
 		FROM chat_session_state
 		WHERE session_id = $1
 	`, sessionID).Scan(
 		&state.ID, &state.SessionID, &dataJSON, &metaJSON, &templateJSON,
-		&viewMode, &viewFocusedJSON, &viewStackJSON, &conversationHistoryJSON, &actionsJSON,
+		&viewMode, &viewFocusedJSON, &viewStackJSON, &conversationHistoryJSON, &agent2HistoryJSON, &actionsJSON,
 		&state.Step, &state.CreatedAt, &state.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -148,6 +152,11 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 	if len(conversationHistoryJSON) > 0 {
 		if err := json.Unmarshal(conversationHistoryJSON, &state.ConversationHistory); err != nil {
 			a.log.Warn("unmarshal conversation history", "session_id", sessionID, "error", err)
+		}
+	}
+	if len(agent2HistoryJSON) > 0 {
+		if err := json.Unmarshal(agent2HistoryJSON, &state.Agent2History); err != nil {
+			a.log.Warn("unmarshal agent2 history", "session_id", sessionID, "error", err)
 		}
 	}
 	if len(actionsJSON) > 0 {
@@ -196,6 +205,10 @@ func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionSta
 	if err != nil {
 		return fmt.Errorf("marshal conversation history: %w", err)
 	}
+	agent2HistoryJSON, err := json.Marshal(state.Agent2History)
+	if err != nil {
+		return fmt.Errorf("marshal agent2 history: %w", err)
+	}
 	actionsJSON, err := json.Marshal(state.Actions)
 	if err != nil {
 		return fmt.Errorf("marshal actions: %w", err)
@@ -205,11 +218,11 @@ func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionSta
 		UPDATE chat_session_state
 		SET current_data = $1, current_meta = $2, current_template = $3,
 		    view_mode = $4, view_focused = $5, view_stack = $6,
-		    conversation_history = $7, actions = $8, step = $9, updated_at = NOW()
-		WHERE session_id = $10
+		    conversation_history = $7, agent2_history = $8, actions = $9, step = $10, updated_at = NOW()
+		WHERE session_id = $11
 	`, dataJSON, metaJSON, templateJSON,
 		state.View.Mode, viewFocusedJSON, viewStackJSON,
-		conversationHistoryJSON, actionsJSON, state.Step, state.SessionID)
+		conversationHistoryJSON, agent2HistoryJSON, actionsJSON, state.Step, state.SessionID)
 	if err != nil {
 		return fmt.Errorf("update state: %w", err)
 	}
@@ -379,6 +392,23 @@ func (a *StateAdapter) AppendConversation(ctx context.Context, sessionID string,
 	`, historyJSON, sessionID)
 	if err != nil {
 		return fmt.Errorf("append conversation: %w", err)
+	}
+	return nil
+}
+
+// AppendAgent2History updates Agent2 tool call history (no delta — append-only for multi-turn rendering)
+func (a *StateAdapter) AppendAgent2History(ctx context.Context, sessionID string, messages []domain.LLMMessage) error {
+	historyJSON, err := json.Marshal(messages)
+	if err != nil {
+		return fmt.Errorf("marshal agent2 history: %w", err)
+	}
+	_, err = a.client.pool.Exec(ctx, `
+		UPDATE chat_session_state
+		SET agent2_history = $1, updated_at = NOW()
+		WHERE session_id = $2
+	`, historyJSON, sessionID)
+	if err != nil {
+		return fmt.Errorf("append agent2 history: %w", err)
 	}
 	return nil
 }

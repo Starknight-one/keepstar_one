@@ -4,6 +4,148 @@
 
 ---
 
+## Аудит V2 Engine — 2026-03-20
+
+Полный аудит V2 движка: сравнение оригинальной спеки (`design_system_architecture_final.md`) с реализацией. Обнаружен значительный разрыв между спецификацией и реальным состоянием.
+
+### Оригинальная спека: 73 элемента системы
+
+- 41 уникальная операция (visual container, sizing, text, icon, media, layout, formation, container)
+- 17 специфичных (10 интерактивных обёрток + 7 групповых)
+- 15 правил (6 группа↔виджет + 5 cross-widget + 4 формация↔экран)
+- 3 режима пресетов (чистый / переопределения / фристайл)
+- 15 атомных обёрток (9 display + 6 interactive)
+- 8 групповых обёрток (v1 scope: collapse, carousel)
+
+### Что реализовано в V2 движке (domain + engine)
+
+**Архитектура — полная и рабочая:**
+- 10-step pipeline с 2-pass layout (BudgetDown/NeedsUp)
+- Rigidity система (locked/preferred/flexible)
+- 15 правил на 5 стыках (все реализованы в `engine/rules.go`)
+- LayoutNode рекурсивное дерево (row/column/flow/span)
+- AtomV2 с TextStyle/WrapperConfig separation
+- DB-driven field definitions (22 поля, расширяемо per-tenant)
+- Design tokens (fontSize, fontWeight, spacing, radius)
+- Compat converters (V2→V1)
+- Фронтенд: LayoutTreeRenderer (рекурсивный), AtomV2Renderer (textStyle→CSS, wrapper→component)
+
+**Операции из спеки — покрытие ~13 из 41:**
+
+| Блок спеки | В спеке | В движке | Через tool | Agent2 знает |
+|---|---|---|---|---|
+| Текстовые (fontSize, fontWeight, color, etc.) | 10 | 8 | через V1 `display`/`color` | частично |
+| Visual container (background, border, shadow...) | 6 | 0 | 0 | нет |
+| Sizing (sizing, min/max, gap, alignment, overflow) | 5 | 1 (gap) | 0 | нет |
+| Media (aspectRatio, objectFit, controls...) | 6 | 0 | 0 | нет |
+| Icon (size, color, style) | 3 | 0 | 0 | нет |
+| Layout groups (distribution, wrap, selfAlign, grow) | 5 | 2 (wrap, order) | order | частично |
+| Formation (columns, widgetSizing, maxWidgets, pagination) | 4 | 2 | limit, grid.cols | да |
+| Container (contentFit, margin) | 2 | 0 | 0 | нет |
+
+**Обёртки:** 10 из 15 атомных (9 display + button), 0 из 5 interactive (input, switch, slider, checkbox, radio), 2 из 8 групповых (collapse, carousel — но agent не может запросить, только AutoLayout ставит).
+
+### Критическая проблема: Tool Schema ≠ V2 движок
+
+Tool schema (то что видит Agent2) — это **V1 интерфейс**. Содержит 18 параметров, из которых V2 движок реально обрабатывает 11. Между ними стоит `convertV1ParamsToV2` — костыль-конвертер.
+
+| Параметр | Tool schema | V2 движок | V2 промпт | Статус |
+|---|---|---|---|---|
+| preset, show, hide, order, layout, size, limit, offset | да | да | да | **работает** |
+| direction | да | да | нет в промпте | частично |
+| display, color | да | конвертируется | нет (промпт говорит про `atoms`) | костыль |
+| format | да | **игнорируется** | нет | **не работает** |
+| shape, layer, anchor, place | да | только post-process | нет | **не работает** |
+| compose | да | только V1 путь | нет | **не работает в V2** |
+| conditional | да | только post-process | нет | **не работает** |
+
+**Дополнительно**: V2 промпт описывает параметр `atoms` (per-field overrides с textStyle/wrapper/rigidity) которого **нет в tool schema**. Agent2 видит в промпте "используй atoms", смотрит в tool definition — а такого параметра нет.
+
+### Comparison/Table — legacy вне контроля движка
+
+`ComparisonTemplate.jsx` — единственный фронтенд-компонент который **сам** решает как рендерить (собирает поля, строит CSS grid). V2 движок не контролирует его — просто шлёт `mode: "comparison"` и виджеты. В V2 пресетах нет comparison/table пресета. Нет cap на количество виджетов (V1 делал `products[:4]`, V2 — нет).
+
+### Что является фундаментом, а что — feature work
+
+**Фундамент (сделан):** domain entities, engine pipeline, rules, layout tree, rigidity, tokens, DB field defs, frontend renderers.
+
+**Feature work (добавление операций):** каждая недостающая операция = поле в domain struct + параметр в tool schema + строка в engine + CSS на фронте. ~30 мин на операцию.
+
+**Критический рефакторинг (нужен):**
+1. Убить `convertV1ParamsToV2` — сделать V2 tool schema, Agent2 говорит на V2 языке напрямую
+2. Синхронизировать промпт = schema = движок (убрать несуществующий `atoms` из промпта или добавить в schema)
+3. Comparison — убить legacy ComparisonTemplate, движок генерирует layout tree
+4. Compose — портировать из V1 пути в V2
+
+### План действий
+
+**Фаза 1 — Стабилизация (текущие баги P1-P4): DONE**
+- ~~P1+E: Agent2 history — убрать текстовые user-сообщения, добавить свои tool calls в историю~~
+- ~~P2: Защитный фикс — skip empty strings в engine (диагностика данных отложена)~~
+- ~~P3: CSS — list images full width~~
+- ~~P4: CSS — detail card not full-width~~
+- ~~G: CSS — text truncate/ellipsis + lineClamp defaults в движке~~
+
+**Фаза 2 — Выпиливание V1 костылей:**
+- Новая V2 tool schema (Agent2 говорит на V2 языке)
+- Убить `convertV1ParamsToV2`
+- Синхронизировать промпт = schema
+- Убить V1 пресеты, V1 templates на фронте
+- Comparison через движок (layout tree)
+
+**Фаза 3 — Прокачка движка по спеке:**
+- Добавлять операции по приоритету (visual container → media → layout groups)
+- Расширять tool schema параллельно
+- Compose в V2
+
+### Аудит V1 legacy кода — масштаб выпиливания
+
+**~4,100 LOC мёртвого V1 кода** (39% от общей базы V1+V2 путей).
+
+**Backend — ~2,300 LOC к удалению:**
+
+| Что | LOC | Статус |
+|-----|-----|--------|
+| `tools/tool_render_preset.go` | 241 | Целый файл, V1-only tool |
+| `tool_visual_assembly.go` V1 path (строки 254-599) + `convertV1ParamsToV2` | 450 | V1 execute + bridge-конвертер |
+| `engine/layout.go` | 156 | Целый файл, V1 zone calculation |
+| `engine/compat.go` | 172 | Целый файл, конвертеры V2→V1 (AtomV2ToLegacy, LayoutToZones) |
+| `engine/formation.go` V1 функции | ~300 | BuildFormation, BuildAtoms, FieldGetters |
+| `engine/assembly.go` V1 функции | ~180 | BuildVisualWidgets, V1 helpers |
+| `engine/constraints.go` V1 функции | ~100 | V1 constraints (отличаются от V2 rules.go) |
+| 3 файла пресетов (product/service/visual_assembly) | 354 | Целиком, V1 hardcoded presets |
+| V1 промпты в prompt_compose_widgets.go | 248 | Agent2SystemPrompt + Builder v1 |
+| `tool_registry.go` NewRegistry() | 18 | V1 registry |
+
+**Frontend — ~3,050 LOC к удалению:**
+
+| Что | LOC | Статус |
+|-----|-----|--------|
+| 5 V1 template JSX (ProductCard/Detail, ServiceCard/Detail, Comparison) | 983 | Целиком |
+| 5 V1 template CSS | 1,254 | Целиком |
+| `AtomRenderer.jsx` | 277 | V1 atom renderer |
+| `Atom.css` | 536 | V1 atom стили |
+
+**Порядок выпиливания (5 фаз):**
+
+1. **Файлы целиком** (923 LOC): 3 пресета + tool_render_preset + layout.go + compat.go
+2. **V1 функции из shared engine файлов** (480 LOC): formation.go, assembly.go, constraints.go
+3. **Tool layer** (468 LOC): V1 path из visual_assembly, bridge, V1 registry
+4. **Фронтенд** (3,065 LOC): 10 файлов шаблонов + AtomRenderer + Atom.css
+5. **Рефакторинг** (~350 LOC): V1 промпты, agent2 usecase, domain entities
+
+**Не трогать:** `engine/defaults.go` (shared), `preset_registry.go` (shared), `GenericCardTemplate.jsx` (V2 fallback).
+
+**Риск:** `compat.go` → `WidgetV2ToLegacy()` вызывается в `engine_v2.go:159`. Фронтенд может читать V1 поля (Atoms/Zones) — проверить перед удалением.
+
+### Файлы-источники
+
+- Оригинальная спека: `~/Downloads/design_system_architecture_final.md`
+- Реализация V2: `docs/ENGINE_V2_IMPLEMENTATION.md`
+- Known issues: `docs/V2_ENGINE_ISSUES.md`
+
+---
+
 ## Alpha 0.0.6 — V2 Engine Critical Fixes — 2026-03-18
 
 Результат тестирования 15 запросов на production. 4 критических бага найдены и исправлены.

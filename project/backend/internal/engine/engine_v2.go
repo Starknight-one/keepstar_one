@@ -194,6 +194,10 @@ func (e *EngineV2) buildWidgets(input EngineV2Input, fieldNames []string, resolv
 			if value == nil {
 				continue
 			}
+			// Skip empty string values (e.g. missing description in DB)
+			if strVal, ok := value.(string); ok && strVal == "" {
+				continue
+			}
 
 			// D7: validate image URLs
 			if fc.AtomType == domain.AtomTypeImage {
@@ -280,19 +284,19 @@ func (e *EngineV2) buildWidgets(input EngineV2Input, fieldNames []string, resolv
 func DisplayToTextStyleWrapper(display string) (*domain.TextStyle, *domain.WrapperConfig) {
 	switch display {
 	case "h1":
-		return &domain.TextStyle{FontSize: "3xl", FontWeight: "bold"}, nil
+		return &domain.TextStyle{FontSize: "3xl", FontWeight: "bold", LineClamp: 2}, nil
 	case "h2":
-		return &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold"}, nil
+		return &domain.TextStyle{FontSize: "2xl", FontWeight: "semibold", LineClamp: 2}, nil
 	case "h3":
-		return &domain.TextStyle{FontSize: "xl", FontWeight: "semibold"}, nil
+		return &domain.TextStyle{FontSize: "xl", FontWeight: "semibold", LineClamp: 3}, nil
 	case "h4":
-		return &domain.TextStyle{FontSize: "lg", FontWeight: "medium"}, nil
+		return &domain.TextStyle{FontSize: "lg", FontWeight: "medium", LineClamp: 3}, nil
 	case "body-lg":
 		return &domain.TextStyle{FontSize: "lg"}, nil
 	case "body":
 		return &domain.TextStyle{FontSize: "md"}, nil
 	case "body-sm":
-		return &domain.TextStyle{FontSize: "sm"}, nil
+		return &domain.TextStyle{FontSize: "sm", LineClamp: 4}, nil
 	case "caption":
 		return &domain.TextStyle{FontSize: "xs"}, nil
 	case "badge":
