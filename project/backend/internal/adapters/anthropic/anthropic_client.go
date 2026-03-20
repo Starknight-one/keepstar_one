@@ -210,7 +210,7 @@ type contentBlock struct {
 	Text      string                 `json:"text,omitempty"`
 	ID        string                 `json:"id,omitempty"`
 	Name      string                 `json:"name,omitempty"`
-	Input     map[string]interface{} `json:"input,omitempty"`
+	Input     map[string]interface{} `json:"input"`
 	ToolUseID string                 `json:"tool_use_id,omitempty"`
 	Content   string                 `json:"content,omitempty"`
 	IsError   bool                   `json:"is_error,omitempty"`
@@ -628,11 +628,15 @@ func convertToAnthropicMessage(msg domain.LLMMessage) anthropicToolMsg {
 		// Assistant message with tool calls
 		blocks := make([]contentBlock, 0, len(msg.ToolCalls))
 		for _, tc := range msg.ToolCalls {
+			input := tc.Input
+			if input == nil {
+				input = map[string]interface{}{}
+			}
 			blocks = append(blocks, contentBlock{
 				Type:  "tool_use",
 				ID:    tc.ID,
 				Name:  tc.Name,
-				Input: tc.Input,
+				Input: input,
 			})
 		}
 		return anthropicToolMsg{Role: "assistant", Content: blocks}
