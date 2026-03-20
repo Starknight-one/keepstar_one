@@ -21,6 +21,8 @@ func AutoLayout(atoms []domain.AtomV2) *domain.LayoutNode {
 		flowIndices    []int
 		bodyIndices    []int
 		buttonIndices  []int
+		iconIndices    []int
+		mediaIndices   []int // video/audio
 		otherIndices   []int
 	)
 
@@ -29,6 +31,10 @@ func AutoLayout(atoms []domain.AtomV2) *domain.LayoutNode {
 		// 1. Image atoms → span (hero)
 		case a.Type == domain.AtomTypeImage:
 			heroIndices = append(heroIndices, i)
+
+		// 1b. Video/Audio → media group
+		case a.Type == domain.AtomTypeVideo || a.Type == domain.AtomTypeAudio:
+			mediaIndices = append(mediaIndices, i)
 
 		// 2. Large text (headings) → column
 		case a.TextStyle != nil && isHeadingSize(a.TextStyle.FontSize):
@@ -49,6 +55,10 @@ func AutoLayout(atoms []domain.AtomV2) *domain.LayoutNode {
 		// 6. Buttons → row
 		case a.Wrapper != nil && a.Wrapper.Type == "button":
 			buttonIndices = append(buttonIndices, i)
+
+		// 6b. Icons → flow (inline with tags)
+		case a.Type == domain.AtomTypeIcon:
+			iconIndices = append(iconIndices, i)
 
 		// 7. Body text → column
 		case a.Type == domain.AtomTypeText || a.Type == domain.AtomTypeNumber:
@@ -79,6 +89,19 @@ func AutoLayout(atoms []domain.AtomV2) *domain.LayoutNode {
 			heroNode.Children = append(heroNode.Children, domain.NewAtomChild(idx))
 		}
 		root.Children = append(root.Children, domain.NewNodeChild(heroNode))
+	}
+
+	// Media (video/audio — span, like hero)
+	if len(mediaIndices) > 0 {
+		mediaNode := &domain.LayoutNode{
+			Type:         domain.LayoutNodeSpan,
+			Name:         "media",
+			BorderRadius: "md",
+		}
+		for _, idx := range mediaIndices {
+			mediaNode.Children = append(mediaNode.Children, domain.NewAtomChild(idx))
+		}
+		root.Children = append(root.Children, domain.NewNodeChild(mediaNode))
 	}
 
 	// Headings (column)
@@ -141,6 +164,20 @@ func AutoLayout(atoms []domain.AtomV2) *domain.LayoutNode {
 			flowNode.Children = append(flowNode.Children, domain.NewAtomChild(idx))
 		}
 		root.Children = append(root.Children, domain.NewNodeChild(flowNode))
+	}
+
+	// Icons (flow, inline)
+	if len(iconIndices) > 0 {
+		iconNode := &domain.LayoutNode{
+			Type: domain.LayoutNodeFlow,
+			Gap:  "xs",
+			Wrap: true,
+			Name: "icons",
+		}
+		for _, idx := range iconIndices {
+			iconNode.Children = append(iconNode.Children, domain.NewAtomChild(idx))
+		}
+		root.Children = append(root.Children, domain.NewNodeChild(iconNode))
 	}
 
 	// Buttons (row)

@@ -371,9 +371,21 @@ CRITICAL: show vs hide decision:
 - direction: string — "vertical" (default) | "horizontal" (image left, content right)
 - limit: number — max widgets (default 50)
 - offset: number — offset (default 0)
-- atoms: object — per-field overrides (keyed by field name), each with:
-  - textStyle: { fontSize, fontWeight, color, textDecoration }
-  - wrapper: { type, variant }
+
+### Visual container (widget-level):
+- columns: number (1-4) — override auto grid columns
+- gap: string — spacing between items: xs/sm/md/lg/xl
+- widgetPadding: string — widget internal padding: xs/sm/md/lg/xl
+- widgetBackground: string — widget background: hex or "white", "#F9FAFB"
+- widgetBorderRadius: string — widget corners: none/sm/md/lg/xl/full
+- widgetShadow: string — widget shadow: none/sm/md/lg
+- widgetBorder: string — widget border: "1px solid #E5E7EB"
+
+### atoms: object — per-field overrides (keyed by field name), each with:
+  - textStyle: { fontSize, fontWeight, color, textDecoration, textTransform, lineClamp, lineHeight, letterSpacing, truncate }
+  - wrapper: { type, variant, background, borderRadius, padding }
+  - mediaStyle: { aspectRatio, objectFit, controls, autoplay, muted, poster }
+  - iconStyle: { size, color, style }
   - format: string
   - color: string
   - rigidity: "locked" — use ONLY for explicit user requests
@@ -384,6 +396,9 @@ xs (10px), sm (12px), md (14px), lg (18px), xl (24px), 2xl (30px), 3xl (36px)
 ### fontWeight tokens:
 light, normal, medium, semibold, bold
 
+### lineHeight tokens: tight, normal, relaxed, loose
+### letterSpacing tokens: tight, normal, wide
+
 ### wrapper types:
 none, badge, tag, pill, avatar, tooltip, alert, link, progress, button
 
@@ -391,6 +406,8 @@ none, badge, tag, pill, avatar, tooltip, alert, link, progress, button
 badge: success, error, warning
 button: primary, secondary, outline
 tag: active
+
+### icon sizes: xs (12px), sm (16px), md (20px), lg (28px), xl (36px)
 
 ### format values (auto-inferred — override only when needed):
 currency, stars, stars-text, stars-compact, percent, number, date, text
@@ -441,6 +458,18 @@ productCount=5, user_request="мельче / поменьше":
 
 productCount=5, user_request="show brand as red tag" (explicit user request):
 → visual_assembly(atoms: {"brand": {"wrapper": {"type": "tag"}, "color": "red", "rigidity": "locked"}})
+
+productCount=5, user_request="покажи в 3 колонки с тенью":
+→ visual_assembly(columns: 3, widgetShadow: "md")
+
+productCount=5, user_request="карточки с рамкой":
+→ visual_assembly(widgetBorder: "1px solid #E5E7EB", widgetBorderRadius: "lg")
+
+productCount=5, user_request="фотки в формате 16:9":
+→ visual_assembly(atoms: {"images": {"mediaStyle": {"aspectRatio": "16:9"}}})
+
+productCount=5, user_request="крупные иконки":
+→ visual_assembly(atoms: {"icon": {"iconStyle": {"size": "xl"}}})
 
 ## RULES
 

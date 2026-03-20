@@ -27,6 +27,11 @@ type LayoutNode struct {
 	BorderRadius string `json:"borderRadius,omitempty"` // Token: "none","sm","md","lg","xl","full"
 	Shadow       string `json:"shadow,omitempty"`       // Token: "none","sm","md","lg"
 	Padding      string `json:"padding,omitempty"`      // Token: "none","xs","sm","md","lg","xl"
+	Border       string `json:"border,omitempty"`       // "1px solid #E5E7EB"
+	BorderColor  string `json:"borderColor,omitempty"`  // Token or hex
+	BorderWidth  string `json:"borderWidth,omitempty"`  // "1px", "2px"
+	Opacity      string `json:"opacity,omitempty"`      // "0"-"100" (percentage)
+	Overflow     string `json:"overflow,omitempty"`     // "truncate"/"wrap"/"scroll"/"hide"/"visible"
 
 	// Layout distribution
 	Distribution string `json:"distribution,omitempty"` // "start","center","end","between","around","evenly"
@@ -39,6 +44,11 @@ type LayoutChild struct {
 	Node      *LayoutNode `json:"node,omitempty"`      // Nested layout group
 	Grow      int         `json:"grow,omitempty"`      // flex-grow
 	SelfAlign string      `json:"selfAlign,omitempty"` // align-self override
+	Sizing    string      `json:"sizing,omitempty"`    // "hug" / "fill" / "fixed"
+	MinWidth  string      `json:"minWidth,omitempty"`
+	MaxWidth  string      `json:"maxWidth,omitempty"`
+	MinHeight string      `json:"minHeight,omitempty"`
+	MaxHeight string      `json:"maxHeight,omitempty"`
 }
 
 // NewAtomChild creates a LayoutChild referencing an atom by index.

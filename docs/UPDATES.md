@@ -4,6 +4,176 @@
 
 ---
 
+## V2 Engine Completion — Full Spec Implementation — 2026-03-20
+
+Движок доведён до полного scope v1 спеки. Из 41 операции было 10 DONE + 10 PARTIAL — теперь ~35 работают end-to-end (backend → schema → prompt → frontend). Добавлено 8 новых правил, 7 widget-level параметров, расширены все atom overrides.
+
+### Phase 1: Schema Unlock
+
+Проблема: ~10 операций работали backend→frontend, но Agent2 не мог их послать — не было в tool schema.
+
+**Tool schema (`definitionV2()`) — 7 новых top-level параметров:**
+- `columns` (1-4) — override auto grid
+- `gap` (xs/sm/md/lg/xl) — spacing между виджетами
+- `widgetPadding`, `widgetBackground`, `widgetBorderRadius`, `widgetShadow`, `widgetBorder` — visual container
+
+**Atoms override расширен:**
+- `textStyle`: +`lineHeight` (tight/normal/relaxed/loose), +`letterSpacing` (tight/normal/wide), +`truncate` (max chars)
+- `wrapper`: +`background`, +`borderRadius`, +`padding` — container overrides на обёртках
+- `mediaStyle`: новый объект — `aspectRatio`, `objectFit`, `controls`, `autoplay`, `muted`, `poster`
+- `iconStyle`: новый объект — `size` (xs-xl), `color`, `style` (stroke/fill)
+
+**Файлы:** `tools/tool_visual_assembly.go` (definitionV2 + parseV2Input + parseAtomOverride)
+
+### Phase 2: Missing Operations — Backend
+
+**Domain расширения:**
+- `IconStyle` struct (size/color/style) + `AtomV2.IconStyle` поле
+- `MediaStyle` расширен: controls, autoplay, muted, poster (video/audio)
+- `WrapperConfig` расширен: background, borderRadius, padding, contentFit, margin
+- `LayoutNode`: border, borderColor, borderWidth, opacity, overflow
+- `LayoutChild`: sizing (hug/fill/fixed), minWidth, maxWidth, minHeight, maxHeight
+
+**AgentInstructions расширен:**
+- 7 widget container полей (Columns, Gap, WidgetPadding/Background/BorderRadius/Shadow/Border)
+- `AtomOverride`: +MediaStyle, +IconStyle
+
+**Engine pipeline — 3 новых шага:**
+- `applyMediaIconOverrides` — mediaStyle/iconStyle из atom overrides
+- `applyDefaultMediaStyle` — теперь обрабатывает video (16:9, controls:true) и audio (controls:true)
+- `applyWidgetContainerOverrides` — прокидывает background/border/shadow/padding/gap/borderRadius из instructions в Layout root
+
+**AutoLayout расширен:**
+- Icon atoms → flow group (inline с tags)
+- Video/Audio → media span group (как hero)
+
+**Файлы:** `domain/atom_entity.go`, `domain/layout_entity.go`, `engine/instructions.go`, `engine/engine_v2.go`, `engine/auto_layout.go`
+
+### Phase 3: Frontend Rendering
+
+**LayoutTreeRenderer.jsx — `buildNodeStyle()`:**
+- border/borderColor/borderWidth → CSS border
+- opacity → CSS opacity (value/100)
+- overflow → CSS overflow map (truncate→hidden, wrap→visible, scroll→auto, hide→hidden)
+
+**LayoutChild — sizing:**
+- `fill` → flex: 1 1 0%
+- `hug` / `fixed` → flex: 0 0 auto
+- minWidth/maxWidth/minHeight/maxHeight → CSS props
+
+**AtomV2Renderer.jsx:**
+- Icon rendering с `iconStyle`: size tokens (xs=12px...xl=36px), color resolve
+- Video rendering: `<video>` с aspectRatio, objectFit, controls, autoplay, muted, poster
+- Audio rendering: `<audio controls>`
+- Wrapper container props: background/borderRadius/padding на всех 10 wrapper types
+
+**CSS:** `.atom-v2-video`, `.atom-v2-audio`, улучшенный `.atom-v2-icon`
+
+### Phase 4: Rules Completion (8 новых/исправленных правил)
+
+**Group↔Widget (3 новых):**
+- R1 `shrinkToFit` — сжимает gap+padding при overflow (рекурсивный downgrade tokens)
+- R5 `removeEmptyGroups` — удаляет layout nodes с 0 children
+- R6 `flattenDeep` — выравнивает nesting > maxDepth уровней
+
+**Cross-widget (2 новых):**
+- C4 `normalizeSizeV2` — все виджеты в grid получают одинаковый size (max)
+- C5 `normalizeStyleV2` — одно поле = одинаковый textStyle во всех виджетах
+
+**Formation↔Screen (3 исправленных):**
+- F1 `viewport-fit` — ПОЧИНЕН: newCols реально применяется (было `_ = newCols`)
+- F2 `reflow` — mobile → single column (viewport < 320px)
+- F4 `min-widget-width` — widget < 120px → reduce columns
+
+### Phase 5: Prompt Polish
+
+`Agent2ToolSystemPromptV2` обновлён:
+- Секция "Visual container (widget-level)" с описанием 7 параметров
+- atoms.textStyle: +lineHeight/letterSpacing/truncate tokens
+- atoms.wrapper: +background/borderRadius/padding
+- atoms.mediaStyle + atoms.iconStyle
+- Icon size tokens
+- 4 новых примера (columns+shadow, border+borderRadius, mediaStyle, iconStyle)
+
+### Phase 6: Testing
+
+10 новых unit тестов:
+- `TestEngineV2_WidgetContainerOverrides` — background/border/shadow/padding/gap на layout root
+- `TestEngineV2_ColumnsOverride` — grid columns override
+- `TestEngineV2_IconStyleOverride` — iconStyle прокидывание
+- `TestEngineV2_MediaStyleOverrides` — mediaStyle override (aspectRatio/objectFit)
+- `TestShrinkToFit` — gap/padding downgrade при overflow
+- `TestRemoveEmptyGroups` — фильтрация пустых layout nodes
+- `TestFlattenDeep` — выравнивание глубокого nesting
+- `TestNormalizeSizeV2` — size consistency across widgets
+- `TestNormalizeStyleV2` — textStyle consistency across widgets
+- `TestDefaultMediaStyle_Video` — video/audio default mediaStyle
+
+### V2 Schema (обновлённая — что видит Agent2)
+
+```
+visual_assembly:
+  preset:             string (5 V2 пресетов)
+  layout:             grid/list/single/carousel/comparison/table
+  size:               tiny/small/medium/large
+  direction:          vertical/horizontal
+  show:               string[]
+  hide:               string[]
+  order:              string[]
+  limit:              number
+  offset:             number
+  columns:            number (1-4)           ← NEW
+  gap:                xs/sm/md/lg/xl         ← NEW
+  widgetPadding:      xs/sm/md/lg/xl         ← NEW
+  widgetBackground:   hex or semantic        ← NEW
+  widgetBorderRadius: none/sm/md/lg/xl/full  ← NEW
+  widgetShadow:       none/sm/md/lg          ← NEW
+  widgetBorder:       CSS border string      ← NEW
+  atoms:              object (per-field overrides)
+    {field}:
+      textStyle:   { fontSize, fontWeight, color, textDecoration, textTransform, lineClamp, lineHeight, letterSpacing, truncate }
+      wrapper:     { type, variant, background, borderRadius, padding }
+      mediaStyle:  { aspectRatio, objectFit, controls, autoplay, muted, poster }  ← NEW
+      iconStyle:   { size, color, style }                                          ← NEW
+      format:      string
+      color:       string
+      rigidity:    locked/preferred/flexible
+```
+
+### Файлы изменённые
+
+**Backend domain:**
+- `domain/atom_entity.go` — IconStyle struct, MediaStyle extensions, WrapperConfig extensions, AtomV2.IconStyle
+- `domain/layout_entity.go` — LayoutNode (border/opacity/overflow), LayoutChild (sizing/min-max)
+
+**Backend engine:**
+- `engine/instructions.go` — AgentInstructions (7 widget fields), AtomOverride (+MediaStyle/IconStyle)
+- `engine/engine_v2.go` — 3 новых pipeline шага, columns override, viewport rules fix
+- `engine/rules.go` — 8 новых/исправленных правил (shrinkToFit, removeEmptyGroups, flattenDeep, normalizeSizeV2, normalizeStyleV2, viewport-fit fix, reflow, min-widget-width)
+- `engine/auto_layout.go` — icon + video/audio classification groups
+- `engine/engine_v2_test.go` — 10 новых тестов
+
+**Backend tools/prompts:**
+- `tools/tool_visual_assembly.go` — definitionV2 (7 top-level + atoms extensions), parseV2Input, parseAtomOverride
+- `prompts/prompt_compose_widgets.go` — Agent2ToolSystemPromptV2 обновлён
+
+**Frontend:**
+- `entities/atom/AtomV2Renderer.jsx` — icon/video/audio rendering, wrapper container props
+- `entities/atom/AtomV2.css` — video/audio/icon styles
+- `entities/widget/templates/LayoutTreeRenderer.jsx` — border/opacity/overflow/sizing
+
+### Верификация
+
+- `go build ./...` ✓
+- `go test ./internal/engine/... ./internal/tools/... ./internal/domain/...` ✓ (все 22+ тестов)
+- `npx vite build` ✓ (frontend 309KB gzip 86KB)
+
+### Следующий шаг
+
+E2E тестирование через Chrome integration: 25 пользовательских кейсов с визуальной верификацией скриншотов. Нужно: `ENGINE_VERSION=v2` + `AGENT2_PROMPT_VERSION=v2` в `.env`, деплой на прод или локальный запуск.
+
+---
+
 ## V2 Engine Completion — Участок 1+2 — 2026-03-20
 
 Двойной участок: движок оживлён (Участок 1) + tool schema переведена на V2-нативную (Участок 2).

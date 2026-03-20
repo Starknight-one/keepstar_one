@@ -111,18 +111,34 @@ type TextStyle struct {
 	LetterSpacing  string `json:"letterSpacing,omitempty"`  // "tight","normal","wide"
 }
 
-// MediaStyle defines styling for image/video atoms (engine v2).
+// MediaStyle defines styling for image/video/audio atoms (engine v2).
 type MediaStyle struct {
 	AspectRatio string `json:"aspectRatio,omitempty"` // "1:1", "4:3", "16:9", "auto"
 	ObjectFit   string `json:"objectFit,omitempty"`   // "cover", "contain", "fill"
+	Controls    bool   `json:"controls,omitempty"`
+	Autoplay    bool   `json:"autoplay,omitempty"`
+	Muted       bool   `json:"muted,omitempty"`
+	Poster      string `json:"poster,omitempty"` // URL for video poster
+}
+
+// IconStyle defines styling for icon atoms (engine v2).
+type IconStyle struct {
+	Size  string `json:"size,omitempty"`  // xs/sm/md/lg/xl
+	Color string `json:"color,omitempty"` // semantic or hex
+	Style string `json:"style,omitempty"` // "stroke" / "fill"
 }
 
 // WrapperConfig defines the visual container around an atom value (engine v2).
 // Separates "what wraps it" from "how text looks".
 type WrapperConfig struct {
-	Type      string `json:"type"`                // "none","badge","tag","pill","avatar","tooltip","alert","link","progress","button"
-	Variant   string `json:"variant,omitempty"`   // Wrapper-specific: "success","error","warning","primary","secondary","outline"
-	Rigidity  Rigidity `json:"rigidity,omitempty"`
+	Type         string   `json:"type"`                   // "none","badge","tag","pill","avatar","tooltip","alert","link","progress","button"
+	Variant      string   `json:"variant,omitempty"`      // Wrapper-specific: "success","error","warning","primary","secondary","outline"
+	Rigidity     Rigidity `json:"rigidity,omitempty"`
+	Background   string   `json:"background,omitempty"`   // CSS background value
+	BorderRadius string   `json:"borderRadius,omitempty"` // Token: none/sm/md/lg/xl/full
+	Padding      string   `json:"padding,omitempty"`      // Token: none/xs/sm/md/lg/xl
+	ContentFit   string   `json:"contentFit,omitempty"`   // "hug" / "fill"
+	Margin       string   `json:"margin,omitempty"`       // Token: xs/sm/md/lg
 }
 
 // AtomV2 is the engine v2 atom with separated textStyle and wrapper.
@@ -135,7 +151,8 @@ type AtomV2 struct {
 	Format     AtomFormat             `json:"format,omitempty"`     // Value transform: "currency", "stars-compact"
 	TextStyle  *TextStyle             `json:"textStyle,omitempty"`  // Typography (separated from wrapper)
 	Wrapper    *WrapperConfig         `json:"wrapper,omitempty"`    // Visual container (separated from textStyle)
-	MediaStyle *MediaStyle            `json:"mediaStyle,omitempty"` // Image/video styling
+	MediaStyle *MediaStyle            `json:"mediaStyle,omitempty"` // Image/video/audio styling
+	IconStyle  *IconStyle             `json:"iconStyle,omitempty"`  // Icon styling
 	Slot       AtomSlot               `json:"slot,omitempty"`
 	Rigidity   Rigidity               `json:"rigidity,omitempty"`   // How freely engine can adjust this atom
 	FieldName  string                 `json:"fieldName,omitempty"`

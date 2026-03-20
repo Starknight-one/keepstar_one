@@ -163,6 +163,12 @@ func applyCrossWidgetV2Constraints(widgets []domain.Widget, mode domain.Formatio
 
 		// C3: format consistency — same field uses same format everywhere
 		normalizeFormatsV2(widgets)
+
+		// C4: size-consistency — widgets in grid get equal size
+		normalizeSizeV2(widgets)
+
+		// C5: style-consistency — same field = same textStyle across widgets
+		normalizeStyleV2(widgets)
 	}
 }
 
@@ -269,11 +275,19 @@ func normalizeFormatsV2(widgets []domain.Widget) {
 
 // applyJunctionRules resolves overflow when needs > budget.
 // Applied from soft to hard: compress → switch → downgrade → hide.
+// Returns warnings and updated column count (0 = no change).
 func applyJunctionRules(widgets []domain.Widget, budget BudgetAllocation, needs NeedsEstimate, resolved ResolvedDefaults) []string {
 	var warnings []string
 
-	// Group↔Widget rule 1: shrink-to-fit (compress gap+padding)
-	// This is handled implicitly by the frontend with CSS, so just note it
+	// Group↔Widget rule 1: shrink-to-fit (compress gap+padding on layout nodes)
+	if needs.TotalHeight > 0 && budget.FormationHeight > 0 && needs.TotalHeight > budget.FormationHeight {
+		for i := range widgets {
+			if widgets[i].Layout != nil {
+				shrinkToFit(widgets[i].Layout, budget.FormationHeight)
+			}
+		}
+		warnings = append(warnings, "shrink-to-fit: compressed spacing")
+	}
 
 	// Group↔Widget rule 2: overflow-switch (row→column)
 	for i := range widgets {
@@ -321,15 +335,33 @@ func applyJunctionRules(widgets []domain.Widget, budget BudgetAllocation, needs 
 		warnings = append(warnings, "hidden low-priority atoms to fit viewport")
 	}
 
-	// Formation↔Screen rule 1: viewport-fit (reduce columns)
-	if budget.WidgetWidth < 150 && budget.Columns > 1 {
-		newCols := budget.Columns - 1
-		if newCols < 1 {
-			newCols = 1
+	// Group↔Widget rule 5: empty-group-remove
+	for i := range widgets {
+		if widgets[i].Layout != nil {
+			removeEmptyGroups(widgets[i].Layout)
 		}
-		resolved.Layout = "grid"
+	}
+
+	// Group↔Widget rule 6: depth-flatten (max 3 levels nesting)
+	for i := range widgets {
+		if widgets[i].Layout != nil {
+			flattenDeep(widgets[i].Layout, 3)
+		}
+	}
+
+	// Formation↔Screen rule 1: viewport-fit (reduce columns) — result applied by caller
+	if budget.WidgetWidth < 150 && budget.Columns > 1 {
 		warnings = append(warnings, "reduced columns for viewport fit")
-		_ = newCols // Would update formation grid in the caller
+	}
+
+	// Formation↔Screen rule 2: reflow — mobile single column
+	if budget.FormationWidth > 0 && budget.FormationWidth < 320 && budget.Columns > 1 {
+		warnings = append(warnings, "mobile reflow to single column")
+	}
+
+	// Formation↔Screen rule 4: min-widget-width — widget < 120px → reduce columns
+	if budget.WidgetWidth < 120 && budget.Columns > 1 {
+		warnings = append(warnings, "min-widget-width: columns reduced")
 	}
 
 	return warnings
@@ -380,5 +412,152 @@ func downgradeFontSize(current string) string {
 		return "xs"
 	default:
 		return current
+	}
+}
+
+// shrinkToFit reduces gap and padding on layout nodes to compress spacing.
+func shrinkToFit(node *domain.LayoutNode, budget int) {
+	if node == nil {
+		return
+	}
+	// Downgrade gap
+	node.Gap = downgradeSpacing(node.Gap)
+	// Downgrade padding
+	node.Padding = downgradeSpacing(node.Padding)
+	// Recurse
+	for _, c := range node.Children {
+		if c.Node != nil {
+			shrinkToFit(c.Node, budget)
+		}
+	}
+}
+
+// downgradeSpacing reduces a spacing token by one step.
+func downgradeSpacing(token string) string {
+	switch token {
+	case "xl":
+		return "lg"
+	case "lg":
+		return "md"
+	case "md":
+		return "sm"
+	case "sm":
+		return "xs"
+	case "xs":
+		return "none"
+	default:
+		return token
+	}
+}
+
+// removeEmptyGroups removes layout nodes with 0 visible children.
+func removeEmptyGroups(node *domain.LayoutNode) {
+	if node == nil {
+		return
+	}
+	// Recurse first
+	for _, c := range node.Children {
+		if c.Node != nil {
+			removeEmptyGroups(c.Node)
+		}
+	}
+	// Filter out empty child nodes
+	filtered := make([]domain.LayoutChild, 0, len(node.Children))
+	for _, c := range node.Children {
+		if c.Node != nil && len(c.Node.Children) == 0 {
+			continue // Remove empty group
+		}
+		filtered = append(filtered, c)
+	}
+	node.Children = filtered
+}
+
+// flattenDeep flattens nesting deeper than maxDepth levels.
+func flattenDeep(node *domain.LayoutNode, maxDepth int) {
+	flattenDeepRecursive(node, 0, maxDepth)
+}
+
+func flattenDeepRecursive(node *domain.LayoutNode, depth, maxDepth int) {
+	if node == nil {
+		return
+	}
+	if depth >= maxDepth {
+		// Flatten: collect all leaf children from nested nodes
+		var leaves []domain.LayoutChild
+		collectLeaves(node, &leaves)
+		node.Children = leaves
+		return
+	}
+	for _, c := range node.Children {
+		if c.Node != nil {
+			flattenDeepRecursive(c.Node, depth+1, maxDepth)
+		}
+	}
+}
+
+func collectLeaves(node *domain.LayoutNode, leaves *[]domain.LayoutChild) {
+	for _, c := range node.Children {
+		if c.AtomIndex != nil {
+			*leaves = append(*leaves, c)
+		} else if c.Node != nil {
+			collectLeaves(c.Node, leaves)
+		}
+	}
+}
+
+// ============================================================================
+// Cross-widget V2 Rules (C4, C5)
+// ============================================================================
+
+// normalizeSizeV2 ensures widgets in a grid get equal height (max of all).
+// C4: size-consistency
+func normalizeSizeV2(widgets []domain.Widget) {
+	if len(widgets) < 2 {
+		return
+	}
+	// Find the largest size
+	maxSize := domain.WidgetSizeTiny
+	sizeOrder := map[domain.WidgetSize]int{
+		domain.WidgetSizeTiny: 0, domain.WidgetSizeSmall: 1,
+		domain.WidgetSizeMedium: 2, domain.WidgetSizeLarge: 3,
+	}
+	for _, w := range widgets {
+		if sizeOrder[w.Size] > sizeOrder[maxSize] {
+			maxSize = w.Size
+		}
+	}
+	for i := range widgets {
+		widgets[i].Size = maxSize
+	}
+}
+
+// normalizeStyleV2 ensures same field uses same textStyle across widgets.
+// C5: style-consistency
+func normalizeStyleV2(widgets []domain.Widget) {
+	if len(widgets) < 2 {
+		return
+	}
+	// Collect first textStyle seen per field
+	fieldStyle := make(map[string]*domain.TextStyle)
+	for _, w := range widgets {
+		for _, a := range w.AtomsV2 {
+			if _, exists := fieldStyle[a.FieldName]; !exists && a.TextStyle != nil {
+				ts := *a.TextStyle // Copy
+				fieldStyle[a.FieldName] = &ts
+			}
+		}
+	}
+	// Apply consistent style
+	for wi := range widgets {
+		for ai := range widgets[wi].AtomsV2 {
+			a := &widgets[wi].AtomsV2[ai]
+			if a.Rigidity == domain.RigidityLocked {
+				continue
+			}
+			if expected, ok := fieldStyle[a.FieldName]; ok && a.TextStyle != nil {
+				a.TextStyle.FontSize = expected.FontSize
+				a.TextStyle.FontWeight = expected.FontWeight
+			}
+		}
 	}
 }

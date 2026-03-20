@@ -148,7 +148,43 @@ function renderV2Content(formatted, atom, textStyles) {
 
   // Icon
   if (atom.type === 'icon') {
-    return <span className="atom-v2-icon" style={textStyles}>{atom.value}</span>;
+    const iconStyle = { ...textStyles };
+    if (atom.iconStyle) {
+      const ICON_SIZE_TOKENS = { xs: 12, sm: 16, md: 20, lg: 28, xl: 36 };
+      if (atom.iconStyle.size) {
+        const px = ICON_SIZE_TOKENS[atom.iconStyle.size] || 20;
+        iconStyle.fontSize = px + 'px';
+        iconStyle.width = px + 'px';
+        iconStyle.height = px + 'px';
+      }
+      if (atom.iconStyle.color) iconStyle.color = resolveColor(atom.iconStyle.color);
+    }
+    return <span className="atom-v2-icon" style={iconStyle}>{atom.value}</span>;
+  }
+
+  // Video
+  if (atom.type === 'video') {
+    const ms = atom.mediaStyle || {};
+    const vidStyle = {};
+    if (ms.aspectRatio) vidStyle.aspectRatio = ms.aspectRatio.replace(':', '/');
+    vidStyle.objectFit = ms.objectFit || 'cover';
+    vidStyle.width = '100%';
+    return (
+      <video
+        src={atom.value}
+        className="atom-v2-video"
+        controls={ms.controls !== false}
+        autoPlay={ms.autoplay || false}
+        muted={ms.muted || false}
+        poster={ms.poster || undefined}
+        style={vidStyle}
+      />
+    );
+  }
+
+  // Audio
+  if (atom.type === 'audio') {
+    return <audio src={atom.value} className="atom-v2-audio" controls />;
   }
 
   // Progress (special: needs raw value for bar width)
@@ -164,39 +200,48 @@ function renderV2Content(formatted, atom, textStyles) {
   return <span className="atom-v2-text" style={textStyles}>{formatted}</span>;
 }
 
+const WRAPPER_RADIUS_TOKENS = { none: '0', sm: '4px', md: '8px', lg: '12px', xl: '16px', full: '9999px' };
+const WRAPPER_SPACING_TOKENS = { none: '0', xs: '2px', sm: '4px', md: '8px', lg: '12px', xl: '16px' };
+
 function renderWrapper(content, wrapper, atom) {
   const variant = wrapper.variant || '';
   const color = resolveColor(atom.textStyle?.color);
+  // Extra wrapper container styles
+  const extraStyle = {};
+  if (wrapper.background) extraStyle.backgroundColor = wrapper.background;
+  if (wrapper.borderRadius) extraStyle.borderRadius = WRAPPER_RADIUS_TOKENS[wrapper.borderRadius] || wrapper.borderRadius;
+  if (wrapper.padding) extraStyle.padding = WRAPPER_SPACING_TOKENS[wrapper.padding] || wrapper.padding;
 
   switch (wrapper.type) {
     case 'badge': {
       const bgColor = color || variantColor(variant);
-      const style = bgColor ? { backgroundColor: bgColor, color: contrastText(bgColor) } : undefined;
-      return <span className={`atom-v2-badge ${variant}`} style={style}>{content}</span>;
+      const style = { ...extraStyle, ...(bgColor ? { backgroundColor: bgColor, color: contrastText(bgColor) } : {}) };
+      return <span className={`atom-v2-badge ${variant}`} style={Object.keys(style).length ? style : undefined}>{content}</span>;
     }
     case 'tag': {
       const borderColor = color || variantColor(variant);
-      const style = borderColor ? { borderColor, color: borderColor } : undefined;
-      return <span className={`atom-v2-tag ${variant}`} style={style}>{content}</span>;
+      const style = { ...extraStyle, ...(borderColor ? { borderColor, color: borderColor } : {}) };
+      return <span className={`atom-v2-tag ${variant}`} style={Object.keys(style).length ? style : undefined}>{content}</span>;
     }
     case 'pill': {
       const bgColor = color || variantColor(variant);
-      const style = bgColor ? { backgroundColor: bgColor, color: contrastText(bgColor) } : undefined;
-      return <span className={`atom-v2-pill ${variant}`} style={style}>{content}</span>;
+      const style = { ...extraStyle, ...(bgColor ? { backgroundColor: bgColor, color: contrastText(bgColor) } : {}) };
+      return <span className={`atom-v2-pill ${variant}`} style={Object.keys(style).length ? style : undefined}>{content}</span>;
     }
     case 'avatar':
-      return <span className="atom-v2-avatar">{content}</span>;
+      return <span className="atom-v2-avatar" style={Object.keys(extraStyle).length ? extraStyle : undefined}>{content}</span>;
     case 'tooltip':
-      return <span className="atom-v2-tooltip" title={atom.label || ''}>{content}</span>;
+      return <span className="atom-v2-tooltip" title={atom.label || ''} style={Object.keys(extraStyle).length ? extraStyle : undefined}>{content}</span>;
     case 'alert': {
       const alertColor = variantColor(variant);
-      return <div className={`atom-v2-alert ${variant}`} style={alertColor ? { borderLeftColor: alertColor } : undefined}>{content}</div>;
+      const style = { ...extraStyle, ...(alertColor ? { borderLeftColor: alertColor } : {}) };
+      return <div className={`atom-v2-alert ${variant}`} style={Object.keys(style).length ? style : undefined}>{content}</div>;
     }
     case 'link':
-      return <a className="atom-v2-link" href={typeof atom.value === 'string' ? atom.value : '#'}>{content}</a>;
+      return <a className="atom-v2-link" href={typeof atom.value === 'string' ? atom.value : '#'} style={Object.keys(extraStyle).length ? extraStyle : undefined}>{content}</a>;
     case 'progress':
       return (
-        <div className="atom-v2-progress">
+        <div className="atom-v2-progress" style={Object.keys(extraStyle).length ? extraStyle : undefined}>
           <div className="atom-v2-progress-bar" style={{ width: `${atom.value}%` }} />
         </div>
       );
@@ -204,6 +249,7 @@ function renderWrapper(content, wrapper, atom) {
       return (
         <button
           className={`atom-v2-button ${variant}`}
+          style={Object.keys(extraStyle).length ? extraStyle : undefined}
           onClick={(e) => { e.stopPropagation(); log.debug('v2 button action:', atom.meta?.action); }}
         >
           {content}

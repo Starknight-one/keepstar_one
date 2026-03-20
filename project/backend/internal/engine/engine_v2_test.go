@@ -475,6 +475,267 @@ func TestAutoSelectPreset(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// Phase 6: New tests for V2 engine completion
+// ============================================================================
+
+func TestEngineV2_WidgetContainerOverrides(t *testing.T) {
+	e := NewEngineV2()
+	out := e.Execute(EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Instructions: &AgentInstructions{
+			WidgetBackground:   "#F9FAFB",
+			WidgetBorderRadius: "lg",
+			WidgetShadow:       "md",
+			WidgetPadding:      "lg",
+			WidgetBorder:       "1px solid #E5E7EB",
+			Gap:                "lg",
+		},
+		Products: []domain.Product{
+			{ID: "p1", Name: "Test", Price: 100, Images: []string{"https://example.com/img.jpg"}},
+		},
+	})
+
+	w := out.Formation.Widgets[0]
+	if w.Layout == nil {
+		t.Fatal("expected layout")
+	}
+	if w.Layout.Background != "#F9FAFB" {
+		t.Errorf("expected background=#F9FAFB, got %q", w.Layout.Background)
+	}
+	if w.Layout.BorderRadius != "lg" {
+		t.Errorf("expected borderRadius=lg, got %q", w.Layout.BorderRadius)
+	}
+	if w.Layout.Shadow != "md" {
+		t.Errorf("expected shadow=md, got %q", w.Layout.Shadow)
+	}
+	if w.Layout.Padding != "lg" {
+		t.Errorf("expected padding=lg, got %q", w.Layout.Padding)
+	}
+	if w.Layout.Border != "1px solid #E5E7EB" {
+		t.Errorf("expected border='1px solid #E5E7EB', got %q", w.Layout.Border)
+	}
+	if w.Layout.Gap != "lg" {
+		t.Errorf("expected gap=lg, got %q", w.Layout.Gap)
+	}
+}
+
+func TestEngineV2_ColumnsOverride(t *testing.T) {
+	e := NewEngineV2()
+	products := make([]domain.Product, 6)
+	for i := range products {
+		products[i] = domain.Product{
+			ID:     "p" + string(rune('1'+i)),
+			Name:   "Product",
+			Price:  100 * (i + 1),
+			Images: []string{"https://example.com/img.jpg"},
+		}
+	}
+
+	out := e.Execute(EngineV2Input{
+		EntityType:   domain.EntityTypeProduct,
+		Products:     products,
+		Instructions: &AgentInstructions{Columns: 3},
+	})
+
+	if out.Formation.Grid == nil {
+		t.Fatal("expected grid config")
+	}
+	if out.Formation.Grid.Cols != 3 {
+		t.Errorf("expected 3 columns, got %d", out.Formation.Grid.Cols)
+	}
+}
+
+func TestEngineV2_IconStyleOverride(t *testing.T) {
+	e := NewEngineV2()
+	out := e.Execute(EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Instructions: &AgentInstructions{
+			Show: []string{"name", "price"},
+			Atoms: map[string]AtomOverride{
+				"name": {IconStyle: &domain.IconStyle{Size: "xl", Color: "blue"}},
+			},
+		},
+		Products: []domain.Product{
+			{ID: "p1", Name: "Test", Price: 100},
+		},
+	})
+
+	w := out.Formation.Widgets[0]
+	for _, a := range w.AtomsV2 {
+		if a.FieldName == "name" && a.IconStyle != nil {
+			if a.IconStyle.Size != "xl" {
+				t.Errorf("expected iconStyle.size=xl, got %q", a.IconStyle.Size)
+			}
+			if a.IconStyle.Color != "blue" {
+				t.Errorf("expected iconStyle.color=blue, got %q", a.IconStyle.Color)
+			}
+		}
+	}
+}
+
+func TestEngineV2_MediaStyleOverrides(t *testing.T) {
+	e := NewEngineV2()
+	out := e.Execute(EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Instructions: &AgentInstructions{
+			Atoms: map[string]AtomOverride{
+				"images": {MediaStyle: &domain.MediaStyle{AspectRatio: "16:9", ObjectFit: "contain"}},
+			},
+		},
+		Products: []domain.Product{
+			{ID: "p1", Name: "Test", Price: 100, Images: []string{"https://example.com/img.jpg"}},
+		},
+	})
+
+	w := out.Formation.Widgets[0]
+	for _, a := range w.AtomsV2 {
+		if a.Type == domain.AtomTypeImage {
+			if a.MediaStyle == nil {
+				t.Fatal("expected mediaStyle on image atom")
+			}
+			if a.MediaStyle.AspectRatio != "16:9" {
+				t.Errorf("expected aspectRatio=16:9, got %q", a.MediaStyle.AspectRatio)
+			}
+			if a.MediaStyle.ObjectFit != "contain" {
+				t.Errorf("expected objectFit=contain, got %q", a.MediaStyle.ObjectFit)
+			}
+		}
+	}
+}
+
+func TestShrinkToFit(t *testing.T) {
+	node := &domain.LayoutNode{
+		Type:    domain.LayoutNodeColumn,
+		Gap:     "lg",
+		Padding: "xl",
+		Children: []domain.LayoutChild{
+			{Node: &domain.LayoutNode{Type: domain.LayoutNodeRow, Gap: "md", Children: []domain.LayoutChild{{AtomIndex: intPtr(0)}}}},
+		},
+	}
+	shrinkToFit(node, 200)
+	if node.Gap != "md" {
+		t.Errorf("expected gap=md after shrink, got %q", node.Gap)
+	}
+	if node.Padding != "lg" {
+		t.Errorf("expected padding=lg after shrink, got %q", node.Padding)
+	}
+	if node.Children[0].Node.Gap != "sm" {
+		t.Errorf("expected child gap=sm after shrink, got %q", node.Children[0].Node.Gap)
+	}
+}
+
+func TestRemoveEmptyGroups(t *testing.T) {
+	node := &domain.LayoutNode{
+		Type: domain.LayoutNodeColumn,
+		Children: []domain.LayoutChild{
+			{Node: &domain.LayoutNode{Type: domain.LayoutNodeRow, Children: []domain.LayoutChild{}}}, // empty
+			{AtomIndex: intPtr(0)},
+			{Node: &domain.LayoutNode{Type: domain.LayoutNodeRow, Children: []domain.LayoutChild{{AtomIndex: intPtr(1)}}}}, // non-empty
+		},
+	}
+	removeEmptyGroups(node)
+	if len(node.Children) != 2 {
+		t.Errorf("expected 2 children after removing empty, got %d", len(node.Children))
+	}
+}
+
+func TestFlattenDeep(t *testing.T) {
+	// 4 levels deep: root(0) > level1(1) > level2(2) > level3(3) > atom
+	// With maxDepth=2, level2 at depth 2 should have its nested children flattened to atoms
+	deepNode := &domain.LayoutNode{
+		Type: domain.LayoutNodeColumn,
+		Children: []domain.LayoutChild{
+			{Node: &domain.LayoutNode{
+				Type: domain.LayoutNodeColumn,
+				Children: []domain.LayoutChild{
+					{Node: &domain.LayoutNode{
+						Type: domain.LayoutNodeColumn,
+						Children: []domain.LayoutChild{
+							{Node: &domain.LayoutNode{
+								Type:     domain.LayoutNodeColumn,
+								Children: []domain.LayoutChild{{AtomIndex: intPtr(0)}, {AtomIndex: intPtr(1)}},
+							}},
+						},
+					}},
+				},
+			}},
+		},
+	}
+	flattenDeep(deepNode, 2)
+	// At depth 2, the node should have been flattened — its children should be atom leaves
+	child := deepNode.Children[0].Node.Children[0].Node
+	if len(child.Children) != 2 {
+		t.Errorf("expected 2 atom children after flatten, got %d", len(child.Children))
+	}
+	for _, c := range child.Children {
+		if c.AtomIndex == nil {
+			t.Error("expected all children to be atom leaves after flatten")
+		}
+	}
+}
+
+func TestNormalizeSizeV2(t *testing.T) {
+	widgets := []domain.Widget{
+		{Size: domain.WidgetSizeSmall},
+		{Size: domain.WidgetSizeMedium},
+		{Size: domain.WidgetSizeSmall},
+	}
+	normalizeSizeV2(widgets)
+	for i, w := range widgets {
+		if w.Size != domain.WidgetSizeMedium {
+			t.Errorf("widget %d: expected size=medium, got %s", i, w.Size)
+		}
+	}
+}
+
+func TestNormalizeStyleV2(t *testing.T) {
+	widgets := []domain.Widget{
+		{AtomsV2: []domain.AtomV2{
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "xl", FontWeight: "bold"}},
+		}},
+		{AtomsV2: []domain.AtomV2{
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "lg", FontWeight: "normal"}},
+		}},
+	}
+	normalizeStyleV2(widgets)
+	// Second widget's name should match first widget's fontSize
+	if widgets[1].AtomsV2[0].TextStyle.FontSize != "xl" {
+		t.Errorf("expected normalized fontSize=xl, got %q", widgets[1].AtomsV2[0].TextStyle.FontSize)
+	}
+	if widgets[1].AtomsV2[0].TextStyle.FontWeight != "bold" {
+		t.Errorf("expected normalized fontWeight=bold, got %q", widgets[1].AtomsV2[0].TextStyle.FontWeight)
+	}
+}
+
+func TestDefaultMediaStyle_Video(t *testing.T) {
+	atoms := []domain.AtomV2{
+		{Type: domain.AtomTypeVideo, FieldName: "video"},
+		{Type: domain.AtomTypeAudio, FieldName: "audio"},
+	}
+	applyDefaultMediaStyle(atoms, domain.WidgetSizeMedium)
+
+	if atoms[0].MediaStyle == nil {
+		t.Fatal("expected mediaStyle on video atom")
+	}
+	if atoms[0].MediaStyle.AspectRatio != "16:9" {
+		t.Errorf("expected video aspectRatio=16:9, got %q", atoms[0].MediaStyle.AspectRatio)
+	}
+	if !atoms[0].MediaStyle.Controls {
+		t.Error("expected video controls=true by default")
+	}
+	if atoms[1].MediaStyle == nil {
+		t.Fatal("expected mediaStyle on audio atom")
+	}
+	if !atoms[1].MediaStyle.Controls {
+		t.Error("expected audio controls=true by default")
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
+}
+
 func TestAutoLayout_ContainerDefaults(t *testing.T) {
 	atoms := []domain.AtomV2{
 		{Type: domain.AtomTypeImage, FieldName: "images"},

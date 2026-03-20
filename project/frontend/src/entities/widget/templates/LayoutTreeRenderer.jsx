@@ -49,6 +49,14 @@ function LayoutChild({ child, atoms }) {
   const childStyle = {};
   if (child.grow) childStyle.flexGrow = child.grow;
   if (child.selfAlign) childStyle.alignSelf = child.selfAlign;
+  // Sizing operations
+  if (child.sizing === 'fill') childStyle.flex = '1 1 0%';
+  if (child.sizing === 'hug') childStyle.flex = '0 0 auto';
+  if (child.sizing === 'fixed') childStyle.flex = '0 0 auto';
+  if (child.minWidth) childStyle.minWidth = child.minWidth;
+  if (child.maxWidth) childStyle.maxWidth = child.maxWidth;
+  if (child.minHeight) childStyle.minHeight = child.minHeight;
+  if (child.maxHeight) childStyle.maxHeight = child.maxHeight;
   const hasStyle = Object.keys(childStyle).length > 0;
 
   // AtomIndex reference
@@ -167,7 +175,7 @@ function buildNodeStyle(node) {
   // Visual container properties
   if (node.borderRadius) {
     style.borderRadius = RADIUS_TOKENS[node.borderRadius] || node.borderRadius;
-    style.overflow = 'hidden';
+    if (!node.overflow) style.overflow = 'hidden';
   }
   if (node.shadow) {
     style.boxShadow = SHADOW_TOKENS[node.shadow] || node.shadow;
@@ -177,6 +185,27 @@ function buildNodeStyle(node) {
   }
   if (node.background) {
     style.background = node.background;
+  }
+  // Border
+  if (node.border) {
+    style.border = node.border;
+  } else {
+    if (node.borderWidth || node.borderColor) {
+      style.border = `${node.borderWidth || '1px'} solid ${node.borderColor || '#E5E7EB'}`;
+    }
+  }
+  // Opacity (0-100 → 0-1)
+  if (node.opacity) {
+    const val = parseFloat(node.opacity);
+    if (!isNaN(val)) style.opacity = val / 100;
+  }
+  // Overflow
+  if (node.overflow) {
+    const OVERFLOW_MAP = {
+      truncate: 'hidden', wrap: 'visible', scroll: 'auto',
+      hide: 'hidden', visible: 'visible',
+    };
+    style.overflow = OVERFLOW_MAP[node.overflow] || node.overflow;
   }
 
   return style;

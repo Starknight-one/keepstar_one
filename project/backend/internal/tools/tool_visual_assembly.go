@@ -109,9 +109,41 @@ func (t *VisualAssemblyTool) definitionV2() domain.ToolDefinition {
 					"type":        "number",
 					"description": "Offset for pagination (default 0).",
 				},
+				"columns": map[string]interface{}{
+					"type":        "number",
+					"description": "Grid columns override (1-4). Overrides auto grid calculation.",
+				},
+				"gap": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"xs", "sm", "md", "lg", "xl"},
+					"description": "Gap between widgets/atoms. Default: sm.",
+				},
+				"widgetPadding": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"xs", "sm", "md", "lg", "xl"},
+					"description": "Widget internal padding.",
+				},
+				"widgetBackground": map[string]interface{}{
+					"type":        "string",
+					"description": "Widget background color (hex or semantic: 'surface', 'white', '#F3F4F6').",
+				},
+				"widgetBorderRadius": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"none", "sm", "md", "lg", "xl", "full"},
+					"description": "Widget border radius.",
+				},
+				"widgetShadow": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"none", "sm", "md", "lg"},
+					"description": "Widget shadow.",
+				},
+				"widgetBorder": map[string]interface{}{
+					"type":        "string",
+					"description": "Widget border (e.g. '1px solid #E5E7EB').",
+				},
 				"atoms": map[string]interface{}{
 					"type":        "object",
-					"description": "Per-field overrides keyed by field name. Each value has: textStyle, wrapper, format, color, rigidity.",
+					"description": "Per-field overrides keyed by field name. Each value has: textStyle, wrapper, mediaStyle, iconStyle, format, color, rigidity.",
 					"additionalProperties": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -124,13 +156,38 @@ func (t *VisualAssemblyTool) definitionV2() domain.ToolDefinition {
 									"textDecoration": map[string]interface{}{"type": "string"},
 									"textTransform":  map[string]interface{}{"type": "string"},
 									"lineClamp":      map[string]interface{}{"type": "number"},
+									"lineHeight":     map[string]interface{}{"type": "string", "description": "Token: tight, normal, relaxed, loose"},
+									"letterSpacing":  map[string]interface{}{"type": "string", "description": "Token: tight, normal, wide"},
+									"truncate":       map[string]interface{}{"type": "number", "description": "Max chars (0 = unlimited)"},
 								},
 							},
 							"wrapper": map[string]interface{}{
 								"type": "object",
 								"properties": map[string]interface{}{
-									"type":    map[string]interface{}{"type": "string", "description": "Wrapper: none, badge, tag, pill, avatar, tooltip, alert, link, progress, button"},
-									"variant": map[string]interface{}{"type": "string", "description": "Variant: success, error, warning, primary, secondary, outline, active"},
+									"type":         map[string]interface{}{"type": "string", "description": "Wrapper: none, badge, tag, pill, avatar, tooltip, alert, link, progress, button"},
+									"variant":      map[string]interface{}{"type": "string", "description": "Variant: success, error, warning, primary, secondary, outline, active"},
+									"background":   map[string]interface{}{"type": "string", "description": "Wrapper background color"},
+									"borderRadius": map[string]interface{}{"type": "string", "description": "Wrapper border radius token"},
+									"padding":      map[string]interface{}{"type": "string", "description": "Wrapper padding token"},
+								},
+							},
+							"mediaStyle": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"aspectRatio": map[string]interface{}{"type": "string", "description": "Aspect ratio: 1:1, 4:3, 16:9, auto"},
+									"objectFit":   map[string]interface{}{"type": "string", "description": "Object fit: cover, contain, fill"},
+									"controls":    map[string]interface{}{"type": "boolean", "description": "Show video/audio controls"},
+									"autoplay":    map[string]interface{}{"type": "boolean", "description": "Autoplay video"},
+									"muted":       map[string]interface{}{"type": "boolean", "description": "Mute video"},
+									"poster":      map[string]interface{}{"type": "string", "description": "Video poster URL"},
+								},
+							},
+							"iconStyle": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"size":  map[string]interface{}{"type": "string", "description": "Icon size: xs, sm, md, lg, xl"},
+									"color": map[string]interface{}{"type": "string", "description": "Icon color (semantic or hex)"},
+									"style": map[string]interface{}{"type": "string", "description": "Icon style: stroke, fill"},
 								},
 							},
 							"format":   map[string]interface{}{"type": "string", "description": "Value format: currency, stars, stars-text, stars-compact, percent, number, date, text"},
@@ -362,6 +419,36 @@ func parseV2Input(input map[string]interface{}) *engine.AgentInstructions {
 		hasAny = true
 	}
 
+	// Widget/formation container overrides
+	if v, ok := input["columns"].(float64); ok && v > 0 {
+		instr.Columns = int(v)
+		hasAny = true
+	}
+	if v, ok := input["gap"].(string); ok && v != "" {
+		instr.Gap = v
+		hasAny = true
+	}
+	if v, ok := input["widgetPadding"].(string); ok && v != "" {
+		instr.WidgetPadding = v
+		hasAny = true
+	}
+	if v, ok := input["widgetBackground"].(string); ok && v != "" {
+		instr.WidgetBackground = v
+		hasAny = true
+	}
+	if v, ok := input["widgetBorderRadius"].(string); ok && v != "" {
+		instr.WidgetBorderRadius = v
+		hasAny = true
+	}
+	if v, ok := input["widgetShadow"].(string); ok && v != "" {
+		instr.WidgetShadow = v
+		hasAny = true
+	}
+	if v, ok := input["widgetBorder"].(string); ok && v != "" {
+		instr.WidgetBorder = v
+		hasAny = true
+	}
+
 	// V2-native: parse atoms map directly
 	if atomsRaw, ok := input["atoms"].(map[string]interface{}); ok && len(atomsRaw) > 0 {
 		instr.Atoms = make(map[string]engine.AtomOverride, len(atomsRaw))
@@ -386,7 +473,7 @@ func parseAtomOverride(raw interface{}) engine.AtomOverride {
 
 	var ov engine.AtomOverride
 
-	// textStyle: { fontSize, fontWeight, color, textDecoration, textTransform, lineClamp }
+	// textStyle: { fontSize, fontWeight, color, textDecoration, textTransform, lineClamp, lineHeight, letterSpacing, truncate }
 	if tsRaw, ok := obj["textStyle"].(map[string]interface{}); ok {
 		ts := &domain.TextStyle{}
 		if v, ok := tsRaw["fontSize"].(string); ok {
@@ -407,10 +494,19 @@ func parseAtomOverride(raw interface{}) engine.AtomOverride {
 		if v, ok := tsRaw["lineClamp"].(float64); ok {
 			ts.LineClamp = int(v)
 		}
+		if v, ok := tsRaw["lineHeight"].(string); ok {
+			ts.LineHeight = v
+		}
+		if v, ok := tsRaw["letterSpacing"].(string); ok {
+			ts.LetterSpacing = v
+		}
+		if v, ok := tsRaw["truncate"].(float64); ok {
+			ts.Truncate = int(v)
+		}
 		ov.TextStyle = ts
 	}
 
-	// wrapper: { type, variant }
+	// wrapper: { type, variant, background, borderRadius, padding }
 	if wrRaw, ok := obj["wrapper"].(map[string]interface{}); ok {
 		wr := &domain.WrapperConfig{}
 		if v, ok := wrRaw["type"].(string); ok {
@@ -419,7 +515,55 @@ func parseAtomOverride(raw interface{}) engine.AtomOverride {
 		if v, ok := wrRaw["variant"].(string); ok {
 			wr.Variant = v
 		}
+		if v, ok := wrRaw["background"].(string); ok {
+			wr.Background = v
+		}
+		if v, ok := wrRaw["borderRadius"].(string); ok {
+			wr.BorderRadius = v
+		}
+		if v, ok := wrRaw["padding"].(string); ok {
+			wr.Padding = v
+		}
 		ov.Wrapper = wr
+	}
+
+	// mediaStyle: { aspectRatio, objectFit, controls, autoplay, muted, poster }
+	if msRaw, ok := obj["mediaStyle"].(map[string]interface{}); ok {
+		ms := &domain.MediaStyle{}
+		if v, ok := msRaw["aspectRatio"].(string); ok {
+			ms.AspectRatio = v
+		}
+		if v, ok := msRaw["objectFit"].(string); ok {
+			ms.ObjectFit = v
+		}
+		if v, ok := msRaw["controls"].(bool); ok {
+			ms.Controls = v
+		}
+		if v, ok := msRaw["autoplay"].(bool); ok {
+			ms.Autoplay = v
+		}
+		if v, ok := msRaw["muted"].(bool); ok {
+			ms.Muted = v
+		}
+		if v, ok := msRaw["poster"].(string); ok {
+			ms.Poster = v
+		}
+		ov.MediaStyle = ms
+	}
+
+	// iconStyle: { size, color, style }
+	if isRaw, ok := obj["iconStyle"].(map[string]interface{}); ok {
+		is := &domain.IconStyle{}
+		if v, ok := isRaw["size"].(string); ok {
+			is.Size = v
+		}
+		if v, ok := isRaw["color"].(string); ok {
+			is.Color = v
+		}
+		if v, ok := isRaw["style"].(string); ok {
+			is.Style = v
+		}
+		ov.IconStyle = is
 	}
 
 	// format

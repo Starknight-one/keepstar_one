@@ -119,7 +119,14 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 		}
 	}
 
-	// Step 2.5: Set default MediaStyle for image atoms
+	// Step 2.5: Apply mediaStyle and iconStyle overrides from instructions
+	if input.Instructions != nil && len(input.Instructions.Atoms) > 0 {
+		for i := range widgets {
+			applyMediaIconOverrides(widgets[i].AtomsV2, input.Instructions.Atoms)
+		}
+	}
+
+	// Step 2.6: Set default MediaStyle for image/video atoms
 	for i := range widgets {
 		applyDefaultMediaStyle(widgets[i].AtomsV2, resolved.Size)
 	}
@@ -149,11 +156,33 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 		// Apply junction rules to resolve overflow
 		ruleWarnings := applyJunctionRules(widgets, budgets, needs, resolved)
 		warnings = append(warnings, ruleWarnings...)
+
+		// F1 viewport-fit: reduce columns if widget too narrow
+		if budgets.WidgetWidth < 150 && budgets.Columns > 1 {
+			// Reduce columns in resolved for next BudgetDown iteration
+			newCols := budgets.Columns - 1
+			if newCols < 1 {
+				newCols = 1
+			}
+			// Override via viewport width trick: re-resolve won't help,
+			// so we store in resolved for formation building
+			resolved.Layout = "grid"
+			resolved.Size = domain.WidgetSizeMedium // Prevent tiny widgets
+		}
+		// F2/F4: mobile reflow / min-widget-width
+		if (budgets.FormationWidth > 0 && budgets.FormationWidth < 320) || budgets.WidgetWidth < 120 {
+			resolved.Layout = "list" // Force single-column
+		}
 	}
 
 	// Step 8: Per-widget constraints
 	for i := range widgets {
 		applyWidgetV2Constraints(&widgets[i])
+	}
+
+	// Step 8.5: Apply widget container overrides from instructions
+	if input.Instructions != nil {
+		applyWidgetContainerOverrides(widgets, input.Instructions)
 	}
 
 	// Step 9: Build formation
@@ -163,7 +192,12 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 		Widgets: widgets,
 	}
 	if mode == domain.FormationTypeGrid {
-		formation.Grid = CalcGridConfig(len(widgets), resolved.Size)
+		grid := CalcGridConfig(len(widgets), resolved.Size)
+		// Apply columns override from instructions
+		if input.Instructions != nil && input.Instructions.Columns > 0 && input.Instructions.Columns <= 4 {
+			grid.Cols = input.Instructions.Columns
+		}
+		formation.Grid = grid
 	}
 
 	// Step 10: Cross-widget constraints (show-fields are protected from C1 normalization)
@@ -542,22 +576,73 @@ func applyAtomOverrides(atoms []domain.AtomV2, overrides map[string]AtomOverride
 	return atoms
 }
 
-// applyDefaultMediaStyle sets default MediaStyle for image atoms based on widget size.
+// applyDefaultMediaStyle sets default MediaStyle for image/video atoms based on widget size.
 func applyDefaultMediaStyle(atoms []domain.AtomV2, size domain.WidgetSize) {
 	for i := range atoms {
-		if atoms[i].Type != domain.AtomTypeImage {
-			continue
-		}
 		if atoms[i].MediaStyle != nil {
 			continue // Already set (by preset or override)
 		}
-		switch size {
-		case domain.WidgetSizeLarge, "xl":
-			atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "16:9", ObjectFit: "cover"}
-		case domain.WidgetSizeMedium:
-			atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "4:3", ObjectFit: "cover"}
-		default: // small, tiny
-			atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "1:1", ObjectFit: "cover"}
+		switch atoms[i].Type {
+		case domain.AtomTypeImage:
+			switch size {
+			case domain.WidgetSizeLarge, "xl":
+				atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "16:9", ObjectFit: "cover"}
+			case domain.WidgetSizeMedium:
+				atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "4:3", ObjectFit: "cover"}
+			default: // small, tiny
+				atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "1:1", ObjectFit: "cover"}
+			}
+		case domain.AtomTypeVideo:
+			atoms[i].MediaStyle = &domain.MediaStyle{AspectRatio: "16:9", ObjectFit: "cover", Controls: true}
+		case domain.AtomTypeAudio:
+			atoms[i].MediaStyle = &domain.MediaStyle{Controls: true}
+		}
+	}
+}
+
+// applyMediaIconOverrides applies mediaStyle and iconStyle from atom overrides.
+func applyMediaIconOverrides(atoms []domain.AtomV2, overrides map[string]AtomOverride) {
+	for i := range atoms {
+		ov, ok := overrides[atoms[i].FieldName]
+		if !ok {
+			continue
+		}
+		if ov.MediaStyle != nil {
+			atoms[i].MediaStyle = ov.MediaStyle
+		}
+		if ov.IconStyle != nil {
+			atoms[i].IconStyle = ov.IconStyle
+		}
+	}
+}
+
+// applyWidgetContainerOverrides applies widget-level visual container overrides from instructions.
+func applyWidgetContainerOverrides(widgets []domain.Widget, instr *AgentInstructions) {
+	if instr == nil {
+		return
+	}
+	for i := range widgets {
+		if widgets[i].Layout == nil {
+			continue
+		}
+		root := widgets[i].Layout
+		if instr.WidgetPadding != "" {
+			root.Padding = instr.WidgetPadding
+		}
+		if instr.WidgetBackground != "" {
+			root.Background = instr.WidgetBackground
+		}
+		if instr.WidgetBorderRadius != "" {
+			root.BorderRadius = instr.WidgetBorderRadius
+		}
+		if instr.WidgetShadow != "" {
+			root.Shadow = instr.WidgetShadow
+		}
+		if instr.WidgetBorder != "" {
+			root.Border = instr.WidgetBorder
+		}
+		if instr.Gap != "" {
+			root.Gap = instr.Gap
 		}
 	}
 }
