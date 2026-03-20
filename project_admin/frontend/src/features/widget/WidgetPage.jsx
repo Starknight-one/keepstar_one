@@ -28,9 +28,9 @@ export default function WidgetPage() {
   if (loading) return <div className="center-spinner"><Spinner /></div>
 
   const slug = tenant?.slug || 'your-tenant'
-  const scriptSrc = widgetUrl ? `${widgetUrl}/widget.js` : 'https://keepstarone-production.up.railway.app/widget.js'
-  const apiUrl = chatApiUrl || 'https://keepstarone-production.up.railway.app/api/v1'
-  const embedCode = `var s=document.createElement('script');\ns.src='${scriptSrc}';\ns.setAttribute('data-tenant','${slug}');\ns.setAttribute('data-api','${apiUrl}');\ndocument.body.appendChild(s);`
+  const scriptSrc = widgetUrl ? `${widgetUrl}/widget.js` : 'https://YOUR_CHAT_SERVER/widget.js'
+  const apiUrl = chatApiUrl || 'https://YOUR_CHAT_SERVER/api/v1'
+  const embedCode = `<script>\nvar s=document.createElement('script');\ns.src='${scriptSrc}';\ns.setAttribute('data-tenant','${slug}');\ns.setAttribute('data-api','${apiUrl}');\ndocument.body.appendChild(s);\n</script>`
 
   function handleCopy() {
     navigator.clipboard.writeText(embedCode).then(() => {
