@@ -625,18 +625,19 @@ func convertToAnthropicMessage(msg domain.LLMMessage) anthropicToolMsg {
 	}
 
 	if len(msg.ToolCalls) > 0 {
-		// Assistant message with tool calls
-		blocks := make([]contentBlock, 0, len(msg.ToolCalls))
+		// Assistant message with tool calls — use raw maps to guarantee "input" is always present
+		// (contentBlock with omitempty drops empty maps, but Anthropic requires "input" on tool_use)
+		blocks := make([]map[string]interface{}, 0, len(msg.ToolCalls))
 		for _, tc := range msg.ToolCalls {
 			input := tc.Input
 			if input == nil {
 				input = map[string]interface{}{}
 			}
-			blocks = append(blocks, contentBlock{
-				Type:  "tool_use",
-				ID:    tc.ID,
-				Name:  tc.Name,
-				Input: input,
+			blocks = append(blocks, map[string]interface{}{
+				"type":  "tool_use",
+				"id":    tc.ID,
+				"name":  tc.Name,
+				"input": input,
 			})
 		}
 		return anthropicToolMsg{Role: "assistant", Content: blocks}
