@@ -24,7 +24,7 @@ type RetentionConfig struct {
 // DefaultRetentionConfig returns sensible defaults
 func DefaultRetentionConfig() RetentionConfig {
 	return RetentionConfig{
-		TraceMaxAge:         48 * time.Hour,
+		TraceMaxAge:         7 * 24 * time.Hour,
 		DeadSessionMaxAge:   1 * time.Hour,
 		ConversationMaxMsgs: 20,
 		CleanupInterval:     6 * time.Hour,
