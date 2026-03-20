@@ -12,6 +12,7 @@
 .atom-v2-image {
   width: 100%;
   height: auto;
+  max-height: 320px;
   object-fit: cover;
   border-radius: var(--radius-md, 8px);
 }

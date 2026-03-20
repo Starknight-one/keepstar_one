@@ -4,6 +4,34 @@ import (
 	"keepstar/internal/domain"
 )
 
+// AutoLayoutSequential preserves atom order as-is (used when agent specified explicit order).
+// Images get a span node, everything else goes into a column in original order.
+func AutoLayoutSequential(atoms []domain.AtomV2) *domain.LayoutNode {
+	if len(atoms) == 0 {
+		return nil
+	}
+	root := &domain.LayoutNode{
+		Type:    domain.LayoutNodeColumn,
+		Gap:     "sm",
+		Name:    "root",
+		Padding: "sm",
+	}
+	for i, a := range atoms {
+		if a.Type == domain.AtomTypeImage {
+			span := &domain.LayoutNode{
+				Type:         domain.LayoutNodeSpan,
+				Name:         "hero",
+				BorderRadius: "md",
+			}
+			span.Children = append(span.Children, domain.NewAtomChild(i))
+			root.Children = append(root.Children, domain.NewNodeChild(span))
+		} else {
+			root.Children = append(root.Children, domain.NewAtomChild(i))
+		}
+	}
+	return root
+}
+
 // AutoLayout groups AtomV2 slice into a LayoutNode tree.
 // Replaces CalculateZones for the v2 engine — groups by type/subtype/wrapper
 // rather than hardcoded display-string matching.

@@ -136,8 +136,17 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 		// Step 3: Per-atom constraints
 		widgets[i].AtomsV2 = applyAtomV2Constraints(widgets[i].AtomsV2)
 
-		// Step 4: Build layout tree
-		widgets[i].Layout = AutoLayout(widgets[i].AtomsV2)
+		// Step 4: Build layout tree (sequential if agent specified order)
+		if input.Instructions != nil && len(input.Instructions.Order) > 0 {
+			widgets[i].Layout = AutoLayoutSequential(widgets[i].AtomsV2)
+		} else {
+			widgets[i].Layout = AutoLayout(widgets[i].AtomsV2)
+		}
+
+		// Step 4b: Apply direction override (horizontal → row layout with hero left, content right)
+		if input.Instructions != nil && input.Instructions.Direction == "horizontal" && widgets[i].Layout != nil {
+			applyHorizontalDirection(widgets[i].Layout)
+		}
 	}
 
 	// Steps 5-6: Budget down / needs up (max 2 iterations)
@@ -397,29 +406,83 @@ func DisplayToTextStyleWrapper(display string) (*domain.TextStyle, *domain.Wrapp
 	}
 }
 
+// applyHorizontalDirection converts a vertical column layout into horizontal row layout.
+// Hero/media goes left (fixed width), content goes right (flex).
+func applyHorizontalDirection(root *domain.LayoutNode) {
+	if root.Type != domain.LayoutNodeColumn || len(root.Children) < 2 {
+		return
+	}
+
+	// Find hero/media child and content children
+	var heroChild *domain.LayoutChild
+	var contentChildren []domain.LayoutChild
+
+	for _, c := range root.Children {
+		if c.Node != nil && (c.Node.Name == "hero" || c.Node.Name == "media") {
+			heroChild = &c
+		} else {
+			contentChildren = append(contentChildren, c)
+		}
+	}
+
+	if heroChild == nil {
+		return
+	}
+
+	// Build horizontal row: [hero (fixed)] [content column (flex)]
+	contentCol := &domain.LayoutNode{
+		Type: domain.LayoutNodeColumn,
+		Gap:  "sm",
+		Name: "content",
+	}
+	contentCol.Children = contentChildren
+
+	heroChild.Node.Overflow = "hidden"
+
+	root.Type = domain.LayoutNodeRow
+	root.Gap = "md"
+	root.Align = "start"
+	root.Children = []domain.LayoutChild{
+		*heroChild,
+		domain.NewNodeChild(contentCol),
+	}
+}
+
 // applyInstructionOverrides modifies field list and resolved defaults based on agent instructions.
 func applyInstructionOverrides(instr *AgentInstructions, fields []string, resolved ResolvedDefaults) ([]string, ResolvedDefaults) {
-	// Apply show fields (prepend to list)
+	// Apply show fields — additive to current resolved set (not all field definitions)
+	// show:["rating"] + current [images,name,price] → [images,name,price,rating], MaxFields=4
 	if len(instr.Show) > 0 {
+		// Start with resolved fields (the current visible set), not all field defs
+		baseFields := resolved.Fields
+		if len(baseFields) == 0 {
+			baseFields = fields
+		}
 		seen := make(map[string]bool)
 		merged := make([]string, 0)
+		// Keep existing fields first
+		for _, f := range baseFields {
+			if !seen[f] {
+				merged = append(merged, f)
+				seen[f] = true
+			}
+		}
+		// Append new show fields
+		newCount := 0
 		for _, f := range instr.Show {
 			if !seen[f] {
 				merged = append(merged, f)
 				seen[f] = true
-			}
-		}
-		for _, f := range fields {
-			if !seen[f] {
-				merged = append(merged, f)
-				seen[f] = true
+				newCount++
 			}
 		}
 		fields = merged
-		// Agent explicitly requested fields — raise MaxFields to honor them
-		if len(instr.Show) > resolved.MaxFields {
-			resolved.MaxFields = len(instr.Show)
+		// Raise MaxFields to accommodate added fields
+		needed := len(merged)
+		if needed > resolved.MaxFields {
+			resolved.MaxFields = needed
 		}
+		_ = newCount
 	}
 
 	// Apply hide fields

@@ -266,7 +266,7 @@ func CalcGridConfig(entityCount int, size domain.WidgetSize) *domain.GridConfig 
 	default:
 		switch size {
 		case domain.WidgetSizeLarge:
-			cols = 3
+			cols = 2
 		case domain.WidgetSizeTiny:
 			cols = 4
 		default:
