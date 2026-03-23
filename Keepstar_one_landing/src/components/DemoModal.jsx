@@ -13,8 +13,14 @@ export default function DemoModal({ onClose }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // TODO: POST to /api/demo-request when admin backend is ready
-    console.log('Demo request:', form);
+    const apiUrl = import.meta.env.VITE_BLOG_API_URL || '';
+    if (apiUrl) {
+      fetch(`${apiUrl}/api/demo-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      }).catch(() => {});
+    }
     onClose();
   };
 

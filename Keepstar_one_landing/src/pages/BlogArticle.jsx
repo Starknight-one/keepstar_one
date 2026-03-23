@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import DemoModal from '../components/DemoModal';
 import { BLOG_POSTS } from '../data/blogPosts';
+import { fetchPost, fetchPosts, apiPostToLocal } from '../data/blogApi';
 import './BlogArticle.css';
 
 const bulletColors = ['#4285F4', '#EA4335', '#FBBC04', '#34A853'];
@@ -13,9 +14,22 @@ export default function BlogArticle() {
   const { slug } = useParams();
   const navigate = useNavigate();
   const [showDemo, setShowDemo] = useState(false);
+  const [post, setPost] = useState(() => BLOG_POSTS.find((p) => p.slug === slug) || null);
+  const [related, setRelated] = useState(() => BLOG_POSTS.filter((p) => p.slug !== slug).slice(0, 3));
 
-  const post = BLOG_POSTS.find((p) => p.slug === slug);
-  const related = BLOG_POSTS.filter((p) => p.slug !== slug).slice(0, 3);
+  useEffect(() => {
+    // Try fetching from API
+    fetchPost(slug).then((apiPost) => {
+      if (apiPost) {
+        setPost(apiPostToLocal(apiPost));
+      }
+    });
+    fetchPosts().then((apiPosts) => {
+      if (apiPosts && apiPosts.length > 0) {
+        setRelated(apiPosts.filter((p) => p.slug !== slug).slice(0, 3).map(apiPostToLocal));
+      }
+    });
+  }, [slug]);
 
   if (!post) {
     return (

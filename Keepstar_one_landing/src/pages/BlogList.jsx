@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import { BLOG_POSTS } from '../data/blogPosts';
+import { fetchPosts, apiPostToLocal } from '../data/blogApi';
 import './BlogList.css';
 
 const confettiShapes = [
@@ -22,8 +23,18 @@ const confettiShapes = [
 
 export default function BlogList() {
   const navigate = useNavigate();
-  const featured = BLOG_POSTS.find((p) => p.featured);
-  const rest = BLOG_POSTS.filter((p) => !p.featured);
+  const [posts, setPosts] = useState(BLOG_POSTS);
+
+  useEffect(() => {
+    fetchPosts().then((apiPosts) => {
+      if (apiPosts && apiPosts.length > 0) {
+        setPosts(apiPosts.map(apiPostToLocal));
+      }
+    });
+  }, []);
+
+  const featured = posts.find((p) => p.featured) || posts[0];
+  const rest = posts.filter((p) => p !== featured);
 
   return (
     <div className="app-container">
