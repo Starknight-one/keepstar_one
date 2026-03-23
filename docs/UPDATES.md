@@ -4,6 +4,26 @@
 
 ---
 
+## Alpha 0.2.0 — Landing: Pricing, Blog, Demo Modal, Blog Admin — 2026-03-23
+
+### Landing Page Enhancements
+- **Pricing section**: 3 тарифа (Starter $129, Growth $299, Scale $599) между Stats и FinalCTA
+- **React Router**: `/` → Landing, `/blog` → Blog List, `/blog/:slug` → Blog Article
+- **Blog List page**: hero с конфетти анимацией, featured post, grid карточек
+- **Blog Article page**: полная статья, цветные буллеты, "Book a Demo" CTA
+- **Demo Modal**: форма заявки (name, email, company, message), ESC/overlay close
+- **Footer**: извлечён в переиспользуемый компонент
+- **Header**: Blog навигация через react-router Link, Pricing → smooth scroll
+
+### Blog Admin App (`admin/`)
+- **Backend**: Express 5 + better-sqlite3, JWT auth, bcrypt passwords
+- **API**: CRUD posts, analytics (views/referrers/chart), user management
+- **Frontend**: React 19 — Login, Sidebar, PostsTable, PostEditor, Analytics, Settings
+- **Default admin**: `admin@keepstar.one / admin123`
+- **Docker**: отдельный Dockerfile для деплоя на Railway (порт 3001)
+
+---
+
 ## Alpha 0.1.0 — E2E Testing Round 1 + Landing Page — 2026-03-23
 
 ### E2E Testing Round 1 — 6 багфиксов — 2026-03-20
