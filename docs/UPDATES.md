@@ -4,6 +4,93 @@
 
 ---
 
+## Alpha 0.1.0 — E2E Testing Round 1 + Landing Page — 2026-03-23
+
+### E2E Testing Round 1 — 6 багфиксов — 2026-03-20
+
+Первый E2E прогон V2 движка на продакшене (25 тесткейсов, session `f618e070`). Найдено и исправлено 6 багов.
+
+### Fix 1: Agent2 history — tool_use.input Field Required (500 на 2+ запросе)
+
+**Проблема**: Agent2History хранит предыдущие tool_use/tool_result. При отправке в Anthropic API:
+- `contentBlock.Input` имел тег `json:"input,omitempty"` — Go считает пустой map `{}` "empty" и убирает поле
+- Anthropic API **требует** `"input"` на `tool_use` блоках → 500 на каждом запросе после первого
+
+**Фикс**: tool_use блоки строятся через `map[string]interface{}` напрямую (не через struct с omitempty). Nil input → `{}`. tool_result по-прежнему через struct — input не попадает.
+
+**Файл**: `adapters/anthropic/anthropic_client.go`
+
+### Fix 2: Show additive logic — price пропадал при show:["rating"]
+
+**Проблема**: `show:["rating"]` мержился со **всеми 13 field definitions**, а не с текущими 3 resolved полями. Потом MaxFields=3 обрезал до `[rating, images, name]` — price терялся.
+
+**Механика бага**:
+1. AutoResolve для 23 товаров → `resolved.Fields = [images, name, price]`, MaxFields=3
+2. `show:["rating"]` + все 13 полей → `[rating, images, name, price, brand, ...]`
+3. MaxFields=3 обрезает → `[rating, images, name]` — **price отрезан**
+
+**Фикс**: Show мержит с `resolved.Fields` (текущие 3 поля), а не с полным `fields` из field definitions. MaxFields поднимается до `len(merged)` чтобы вместить все.
+
+**Файл**: `engine/engine_v2.go` — `applyInstructionOverrides`
+
+### Fix 3: Order не работал визуально
+
+**Проблема**: `order:[price, name]` корректно переставлял fieldNames, но `AutoLayout` потом пересортировывал атомы по типу (hero → headings → price → ...), игнорируя порядок.
+
+**Фикс**: Новый `AutoLayoutSequential` — сохраняет порядок атомов как есть (images в span, остальное в column по порядку). Используется когда agent задал order.
+
+**Файлы**: `engine/auto_layout.go`, `engine/engine_v2.go`
+
+### Fix 4: Direction horizontal без эффекта
+
+**Проблема**: `direction: "horizontal"` парсился в AgentInstructions, но движок нигде не применял его к layout tree.
+
+**Фикс**: `applyHorizontalDirection` — перестраивает root layout: hero/media слева (span), content справа (column) в row.
+
+**Файл**: `engine/engine_v2.go`
+
+### Fix 5: Size large не уменьшал grid columns
+
+**Проблема**: `CalcGridConfig` для 10+ товаров давал 3 колонки при size=large — столько же сколько default. Large карточки не помещались.
+
+**Фикс**: 10+ items + size=large → 2 колонки вместо 3.
+
+**Файл**: `engine/defaults.go`
+
+### Fix 6: Carousel image на весь экран
+
+**Проблема**: `.atom-v2-image` = `width:100%; height:auto` — в carousel (85% viewport) image растягивался без ограничения.
+
+**Фикс**: `max-height: 320px` на `.atom-v2-image`.
+
+**Файл**: `frontend/src/entities/atom/AtomV2.css`
+
+### Другое
+
+- **Trace retention**: увеличен с 48h до 7 дней (для тестирования)
+- **Тесткейсы**: `docs/E2E_TEST_CASES.md` — 25 тесткейсов в 8 блоках
+
+### Нерешённое (не баги движка)
+
+- **P1 state_filter**: Agent1 при "Покажи только COSRX" использует `text_match` вместо `brand` — 0 результатов. Со второй попытки (другая формулировка) работает. Нужна доработка Agent1 промпта.
+
+### Файлы изменённые
+
+**Backend:**
+- `adapters/anthropic/anthropic_client.go` — tool_use input serialization
+- `adapters/postgres/retention.go` — TraceMaxAge 48h → 7d
+- `engine/engine_v2.go` — show logic, order→sequential layout, direction horizontal
+- `engine/auto_layout.go` — AutoLayoutSequential
+- `engine/defaults.go` — CalcGridConfig large → 2 cols
+
+**Frontend:**
+- `entities/atom/AtomV2.css` — image max-height
+
+**Docs:**
+- `docs/E2E_TEST_CASES.md` — 25 тесткейсов + Run 1 результаты
+
+---
+
 ## V2 Engine Completion — Full Spec Implementation — 2026-03-20
 
 Движок доведён до полного scope v1 спеки. Из 41 операции было 10 DONE + 10 PARTIAL — теперь ~35 работают end-to-end (backend → schema → prompt → frontend). Добавлено 8 новых правил, 7 widget-level параметров, расширены все atom overrides.
