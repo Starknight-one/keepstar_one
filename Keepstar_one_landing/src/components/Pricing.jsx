@@ -50,7 +50,7 @@ const plans = [
   },
 ];
 
-export default function Pricing() {
+export default function Pricing({ onDemo }) {
   return (
     <section id="pricing" className="pricing-section container">
       <div className="pricing-header">
@@ -79,7 +79,7 @@ export default function Pricing() {
                 </li>
               ))}
             </ul>
-            <button className={`btn-pricing ${plan.featured ? 'btn-pricing-primary' : 'btn-pricing-secondary'}`}>
+            <button className={`btn-pricing ${plan.featured ? 'btn-pricing-primary' : 'btn-pricing-secondary'}`} onClick={onDemo}>
               Get started
             </button>
           </div>

@@ -2,7 +2,7 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import './Header.css';
 
-export default function Header() {
+export default function Header({ onDemo }) {
   const navigate = useNavigate();
 
   const handlePricingClick = (e) => {
@@ -31,7 +31,7 @@ export default function Header() {
         <Link to="/blog">Blog</Link>
       </nav>
 
-      <button className="btn-get-started">Get started</button>
+      <button className="btn-get-started" onClick={onDemo}>Get started</button>
     </header>
   );
 }

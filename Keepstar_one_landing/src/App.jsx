@@ -19,15 +19,15 @@ import './App.css';
 function Landing({ onDemo }) {
   return (
     <div className="app-container">
-      <Header />
-      <Hero />
+      <Header onDemo={onDemo} />
+      <Hero onDemo={onDemo} />
       <ProductDemo />
       <IconStrip />
       <FeatureRows />
       <ProblemSection />
       <HowItWorks />
       <Stats />
-      <Pricing />
+      <Pricing onDemo={onDemo} />
       <FinalCTA onDemo={onDemo} />
       <Footer />
     </div>

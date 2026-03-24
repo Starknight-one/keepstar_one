@@ -1,7 +1,7 @@
 import React from 'react';
 import './Hero.css';
 
-export default function Hero() {
+export default function Hero({ onDemo }) {
   const shapes = [
     { type: 'ellipse', color: 'bg-blue', w: 12, top: '15%', left: '12%', delay: '' },
     { type: 'ellipse', color: 'bg-red', w: 8, top: '10%', left: '24%', delay: 'delay-100' },
@@ -55,8 +55,8 @@ export default function Hero() {
         </p>
 
         <div className="hero-actions">
-          <button className="btn-hero btn-hero-primary">Start free trial</button>
-          <button className="btn-hero btn-hero-secondary">Watch demo</button>
+          <button className="btn-hero btn-hero-primary" onClick={onDemo}>Start free trial</button>
+          <button className="btn-hero btn-hero-secondary" onClick={onDemo}>Watch demo</button>
         </div>
       </div>
     </section>
