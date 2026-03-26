@@ -14,6 +14,12 @@ import Footer from './components/Footer';
 import DemoModal from './components/DemoModal';
 import BlogList from './pages/BlogList';
 import BlogArticle from './pages/BlogArticle';
+import TermsOfUse from './pages/TermsOfUse';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import Contact from './pages/Contact';
+import About from './pages/About';
+import FeaturesPage from './pages/FeaturesPage';
+import ChangelogPage from './pages/ChangelogPage';
 import './App.css';
 
 function Landing({ onDemo }) {
@@ -43,6 +49,12 @@ function App() {
         <Route path="/" element={<Landing onDemo={() => setShowDemo(true)} />} />
         <Route path="/blog" element={<BlogList />} />
         <Route path="/blog/:slug" element={<BlogArticle />} />
+        <Route path="/terms" element={<TermsOfUse />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/contact" element={<Contact />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/features" element={<FeaturesPage />} />
+        <Route path="/changelog" element={<ChangelogPage />} />
       </Routes>
       {showDemo && <DemoModal onClose={() => setShowDemo(false)} />}
     </>
