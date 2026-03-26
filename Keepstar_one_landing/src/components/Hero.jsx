@@ -43,11 +43,11 @@ export default function Hero({ onDemo }) {
 
       <div className="hero-content">
         <div className="badge">Now in public beta</div>
-        
+
         <h1 className="hero-headline">
           Every visitor gets<br/>their own website
         </h1>
-        
+
         <p className="hero-subhead">
           An AI chat that generates fully personalized pages in seconds.<br/>
           Replace your static site with a dynamic experience that puts<br/>
@@ -55,8 +55,7 @@ export default function Hero({ onDemo }) {
         </p>
 
         <div className="hero-actions">
-          <button className="btn-hero btn-hero-primary" onClick={onDemo}>Start free trial</button>
-          <button className="btn-hero btn-hero-secondary" onClick={onDemo}>Watch demo</button>
+          <button className="btn-hero btn-hero-primary" onClick={onDemo}>Request live demo</button>
         </div>
       </div>
     </section>

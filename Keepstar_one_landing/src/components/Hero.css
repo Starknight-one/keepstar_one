@@ -54,6 +54,8 @@
   cursor: pointer;
   transition: transform 0.2s, box-shadow 0.2s;
   font-family: 'Inter', sans-serif;
+  text-decoration: none;
+  display: inline-block;
 }
 
 .btn-hero:hover {
