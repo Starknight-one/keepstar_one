@@ -82,3 +82,20 @@
 11. Like + Cart кнопки на карточках (overlay)
 12. Selector (выбор размера/цвета)
 13. Formation layouts (carousel, single mode)
+
+---
+
+### Git
+
+Все изменения Alpha 0.3.0 сохранены в ветке `feature/alpha-0.3.0-design-system` (pushed to origin).
+
+**Коммит**: `10127cd` — `feat: Alpha 0.3.0 — Design System Migration + Comparison Redesign`
+
+**Содержимое ветки** (18 файлов, +1854/-158 строк):
+- Design System migration (CSS vars, 16 frontend файлов)
+- Comparison Table full redesign (JSX + CSS)
+- V2 preset `product_comparison` (backend)
+- Pencil convergence spec
+- UPDATES.md + UPDATES2.md
+
+**Чтобы достать**: `git checkout feature/alpha-0.3.0-design-system` или `git merge feature/alpha-0.3.0-design-system`
