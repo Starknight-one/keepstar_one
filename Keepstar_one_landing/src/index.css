@@ -74,3 +74,11 @@ p {
 .delay-100 { animation-delay: 1s; }
 .delay-200 { animation-delay: 2s; }
 .delay-300 { animation-delay: 3s; }
+
+/* Confetti shapes */
+.shape-ellipse { border-radius: 50%; }
+.shape-rect { border-radius: 1px; }
+.bg-blue { background: var(--google-blue); }
+.bg-red { background: var(--google-red); }
+.bg-yellow { background: var(--google-yellow); }
+.bg-green { background: var(--google-green); }

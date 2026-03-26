@@ -1,4 +1,5 @@
 import React from 'react';
+import Confetti from './Confetti';
 import './Sections.css';
 
 export default function ProblemSection() {
@@ -9,7 +10,8 @@ export default function ProblemSection() {
   ];
 
   return (
-    <section className="problem-section">
+    <section className="problem-section" style={{ position: 'relative', overflow: 'hidden' }}>
+      <Confetti seed={40} count={8} opacity={0.3} />
       <div className="container">
         <div className="prob-header">
           <h2 className="prob-title">Static websites are killing<br/>your conversions</h2>

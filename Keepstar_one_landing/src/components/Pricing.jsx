@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check } from 'lucide-react';
+import Confetti from './Confetti';
 import './Pricing.css';
 
 const plans = [
@@ -52,7 +53,8 @@ const plans = [
 
 export default function Pricing({ onDemo }) {
   return (
-    <section id="pricing" className="pricing-section container">
+    <section id="pricing" className="pricing-section container" style={{ position: 'relative', overflow: 'hidden' }}>
+      <Confetti seed={70} count={10} opacity={0.35} />
       <div className="pricing-header">
         <div className="pricing-badge">Pricing</div>
         <h2 className="pricing-title">Simple, transparent pricing</h2>

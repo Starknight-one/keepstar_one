@@ -1,4 +1,5 @@
 import React from 'react';
+import Confetti from './Confetti';
 import './Sections.css';
 
 export default function HowItWorks() {
@@ -9,7 +10,8 @@ export default function HowItWorks() {
   ];
 
   return (
-    <section className="how-section container">
+    <section className="how-section container" style={{ position: 'relative', overflow: 'hidden' }}>
+      <Confetti seed={50} count={8} opacity={0.35} />
       <h2 className="how-title">Live in 5 minutes.<br/>No code required.</h2>
       <div className="how-steps">
         {steps.map((s, idx) => (

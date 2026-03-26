@@ -1,9 +1,11 @@
 import React from 'react';
 import { User, GitBranch, TrendingUp, Database, Star } from 'lucide-react';
+import Confetti from './Confetti';
 
 export default function FeatureRows() {
   return (
-    <div className="features-container">
+    <div className="features-container" style={{ position: 'relative', overflow: 'hidden' }}>
+      <Confetti seed={30} count={10} opacity={0.35} />
       {/* Feature 1 */}
       <section className="feature-row container">
         <div className="feature-text">

@@ -1,4 +1,5 @@
 import React from 'react';
+import Confetti from './Confetti';
 import './Sections.css';
 
 export default function Stats() {
@@ -10,7 +11,8 @@ export default function Stats() {
   ];
 
   return (
-    <section className="stats-section">
+    <section className="stats-section" style={{ position: 'relative', overflow: 'hidden' }}>
+      <Confetti seed={60} count={8} opacity={0.4} />
       <div className="container stats-row">
         {stats.map((s, idx) => (
           <div key={idx} className="stat-card">
