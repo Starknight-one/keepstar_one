@@ -75,7 +75,7 @@
 }
 
 .service-detail-template .gallery-thumbnail.active {
-  border-color: var(--color-primary, #8B5CF6);
+  border-color: var(--color-primary, #18181B);
 }
 
 .service-detail-template .gallery-thumbnail:hover {

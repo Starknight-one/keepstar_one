@@ -96,6 +96,24 @@ func (r *PresetV2Registry) registerDefaults() {
 		},
 	})
 
+	// Product Comparison — side-by-side pricing-table (max 4 items)
+	r.Register(domain.PresetV2{
+		Name:        "product_comparison",
+		EntityType:  domain.EntityTypeProduct,
+		Template:    "GenericCard",
+		DefaultMode: domain.FormationTypeComparison,
+		DefaultSize: domain.WidgetSizeLarge,
+		Fields: []domain.PresetV2Field{
+			{FieldName: "images", Slot: domain.AtomSlotHero, Priority: 0, Rigidity: domain.RigidityPreferred},
+			{FieldName: "name", TextStyle: &domain.TextStyle{FontSize: "lg", FontWeight: "semibold"}, Slot: domain.AtomSlotTitle, Priority: 1, Rigidity: domain.RigidityPreferred},
+			{FieldName: "brand", TextStyle: &domain.TextStyle{FontSize: "sm", Color: "muted"}, Slot: domain.AtomSlotPrimary, Priority: 2, Rigidity: domain.RigidityFlexible},
+			{FieldName: "category", Wrapper: &domain.WrapperConfig{Type: "tag"}, Slot: domain.AtomSlotPrimary, Priority: 3, Rigidity: domain.RigidityFlexible},
+			{FieldName: "price", Format: domain.FormatCurrency, TextStyle: &domain.TextStyle{FontSize: "md", FontWeight: "bold"}, Slot: domain.AtomSlotPrice, Priority: 4, Rigidity: domain.RigidityPreferred},
+			{FieldName: "rating", Format: domain.FormatStarsCompact, TextStyle: &domain.TextStyle{FontSize: "sm"}, Slot: domain.AtomSlotPrimary, Priority: 5, Rigidity: domain.RigidityFlexible},
+			{FieldName: "description", TextStyle: &domain.TextStyle{FontSize: "sm", LineHeight: "relaxed"}, Slot: domain.AtomSlotSecondary, Priority: 6, Rigidity: domain.RigidityFlexible},
+		},
+	})
+
 	// Service Detail
 	r.Register(domain.PresetV2{
 		Name:        "service_detail",

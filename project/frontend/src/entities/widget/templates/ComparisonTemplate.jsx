@@ -1,4 +1,5 @@
 import { AtomRenderer } from '../../atom/AtomRenderer';
+import { AtomV2Renderer } from '../../atom/AtomV2Renderer';
 import { normalizeImages } from './templateUtils';
 import './ComparisonTemplate.css';
 
@@ -14,21 +15,37 @@ const FIELD_LABELS = {
   tags: 'Теги',
   stockQuantity: 'В наличии',
   attributes: 'Характеристики',
+  provider: 'Провайдер',
+  duration: 'Длительность',
+  availability: 'Доступность',
 };
 
 function getFieldLabel(fieldName) {
   return FIELD_LABELS[fieldName] || fieldName;
 }
 
-// Collect unique fieldNames across all widgets, preserving order from the first widget
+// Detect if widget uses V2 atoms
+function isV2Widget(widget) {
+  return Array.isArray(widget.atomsV2) && widget.atomsV2.length > 0;
+}
+
+// Get atoms array — V2 or V1
+function getAtoms(widget) {
+  return isV2Widget(widget) ? widget.atomsV2 : (widget.atoms || []);
+}
+
+// Collect unique fieldNames across all widgets, preserving order from first widget
+// Skip 'images' and 'name' — they go into column headers
+const HEADER_FIELDS = new Set(['images', 'name', 'brand']);
+
 function collectFieldNames(widgets) {
   const seen = new Set();
   const ordered = [];
 
   for (const widget of widgets) {
-    for (const atom of widget.atoms || []) {
+    for (const atom of getAtoms(widget)) {
       const key = atom.fieldName || atom.slot || 'unknown';
-      if (!seen.has(key)) {
+      if (!seen.has(key) && !HEADER_FIELDS.has(key)) {
         seen.add(key);
         ordered.push(key);
       }
@@ -40,83 +57,176 @@ function collectFieldNames(widgets) {
 
 // Get atom for a given fieldName from a widget's atoms
 function getAtomByField(widget, fieldName) {
-  return (widget.atoms || []).find(
+  return getAtoms(widget).find(
     (a) => (a.fieldName || a.slot) === fieldName
   );
+}
+
+// Detect boolean-like values for checkmark rendering
+function isBooleanLike(value) {
+  if (typeof value === 'boolean') return true;
+  if (typeof value === 'string') {
+    const v = value.toLowerCase().trim();
+    return v === 'yes' || v === 'no' || v === 'true' || v === 'false' || v === 'да' || v === 'нет';
+  }
+  return false;
+}
+
+function isTruthy(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value > 0;
+  if (typeof value === 'string') {
+    const v = value.toLowerCase().trim();
+    return v === 'yes' || v === 'true' || v === 'да';
+  }
+  return !!value;
+}
+
+// Determine featured widget (highest rating, or middle one)
+function getFeaturedIndex(widgets) {
+  if (widgets.length <= 1) return -1;
+
+  // Try to find the one with highest rating
+  let bestIdx = -1;
+  let bestRating = -1;
+  widgets.forEach((w, i) => {
+    const ratingAtom = getAtomByField(w, 'rating');
+    if (ratingAtom && typeof ratingAtom.value === 'number' && ratingAtom.value > bestRating) {
+      bestRating = ratingAtom.value;
+      bestIdx = i;
+    }
+  });
+
+  // Fallback: middle widget
+  if (bestIdx === -1) {
+    bestIdx = Math.floor(widgets.length / 2);
+  }
+
+  return bestIdx;
 }
 
 export function ComparisonTemplate({ widgets = [], onWidgetClick }) {
   if (widgets.length === 0) return null;
 
   const fieldNames = collectFieldNames(widgets);
+  const featuredIdx = getFeaturedIndex(widgets);
 
   return (
     <div className="comparison-wrapper">
-      <div
-        className="comparison-table"
-        style={{ gridTemplateColumns: `120px repeat(${widgets.length}, minmax(150px, 1fr))` }}
-      >
-        {/* Header row: empty corner + product names */}
-        <div className="comparison-cell comparison-corner" />
-        {widgets.map((widget) => {
+      <div className="comparison-table">
+        {/* Label column */}
+        <div className="comparison-column comparison-label-column">
+          {/* Empty header area to align with product headers */}
+          <div className="comparison-column-header comparison-label-header" />
+
+          {/* Field labels */}
+          {fieldNames.map((fieldName) => (
+            <div key={fieldName} className="comparison-row-label">
+              {getFieldLabel(fieldName)}
+            </div>
+          ))}
+
+          {/* Empty CTA area */}
+          <div className="comparison-cta-row" />
+        </div>
+
+        {/* Product columns */}
+        {widgets.map((widget, idx) => {
+          const isFeatured = idx === featuredIdx;
           const nameAtom = getAtomByField(widget, 'name');
+          const brandAtom = getAtomByField(widget, 'brand');
+          const imageAtom = getAtomByField(widget, 'images');
+          const images = imageAtom ? normalizeImages(imageAtom.value) : [];
+          const v2 = isV2Widget(widget);
+
           return (
             <div
               key={widget.id}
-              className="comparison-cell comparison-header"
-              onClick={() =>
-                onWidgetClick?.(widget.entityRef?.type, widget.entityRef?.id)
-              }
+              className={`comparison-column comparison-product-column${isFeatured ? ' comparison-featured' : ''}`}
             >
-              {nameAtom ? nameAtom.value : `Товар`}
+              {/* Column header: image + name + brand */}
+              <div className="comparison-column-header">
+                {isFeatured && (
+                  <span className="comparison-popular-badge">Popular</span>
+                )}
+                {images.length > 0 && (
+                  <img
+                    src={images[0]}
+                    alt={nameAtom?.value || ''}
+                    className="comparison-header-image"
+                  />
+                )}
+                <span className="comparison-header-name">
+                  {nameAtom ? nameAtom.value : 'Товар'}
+                </span>
+                {brandAtom && (
+                  <span className="comparison-header-brand">
+                    {brandAtom.value}
+                  </span>
+                )}
+              </div>
+
+              {/* Field values */}
+              {fieldNames.map((fieldName) => {
+                const atom = getAtomByField(widget, fieldName);
+                return (
+                  <div key={fieldName} className="comparison-cell">
+                    {atom ? (
+                      <ComparisonCell atom={atom} isFeatured={isFeatured} v2={v2} />
+                    ) : (
+                      <span className="comparison-empty">—</span>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* CTA button */}
+              <div className="comparison-cta-row">
+                <button
+                  className={`comparison-cta-btn${isFeatured ? ' comparison-cta-featured' : ''}`}
+                  onClick={() =>
+                    onWidgetClick?.(widget.entityRef?.type, widget.entityRef?.id)
+                  }
+                >
+                  Подробнее
+                </button>
+              </div>
             </div>
           );
         })}
-
-        {/* Data rows */}
-        {fieldNames.map((fieldName) => (
-          <ComparisonRow
-            key={fieldName}
-            fieldName={fieldName}
-            widgets={widgets}
-          />
-        ))}
       </div>
     </div>
   );
 }
 
-function ComparisonRow({ fieldName, widgets }) {
-  return (
-    <>
-      <div className="comparison-cell comparison-label">
-        {getFieldLabel(fieldName)}
-      </div>
-      {widgets.map((widget) => {
-        const atom = getAtomByField(widget, fieldName);
-        return (
-          <div key={widget.id} className="comparison-cell comparison-value">
-            {atom ? <ComparisonCell atom={atom} /> : <span className="comparison-empty">—</span>}
-          </div>
-        );
-      })}
-    </>
-  );
-}
+function ComparisonCell({ atom, isFeatured, v2 }) {
+  // Boolean-like values → checkmark/cross
+  if (isBooleanLike(atom.value)) {
+    return isTruthy(atom.value) ? (
+      <span className="comparison-check">✓</span>
+    ) : (
+      <span className="comparison-cross">✗</span>
+    );
+  }
 
-function ComparisonCell({ atom }) {
-  // Special handling for images — show thumbnail
+  // Stock quantity → checkmark if > 0
+  if (atom.fieldName === 'stockQuantity' && typeof atom.value === 'number') {
+    return atom.value > 0 ? (
+      <span className="comparison-check">✓ {atom.value}</span>
+    ) : (
+      <span className="comparison-cross">✗</span>
+    );
+  }
+
+  // Images — show thumbnail
   if (atom.type === 'image') {
     const images = normalizeImages(atom.value);
     if (images.length === 0) return <span className="comparison-empty">—</span>;
     return (
-      <img
-        src={images[0]}
-        alt=""
-        className="comparison-thumbnail"
-      />
+      <img src={images[0]} alt="" className="comparison-thumbnail" />
     );
   }
 
-  return <AtomRenderer atom={atom} />;
+  // V2 atoms → AtomV2Renderer, V1 → AtomRenderer
+  return v2 ? <AtomV2Renderer atom={atom} /> : <AtomRenderer atom={atom} />;
 }

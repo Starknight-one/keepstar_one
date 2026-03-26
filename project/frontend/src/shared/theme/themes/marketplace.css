@@ -8,15 +8,16 @@
      ========================================================================== */
 
   /* Accent colors */
-  --color-primary: #8B5CF6;          /* --accent-primary */
-  --color-primary-hover: #7C3AED;
-  --color-primary-light: #8B5CF620;  /* --accent-primary-soft */
-  --color-primary-dark: #6D28D9;
+  --color-primary: #18181B;          /* black primary (Landing Style) */
+  --color-primary-hover: #27272A;
+  --color-primary-light: #18181B20;
+  --color-primary-dark: #000000;
 
   /* Additional accents */
   --color-accent-orange: #F97316;    /* --accent-orange (ratings) */
   --color-accent-pink: #F472B6;      /* --accent-pink */
   --color-accent-teal: #14B8A6;      /* --accent-teal */
+  --color-accent-blue: #3B82F6;      /* stepper, assistant bubble */
 
   /* Status colors */
   --color-success: #22C55E;          /* --success */
@@ -42,7 +43,7 @@
   /* Border colors */
   --color-border: #D4D4D8;           /* --border */
   --color-border-hover: #A1A1AA;
-  --color-border-focus: #8B5CF6;
+  --color-border-focus: #18181B;
   --color-divider: #E4E4E7;
 
   /* Component-specific colors */
@@ -65,7 +66,7 @@
   /* Font sizes from Pencil components */
   --font-size-h1: 34px;              /* Atom/H1 */
   --font-size-h2: 28px;              /* Atom/H2 */
-  --font-size-h3: 22px;              /* extrapolated */
+  --font-size-h3: 20px;              /* Pencil Landing Style */
   --font-size-h4: 18px;              /* extrapolated */
   --font-size-price-lg: 28px;        /* Atom/Price Large */
   --font-size-price: 20px;           /* Atom/Price */

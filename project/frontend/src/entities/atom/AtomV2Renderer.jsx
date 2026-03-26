@@ -8,7 +8,7 @@ const FONT_WEIGHT_TOKENS = { light: 300, normal: 400, medium: 500, semibold: 600
 
 const COLOR_PALETTE = {
   green: '#22C55E', red: '#EF4444', blue: '#3B82F6',
-  orange: '#F97316', purple: '#8B5CF6', gray: '#6B7280',
+  orange: '#F97316', purple: '#18181B', gray: '#6B7280',
   muted: '#9CA3AF', error: '#EF4444', success: '#22C55E',
   warning: '#F59E0B', info: '#3B82F6',
 };
@@ -267,7 +267,7 @@ function variantColor(variant) {
     case 'error': return '#EF4444';
     case 'warning': return '#F59E0B';
     case 'info': return '#3B82F6';
-    case 'primary': return '#8B5CF6';
+    case 'primary': return '#18181B';
     case 'secondary': return '#6B7280';
     default: return null;
   }

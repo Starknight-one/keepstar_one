@@ -263,7 +263,7 @@
 }
 
 .selector-option.selected {
-  background: var(--color-primary, #8B5CF6);
+  background: var(--color-primary, #18181B);
   color: white;
 }
 
@@ -289,7 +289,7 @@
   padding: 8px 12px;
   margin-top: 4px;
   background: transparent;
-  color: var(--color-primary, #8B5CF6);
+  color: var(--color-primary, #18181B);
   border: 1px solid var(--color-border, #D4D4D8);
   border-radius: 8px;
   font-size: 13px;
@@ -300,7 +300,7 @@
 
 .product-card-expand:hover {
   background: var(--color-bg-tertiary, #E4E4E7);
-  border-color: var(--color-primary, #8B5CF6);
+  border-color: var(--color-primary, #18181B);
 }
 
 .product-card-secondary {

@@ -65,9 +65,9 @@
 
 .message-bubble.assistant {
   align-self: flex-start;
-  background: transparent;
+  background: rgba(59, 130, 246, 0.08);
   color: rgba(0, 0, 0, 0.67);
-  border-radius: 0;
+  border-radius: 16px 16px 16px 4px;
 }
 
 /* Chat Input */

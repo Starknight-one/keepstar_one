@@ -56,8 +56,8 @@
   max-width: 200px;
 }
 .atom-v2-tag.active {
-  border-color: var(--color-primary, #8B5CF6);
-  color: var(--color-primary, #8B5CF6);
+  border-color: var(--color-primary, #18181B);
+  color: var(--color-primary, #18181B);
 }
 
 /* --- Pill wrapper --- */
@@ -96,7 +96,7 @@
 /* --- Alert wrapper --- */
 .atom-v2-alert {
   padding: 8px 12px;
-  border-left: 3px solid var(--color-primary, #8B5CF6);
+  border-left: 3px solid var(--color-primary, #18181B);
   border-radius: 4px;
   background: var(--color-surface-alt, #F9FAFB);
   font-size: 13px;
@@ -107,7 +107,7 @@
 
 /* --- Link wrapper --- */
 .atom-v2-link {
-  color: var(--color-primary, #8B5CF6);
+  color: var(--color-primary, #18181B);
   text-decoration: none;
 }
 .atom-v2-link:hover {
@@ -124,7 +124,7 @@
 }
 .atom-v2-progress-bar {
   height: 100%;
-  background: var(--color-primary, #8B5CF6);
+  background: var(--color-primary, #18181B);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -141,11 +141,11 @@
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s;
-  background: var(--color-primary, #8B5CF6);
+  background: var(--color-primary, #18181B);
   color: #FFFFFF;
 }
 .atom-v2-button:hover { opacity: 0.9; }
-.atom-v2-button.primary { background: var(--color-primary, #8B5CF6); color: #FFFFFF; }
+.atom-v2-button.primary { background: var(--color-primary, #18181B); color: #FFFFFF; }
 .atom-v2-button.secondary { background: var(--color-surface-alt, #F3F4F6); color: var(--color-text, #18181B); }
 .atom-v2-button.outline {
   background: transparent;
@@ -211,7 +211,7 @@
 .layout-collapse-toggle {
   background: none;
   border: none;
-  color: var(--color-primary, #8B5CF6);
+  color: var(--color-primary, #18181B);
   cursor: pointer;
   font-size: 12px;
   padding: 4px 0;
