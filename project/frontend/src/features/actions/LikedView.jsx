@@ -5,6 +5,7 @@ import { fillFormation } from '../chat/model/fillFormation'
 import { getActionView } from '../../shared/api/apiClient'
 import { loadSessionCache } from '../chat/sessionCache'
 import { log } from '../../shared/logger'
+import { EmptyState } from '../../shared/ui'
 
 export function LikedView({ adjacentTemplates, entities, onWidgetClick, onBack }) {
   const { likedIds } = useActions()
@@ -80,10 +81,11 @@ export function LikedView({ adjacentTemplates, entities, onWidgetClick, onBack }
       {formation ? (
         <FormationRenderer formation={formation} onWidgetClick={onWidgetClick} />
       ) : (
-        <div className="liked-empty">
-          <span className="liked-empty-icon">&#9825;</span>
-          <span>No liked items yet</span>
-        </div>
+        <EmptyState
+          icon="heart"
+          title="No liked items yet"
+          description="Tap the heart on items you love"
+        />
       )}
     </div>
   )

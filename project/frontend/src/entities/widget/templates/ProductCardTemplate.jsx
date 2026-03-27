@@ -77,6 +77,19 @@ export function ProductCardTemplate({ atoms = [], size = 'medium', onSelect, ent
             </svg>
           </button>
         )}
+
+        {/* Cart button — plus icon on image */}
+        {entityId && (
+          <button
+            className={`product-card-cart-btn${cartQty > 0 ? ' in-cart' : ''}`}
+            onClick={(e) => { e.stopPropagation(); addToCart(entityRef.type, entityId); }}
+            aria-label={cartQty > 0 ? `In cart (${cartQty})` : 'Add to cart'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14" /><path d="M5 12h14" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Content Area */}
@@ -107,20 +120,6 @@ export function ProductCardTemplate({ atoms = [], size = 'medium', onSelect, ent
           <div className="product-card-price">
             <AtomRenderer atom={priceAtoms[0]} />
           </div>
-        )}
-
-        {/* Add to Cart */}
-        {entityId && (
-          <button
-            className={`product-card-cart-btn${cartQty > 0 ? ' in-cart' : ''}`}
-            onClick={(e) => { e.stopPropagation(); addToCart(entityRef.type, entityId); }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
-              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-            </svg>
-            {cartQty > 0 ? `In cart (${cartQty})` : 'Add to cart'}
-          </button>
         )}
 
         {/* Expand Button & Secondary */}

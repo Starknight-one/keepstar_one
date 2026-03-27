@@ -20,7 +20,21 @@
 - **API**: CRUD posts, analytics (views/referrers/chart), user management
 - **Frontend**: React 19 — Login, Sidebar, PostsTable, PostEditor, Analytics, Settings
 - **Default admin**: `admin@keepstar.one / admin123`
+- **Seed**: 4 блог-поста автоматически создаются при первом старте
 - **Docker**: отдельный Dockerfile для деплоя на Railway (порт 3001)
+
+### Landing ↔ Admin API Integration
+- **blogApi.js**: `fetchPosts`/`fetchPost` — landing fetch-ит посты из admin API
+- **Markdown parser**: конвертирует markdown контент из API в structured sections (heading/paragraph/list)
+- **Fallback**: если `VITE_BLOG_API_URL` не задан или API недоступен — используются hardcoded данные
+- **Demo Modal**: шлёт заявки на `POST /api/demo-request` admin API
+- **CORS**: открыт для публичных endpoints (`/api/posts`)
+
+### Deployment (Railway)
+- **Landing**: задеплоен как статический SPA (serve -s), порт 3000
+- **Admin**: отдельный сервис, Express + SQLite, порт 3001
+- **Fixes**: Express 5 wildcard route `{*path}`, build tools для better-sqlite3 native module в Alpine
+- **DNS**: `www` → CNAME → Railway (Squarespace DNS не поддерживает CNAME на root `@`)
 
 ---
 

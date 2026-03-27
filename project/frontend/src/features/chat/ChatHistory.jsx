@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { MessageBubble } from '../../entities/message/MessageBubble';
+import { TypingIndicator } from '../../shared/ui';
 
 export function ChatHistory({ messages, isLoading, hideFormation }) {
   const bottomRef = useRef(null);
@@ -15,7 +16,7 @@ export function ChatHistory({ messages, isLoading, hideFormation }) {
       {messages.map((message) => (
         <MessageBubble key={message.id} message={message} hideFormation={hideFormation} />
       ))}
-      {isLoading && <div className="chat-loading">Thinking...</div>}
+      {isLoading && <TypingIndicator />}
       <div ref={bottomRef} />
     </div>
   );

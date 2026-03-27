@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Spinner } from '../../shared/ui';
 
 export function ChatInput({ onSubmit, disabled }) {
   const [text, setText] = useState('');
@@ -29,7 +30,7 @@ export function ChatInput({ onSubmit, disabled }) {
         rows={1}
       />
       <button type="submit" disabled={disabled || !text.trim()}>
-        Send
+        {disabled ? <Spinner size={16} /> : 'Send'}
       </button>
     </form>
   );

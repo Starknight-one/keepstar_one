@@ -8,7 +8,7 @@ const COLOR_PALETTE = {
   red: '#EF4444',
   blue: '#3B82F6',
   orange: '#F97316',
-  purple: '#8B5CF6',
+  purple: '#18181B',
   gray: '#6B7280',
 };
 
