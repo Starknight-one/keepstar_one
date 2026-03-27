@@ -99,11 +99,36 @@
 
 ---
 
+### Landing Page — keepstar.one (Alpha 0.2.0 → 0.4.0)
+
+Лендинг значительно прокачан и опубликован на **keepstar.one**.
+
+**Страницы и навигация**
+- 6 новых страниц: Terms of Use, Privacy Policy, Contact, About, Features, Changelog
+- Footer redesign: 4 колонки (Product, Company, Legal) + social icons
+- Все CTA кнопки привязаны к Demo Modal (lead capture)
+- Smooth scroll + единый "Request live demo" CTA в hero
+- React Router навигация между всеми страницами
+
+**Визуальные улучшения**
+- Confetti-анимации на всех секциях (reusable Confetti component с seeded генерацией)
+- Фавикон: кастомный круглый логотип (32/180/192/512px)
+- Infostyle copy audit: абстракции → конкретные сценарии, убраны нечестные статы
+- Pricing: новый CSS + redesign
+- UseCases: новая страница + компонент
+
+**Инфраструктура**
+- Подключение лендинга к admin API + seed blog posts
+- Express 5 wildcard route fix
+- better-sqlite3 build tools в admin Dockerfile
+
+---
+
 ### TODO — Следующая сессия
 
-1. **Пресеты V2**: перенести визуальные пресеты из Pencil в `PresetV2Registry` (backend)
-2. **Тест-кейсы**: прописать набор тестовых запросов для проверки всех состояний виджета (loading, error, empty cart/liked, expand/back, comparison)
-3. **Визуальные недочёты**: доработать мелкие расхождения между Pencil и кодом (spacing, shadows, цвета) по результатам ручного тестирования
+1. **Прогон чат-кейсов**: пройти основные сценарии чата end-to-end, выявить и зафиксировать проблемы (поиск, comparison, expand/back, carousel, empty/error states)
+2. **Фикс найденных проблем**: устранить баги и визуальные недочёты, выявленные при прогоне кейсов
+3. **Пресеты из Pencil**: перенести визуальные пресеты из Pencil в `PresetV2Registry` (backend) — маппинг полей, слоты, размеры
 4. **Formation layouts**: carousel и single mode — проверить соответствие Pencil
 5. **Overlay/Backdrop**: полноэкранный blur layout (есть в Pencil, нет в коде)
 6. **ProductGrid.css**: устаревшие Material Design цвета (#1976d2) → заменить на design tokens
