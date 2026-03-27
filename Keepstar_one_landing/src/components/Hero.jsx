@@ -42,20 +42,20 @@ export default function Hero({ onDemo }) {
       ))}
 
       <div className="hero-content">
-        <div className="badge">Now in public beta</div>
+        <div className="badge">Used by e-commerce teams worldwide</div>
 
         <h1 className="hero-headline">
           Every visitor gets<br/>their own website
         </h1>
 
         <p className="hero-subhead">
-          An AI chat that generates fully personalized pages in seconds.<br/>
-          Replace your static site with a dynamic experience that puts<br/>
-          every visitor into a conversion funnel.
+          A visitor types &lsquo;red sneakers under $100&rsquo; — and sees a curated page<br/>
+          with cards, comparisons, and reviews. Built from your catalog<br/>
+          in under a second.
         </p>
 
         <div className="hero-actions">
-          <button className="btn-hero btn-hero-primary" onClick={onDemo}>Request live demo</button>
+          <button className="btn-hero btn-hero-primary" onClick={onDemo}>Request demo</button>
         </div>
       </div>
     </section>

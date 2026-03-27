@@ -94,9 +94,9 @@ export default function BlogArticle() {
 
         <div className="article-cta">
           <h3>See it in action</h3>
-          <p>Book a personalized demo and see how Keepstar One can work for your store.</p>
+          <p>Request a personalized demo and see how Keepstar One can work for your store.</p>
           <button className="btn-article-cta" onClick={() => setShowDemo(true)}>
-            Book a Demo
+            Request demo
           </button>
         </div>
       </div>

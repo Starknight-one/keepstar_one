@@ -35,7 +35,7 @@ export default function DemoModal({ onClose }) {
           <X size={20} />
         </button>
 
-        <h2 className="modal-title">Book a Demo</h2>
+        <h2 className="modal-title">Request a Demo</h2>
         <p className="modal-subtitle">
           See how Keepstar One can transform your store's conversion rate.
         </p>
@@ -59,7 +59,7 @@ export default function DemoModal({ onClose }) {
           </div>
           <button type="submit" className="btn-submit-demo">
             <Send size={18} />
-            Request Demo
+            Request demo
           </button>
         </form>
 

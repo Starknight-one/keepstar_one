@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Twitter, Linkedin, Github } from 'lucide-react';
+import { Send, Linkedin } from 'lucide-react';
 import './Footer.css';
 
 export default function Footer() {
@@ -24,7 +24,7 @@ export default function Footer() {
         <div className="footer-brand">
           <Link to="/" className="logo-wrap">
             <div className="logo-icon"></div>
-            <span className="logo-text">Keepstar</span>
+            <span className="logo-text">Keepstar One</span>
           </Link>
           <p className="footer-brand-desc">
             AI-powered dynamic pages that replace static websites and turn every visitor into a conversion.
@@ -55,11 +55,10 @@ export default function Footer() {
       <div className="footer-divider" />
 
       <div className="footer-bottom">
-        <span className="footer-copyright">&copy; {new Date().getFullYear()} Keepstar. All rights reserved.</span>
+        <span className="footer-copyright">&copy; {new Date().getFullYear()} Keepstar One. All rights reserved.</span>
         <div className="footer-social">
-          <a href="#" aria-label="Twitter"><Twitter size={16} /></a>
-          <a href="#" aria-label="LinkedIn"><Linkedin size={16} /></a>
-          <a href="#" aria-label="GitHub"><Github size={16} /></a>
+          <a href="https://t.me/Keepstar_one" target="_blank" rel="noopener noreferrer" aria-label="Telegram"><Send size={16} /></a>
+          <a href="https://www.linkedin.com/in/starknight/?skipRedirect=true" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn"><Linkedin size={16} /></a>
         </div>
       </div>
     </footer>

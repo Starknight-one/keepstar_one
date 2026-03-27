@@ -37,7 +37,7 @@ export default function About() {
             style={{ top: s.top, left: s.left, width: s.w, height: s.h || s.w, opacity: 0.6, transform: s.rot ? `rotate(${s.rot})` : undefined }} />
         ))}
         <h1>About Us</h1>
-        <p className="page-subtitle">The story behind Keepstar and the people who build it.</p>
+        <p className="page-subtitle">The story behind Keepstar One and the people who build it.</p>
       </section>
 
       <div className="story-section">
@@ -47,7 +47,7 @@ export default function About() {
         <div className="story-text">
           <span className="story-label">Our Story</span>
           <h2>Building the future of personalized web</h2>
-          <p>Your story goes here. Tell visitors about your journey — how you started, what drives you, what problems you saw and how Keepstar was born to solve them.</p>
+          <p>Your story goes here. Tell visitors about your journey — how you started, what drives you, what problems you saw and how Keepstar One was born to solve them.</p>
           <p>Share your vision, your values, and what makes your approach unique. This is your space to connect with people on a personal level.</p>
           <p>Replace this placeholder text with your real story when you're ready.</p>
         </div>

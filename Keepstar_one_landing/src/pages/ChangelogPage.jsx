@@ -38,7 +38,7 @@ const entries = [
     badge: { text: 'New', color: '#166534', bg: '#CEEAD6' },
     date: 'February 15, 2026',
     title: 'Shopify Integration',
-    desc: 'One-click Shopify integration is now live. Automatically sync your product catalog, inventory, and customer data. Keepstar generates personalized storefronts from your existing Shopify data with zero configuration.',
+    desc: 'One-click Shopify integration is now live. Automatically sync your product catalog, inventory, and customer data. Keepstar One generates personalized storefronts from your existing Shopify data with zero configuration.',
   },
 ];
 

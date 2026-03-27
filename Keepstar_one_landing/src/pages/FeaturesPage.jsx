@@ -78,8 +78,8 @@ export default function FeaturesPage() {
 
       <div className="features-cta">
         <h2>Ready to see it in action?</h2>
-        <p>Start your free 14-day trial. No credit card required.</p>
-        <button className="btn-get-started" onClick={() => setShowDemo(true)}>Start free trial</button>
+        <p>Get a personalized demo from our team.</p>
+        <button className="btn-get-started" onClick={() => setShowDemo(true)}>Contact sales</button>
       </div>
 
       <Footer />

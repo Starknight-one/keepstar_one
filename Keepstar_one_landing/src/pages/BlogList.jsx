@@ -58,7 +58,7 @@ export default function BlogList() {
           <div className="blog-badge">Blog</div>
           <h1 className="blog-hero-title">Insights & Updates</h1>
           <p className="blog-hero-subtitle">
-            AI personalization, e-commerce strategy, and product updates from the Keepstar team.
+            AI personalization, e-commerce strategy, and product updates from the Keepstar One team.
           </p>
         </div>
       </section>

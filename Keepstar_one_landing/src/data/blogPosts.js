@@ -1,7 +1,7 @@
 export const BLOG_POSTS = [
   {
     slug: 'how-ai-personalization-increases-conversion',
-    title: 'How AI Personalization Increases E-Commerce Conversion by 340%',
+    title: 'How AI Personalization Increases E-Commerce Conversion by 20%+',
     excerpt: 'Static websites treat every visitor the same. Learn how dynamic AI-generated pages create unique experiences that dramatically boost conversion rates.',
     category: 'Case Study',
     date: 'Mar 18, 2026',
@@ -42,15 +42,15 @@ export const BLOG_POSTS = [
         },
         {
           type: 'paragraph',
-          content: 'Our beta customers have seen remarkable improvements across key metrics. Average session duration increased by 4.2x, add-to-cart rates jumped 280%, and overall conversion rates improved by 340% compared to their static storefronts.'
+          content: 'Our early customers have seen remarkable improvements across key metrics. Average session duration increased significantly, add-to-cart rates grew substantially, and overall conversion rates improved by 20%+ compared to their static storefronts.'
         },
         {
           type: 'list',
           items: [
-            '340% increase in conversion rate',
-            '4.2x longer average session duration',
-            '280% higher add-to-cart rate',
-            '67% reduction in bounce rate'
+            '20%+ increase in conversion rate',
+            'Longer average session duration',
+            'Higher add-to-cart rate',
+            'Lower bounce rate'
           ]
         },
         {

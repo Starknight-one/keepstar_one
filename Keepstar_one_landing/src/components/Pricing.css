@@ -179,6 +179,92 @@
   color: #fff;
 }
 
+/* Billing toggle */
+.billing-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.toggle-label {
+  font-size: 15px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.toggle-label.active {
+  color: var(--foreground);
+}
+
+.toggle-save {
+  background: #DCFCE7;
+  color: #16A34A;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 4px;
+}
+
+.toggle-switch {
+  width: 48px;
+  height: 26px;
+  background: #E2E8F0;
+  border: none;
+  border-radius: 13px;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.2s;
+  padding: 0;
+}
+
+.toggle-switch:hover {
+  background: #CBD5E1;
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.toggle-knob.on {
+  transform: translateX(22px);
+}
+
+/* Yearly total */
+.plan-yearly-total {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.pricing-card.featured .plan-yearly-total {
+  color: rgba(255,255,255,0.6);
+}
+
+.feature-highlight {
+  font-weight: 600;
+  color: var(--google-blue) !important;
+}
+
+.pricing-card.featured .feature-highlight {
+  color: #93C5FD !important;
+}
+
+.plan-price-custom {
+  font-size: 40px;
+}
+
 @media (max-width: 900px) {
   .pricing-grid {
     grid-template-columns: 1fr;

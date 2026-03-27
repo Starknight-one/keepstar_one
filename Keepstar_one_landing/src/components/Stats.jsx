@@ -4,10 +4,10 @@ import './Sections.css';
 
 export default function Stats() {
   const stats = [
-    { num: '6x', label: 'Higher conversion rate', color: '#1A73E8' },
-    { num: '100%', label: 'Visitors enter a funnel', color: '#34A853' },
-    { num: '<1s', label: 'Page generation time', color: '#EA4335' },
-    { num: '1', label: 'Line of code to integrate', color: '#1A1A1A' }
+    { num: '+20%', label: 'Avg. conversion lift (pilot data)', color: '#1A73E8' },
+    { num: '~3s', label: 'Visual response — faster than filters', color: '#EA4335' },
+    { num: '1 line', label: 'Of code to integrate', color: '#34A853' },
+    { num: '5 min', label: 'From signup to live', color: '#1A1A1A' }
   ];
 
   return (

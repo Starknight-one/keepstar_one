@@ -10,7 +10,7 @@ export default function FeatureRows() {
       <section className="feature-row container">
         <div className="feature-text">
           <h2 className="feature-title">Hyper-Personalization</h2>
-          <p className="feature-desc">Every visitor sees a page built just for them. The AI analyzes context, intent, and behavior to generate unique page layouts in real time. Product cards, comparisons, galleries — assembled dynamically from your catalog data.</p>
+          <p className="feature-desc">A visitor types &lsquo;moisturizer for dry skin&rsquo; — they see 4 matching products with reviews and prices. Someone else types &lsquo;gift set under $50&rsquo; — completely different page. No templates, no rules to configure.</p>
         </div>
         <div className="feature-visual" style={{background: 'linear-gradient(135deg, #C6DAFC 0%, #FEEFC3 100%)'}}>
           <div className="feature-card-mock">
@@ -43,7 +43,7 @@ export default function FeatureRows() {
         </div>
         <div className="feature-text">
           <h2 className="feature-title">Auto-Funnel</h2>
-          <p className="feature-desc">Every conversation is a conversion funnel. Visitors don't browse randomly anymore. Each interaction guides them closer to purchase — from discovery to comparison to checkout. Replace your entire website with an intelligent journey.</p>
+          <p className="feature-desc">Each conversation guides visitors from discovery to comparison to checkout. No random browsing — every interaction moves them closer to purchase. Your store gets a conversion path that adapts to each person.</p>
         </div>
       </section>
 
@@ -51,7 +51,7 @@ export default function FeatureRows() {
       <section className="feature-row container">
         <div className="feature-text">
           <h2 className="feature-title">Zero Info Loss</h2>
-          <p className="feature-desc">The more data you have, the smarter it gets. Traditional sites force you to pick what to show. Keepstar uses all your product data — specs, reviews, comparisons — and surfaces exactly what each visitor needs to hear to buy.</p>
+          <p className="feature-desc">Your catalog has 2,000 products with specs, reviews, and comparisons. A static page shows 20 of them. Keepstar One surfaces the specs, reviews, and comparisons relevant to each visitor's question — nothing hidden, nothing wasted.</p>
         </div>
         <div className="feature-visual" style={{background: 'linear-gradient(135deg, #FEEFC3 0%, #FCE8E6 100%)'}}>
           <div className="feature-card-mock mb-3">

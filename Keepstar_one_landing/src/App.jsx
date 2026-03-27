@@ -5,6 +5,7 @@ import Hero from './components/Hero';
 import ProductDemo from './components/ProductDemo';
 import IconStrip from './components/IconStrip';
 import FeatureRows from './components/FeatureRows';
+import UseCases from './components/UseCases';
 import ProblemSection from './components/ProblemSection';
 import HowItWorks from './components/HowItWorks';
 import Stats from './components/Stats';
@@ -20,6 +21,7 @@ import Contact from './pages/Contact';
 import About from './pages/About';
 import FeaturesPage from './pages/FeaturesPage';
 import ChangelogPage from './pages/ChangelogPage';
+import UseCasesPage from './pages/UseCasesPage';
 import './App.css';
 
 function Landing({ onDemo }) {
@@ -30,6 +32,7 @@ function Landing({ onDemo }) {
       <ProductDemo />
       <IconStrip />
       <FeatureRows />
+      <UseCases />
       <ProblemSection />
       <HowItWorks />
       <Stats />
@@ -55,6 +58,7 @@ function App() {
         <Route path="/about" element={<About />} />
         <Route path="/features" element={<FeaturesPage />} />
         <Route path="/changelog" element={<ChangelogPage />} />
+        <Route path="/use-cases" element={<UseCasesPage />} />
       </Routes>
       {showDemo && <DemoModal onClose={() => setShowDemo(false)} />}
     </>

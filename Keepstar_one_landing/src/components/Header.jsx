@@ -5,15 +5,15 @@ import './Header.css';
 export default function Header({ onDemo }) {
   const navigate = useNavigate();
 
-  const handlePricingClick = (e) => {
+  const handleScrollTo = (id) => (e) => {
     e.preventDefault();
     if (window.location.pathname !== '/') {
       navigate('/');
       setTimeout(() => {
-        document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
     } else {
-      document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -21,17 +21,17 @@ export default function Header({ onDemo }) {
     <header className="header container">
       <Link to="/" className="logo-wrap">
         <div className="logo-icon"></div>
-        <span className="logo-text">Keepstar</span>
+        <span className="logo-text">Keepstar One</span>
       </Link>
 
       <nav className="nav-links">
-        <a href="#" onClick={(e) => { e.preventDefault(); }}>Product</a>
-        <a href="#" onClick={(e) => { e.preventDefault(); }}>Use Cases</a>
-        <a href="#pricing" onClick={handlePricingClick}>Pricing</a>
+        <a href="#product" onClick={handleScrollTo('product')}>Product</a>
+        <a href="#use-cases" onClick={handleScrollTo('use-cases')}>Use Cases</a>
+        <a href="#pricing" onClick={handleScrollTo('pricing')}>Pricing</a>
         <Link to="/blog">Blog</Link>
       </nav>
 
-      <button className="btn-get-started" onClick={onDemo}>Get started</button>
+      <button className="btn-get-started" onClick={onDemo}>Contact sales</button>
     </header>
   );
 }
