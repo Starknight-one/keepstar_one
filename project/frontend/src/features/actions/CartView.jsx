@@ -3,6 +3,7 @@ import { useActions } from './ActionContext'
 import { getActionView } from '../../shared/api/apiClient'
 import { loadSessionCache } from '../chat/sessionCache'
 import { log } from '../../shared/logger'
+import { EmptyState } from '../../shared/ui'
 
 export function CartView({ entities, onBack }) {
   const { cartItems, updateCartQuantity, removeFromCart } = useActions()
@@ -58,10 +59,11 @@ export function CartView({ entities, onBack }) {
       </div>
 
       {items.length === 0 ? (
-        <div className="cart-empty">
-          <span className="cart-empty-icon">&#128722;</span>
-          <span>Cart is empty</span>
-        </div>
+        <EmptyState
+          icon="shopping-bag"
+          title="Cart is empty"
+          description="Items you add will appear here"
+        />
       ) : (
         <>
           <div className="cart-items">

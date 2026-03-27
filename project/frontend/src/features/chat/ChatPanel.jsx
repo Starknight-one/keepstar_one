@@ -236,7 +236,14 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
       <ChatInput onSubmit={submit} disabled={isLoading} />
       <Stepper history={formationHistory} currentIndex={historyIndex} goTo={handleStepperGoTo} />
       <div className="chat-spacer" />
-      {error && <div className="chat-error">{error}</div>}
+      {error && (
+        <div className="chat-error-wrapper">
+          <div className="chat-error-card">
+            <span className="chat-error-text">{error}</span>
+            <button className="chat-error-retry" onClick={() => setError(null)}>Dismiss</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

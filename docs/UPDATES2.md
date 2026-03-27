@@ -65,37 +65,55 @@
 
 ---
 
-### Pencil Design System — Что не перенесено (TODO)
+### Pencil Design System — Что перенесено (Alpha 0.4.0)
 
-Компоненты которые есть в коде, но отсутствуют в Pencil дизайн-системе:
+**Новые shared/ui компоненты** (9 шт, `project/frontend/src/shared/ui/`):
+- Spinner — 32px conic-gradient с mask
+- TypingIndicator — 3 dots с staggered pulse в голубом bubble
+- SkeletonCard — placeholder карточка с shimmer анимацией
+- ErrorState — карточка с розовой рамкой, иконка, кнопка Retry
+- EmptyState — конфигурируемый: icon (search-x/shopping-bag/heart) + title + desc + action
+- StatusPill — голубой pill с иконкой поиска + count
+- SelectorGroup — pill-кнопки (active=black, inactive=border, disabled=0.4)
+- ColorSelector — 24px цветные кружки с blue box-shadow при выборе
 
-1. Overlay/Backdrop (полноэкранный blur layout)
-2. Cart View (список товаров, ±, итого)
-3. Liked Items View (избранное)
-4. Back Button (навигация)
-5. Loading/Skeleton States (спиннер, скелетоны, typing indicator)
-6. Error States (сообщения об ошибках)
-7. Empty States ("ничего не найдено", пустая корзина)
-8. Image Carousel (точки навигации на карточках)
-9. "Показать ещё" (fold/unfold кнопка)
-10. Status Pill ("12 результатов")
-11. Like + Cart кнопки на карточках (overlay)
-12. Selector (выбор размера/цвета)
-13. Formation layouts (carousel, single mode)
+**Стилевое выравнивание с Pencil** (11 компонентов):
+- BackButton → белая пилюля + shadow + SVG стрелка
+- ActionToolbar → pill shape + border-radius + shadow
+- LikeButton → 36px, glass bg (backdrop-filter: blur)
+- AddToCartButton → 36px circle с плюсиком на картинке (вместо full-width текстовой кнопки)
+- CartView/LikedView → EmptyState компонент (вместо emoji)
+- ChatHistory → TypingIndicator (вместо "Thinking...")
+- ChatPanel error → styled карточка с розовой рамкой
+- Show More → chevron icon + синий accent
+- AtomV2 wrappers → badge 6/12, tag 4/10, pill 6/14, button 12/24
+- Stepper → CSS variable tokens
+
+**Интеграция**:
+- StatusPill в FormationRenderer (количество товаров)
+- Spinner в ChatInput (при отправке)
+
+**Cleanup**:
+- `widget.css` — font-family + color → CSS variables
+- `ChatPanel.css` — font-family → CSS variables
+
+---
+
+### TODO — Следующая сессия
+
+1. **Пресеты V2**: перенести визуальные пресеты из Pencil в `PresetV2Registry` (backend)
+2. **Тест-кейсы**: прописать набор тестовых запросов для проверки всех состояний виджета (loading, error, empty cart/liked, expand/back, comparison)
+3. **Визуальные недочёты**: доработать мелкие расхождения между Pencil и кодом (spacing, shadows, цвета) по результатам ручного тестирования
+4. **Formation layouts**: carousel и single mode — проверить соответствие Pencil
+5. **Overlay/Backdrop**: полноэкранный blur layout (есть в Pencil, нет в коде)
+6. **ProductGrid.css**: устаревшие Material Design цвета (#1976d2) → заменить на design tokens
 
 ---
 
 ### Git
 
-Все изменения Alpha 0.3.0 сохранены в ветке `feature/alpha-0.3.0-design-system` (pushed to origin).
+**Alpha 0.3.0** — ветка `feature/alpha-0.3.0-design-system`
+- Коммит `10127cd` — Design System Migration + Comparison Redesign
 
-**Коммит**: `10127cd` — `feat: Alpha 0.3.0 — Design System Migration + Comparison Redesign`
-
-**Содержимое ветки** (18 файлов, +1854/-158 строк):
-- Design System migration (CSS vars, 16 frontend файлов)
-- Comparison Table full redesign (JSX + CSS)
-- V2 preset `product_comparison` (backend)
-- Pencil convergence spec
-- UPDATES.md + UPDATES2.md
-
-**Чтобы достать**: `git checkout feature/alpha-0.3.0-design-system` или `git merge feature/alpha-0.3.0-design-system`
+**Alpha 0.4.0** — merged в `main`
+- Pencil → Code: 9 новых компонентов, 16 изменённых файлов, cleanup CSS tokens

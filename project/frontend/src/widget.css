@@ -6,10 +6,10 @@
 :host {
   all: initial;
   display: block;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-family-base, 'Inter', -apple-system, BlinkMacSystemFont, sans-serif);
   font-size: 15px;
   line-height: 1.5;
-  color: #333;
+  color: var(--color-text-primary, #333);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -39,12 +39,12 @@
 
 .chat-toggle-bubble {
   padding: 8px 14px;
-  background: #FFFFFF;
+  background: var(--color-bg-primary, #FFFFFF);
   border-radius: 16px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
   font-size: 13px;
   font-weight: 500;
-  color: #1a1a1a;
+  color: var(--color-text-primary, #1a1a1a);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.07);
   white-space: nowrap;
 }

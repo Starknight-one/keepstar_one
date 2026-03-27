@@ -1,0 +1,55 @@
+.ui-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  border-radius: var(--border-radius-lg, 16px);
+  background: var(--color-bg-primary, #fff);
+  border: 1px solid #FCE8E6;
+  width: 280px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.ui-error-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #FCE8E6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ui-error-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary, #1A1A1A);
+  text-align: center;
+}
+
+.ui-error-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary, #5F6368);
+  text-align: center;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.ui-error-btn {
+  padding: 10px 24px;
+  border-radius: var(--border-radius-pill, 100px);
+  border: 1px solid var(--color-border, #E8EAED);
+  background: transparent;
+  color: var(--color-text-primary, #1A1A1A);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  cursor: pointer;
+  transition: background var(--transition-fast, 150ms ease);
+}
+
+.ui-error-btn:hover {
+  background: var(--color-bg-secondary, #F4F4F5);
+}

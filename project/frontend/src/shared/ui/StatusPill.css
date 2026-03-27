@@ -1,0 +1,12 @@
+.ui-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--border-radius-pill, 100px);
+  background: #E8F0FE;
+  color: var(--color-accent-blue, #1A73E8);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+}

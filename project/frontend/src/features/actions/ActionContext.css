@@ -11,8 +11,9 @@
   width: 48px;
   min-width: 48px;
   background: var(--color-bg-primary, #FFFFFF);
-  border-left: 1px solid var(--color-border, #E4E4E7);
-  border-right: 1px solid var(--color-border, #E4E4E7);
+  border: 1px solid var(--color-border, #E8EAED);
+  border-radius: var(--border-radius-pill, 100px);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
   z-index: 10;
 }
 
@@ -102,36 +103,38 @@
    ============================================================================= */
 
 .product-card-cart-btn {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 8px 12px;
-  margin-top: 4px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 18px;
   border: none;
-  background: var(--color-primary, #18181B);
-  color: white;
-  font-family: var(--font-family-base, 'Inter', sans-serif);
-  font-size: 13px;
-  font-weight: 600;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--color-text-primary, #18181B);
   cursor: pointer;
   transition: all 0.15s ease;
+  z-index: 2;
 }
 
 .product-card-cart-btn:hover {
-  filter: brightness(1.1);
+  background: rgba(255, 255, 255, 0.95);
 }
 
 .product-card-cart-btn.in-cart {
-  background: var(--color-bg-tertiary, #E4E4E7);
-  color: var(--color-text-primary, #18181B);
+  background: var(--color-primary, #18181B);
+  color: white;
 }
 
 .product-card-cart-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 /* Detail templates — inline add-to-cart */

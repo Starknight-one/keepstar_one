@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { FormationMode } from './formationModel';
 import { WidgetRenderer } from '../widget/WidgetRenderer';
 import { ComparisonTemplate } from '../widget/templates/ComparisonTemplate';
+import { StatusPill } from '../../shared/ui';
 import './Formation.css';
 
 const BATCH_SIZE = 12;
@@ -115,9 +116,7 @@ function WidgetList({ mode, cols, widgets, onWidgetClick, pagination, onLoadMore
   return (
     <div className="formation-wrapper">
       {total > 1 && (
-        <div className="formation-status">
-          {statusText}
-        </div>
+        <StatusPill count={total} label="товаров" />
       )}
       <div className={layoutClass}>
         {visibleWidgets.map((widget) => (
