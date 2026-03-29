@@ -30,6 +30,27 @@ export default function TraceInline({ trace }) {
 
       {open && (
         <div className="trace-inline-body">
+          {(td?.microcontext || td?.screenContext) && (
+            <div className="trace-context-bar">
+              {td.microcontext && (
+                <span className="trace-context-item">
+                  <span className="trace-context-label">Микроконтекст:</span>
+                  <Tag color="blue">{td.microcontext}</Tag>
+                </span>
+              )}
+              {td.screenContext && (
+                <span className="trace-context-item">
+                  <span className="trace-context-label">Экран:</span>
+                  <Tag>{td.screenContext.mode || '?'}</Tag>
+                  <span className="trace-mono">{td.screenContext.widgetCount} widgets</span>
+                  {td.screenContext.fields?.length > 0 && (
+                    <span className="trace-state-fields">{td.screenContext.fields.join(', ')}</span>
+                  )}
+                </span>
+              )}
+            </div>
+          )}
+
           <Section
             title="Агент 1 — Анализ запроса"
             badge={agent1?.model?.replace('claude-', '').replace('-20251001', '')}
@@ -50,6 +71,7 @@ export default function TraceInline({ trace }) {
               </div>
             )}
             <JsonBlock data={agent1?.enrichedQuery} label="Enriched Query" />
+            <JsonBlock data={agent1?.rawReasoning} label="LLM Reasoning" />
             <JsonBlock data={agent1?.toolInput} label="Tool Input" />
             <JsonBlock data={agent1?.toolResult} label="Tool Result" />
             <JsonBlock data={agent1?.toolBreakdown} label="Tool Breakdown" />

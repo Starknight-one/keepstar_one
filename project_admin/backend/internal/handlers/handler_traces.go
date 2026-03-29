@@ -102,9 +102,17 @@ func (h *TracesHandler) HandleSessionDetail(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	id := strings.TrimPrefix(r.URL.Path, "/admin/api/sessions/")
-	id = strings.TrimSuffix(id, "/")
-	if id == "" || id == "kill" {
+	rawPath := strings.TrimPrefix(r.URL.Path, "/admin/api/sessions/")
+	rawPath = strings.TrimSuffix(rawPath, "/")
+
+	// Route: /admin/api/sessions/{id}/state → HandleSessionState
+	if strings.HasSuffix(rawPath, "/state") {
+		h.HandleSessionState(w, r)
+		return
+	}
+
+	id := rawPath
+	if id == "" || id == "kill" || id == "kill-all" {
 		writeError(w, http.StatusBadRequest, "session ID required")
 		return
 	}
@@ -134,6 +142,30 @@ func (h *TracesHandler) HandleSessionDetail(w http.ResponseWriter, r *http.Reque
 		"traces":      traces,
 		"userActions": actions,
 	})
+}
+
+// HandleSessionState returns the full session state (conversation history, data, view, actions).
+func (h *TracesHandler) HandleSessionState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/admin/api/sessions/")
+	id = strings.TrimSuffix(id, "/state")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "session ID required")
+		return
+	}
+
+	state, err := h.traces.GetSessionState(r.Context(), id)
+	if err != nil {
+		h.log.Error("session_state_failed", "error", err, "session_id", id)
+		writeError(w, http.StatusNotFound, "session state not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, state)
 }
 
 // HandleKillAllSessions closes all active sessions.

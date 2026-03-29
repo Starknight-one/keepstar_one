@@ -170,6 +170,7 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		ToolInput:         agent1Resp.ToolInput,
 		ToolResult:        agent1Resp.ToolResult,
 		ToolBreakdown:     agent1Resp.ToolMetadata,
+		RawReasoning:      agent1Resp.RawReasoning,
 	}
 
 	// Snapshot state after Agent1
@@ -214,6 +215,16 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 
 	// Generate microcontext signal for Agent2
 	microcontext := buildMicrocontext(agent1Resp)
+	trace.Microcontext = microcontext
+
+	// Capture screen context from frontend
+	if req.ScreenContext != nil {
+		trace.ScreenContext = &domain.ScreenContext{
+			Mode:        req.ScreenContext.Mode,
+			WidgetCount: req.ScreenContext.WidgetCount,
+			Fields:      req.ScreenContext.Fields,
+		}
+	}
 
 	// Step 2: Agent 2 (Template Builder) - triggered after Agent 1
 	agent2Resp, err := uc.agent2UC.Execute(ctx, Agent2ExecuteRequest{

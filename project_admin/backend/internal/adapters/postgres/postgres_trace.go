@@ -266,6 +266,35 @@ func (a *TraceAdapter) ListBySession(ctx context.Context, sessionID string) ([]T
 	return items, nil
 }
 
+// SessionState holds the full state of a session for admin viewing.
+type SessionState struct {
+	ConversationHistory json.RawMessage `json:"conversationHistory"`
+	Agent2History       json.RawMessage `json:"agent2History"`
+	CurrentData         json.RawMessage `json:"currentData"`
+	ViewMode            string          `json:"viewMode"`
+	ViewFocused         json.RawMessage `json:"viewFocused"`
+	ViewStack           json.RawMessage `json:"viewStack"`
+	Actions             json.RawMessage `json:"actions"`
+	Step                int             `json:"step"`
+}
+
+// GetSessionState returns the full session state for admin viewing.
+func (a *TraceAdapter) GetSessionState(ctx context.Context, sessionID string) (*SessionState, error) {
+	var s SessionState
+	err := a.client.pool.QueryRow(ctx,
+		`SELECT COALESCE(conversation_history, '[]'), COALESCE(agent2_history, '[]'),
+		        COALESCE(current_data, '{}'), COALESCE(view_mode, 'grid'),
+		        COALESCE(view_focused, 'null'), COALESCE(view_stack, '[]'),
+		        COALESCE(actions, '{}'), step
+		 FROM chat_session_state WHERE session_id = $1`, sessionID,
+	).Scan(&s.ConversationHistory, &s.Agent2History, &s.CurrentData,
+		&s.ViewMode, &s.ViewFocused, &s.ViewStack, &s.Actions, &s.Step)
+	if err != nil {
+		return nil, fmt.Errorf("get session state: %w", err)
+	}
+	return &s, nil
+}
+
 // ListUserActions returns user-initiated deltas for a session.
 func (a *TraceAdapter) ListUserActions(ctx context.Context, sessionID string) ([]UserActionItem, error) {
 	rows, err := a.client.pool.Query(ctx,

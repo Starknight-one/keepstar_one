@@ -13,6 +13,10 @@ type PipelineTrace struct {
 	TurnID    string    `json:"turnId"`
 	Timestamp time.Time `json:"timestamp"`
 
+	// Pipeline context
+	Microcontext  string         `json:"microcontext,omitempty"`  // Agent1→Agent2 bridge signal
+	ScreenContext *ScreenContext `json:"screenContext,omitempty"` // Frontend viewport state
+
 	// Agent1
 	Agent1 *AgentTrace `json:"agent1,omitempty"`
 
@@ -66,9 +70,19 @@ type AgentTrace struct {
 	ToolResult    string                 `json:"toolResult,omitempty"`
 	ToolBreakdown map[string]interface{} `json:"toolBreakdown,omitempty"` // Internal tool breakdown (normalize, fallback, etc.)
 
+	// LLM reasoning text (before tool_use)
+	RawReasoning string `json:"rawReasoning,omitempty"`
+
 	// Agent2-specific
 	PromptSent  string `json:"promptSent,omitempty"`
 	RawResponse string `json:"rawResponse,omitempty"`
+}
+
+// ScreenContext represents the current UI state from the frontend
+type ScreenContext struct {
+	Mode        string   `json:"mode"`
+	WidgetCount int      `json:"widgetCount"`
+	Fields      []string `json:"fields"`
 }
 
 // StateSnapshot captures state at a point in the pipeline

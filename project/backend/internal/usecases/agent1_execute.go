@@ -49,6 +49,7 @@ type Agent1ExecuteResponse struct {
 	EnrichedQuery     string `json:"enrichedQuery,omitempty"` // User query with <state> context
 	MessageCount      int    `json:"messageCount"`
 	ToolDefCount      int    `json:"toolDefCount"`
+	RawReasoning      string `json:"rawReasoning,omitempty"` // LLM text before tool_use
 }
 
 // Agent1ExecuteUseCase executes Agent 1 (Tool Caller)
@@ -284,7 +285,7 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 
 		// Get updated state after tool zone-write
 		state, _ = uc.statePort.GetState(ctx, req.SessionID)
-		productsFound = state.Current.Meta.Count
+		productsFound = len(state.Current.Data.Products) + len(state.Current.Data.Services)
 	} else {
 		// No tool call — style request or ambiguous query. Agent2 handles rendering.
 		uc.log.Info("no_tool_call",
@@ -351,6 +352,7 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		EnrichedQuery:     enrichedQuery,
 		MessageCount:      len(messages),
 		ToolDefCount:      len(toolDefs),
+		RawReasoning:      llmResp.Text,
 	}, nil
 }
 

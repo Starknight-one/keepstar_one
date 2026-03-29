@@ -898,3 +898,99 @@
   background: #fef3c7;
   color: #92400e;
 }
+
+/* ===== Tag red color ===== */
+.trace-tag--red {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* ===== Context Bar (microcontext + screenContext) ===== */
+.trace-context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.trace-context-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.trace-context-label {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
+/* ===== Session State Panel ===== */
+.session-state-panel {
+  margin: 1rem 0;
+}
+
+.session-state-body {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* ===== Conversation History ===== */
+.conv-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.conv-msg {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border-left: 3px solid #e2e8f0;
+}
+
+.conv-msg--user {
+  border-left-color: #3B82F6;
+  background: #f0f7ff;
+}
+
+.conv-msg--assistant {
+  border-left-color: #8B5CF6;
+  background: #f5f3ff;
+}
+
+.conv-msg-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 4px;
+}
+
+.conv-msg-idx {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+
+.conv-msg-content {
+  font-size: 0.78rem;
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  color: var(--color-text-primary);
+}
+
+.conv-msg-tools {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../../shared/api/apiClient.js'
 import Spinner from '../../shared/ui/Spinner.jsx'
 import TraceInline from './TraceInline.jsx'
-import { MetricCard, Tag } from './TraceComponents.jsx'
+import { MetricCard, Tag, Section, JsonBlock } from './TraceComponents.jsx'
 import './traces.css'
 
 function formatDateTime(ts) {
@@ -92,6 +92,115 @@ function TraceResponseSummary({ trace, td }) {
   )
 }
 
+function ConversationMessage({ msg, idx }) {
+  const isUser = msg.role === 'user'
+  const hasToolCalls = msg.toolCalls?.length > 0
+  const hasToolResult = !!msg.toolResult
+
+  return (
+    <div className={`conv-msg conv-msg--${msg.role}`}>
+      <div className="conv-msg-header">
+        <Tag color={isUser ? (hasToolResult ? 'amber' : 'blue') : 'purple'}>
+          {hasToolResult ? 'tool_result' : msg.role}
+        </Tag>
+        <span className="trace-mono conv-msg-idx">#{idx + 1}</span>
+      </div>
+      {msg.content && (
+        <pre className="conv-msg-content">{typeof msg.content === 'string' ? msg.content.substring(0, 2000) : JSON.stringify(msg.content, null, 2).substring(0, 2000)}</pre>
+      )}
+      {hasToolCalls && (
+        <div className="conv-msg-tools">
+          {msg.toolCalls.map((tc, i) => (
+            <Tag key={i} color="green">{tc.name || 'tool_use'}</Tag>
+          ))}
+        </div>
+      )}
+      {hasToolResult && (
+        <pre className="conv-msg-content">{(msg.toolResult.content || '').substring(0, 1000)}</pre>
+      )}
+    </div>
+  )
+}
+
+function SessionStatePanel({ sessionId }) {
+  const [stateData, setStateData] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  function loadState() {
+    if (stateData) { setOpen(!open); return }
+    setLoading(true)
+    api.get(`/sessions/${sessionId}/state`)
+      .then(data => { setStateData(data); setOpen(true) })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }
+
+  const convHistory = stateData?.conversationHistory
+  const parsedConv = useMemo(() => {
+    if (!convHistory) return []
+    try {
+      return typeof convHistory === 'string' ? JSON.parse(convHistory) : convHistory
+    } catch { return [] }
+  }, [convHistory])
+
+  const agent2Hist = stateData?.agent2History
+  const parsedA2 = useMemo(() => {
+    if (!agent2Hist) return []
+    try {
+      return typeof agent2Hist === 'string' ? JSON.parse(agent2Hist) : agent2Hist
+    } catch { return [] }
+  }, [agent2Hist])
+
+  return (
+    <div className="session-state-panel">
+      <button className="btn btn-secondary btn-sm" onClick={loadState} disabled={loading}>
+        {loading ? '...' : open ? '▾ Скрыть стейт сессии' : '▸ Стейт сессии (БД)'}
+      </button>
+
+      {open && stateData && (
+        <div className="session-state-body">
+          <Section title={`Conversation History (${parsedConv.length} сообщений)`} color="blue">
+            <div className="conv-history">
+              {parsedConv.map((msg, i) => (
+                <ConversationMessage key={i} msg={msg} idx={i} />
+              ))}
+              {parsedConv.length === 0 && <div className="timeline-empty">Пусто</div>}
+            </div>
+          </Section>
+
+          {parsedA2.length > 0 && (
+            <Section title={`Agent2 History (${parsedA2.length} сообщений)`} color="purple">
+              <div className="conv-history">
+                {parsedA2.map((msg, i) => (
+                  <ConversationMessage key={i} msg={msg} idx={i} />
+                ))}
+              </div>
+            </Section>
+          )}
+
+          <Section title="State Data (продукты/сервисы)" color="green">
+            <JsonBlock data={stateData.currentData} label="current_data" />
+          </Section>
+
+          <Section title="View & Navigation" color="gray">
+            <div className="trace-state-row">
+              <span className="trace-state-label">View mode:</span>
+              <Tag>{stateData.viewMode}</Tag>
+            </div>
+            <JsonBlock data={stateData.viewFocused} label="view_focused" />
+            <JsonBlock data={stateData.viewStack} label="view_stack" />
+          </Section>
+
+          <Section title="Actions (likes/cart)" color="red">
+            <JsonBlock data={stateData.actions} label="actions" />
+          </Section>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function SessionDetail() {
   const { sessionId } = useParams()
   const navigate = useNavigate()
@@ -163,6 +272,9 @@ export default function SessionDetail() {
           <MetricCard label="Tokens" value={totalTokens.toLocaleString()} />
         </div>
       </div>
+
+      {/* Session State (lazy-loaded from DB) */}
+      <SessionStatePanel sessionId={sessionId} />
 
       {/* Timeline */}
       <div className="session-timeline">
