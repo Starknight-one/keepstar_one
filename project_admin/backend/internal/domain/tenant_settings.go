@@ -6,4 +6,5 @@ type TenantSettings struct {
 	GeoCountry      string `json:"geoCountry,omitempty"`
 	GeoRegion       string `json:"geoRegion,omitempty"`
 	EnrichCrossData bool   `json:"enrichCrossData,omitempty"`
+	WidgetEnabled   bool   `json:"widgetEnabled"`
 }

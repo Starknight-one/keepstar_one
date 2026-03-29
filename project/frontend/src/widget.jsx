@@ -70,33 +70,60 @@ const ALL_CSS = [
     apiBaseUrl = devConfig?.api || null
   }
 
-  // Create host element
-  const host = document.createElement('div')
-  host.id = 'keepstar-widget'
-  document.body.appendChild(host)
+  function mount() {
+    // Create host element
+    const host = document.createElement('div')
+    host.id = 'keepstar-widget'
+    document.body.appendChild(host)
 
-  // Attach Shadow DOM
-  const shadow = host.attachShadow({ mode: 'open' })
+    // Attach Shadow DOM
+    const shadow = host.attachShadow({ mode: 'open' })
 
-  // Load Google Fonts inside shadow root
-  const fontLink = document.createElement('link')
-  fontLink.rel = 'stylesheet'
-  fontLink.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap'
-  shadow.appendChild(fontLink)
+    // Load Google Fonts inside shadow root
+    const fontLink = document.createElement('link')
+    fontLink.rel = 'stylesheet'
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap'
+    shadow.appendChild(fontLink)
 
-  // Inject all CSS into shadow root
-  const style = document.createElement('style')
-  style.textContent = ALL_CSS
-  shadow.appendChild(style)
+    // Inject all CSS into shadow root
+    const style = document.createElement('style')
+    style.textContent = ALL_CSS
+    shadow.appendChild(style)
 
-  // Mount point for React
-  const mountPoint = document.createElement('div')
-  mountPoint.id = 'keepstar-root'
-  shadow.appendChild(mountPoint)
+    // Mount point for React
+    const mountPoint = document.createElement('div')
+    mountPoint.id = 'keepstar-root'
+    shadow.appendChild(mountPoint)
 
-  // Render React app
-  const root = createRoot(mountPoint)
-  root.render(
-    <WidgetApp tenantSlug={tenantSlug} apiBaseUrl={apiBaseUrl} />
-  )
+    // Render React app
+    const root = createRoot(mountPoint)
+    root.render(
+      <WidgetApp tenantSlug={tenantSlug} apiBaseUrl={apiBaseUrl} />
+    )
+  }
+
+  // Check if widget is enabled for this tenant (skip in dev mode)
+  const isDev = !script?.src || script.src.includes(':5173') || script.src.includes('/src/')
+  if (isDev) {
+    mount()
+    return
+  }
+
+  const statusUrl = apiBaseUrl
+    ? `${apiBaseUrl}/widget/status?tenant=${encodeURIComponent(tenantSlug || '')}`
+    : null
+
+  if (!statusUrl) {
+    mount()
+    return
+  }
+
+  fetch(statusUrl)
+    .then(r => r.json())
+    .then(data => {
+      if (data.enabled) mount()
+    })
+    .catch(() => {
+      // If status check fails, don't mount (fail closed)
+    })
 })()

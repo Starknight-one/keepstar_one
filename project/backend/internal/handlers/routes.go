@@ -30,6 +30,11 @@ func SetupRoutes(mux *http.ServeMux, chat *ChatHandler, session *SessionHandler,
 	}
 }
 
+// SetupWidgetStatusRoutes configures the widget status endpoint
+func SetupWidgetStatusRoutes(mux *http.ServeMux, ws *WidgetStatusHandler) {
+	mux.HandleFunc("/api/v1/widget/status", ws.HandleStatus)
+}
+
 // SetupTestbenchRoutes configures testbench routes
 func SetupTestbenchRoutes(mux *http.ServeMux, testbench *TestbenchHandler) {
 	mux.HandleFunc("/api/v1/testbench", testbench.HandleTestbench)

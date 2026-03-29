@@ -75,6 +75,18 @@ export default function SettingsPage() {
         </div>
 
         <div className="settings-section">
+          <h2 className="settings-section-title">Chat Widget</h2>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings?.widgetEnabled || false}
+              onChange={(e) => setSettings({ ...settings, widgetEnabled: e.target.checked })}
+            />
+            <span>Show chat widget on website</span>
+          </label>
+        </div>
+
+        <div className="settings-section">
           <h2 className="settings-section-title">Enrichment</h2>
           <label className="settings-toggle">
             <input

@@ -309,6 +309,13 @@ func main() {
 		appLog.Info("trace_routes_enabled", "url", "/debug/traces/")
 	}
 
+	// Setup widget status route (public: checks if widget is enabled for tenant)
+	if catalogAdapter != nil {
+		wsHandler := handlers.NewWidgetStatusHandler(catalogAdapter)
+		handlers.SetupWidgetStatusRoutes(mux, wsHandler)
+		appLog.Info("widget_status_route_enabled", "url", "GET /api/v1/widget/status")
+	}
+
 	// Setup testbench routes (visual assembly testing)
 	if catalogAdapter != nil && presetRegistry != nil {
 		testbenchHandler := handlers.NewTestbenchHandler(catalogAdapter, presetRegistry)
