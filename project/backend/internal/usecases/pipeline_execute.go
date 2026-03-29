@@ -199,6 +199,16 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 			}
 			snapshot.Deltas = append(snapshot.Deltas, dt)
 		}
+		// Enriched state sections
+		snapshot.Meta = &midState.Current.Meta
+		snapshot.ViewMode = string(midState.View.Mode)
+		snapshot.ViewFocused = midState.View.Focused
+		snapshot.ViewStackLen = len(midState.ViewStack)
+		snapshot.LikedCount = len(midState.Actions.LikedIds)
+		snapshot.CartCount = len(midState.Actions.CartItems)
+		if midState.Current.Template != nil {
+			snapshot.TemplateSummary = buildTemplateSummary(midState.Current.Template)
+		}
 		trace.StateAfterAgent1 = snapshot
 	}
 
@@ -251,6 +261,44 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	state, err := uc.statePort.GetState(ctx, req.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
+	}
+
+	// Snapshot state after Agent2
+	{
+		deltas, _ := uc.statePort.GetDeltas(ctx, req.SessionID)
+		snapshot := &domain.StateSnapshot{
+			ProductCount: len(state.Current.Data.Products),
+			ServiceCount: len(state.Current.Data.Services),
+			Fields:       state.Current.Meta.Fields,
+			Aliases:      state.Current.Meta.Aliases,
+			HasTemplate:  state.Current.Template != nil,
+			DeltaCount:   len(deltas),
+		}
+		for _, d := range deltas {
+			if d.TurnID != "" && d.TurnID != turnID {
+				continue
+			}
+			dt := domain.DeltaTrace{
+				Step:      d.Step,
+				ActorID:   d.ActorID,
+				DeltaType: string(d.DeltaType),
+				Path:      d.Path,
+				Tool:      d.Action.Tool,
+				Count:     d.Result.Count,
+				Fields:    d.Result.Fields,
+			}
+			snapshot.Deltas = append(snapshot.Deltas, dt)
+		}
+		snapshot.Meta = &state.Current.Meta
+		snapshot.ViewMode = string(state.View.Mode)
+		snapshot.ViewFocused = state.View.Focused
+		snapshot.ViewStackLen = len(state.ViewStack)
+		snapshot.LikedCount = len(state.Actions.LikedIds)
+		snapshot.CartCount = len(state.Actions.CartItems)
+		if state.Current.Template != nil {
+			snapshot.TemplateSummary = buildTemplateSummary(state.Current.Template)
+		}
+		trace.StateAfterAgent2 = snapshot
 	}
 
 	// Get formation from Agent 2 response (built by tool) or state
@@ -433,6 +481,34 @@ func convertToFormation(data interface{}) *domain.FormationWithData {
 	}
 
 	return &formation
+}
+
+// buildTemplateSummary extracts mode and widget count from template map
+func buildTemplateSummary(template map[string]interface{}) string {
+	f, ok := template["formation"]
+	if !ok {
+		return ""
+	}
+	fm, ok := f.(map[string]interface{})
+	if !ok {
+		// Try JSON re-marshal for typed structs
+		raw, err := json.Marshal(f)
+		if err != nil {
+			return ""
+		}
+		if err := json.Unmarshal(raw, &fm); err != nil {
+			return ""
+		}
+	}
+	mode, _ := fm["mode"].(string)
+	var widgetCount int
+	if widgets, ok := fm["widgets"].([]interface{}); ok {
+		widgetCount = len(widgets)
+	}
+	if mode == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s / %d widgets", mode, widgetCount)
 }
 
 // buildMicrocontext generates a short context signal from Agent1 results for Agent2

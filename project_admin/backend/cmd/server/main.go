@@ -176,6 +176,7 @@ func main() {
 	protected.HandleFunc("/admin/api/traces/", tracesHandler.HandleGet)
 	protected.HandleFunc("/admin/api/sessions", tracesHandler.HandleSessions)
 	protected.HandleFunc("/admin/api/sessions/kill", tracesHandler.HandleKillSession)
+	protected.HandleFunc("/admin/api/sessions/kill-all", tracesHandler.HandleKillAllSessions)
 	protected.HandleFunc("/admin/api/sessions/", tracesHandler.HandleSessionDetail)
 	if enrichmentHandler != nil {
 		protected.HandleFunc("/admin/api/catalog/enrich", enrichmentHandler.HandleEnrich)
@@ -196,6 +197,7 @@ func main() {
 	mux.Handle("/admin/api/traces", authMW(protected))
 	mux.Handle("/admin/api/traces/", authMW(protected))
 	mux.Handle("/admin/api/sessions", authMW(protected))
+	mux.Handle("/admin/api/sessions/kill-all", authMW(protected))
 	mux.Handle("/admin/api/sessions/", authMW(protected))
 	if enrichmentHandler != nil {
 		mux.Handle("/admin/api/catalog/enrich", authMW(protected))

@@ -22,6 +22,9 @@ type PipelineTrace struct {
 	// Agent2
 	Agent2 *AgentTrace `json:"agent2,omitempty"`
 
+	// State snapshot after Agent2
+	StateAfterAgent2 *StateSnapshot `json:"stateAfterAgent2,omitempty"`
+
 	// Formation result
 	FormationResult *FormationTrace `json:"formationResult,omitempty"`
 
@@ -79,6 +82,15 @@ type StateSnapshot struct {
 
 	// Detailed delta log for this turn
 	Deltas []DeltaTrace `json:"deltas,omitempty"`
+
+	// Enriched state sections
+	Meta            *StateMeta `json:"meta,omitempty"`
+	ViewMode        string     `json:"viewMode,omitempty"`
+	ViewFocused     *EntityRef `json:"viewFocused,omitempty"`
+	ViewStackLen    int        `json:"viewStackLen,omitempty"`
+	LikedCount      int        `json:"likedCount,omitempty"`
+	CartCount       int        `json:"cartCount,omitempty"`
+	TemplateSummary string     `json:"templateSummary,omitempty"`
 }
 
 // DeltaTrace captures one delta's key info for the trace

@@ -769,7 +769,7 @@
 }
 
 .trace-waterfall-label {
-  width: 130px;
+  width: 260px;
   font-size: 0.78rem;
   font-family: 'SF Mono', 'Cascadia Code', monospace;
   color: var(--color-text-secondary);
@@ -801,4 +801,100 @@
   color: var(--color-text-secondary);
   flex-shrink: 0;
   text-align: right;
+}
+
+/* ===== Traces Header Actions ===== */
+.traces-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* ===== Cache Status ===== */
+.trace-cache-status {
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trace-cache-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.trace-cache-label {
+  color: var(--color-text-secondary);
+  min-width: 110px;
+}
+
+/* ===== Token Cost Table ===== */
+.trace-token-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin: 0.5rem 0;
+}
+
+.trace-token-table th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+
+.trace-token-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.trace-token-row--cache td {
+  color: #6366f1;
+}
+
+.trace-token-row--total td {
+  border-top: 2px solid #e2e8f0;
+  border-bottom: none;
+}
+
+.trace-savings {
+  color: #10B981;
+  font-size: 0.75rem;
+}
+
+/* ===== State Details ===== */
+.trace-state-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 0.5rem;
+}
+
+.trace-state-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.trace-state-label {
+  color: var(--color-text-secondary);
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.trace-state-fields {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+}
+
+/* ===== Tag amber color ===== */
+.trace-tag--amber {
+  background: #fef3c7;
+  color: #92400e;
 }

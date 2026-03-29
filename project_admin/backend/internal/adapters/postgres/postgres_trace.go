@@ -147,8 +147,34 @@ func (a *TraceAdapter) Get(ctx context.Context, id string) (*TraceListItem, erro
 	return &item, nil
 }
 
+// KillAllActiveSessions closes all active sessions.
+func (a *TraceAdapter) KillAllActiveSessions(ctx context.Context) (int, error) {
+	tag, err := a.client.pool.Exec(ctx,
+		`UPDATE chat_sessions SET status = 'closed', ended_at = NOW(), updated_at = NOW() WHERE status = 'active'`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("kill all sessions: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// CloseStaleSessions auto-closes sessions inactive for 30+ minutes.
+func (a *TraceAdapter) CloseStaleSessions(ctx context.Context) error {
+	_, err := a.client.pool.Exec(ctx,
+		`UPDATE chat_sessions SET status = 'closed', ended_at = last_activity_at + interval '30 minutes', updated_at = NOW()
+		 WHERE status = 'active' AND last_activity_at + interval '30 minutes' < NOW()`,
+	)
+	if err != nil {
+		return fmt.Errorf("close stale sessions: %w", err)
+	}
+	return nil
+}
+
 // ListSessionsWithStats returns sessions with aggregated trace stats.
 func (a *TraceAdapter) ListSessionsWithStats(ctx context.Context, limit, offset int) ([]SessionListItem, int, error) {
+	// Auto-close stale sessions (inactive > 30 min)
+	_ = a.CloseStaleSessions(ctx)
+
 	var total int
 	err := a.client.pool.QueryRow(ctx, `SELECT count(*) FROM chat_sessions`).Scan(&total)
 	if err != nil {

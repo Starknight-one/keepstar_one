@@ -136,6 +136,23 @@ func (h *TracesHandler) HandleSessionDetail(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// HandleKillAllSessions closes all active sessions.
+func (h *TracesHandler) HandleKillAllSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+
+	killed, err := h.traces.KillAllActiveSessions(r.Context())
+	if err != nil {
+		h.log.Error("kill_all_sessions_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to kill all sessions")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "killed": killed})
+}
+
 // HandleKillSession marks a chat session as closed.
 func (h *TracesHandler) HandleKillSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

@@ -113,6 +113,7 @@ export default function TracesPage() {
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
   const [killing, setKilling] = useState(null)
+  const [killingAll, setKillingAll] = useState(false)
 
   const fetchSessions = useCallback(async () => {
     setLoading(true)
@@ -144,13 +145,33 @@ export default function TracesPage() {
     finally { setKilling(null) }
   }
 
+  async function handleKillAll() {
+    const activeCount = sessions.filter(s => s.status === 'active').length
+    if (!activeCount || !confirm(`Kill ALL ${activeCount} active sessions?`)) return
+    setKillingAll(true)
+    try {
+      await api.post('/sessions/kill-all')
+      fetchSessions()
+    } catch { /* ignore */ }
+    finally { setKillingAll(false) }
+  }
+
   return (
     <div>
       <div className="traces-header">
         <h1 className="page-title">Sessions</h1>
-        <button className="btn btn-secondary" onClick={fetchSessions} disabled={loading}>
-          Refresh
-        </button>
+        <div className="traces-header-actions">
+          <button className="btn btn-secondary" onClick={fetchSessions} disabled={loading}>
+            Refresh
+          </button>
+          <button
+            className="btn btn-danger"
+            onClick={handleKillAll}
+            disabled={killingAll || !sessions.some(s => s.status === 'active')}
+          >
+            {killingAll ? '...' : 'Kill All'}
+          </button>
+        </div>
       </div>
 
       {loading ? (

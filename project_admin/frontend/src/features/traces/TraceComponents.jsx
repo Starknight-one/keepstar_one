@@ -86,6 +86,19 @@ export function TokensBar({ agent }) {
   )
 }
 
+const SPAN_LABELS = {
+  'pipeline': 'Пайплайн (общее)',
+  'agent1': 'Агент 1 — Анализ запроса',
+  'agent1.llm': 'Агент 1 — LLM вызов',
+  'agent1.llm.ttfb': 'Агент 1 — До первого токена',
+  'agent1.llm.body': 'Агент 1 — Чтение ответа',
+  'agent1.tool': 'Агент 1 — Инструмент',
+  'agent1.state': 'Агент 1 — Обновление стейта',
+  'agent2': 'Агент 2 — Рендеринг',
+  'agent2.llm': 'Агент 2 — LLM вызов',
+  'agent2.tool': 'Агент 2 — Visual Assembly',
+}
+
 export function WaterfallBar({ spans, totalMs }) {
   if (!spans || spans.length === 0) return null
   const colors = ['#8B5CF6', '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#EC4899']
@@ -96,7 +109,7 @@ export function WaterfallBar({ spans, totalMs }) {
         const widthPct = totalMs > 0 ? (span.durationMs / totalMs) * 100 : 0
         return (
           <div key={i} className="trace-waterfall-row">
-            <span className="trace-waterfall-label">{span.name}</span>
+            <span className="trace-waterfall-label">{SPAN_LABELS[span.name] || span.name}</span>
             <div className="trace-waterfall-track">
               <div
                 className="trace-waterfall-bar"
@@ -111,6 +124,133 @@ export function WaterfallBar({ spans, totalMs }) {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+export function CacheStatus({ agent }) {
+  if (!agent) return null
+  return (
+    <div className="trace-cache-status">
+      <div className="trace-cache-row">
+        <span className="trace-cache-label">System prompt:</span>
+        <span className="trace-mono">{agent.systemPromptChars?.toLocaleString()} символов</span>
+      </div>
+      <div className="trace-cache-row">
+        <span className="trace-cache-label">Кэш:</span>
+        {agent.cacheRead > 0 && (
+          <Tag color="green">HIT: {agent.cacheRead.toLocaleString()} токенов из кэша</Tag>
+        )}
+        {agent.cacheWrite > 0 && (
+          <Tag color="amber">MISS: запись {agent.cacheWrite.toLocaleString()} токенов</Tag>
+        )}
+        {!agent.cacheRead && !agent.cacheWrite && (
+          <Tag color="gray">Без кэша</Tag>
+        )}
+      </div>
+      <JsonBlock data={agent.systemPrompt} label="System Prompt" />
+    </div>
+  )
+}
+
+const MODEL_PRICING = {
+  'claude-haiku-4-5-20251001': { input: 1.0, output: 5.0, name: 'Haiku' },
+  'claude-sonnet-4-5-20251014': { input: 3.0, output: 15.0, name: 'Sonnet' },
+}
+
+function getPricing(model) {
+  if (!model) return { input: 1.0, output: 5.0, name: '?' }
+  return MODEL_PRICING[model] || { input: 1.0, output: 5.0, name: model.replace('claude-', '') }
+}
+
+export function TokenCostTable({ agent }) {
+  if (!agent) return null
+  const p = getPricing(agent.model)
+  const inputCost = (agent.inputTokens || 0) * p.input / 1_000_000
+  const outputCost = (agent.outputTokens || 0) * p.output / 1_000_000
+  const cacheReadCost = (agent.cacheRead || 0) * p.input * 0.1 / 1_000_000
+  const cacheWriteCost = (agent.cacheWrite || 0) * p.input * 1.25 / 1_000_000
+  const cacheReadSavings = (agent.cacheRead || 0) * p.input * 0.9 / 1_000_000
+
+  return (
+    <table className="trace-token-table">
+      <thead>
+        <tr><th>Категория</th><th>Токены</th><th>Стоимость</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Input</td>
+          <td className="trace-mono">{(agent.inputTokens || 0).toLocaleString()}</td>
+          <td className="trace-mono">${inputCost.toFixed(6)}</td>
+        </tr>
+        <tr>
+          <td>Output</td>
+          <td className="trace-mono">{(agent.outputTokens || 0).toLocaleString()}</td>
+          <td className="trace-mono">${outputCost.toFixed(6)}</td>
+        </tr>
+        {agent.cacheRead > 0 && (
+          <tr className="trace-token-row--cache">
+            <td>Cache read (0.1x)</td>
+            <td className="trace-mono">{agent.cacheRead.toLocaleString()}</td>
+            <td className="trace-mono">${cacheReadCost.toFixed(6)} <span className="trace-savings">(-${cacheReadSavings.toFixed(6)})</span></td>
+          </tr>
+        )}
+        {agent.cacheWrite > 0 && (
+          <tr className="trace-token-row--cache">
+            <td>Cache write (1.25x)</td>
+            <td className="trace-mono">{agent.cacheWrite.toLocaleString()}</td>
+            <td className="trace-mono">${cacheWriteCost.toFixed(6)}</td>
+          </tr>
+        )}
+        <tr className="trace-token-row--total">
+          <td><strong>Итого</strong></td>
+          <td></td>
+          <td className="trace-mono"><strong>${agent.costUsd?.toFixed(6)}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  )
+}
+
+export function StateDetails({ snapshot }) {
+  if (!snapshot) return null
+  return (
+    <div className="trace-state-details">
+      {snapshot.meta && (
+        <div className="trace-state-row">
+          <span className="trace-state-label">Мета:</span>
+          <span className="trace-mono">{snapshot.meta.count} items</span>
+          {snapshot.meta.fields?.length > 0 && (
+            <span className="trace-state-fields">{snapshot.meta.fields.join(', ')}</span>
+          )}
+        </div>
+      )}
+      <div className="trace-state-row">
+        <span className="trace-state-label">Вью:</span>
+        <Tag>{snapshot.viewMode || 'default'}</Tag>
+        {snapshot.viewFocused && (
+          <span className="trace-mono">{snapshot.viewFocused.type}: {snapshot.viewFocused.id?.substring(0, 12)}</span>
+        )}
+      </div>
+      {snapshot.viewStackLen > 0 && (
+        <div className="trace-state-row">
+          <span className="trace-state-label">Стек навигации:</span>
+          <span className="trace-mono">{snapshot.viewStackLen} уровней</span>
+        </div>
+      )}
+      {(snapshot.likedCount > 0 || snapshot.cartCount > 0) && (
+        <div className="trace-state-row">
+          <span className="trace-state-label">Действия:</span>
+          {snapshot.likedCount > 0 && <Tag color="red">{snapshot.likedCount} liked</Tag>}
+          {snapshot.cartCount > 0 && <Tag color="green">{snapshot.cartCount} в корзине</Tag>}
+        </div>
+      )}
+      {snapshot.templateSummary && (
+        <div className="trace-state-row">
+          <span className="trace-state-label">Шаблон:</span>
+          <Tag color="purple">{snapshot.templateSummary}</Tag>
+        </div>
+      )}
     </div>
   )
 }
