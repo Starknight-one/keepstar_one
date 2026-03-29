@@ -1,6 +1,6 @@
 import './ui.css'
 
-export default function Table({ columns, data, onRowClick }) {
+export default function Table({ columns, data, onRowClick, extraProps }) {
   return (
     <div className="table-wrapper">
       <table className="table">
@@ -29,7 +29,7 @@ export default function Table({ columns, data, onRowClick }) {
               >
                 {columns.map((col) => (
                   <td key={col.key}>
-                    {col.render ? col.render(row) : row[col.key]}
+                    {col.render ? col.render(row, extraProps) : row[col.key]}
                   </td>
                 ))}
               </tr>

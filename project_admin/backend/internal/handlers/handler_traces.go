@@ -71,21 +71,69 @@ func (h *TracesHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, trace)
 }
 
-// HandleSessions returns list of chat sessions.
+// HandleSessions returns list of chat sessions with aggregated stats.
 func (h *TracesHandler) HandleSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
 
-	sessions, err := h.traces.ListSessions(r.Context())
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	if limit <= 0 {
+		limit = 50
+	}
+
+	sessions, total, err := h.traces.ListSessionsWithStats(r.Context(), limit, offset)
 	if err != nil {
 		h.log.Error("sessions_list_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions, "total": total})
+}
+
+// HandleSessionDetail returns session info with all traces and user actions.
+func (h *TracesHandler) HandleSessionDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/admin/api/sessions/")
+	id = strings.TrimSuffix(id, "/")
+	if id == "" || id == "kill" {
+		writeError(w, http.StatusBadRequest, "session ID required")
+		return
+	}
+
+	session, err := h.traces.GetSession(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	traces, err := h.traces.ListBySession(r.Context(), id)
+	if err != nil {
+		h.log.Error("session_traces_failed", "error", err, "session_id", id)
+		writeError(w, http.StatusInternalServerError, "failed to get traces")
+		return
+	}
+
+	actions, err := h.traces.ListUserActions(r.Context(), id)
+	if err != nil {
+		h.log.Error("session_actions_failed", "error", err, "session_id", id)
+		writeError(w, http.StatusInternalServerError, "failed to get actions")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"session":     session,
+		"traces":      traces,
+		"userActions": actions,
+	})
 }
 
 // HandleKillSession marks a chat session as closed.

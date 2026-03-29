@@ -176,6 +176,7 @@ func main() {
 	protected.HandleFunc("/admin/api/traces/", tracesHandler.HandleGet)
 	protected.HandleFunc("/admin/api/sessions", tracesHandler.HandleSessions)
 	protected.HandleFunc("/admin/api/sessions/kill", tracesHandler.HandleKillSession)
+	protected.HandleFunc("/admin/api/sessions/", tracesHandler.HandleSessionDetail)
 	if enrichmentHandler != nil {
 		protected.HandleFunc("/admin/api/catalog/enrich", enrichmentHandler.HandleEnrich)
 		protected.HandleFunc("/admin/api/catalog/enrich-v2", enrichmentHandler.HandleEnrichV2)
