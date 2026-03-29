@@ -15,7 +15,7 @@ type RetentionService struct {
 // RetentionConfig defines TTL and limits for retention policy
 type RetentionConfig struct {
 	TraceMaxAge         time.Duration // Delete traces older than this (default: 48h)
-	DeadSessionMaxAge   time.Duration // Delete dead session data older than this (default: 1h)
+	DeadSessionMaxAge   time.Duration // Delete dead session data older than this (default: 24h)
 	ConversationMaxMsgs int           // Keep last N messages in conversation_history (default: 20)
 	CleanupInterval     time.Duration // How often to run cleanup (default: 30min)
 	RequestLogMaxAge    time.Duration // Delete request_logs older than this (default: 72h)
@@ -25,7 +25,7 @@ type RetentionConfig struct {
 func DefaultRetentionConfig() RetentionConfig {
 	return RetentionConfig{
 		TraceMaxAge:         7 * 24 * time.Hour,
-		DeadSessionMaxAge:   1 * time.Hour,
+		DeadSessionMaxAge:   24 * time.Hour,
 		ConversationMaxMsgs: 20,
 		CleanupInterval:     6 * time.Hour,
 		RequestLogMaxAge:    72 * time.Hour,
@@ -124,11 +124,12 @@ func (s *RetentionService) cleanupDeadSessions(ctx context.Context) (int64, erro
 	}
 
 	// Delete in correct order for FK constraints
+	// NOTE: pipeline_traces are NOT deleted here — they have their own TTL (TraceMaxAge: 7 days)
+	// via cleanupTraces(). This preserves trace history even after sessions are closed.
 	tables := []string{
 		"chat_session_deltas",
 		"chat_session_state",
 		"chat_messages",
-		"pipeline_traces",
 		"chat_sessions",
 	}
 	for _, sid := range sessionIDs {
