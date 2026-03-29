@@ -130,23 +130,31 @@ export function WaterfallBar({ spans, totalMs }) {
 
 export function CacheStatus({ agent }) {
   if (!agent) return null
+  const totalInput = (agent.inputTokens || 0) + (agent.cacheRead || 0) + (agent.cacheWrite || 0)
+  const hitRate = totalInput > 0 ? ((agent.cacheRead || 0) / totalInput * 100).toFixed(0) : 0
   return (
     <div className="trace-cache-status">
       <div className="trace-cache-row">
         <span className="trace-cache-label">System prompt:</span>
-        <span className="trace-mono">{agent.systemPromptChars?.toLocaleString()} символов</span>
+        <span className="trace-mono">{agent.systemPromptChars?.toLocaleString()} символов (~{Math.ceil((agent.systemPromptChars || 0) / 4).toLocaleString()} токенов)</span>
       </div>
       <div className="trace-cache-row">
         <span className="trace-cache-label">Кэш:</span>
         {agent.cacheRead > 0 && (
-          <Tag color="green">HIT: {agent.cacheRead.toLocaleString()} токенов из кэша</Tag>
+          <Tag color="green">HIT {hitRate}%: {agent.cacheRead.toLocaleString()} токенов из кэша</Tag>
         )}
         {agent.cacheWrite > 0 && (
           <Tag color="amber">MISS: запись {agent.cacheWrite.toLocaleString()} токенов</Tag>
         )}
         {!agent.cacheRead && !agent.cacheWrite && (
-          <Tag color="gray">Без кэша</Tag>
+          <Tag color="gray">Без кэша (read=0, write=0)</Tag>
         )}
+      </div>
+      <div className="trace-cache-row trace-cache-debug">
+        <span className="trace-cache-label">Токены:</span>
+        <span className="trace-mono">
+          input={agent.inputTokens || 0} · output={agent.outputTokens || 0} · cache_read={agent.cacheRead || 0} · cache_write={agent.cacheWrite || 0}
+        </span>
       </div>
       <JsonBlock data={agent.systemPrompt} label="System Prompt" />
     </div>
