@@ -30,12 +30,26 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
   // Build hover/active CSS variables from states
   const stateStyles = buildStateStyles(states);
 
-  const directionClass = direction === 'horizontal' ? 'generic-card-horizontal' : '';
+  // Only apply horizontal CSS class in fallback mode (no layout tree).
+  // When layout tree exists, direction is handled by applyHorizontalDirection in engine.
+  const directionClass = (!layout && direction === 'horizontal') ? 'generic-card-horizontal' : '';
+
+  // Apply shadow/borderRadius from root layout node to the card container
+  const cardStyle = { ...stateStyles, position: 'relative' };
+  if (layout?.shadow) {
+    const shadowTokens = { none: 'none', sm: '0 1px 3px rgba(0,0,0,0.1)', md: '0 4px 12px rgba(0,0,0,0.1)', lg: '0 8px 24px rgba(0,0,0,0.12)' };
+    cardStyle.boxShadow = shadowTokens[layout.shadow] || layout.shadow;
+  }
+  if (layout?.borderRadius) {
+    const radiusTokens = { none: '0', sm: '4px', md: '8px', lg: '12px', xl: '16px', full: '9999px' };
+    cardStyle.borderRadius = radiusTokens[layout.borderRadius] || layout.borderRadius;
+    cardStyle.overflow = 'hidden';
+  }
 
   return (
     <div
       className={`generic-card generic-card-v2 size-${size} ${directionClass}`}
-      style={{ ...stateStyles, position: 'relative' }}
+      style={cardStyle}
     >
       {/* Like button overlay when layout tree handles hero rendering */}
       {layout && entityId && (

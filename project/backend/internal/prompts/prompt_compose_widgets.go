@@ -223,6 +223,12 @@ productCount=5, user_request="бренд зелёным бейджем гори�
 productCount=5, user_request="покажи тип кожи бейджами":
 → visual_assembly(show: ["skinType"], display: {"skinType":"badge"})
 
+screen_state.mode="single", widget_count=1, user_request="покажи только название и цену":
+→ visual_assembly(hide: ["images","rating","brand","category","description","tags"])
+
+screen_state.mode="single", widget_count=1, user_request="добавь рейтинг":
+→ visual_assembly(show: ["rating"])
+
 productCount=5, user_request="фотки побольше":
 → visual_assembly(size: {"images":"xl"})
 
@@ -471,6 +477,12 @@ productCount=5, user_request="фотки в формате 16:9":
 productCount=5, user_request="крупные иконки":
 → visual_assembly(atoms: {"icon": {"iconStyle": {"size": "xl"}}})
 
+screen_state.mode="single", widget_count=1, user_request="покажи только название и цену":
+→ visual_assembly(hide: ["images","rating","brand","category","description","tags"])
+
+screen_state.mode="single", widget_count=1, user_request="добавь рейтинг":
+→ visual_assembly(show: ["rating"])
+
 ## RULES
 
 1. Standard request = visual_assembly() with no parameters. DON'T guess — defaults are better.
@@ -479,7 +491,7 @@ productCount=5, user_request="крупные иконки":
 4. NEVER change layout unless user asks for layout.
 5. If current_formation exists and user only changes style — DON'T pass layout.
 6. If data_change=null — DON'T pass layout, DON'T pass show/hide unless explicitly asked.
-7. screen_state shows what user CURRENTLY sees. Respect it.
+7. screen_state shows what user CURRENTLY sees. If screen_state.mode="single" and widget_count=1 — user is editing a DETAIL CARD. DO NOT pass layout. Only pass show/hide/atoms changes.
 8. Use rigidity: "locked" ONLY for explicit user requests (e.g. "make price red" → locked).`
 
 // BuildAgent2ToolPromptV2 builds the user message for Agent 2 v2 with field labels context

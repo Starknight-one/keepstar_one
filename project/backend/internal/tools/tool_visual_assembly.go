@@ -271,15 +271,37 @@ func (t *VisualAssemblyTool) executeV2(ctx context.Context, toolCtx ToolContext,
 		}
 	}
 
+	// Extract current visible fields and mode from previous formation (for additive show/hide)
+	var currentFields []string
+	var currentMode string
+	if state.Current.Template != nil {
+		if fData, ok := state.Current.Template["formation"]; ok {
+			if f, ok := fData.(*domain.FormationWithData); ok && f != nil {
+				currentMode = string(f.Mode)
+				if len(f.Widgets) > 0 {
+					seen := make(map[string]bool)
+					for _, a := range f.Widgets[0].AtomsV2 {
+						if a.FieldName != "" && !seen[a.FieldName] {
+							currentFields = append(currentFields, a.FieldName)
+							seen[a.FieldName] = true
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Run v2 engine
 	eng := engine.NewEngineV2()
 	output := eng.Execute(engine.EngineV2Input{
-		EntityType:   entityType,
-		Products:     products,
-		Services:     services,
-		FieldDefs:    fieldDefs,
-		Instructions: instructions,
-		Preset:       preset,
+		EntityType:    entityType,
+		Products:      products,
+		Services:      services,
+		FieldDefs:     fieldDefs,
+		Instructions:  instructions,
+		Preset:        preset,
+		CurrentFields: currentFields,
+		CurrentMode:   currentMode,
 	})
 
 	formation := output.Formation

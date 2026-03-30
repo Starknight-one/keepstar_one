@@ -260,7 +260,7 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		LatencyMs:         int(time.Since(start).Milliseconds()),
 		LLMCallMs:         llmDuration,
 		PromptSent:        userPrompt,
-		MetaCount:         state.Current.Meta.Count,
+		MetaCount:         state.Current.Meta.ProductCount + state.Current.Meta.ServiceCount,
 		MetaFields:        state.Current.Meta.Fields,
 		SystemPrompt:      systemPrompt,
 		SystemPromptChars: len(systemPrompt),

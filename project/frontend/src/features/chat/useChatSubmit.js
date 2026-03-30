@@ -19,12 +19,22 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
-  const submittingRef = useRef(false);
+  // Request versioning: monotonic counter prevents stale responses from overwriting fresh state
+  const requestIdRef = useRef(0);
+  // AbortController for cancelling in-flight requests when a new one is submitted
+  const abortRef = useRef(null);
 
   const submit = useCallback(async (text) => {
     if (!text.trim()) return;
-    if (submittingRef.current) return; // Prevent duplicate requests
-    submittingRef.current = true;
+
+    // Abort any in-flight request — new request always wins
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+
+    const thisRequestId = ++requestIdRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     // Add user message
     addMessage({
@@ -50,7 +60,10 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
         };
       }
 
-      const response = await sendPipelineQuery(sessionIdRef.current, text, screenContext);
+      const response = await sendPipelineQuery(sessionIdRef.current, text, screenContext, controller.signal);
+
+      // Stale response guard: discard if a newer request was issued
+      if (thisRequestId !== requestIdRef.current) return;
 
       // Save sessionId to localStorage if new
       if (response.sessionId && response.sessionId !== sessionIdRef.current) {
@@ -76,8 +89,10 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
         timestamp: new Date(),
       });
     } catch (err) {
+      if (err.name === 'AbortError') return; // Request was cancelled by a newer one
+      if (thisRequestId !== requestIdRef.current) return; // Stale error
+
       setError(err.message);
-      // Add error message
       addMessage({
         id: (Date.now() + 1).toString(),
         role: MessageRole.ASSISTANT,
@@ -85,8 +100,10 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
         timestamp: new Date(),
       });
     } finally {
-      setLoading(false);
-      submittingRef.current = false;
+      if (thisRequestId === requestIdRef.current) {
+        setLoading(false);
+        abortRef.current = null;
+      }
     }
   }, [addMessage, setLoading, setError, setSessionId, onFormationReceived]);
 

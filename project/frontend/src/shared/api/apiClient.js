@@ -114,7 +114,7 @@ export async function initSession() {
 }
 
 // Pipeline API - sends query through Agent 1 -> Agent 2 -> Formation
-export async function sendPipelineQuery(sessionId, query, screenContext) {
+export async function sendPipelineQuery(sessionId, query, screenContext, signal) {
   const body = { query };
   if (sessionId) {
     body.sessionId = sessionId;
@@ -123,7 +123,12 @@ export async function sendPipelineQuery(sessionId, query, screenContext) {
     body.screenContext = screenContext;
   }
 
-  const response = await timedFetch('POST', '/pipeline', { body: JSON.stringify(body) });
+  const options = { body: JSON.stringify(body) };
+  if (signal) {
+    options.signal = signal;
+  }
+
+  const response = await timedFetch('POST', '/pipeline', options);
 
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);

@@ -6,13 +6,15 @@ import (
 
 // EngineV2Input holds all inputs needed for the v2 visual assembly pipeline.
 type EngineV2Input struct {
-	EntityType   domain.EntityType
-	Products     []domain.Product
-	Services     []domain.Service
-	FieldDefs    []FieldDefinitionEntry // From field_definitions table (nil = use legacy fallback)
-	Instructions *AgentInstructions     // Parsed agent instructions (nil = auto mode)
-	Preset       *domain.PresetV2              // Loaded preset (nil = no preset)
-	Viewport     ViewportConfig         // Screen/container dimensions
+	EntityType    domain.EntityType
+	Products      []domain.Product
+	Services      []domain.Service
+	FieldDefs     []FieldDefinitionEntry // From field_definitions table (nil = use legacy fallback)
+	Instructions  *AgentInstructions     // Parsed agent instructions (nil = auto mode)
+	Preset        *domain.PresetV2              // Loaded preset (nil = no preset)
+	Viewport      ViewportConfig         // Screen/container dimensions
+	CurrentFields []string               // Fields currently visible on screen (from previous formation)
+	CurrentMode   string                 // Current layout mode from previous formation ("single", "grid", etc.)
 }
 
 // EngineV2Output holds the result of the v2 pipeline.
@@ -91,6 +93,20 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 
 	// Auto-resolve layout/size from effective entity count
 	resolved := AutoResolve(string(input.EntityType), effectiveCount)
+
+	// Preserve current mode when agent didn't explicitly change layout
+	// Prevents detail card (single) from auto-resolving to grid on show/hide changes
+	if input.CurrentMode != "" && (input.Instructions == nil || input.Instructions.Layout == "") {
+		resolved.Layout = input.CurrentMode
+	}
+
+	// Use current visible fields as base if available (so show/hide are relative to screen state)
+	if len(input.CurrentFields) > 0 {
+		resolved.Fields = input.CurrentFields
+		if len(input.CurrentFields) > resolved.MaxFields {
+			resolved.MaxFields = len(input.CurrentFields)
+		}
+	}
 
 	// Apply instructions overrides if present
 	if input.Instructions != nil {

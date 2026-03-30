@@ -40,11 +40,19 @@ export function AtomV2Renderer({ atom }) {
   const content = renderV2Content(formatted, atom, textStyles);
 
   // Wrap with wrapper if present
+  let rendered = content;
   if (atom.wrapper && atom.wrapper.type && atom.wrapper.type !== 'none') {
-    return renderWrapper(content, atom.wrapper, atom);
+    rendered = renderWrapper(content, atom.wrapper, atom);
   }
 
-  return content;
+  // Add data attributes for test selectors and debugging
+  const dataProps = {};
+  if (atom.slot) dataProps['data-slot'] = atom.slot;
+  if (atom.fieldName) dataProps['data-field'] = atom.fieldName;
+  if (Object.keys(dataProps).length > 0) {
+    return <span {...dataProps}>{rendered}</span>;
+  }
+  return rendered;
 }
 
 const LINE_HEIGHT_TOKENS = { tight: 1.25, normal: 1.5, relaxed: 1.625, loose: 2 };

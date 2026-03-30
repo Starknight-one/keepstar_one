@@ -471,9 +471,11 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx ToolContext, in
 	// UpdateData zone-write: atomic data + delta
 	data := domain.StateData{Products: merged, Services: mergedServices}
 	stateMeta := domain.StateMeta{
-		Count:   total,
-		Fields:  fields,
-		Aliases: state.Current.Meta.Aliases, // preserve tenant_slug
+		Count:        total,
+		ProductCount: len(merged),
+		ServiceCount: len(mergedServices),
+		Fields:       fields,
+		Aliases:      state.Current.Meta.Aliases, // preserve tenant_slug
 	}
 
 	info := domain.DeltaInfo{

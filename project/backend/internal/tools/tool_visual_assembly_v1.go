@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 
@@ -11,8 +10,6 @@ import (
 	"keepstar/internal/engine"
 )
 
-// layoutKeywords matches user requests that explicitly ask for layout change
-var layoutKeywords = regexp.MustCompile(`(?i)(grid|грид|список|list|сравни|сравнение|compar|карусел|carousel|горизонтально|вертикально|horizontal|vertical|таблиц|table)`)
 
 // definitionV1 returns the V1 tool definition for LLM (legacy schema with display/color/shape/layer/anchor)
 func (t *VisualAssemblyTool) definitionV1() domain.ToolDefinition {
@@ -362,12 +359,10 @@ func (t *VisualAssemblyTool) executeV1(ctx context.Context, toolCtx ToolContext,
 	}
 
 	// Step 7: Apply layout/size overrides with graceful degradation
-	layoutExplicit := false
 	if layoutStr, ok := input["layout"].(string); ok && layoutStr != "" {
 		switch layoutStr {
 		case "grid", "list", "single", "carousel", "comparison", "table":
 			layout = layoutStr
-			layoutExplicit = true
 		default:
 			degraded = true
 		}
@@ -380,21 +375,6 @@ func (t *VisualAssemblyTool) executeV1(ctx context.Context, toolCtx ToolContext,
 			if sv, ok := s.(string); ok {
 				perAtomSize[field] = sv
 			}
-		}
-	}
-
-	// Step 7.1: Layout post-validate guard
-	if layoutExplicit && toolCtx.UserQuery != "" {
-		var currentConfig *domain.RenderConfig
-		if state.Current.Template != nil {
-			if fData, ok := state.Current.Template["formation"]; ok {
-				if f, ok := fData.(*domain.FormationWithData); ok && f != nil && f.Config != nil {
-					currentConfig = f.Config
-				}
-			}
-		}
-		if currentConfig != nil && !layoutKeywords.MatchString(toolCtx.UserQuery) {
-			layout = string(currentConfig.Mode)
 		}
 	}
 
