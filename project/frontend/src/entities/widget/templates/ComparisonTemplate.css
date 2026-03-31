@@ -32,6 +32,8 @@
   flex: 1;
   min-width: 160px;
   border-radius: 0;
+  background: #FFFFFF;
+  border: 1px solid #F1F5F9;
   transition: background-color 0.2s;
 }
 

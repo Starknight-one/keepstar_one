@@ -79,15 +79,15 @@
 }
 
 .generic-card-horizontal .generic-card-media {
-  width: 140px;
-  min-width: 140px;
+  width: 50%;
+  min-width: 50%;
   height: auto;
   min-height: 100%;
 }
 
 .generic-card-horizontal.size-large .generic-card-media {
-  width: 200px;
-  min-width: 200px;
+  width: 50%;
+  min-width: 50%;
 }
 
 .generic-card-horizontal .generic-card-content {
