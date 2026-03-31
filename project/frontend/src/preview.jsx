@@ -9,6 +9,8 @@ import widgetCompCss from './entities/widget/Widget.css?inline'
 import formationCss from './entities/formation/Formation.css?inline'
 import marketplaceCss from './shared/theme/themes/marketplace.css?inline'
 import comparisonCss from './entities/widget/templates/ComparisonTemplate.css?inline'
+import atomV2Css from './entities/atom/AtomV2.css?inline'
+import actionCss from './features/actions/ActionContext.css?inline'
 import productGridCss from './features/catalog/ProductGrid.css?inline'
 import backButtonCss from './features/navigation/BackButton.css?inline'
 import stepperCss from './features/navigation/Stepper.css?inline'
@@ -21,6 +23,8 @@ const ALL_CSS = [
   formationCss,
   marketplaceCss,
   comparisonCss,
+  atomV2Css,
+  actionCss,
   productGridCss,
   backButtonCss,
   stepperCss,
