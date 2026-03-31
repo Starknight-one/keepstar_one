@@ -747,3 +747,58 @@ func AutoSelectPreset(entityType domain.EntityType, layout string, size domain.W
 		return "product_card_grid"
 	}
 }
+
+// BuildTemplateFormationV2 creates a template formation with nil-valued atoms
+// for frontend instant-fill (adjacentTemplates). Uses PresetV2 fields to determine
+// which atoms to include and their styling.
+func BuildTemplateFormationV2(entityType domain.EntityType, preset *domain.PresetV2) *domain.FormationWithData {
+	if preset == nil {
+		return nil
+	}
+
+	// Build atoms from preset fields with nil values
+	atomsV2 := make([]domain.AtomV2, 0, len(preset.Fields))
+	for _, f := range preset.Fields {
+		atom := domain.AtomV2{
+			FieldName: f.FieldName,
+			Slot:      f.Slot,
+			Rigidity:  f.Rigidity,
+			Priority:  f.Priority,
+		}
+		// Infer type/subtype from FieldTypeMap
+		entry, known := FieldTypeMap[f.FieldName]
+		if known {
+			atom.Type = entry.Type
+			atom.Subtype = entry.Subtype
+		} else {
+			atom.Type = domain.AtomTypeText
+			atom.Subtype = domain.SubtypeString
+		}
+		if f.TextStyle != nil {
+			atom.TextStyle = f.TextStyle
+		}
+		if f.Wrapper != nil {
+			atom.Wrapper = f.Wrapper
+		}
+		if f.Format != "" {
+			atom.Format = f.Format
+		}
+		// Value stays nil — frontend fills it
+		atomsV2 = append(atomsV2, atom)
+	}
+
+	widget := domain.Widget{
+		ID:       "template-0",
+		Template: preset.Template,
+		Size:     preset.DefaultSize,
+		AtomsV2:  atomsV2,
+		Layout:   AutoLayout(atomsV2),
+	}
+	// Generate V1 compat
+	WidgetV2ToLegacy(&widget)
+
+	return &domain.FormationWithData{
+		Mode:    preset.DefaultMode,
+		Widgets: []domain.Widget{widget},
+	}
+}

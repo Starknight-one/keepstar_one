@@ -220,34 +220,6 @@ func AutoResolve(entityType string, entityCount int) ResolvedDefaults {
 	}
 }
 
-// DefaultSlotConstraints limits max atoms per slot
-var DefaultSlotConstraints = map[domain.AtomSlot]int{
-	domain.AtomSlotHero:      1,
-	domain.AtomSlotTitle:     1,
-	domain.AtomSlotPrice:     2,
-	domain.AtomSlotBadge:     3,
-	domain.AtomSlotPrimary:   4,
-	domain.AtomSlotSecondary: 5,
-}
-
-// ApplySlotConstraints limits the number of atoms per slot
-func ApplySlotConstraints(configs []domain.FieldConfig) []domain.FieldConfig {
-	slotCounts := make(map[domain.AtomSlot]int)
-	result := make([]domain.FieldConfig, 0, len(configs))
-	for _, fc := range configs {
-		maxForSlot, hasLimit := DefaultSlotConstraints[fc.Slot]
-		if !hasLimit {
-			result = append(result, fc)
-			continue
-		}
-		if slotCounts[fc.Slot] < maxForSlot {
-			result = append(result, fc)
-			slotCounts[fc.Slot]++
-		}
-	}
-	return result
-}
-
 // CalcGridConfig determines optimal grid columns from entity count and widget size
 func CalcGridConfig(entityCount int, size domain.WidgetSize) *domain.GridConfig {
 	var cols int

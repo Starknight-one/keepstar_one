@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 
 	"keepstar/internal/domain"
@@ -15,15 +14,17 @@ import (
 
 // TestbenchHandler handles testbench API requests
 type TestbenchHandler struct {
-	catalogPort    ports.CatalogPort
-	presetRegistry *presets.PresetRegistry
+	catalogPort      ports.CatalogPort
+	fieldDefPort     ports.FieldDefinitionPort
+	presetV2Registry *presets.PresetV2Registry
 }
 
 // NewTestbenchHandler creates a testbench handler
-func NewTestbenchHandler(catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry) *TestbenchHandler {
+func NewTestbenchHandler(catalogPort ports.CatalogPort, fieldDefPort ports.FieldDefinitionPort, presetV2Registry *presets.PresetV2Registry) *TestbenchHandler {
 	return &TestbenchHandler{
-		catalogPort:    catalogPort,
-		presetRegistry: presetRegistry,
+		catalogPort:      catalogPort,
+		fieldDefPort:     fieldDefPort,
+		presetV2Registry: presetV2Registry,
 	}
 }
 
@@ -110,205 +111,59 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Build formation using visual assembly logic
+	// Build formation using V2 engine
 	params := req.Params
 	if params == nil {
 		params = make(map[string]interface{})
 	}
 
-	entityType := "product"
-	entityCount := len(products)
-	resolved := engine.AutoResolve(entityType, entityCount)
-	fields := resolved.Fields
-	displayOverrides := make(map[string]string)
-	layout := resolved.Layout
-	size := resolved.Size
+	// Build AgentInstructions from testbench params
+	instructions := buildTestbenchInstructions(params)
 
-	// Apply preset if specified
+	// Look up V2 preset if specified
+	var preset *domain.PresetV2
 	if presetName, ok := params["preset"].(string); ok && presetName != "" {
-		if preset, ok := h.presetRegistry.Get(domain.PresetName(presetName)); ok {
-			fields = make([]string, 0, len(preset.Fields))
-			for _, f := range preset.Fields {
-				fields = append(fields, f.Name)
-				displayOverrides[f.Name] = string(f.Display)
+		if h.presetV2Registry != nil {
+			if p, ok := h.presetV2Registry.Get(presetName); ok {
+				preset = &p
+			} else {
+				warnings = append(warnings, fmt.Sprintf("unknown preset: %s", presetName))
 			}
-			layout = string(preset.DefaultMode)
-			size = preset.DefaultSize
 		} else {
-			warnings = append(warnings, fmt.Sprintf("unknown preset: %s", presetName))
+			warnings = append(warnings, "preset registry not available (engine v2 not enabled)")
 		}
 	}
 
-	// Apply show/hide
-	if showRaw, ok := params["show"].([]interface{}); ok && len(showRaw) > 0 {
-		for _, s := range showRaw {
-			if name, ok := s.(string); ok {
-				found := false
-				for _, f := range fields {
-					if f == name {
-						found = true
-						break
-					}
-				}
-				if !found {
-					fields = append(fields, name)
-				}
-			}
-		}
-	}
-	if hideRaw, ok := params["hide"].([]interface{}); ok && len(hideRaw) > 0 {
-		hideSet := make(map[string]bool)
-		for _, h := range hideRaw {
-			if name, ok := h.(string); ok {
-				hideSet[name] = true
-			}
-		}
-		filtered := make([]string, 0)
-		for _, f := range fields {
-			if !hideSet[f] {
-				filtered = append(filtered, f)
-			}
-		}
-		fields = filtered
-	}
-
-	// Apply order
-	hasExplicitShow := false
-	if showRaw, ok := params["show"].([]interface{}); ok && len(showRaw) > 0 {
-		hasExplicitShow = true
-	}
-	if orderRaw, ok := params["order"].([]interface{}); ok && len(orderRaw) > 0 {
-		ordered := make([]string, 0, len(fields))
-		inOrder := make(map[string]bool)
-		for _, o := range orderRaw {
-			if name, ok := o.(string); ok {
-				for _, f := range fields {
-					if f == name && !inOrder[name] {
-						ordered = append(ordered, name)
-						inOrder[name] = true
-						break
-					}
+	// Load field definitions if available
+	var fieldDefs []engine.FieldDefinitionEntry
+	if h.fieldDefPort != nil {
+		if defs, err := h.fieldDefPort.ListFieldDefinitions(ctx, tenantSlug, "product"); err == nil {
+			fieldDefs = make([]engine.FieldDefinitionEntry, len(defs))
+			for i, d := range defs {
+				fieldDefs[i] = engine.FieldDefinitionEntry{
+					FieldName:      d.FieldName,
+					AtomType:       d.AtomType,
+					AtomSubtype:    d.AtomSubtype,
+					DefaultDisplay: d.DefaultDisplay,
+					DefaultSlot:    d.DefaultSlot,
+					Label:          d.Label,
+					Priority:       d.Priority,
 				}
 			}
 		}
-		for _, f := range fields {
-			if !inOrder[f] {
-				ordered = append(ordered, f)
-			}
-		}
-		fields = ordered
 	}
 
-	// Apply layout/size overrides
-	if l, ok := params["layout"].(string); ok && l != "" {
-		layout = l
-	}
-	if s, ok := params["size"].(string); ok && s != "" {
-		size = domain.WidgetSize(s)
-	}
-
-	// Apply display overrides
-	if displayRaw, ok := params["display"].(map[string]interface{}); ok {
-		for field, disp := range displayRaw {
-			if d, ok := disp.(string); ok {
-				displayOverrides[field] = d
-			}
-		}
-	}
-
-	// Apply format overrides
-	formatOverrides := make(map[string]string)
-	if formatRaw, ok := params["format"].(map[string]interface{}); ok {
-		for field, f := range formatRaw {
-			if fs, ok := f.(string); ok {
-				formatOverrides[field] = fs
-			}
-		}
-	}
-
-	// Build field configs (with format inference)
-	fieldConfigs := engine.BuildFieldConfigsWithFormat(fields, displayOverrides, formatOverrides)
-	sort.Slice(fieldConfigs, func(i, j int) bool {
-		return fieldConfigs[i].Priority < fieldConfigs[j].Priority
+	// Execute V2 engine
+	eng := engine.NewEngineV2()
+	output := eng.Execute(engine.EngineV2Input{
+		EntityType:   domain.EntityTypeProduct,
+		Products:     products,
+		FieldDefs:    fieldDefs,
+		Instructions: instructions,
+		Preset:       preset,
 	})
-
-	formationMode := parseTestbenchFormationType(layout)
-	template := "GenericCard"
-
-	// Build widgets
-	widgets := make([]domain.Widget, 0, len(products))
-	for i, p := range products {
-		getter := engine.ProductFieldGetter(p)
-		currency := p.Currency
-		if currency == "" {
-			currency = "$"
-		}
-		atoms := engine.BuildAtoms(fieldConfigs, getter, func() string { return currency })
-
-		// Apply constraints
-		atoms = engine.ApplyAtomConstraints(atoms)
-
-		widget := domain.Widget{
-			ID:       fmt.Sprintf("tb-%d", i),
-			Template: template,
-			Size:     size,
-			Priority: i,
-			Atoms:    atoms,
-			EntityRef: &domain.EntityRef{
-				Type: domain.EntityTypeProduct,
-				ID:   p.ID,
-			},
-		}
-		engine.ApplyWidgetConstraints(&widget)
-
-		// Calculate layout zones
-		widget.Zones = engine.CalculateZones(widget.Atoms, engine.DefaultDesignTokens())
-
-		widgets = append(widgets, widget)
-	}
-
-	// Apply cross-widget constraints
-	if !hasExplicitShow {
-		engine.ApplyCrossWidgetConstraints(widgets, formationMode)
-	}
-
-	// Apply color, direction, shape
-	colorMap := make(map[string]string)
-	if colorRaw, ok := params["color"].(map[string]interface{}); ok {
-		for field, c := range colorRaw {
-			if cs, ok := c.(string); ok {
-				colorMap[field] = cs
-			}
-		}
-	}
-	direction, _ := params["direction"].(string)
-
-	for i := range widgets {
-		if len(colorMap) > 0 {
-			for ai := range widgets[i].Atoms {
-				if color, ok := colorMap[widgets[i].Atoms[ai].FieldName]; ok {
-					if widgets[i].Atoms[ai].Meta == nil {
-						widgets[i].Atoms[ai].Meta = make(map[string]interface{})
-					}
-					widgets[i].Atoms[ai].Meta["color"] = color
-				}
-			}
-		}
-		if direction != "" {
-			if widgets[i].Meta == nil {
-				widgets[i].Meta = make(map[string]interface{})
-			}
-			widgets[i].Meta["direction"] = direction
-		}
-	}
-
-	formation := &domain.FormationWithData{
-		Mode:    formationMode,
-		Widgets: widgets,
-	}
-	if formationMode == domain.FormationTypeGrid {
-		formation.Grid = engine.CalcGridConfig(len(widgets), size)
-	}
+	formation := output.Formation
+	warnings = append(warnings, output.Warnings...)
 
 	// Build entity data for debugging
 	entityData := make([]TestbenchEntityData, 0, len(products))
@@ -348,28 +203,101 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 		Entities: entityData,
 		Warnings: warnings,
 		Config: map[string]interface{}{
-			"layout": layout,
-			"size":   size,
-			"fields": fields,
+			"entityCount": len(products),
 		},
 	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func parseTestbenchFormationType(mode string) domain.FormationType {
-	switch mode {
-	case "grid":
-		return domain.FormationTypeGrid
-	case "list":
-		return domain.FormationTypeList
-	case "carousel":
-		return domain.FormationTypeCarousel
-	case "single":
-		return domain.FormationTypeSingle
-	case "comparison":
-		return domain.FormationTypeComparison
-	default:
-		return domain.FormationTypeGrid
+// buildTestbenchInstructions converts testbench params into AgentInstructions for EngineV2.
+func buildTestbenchInstructions(params map[string]interface{}) *engine.AgentInstructions {
+	inst := &engine.AgentInstructions{}
+	hasAny := false
+
+	if showRaw, ok := params["show"].([]interface{}); ok && len(showRaw) > 0 {
+		for _, s := range showRaw {
+			if name, ok := s.(string); ok {
+				inst.Show = append(inst.Show, name)
+			}
+		}
+		hasAny = true
 	}
+	if hideRaw, ok := params["hide"].([]interface{}); ok && len(hideRaw) > 0 {
+		for _, s := range hideRaw {
+			if name, ok := s.(string); ok {
+				inst.Hide = append(inst.Hide, name)
+			}
+		}
+		hasAny = true
+	}
+	if orderRaw, ok := params["order"].([]interface{}); ok && len(orderRaw) > 0 {
+		for _, s := range orderRaw {
+			if name, ok := s.(string); ok {
+				inst.Order = append(inst.Order, name)
+			}
+		}
+		hasAny = true
+	}
+	if l, ok := params["layout"].(string); ok && l != "" {
+		inst.Layout = l
+		hasAny = true
+	}
+	if s, ok := params["size"].(string); ok && s != "" {
+		inst.Size = s
+		hasAny = true
+	}
+	if d, ok := params["direction"].(string); ok && d != "" {
+		inst.Direction = d
+		hasAny = true
+	}
+	// Color overrides → atom overrides
+	if colorRaw, ok := params["color"].(map[string]interface{}); ok && len(colorRaw) > 0 {
+		if inst.Atoms == nil {
+			inst.Atoms = make(map[string]engine.AtomOverride)
+		}
+		for field, c := range colorRaw {
+			if cs, ok := c.(string); ok {
+				override := inst.Atoms[field]
+				override.Color = cs
+				inst.Atoms[field] = override
+			}
+		}
+		hasAny = true
+	}
+	// Display overrides → atom textStyle/wrapper overrides (legacy display string → v2 TextStyle+Wrapper)
+	if displayRaw, ok := params["display"].(map[string]interface{}); ok && len(displayRaw) > 0 {
+		if inst.Atoms == nil {
+			inst.Atoms = make(map[string]engine.AtomOverride)
+		}
+		for field, d := range displayRaw {
+			if ds, ok := d.(string); ok {
+				override := inst.Atoms[field]
+				ts, wr := engine.DisplayToTextStyleWrapper(ds)
+				override.TextStyle = ts
+				override.Wrapper = wr
+				inst.Atoms[field] = override
+			}
+		}
+		hasAny = true
+	}
+	// Format overrides → atom format overrides
+	if formatRaw, ok := params["format"].(map[string]interface{}); ok && len(formatRaw) > 0 {
+		if inst.Atoms == nil {
+			inst.Atoms = make(map[string]engine.AtomOverride)
+		}
+		for field, f := range formatRaw {
+			if fs, ok := f.(string); ok {
+				override := inst.Atoms[field]
+				override.Format = fs
+				inst.Atoms[field] = override
+			}
+		}
+		hasAny = true
+	}
+
+	if !hasAny {
+		return nil
+	}
+	return inst
 }

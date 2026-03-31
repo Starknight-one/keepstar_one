@@ -59,17 +59,16 @@ type PipelineExecuteResponse struct {
 
 // PipelineExecuteUseCase orchestrates Agent 1 → Agent 2 → Formation
 type PipelineExecuteUseCase struct {
-	agent1UC       *Agent1ExecuteUseCase
-	agent2UC       *Agent2ExecuteUseCase
-	statePort      ports.StatePort
-	cachePort      ports.CachePort
-	tracePort      ports.TracePort
-	presetRegistry *presets.PresetRegistry
-	log            *logger.Logger
+	agent1UC         *Agent1ExecuteUseCase
+	agent2UC         *Agent2ExecuteUseCase
+	statePort        ports.StatePort
+	cachePort        ports.CachePort
+	tracePort        ports.TracePort
+	presetV2Registry *presets.PresetV2Registry
+	log              *logger.Logger
 }
 
 // NewPipelineExecuteUseCase creates the pipeline orchestrator
-// NOTE: logger is required because Agent1ExecuteUseCase needs it
 func NewPipelineExecuteUseCase(
 	llm ports.LLMPort,
 	statePort ports.StatePort,
@@ -77,17 +76,18 @@ func NewPipelineExecuteUseCase(
 	tracePort ports.TracePort,
 	catalogPort ports.CatalogPort,
 	toolRegistry *tools.Registry,
-	presetRegistry *presets.PresetRegistry,
+	presetV2Registry *presets.PresetV2Registry,
+	agent2UC *Agent2ExecuteUseCase,
 	log *logger.Logger,
 ) *PipelineExecuteUseCase {
 	return &PipelineExecuteUseCase{
-		agent1UC:       NewAgent1ExecuteUseCase(llm, statePort, catalogPort, toolRegistry, log),
-		agent2UC:       NewAgent2ExecuteUseCase(llm, statePort, toolRegistry, log),
-		statePort:      statePort,
-		cachePort:      cachePort,
-		tracePort:      tracePort,
-		presetRegistry: presetRegistry,
-		log:            log,
+		agent1UC:         NewAgent1ExecuteUseCase(llm, statePort, catalogPort, toolRegistry, log),
+		agent2UC:         agent2UC,
+		statePort:        statePort,
+		cachePort:        cachePort,
+		tracePort:        tracePort,
+		presetV2Registry: presetV2Registry,
+		log:              log,
 	}
 }
 
@@ -335,7 +335,7 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 	// Build adjacent templates for instant expand (1 template per entity type + raw entities)
 	var adjacentTemplates map[string]*domain.FormationWithData
 	var entities *domain.StateData
-	if formation != nil && formation.Mode != domain.FormationTypeSingle && uc.presetRegistry != nil {
+	if formation != nil && formation.Mode != domain.FormationTypeSingle && uc.presetV2Registry != nil {
 		adjacentTemplates, entities = uc.buildAdjacentTemplates(state)
 	}
 
@@ -421,24 +421,22 @@ func (uc *PipelineExecuteUseCase) recordTrace(ctx context.Context, trace *domain
 
 // buildAdjacentTemplates builds 1 template per entity type + returns raw entity data.
 // Frontend fills templates with entity data at click time (instant, no round-trip).
-// Uses defaults engine with maxFields=10 for detail view.
+// Uses PresetV2 detail presets for template formation building.
 func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionState) (map[string]*domain.FormationWithData, *domain.StateData) {
 	templates := make(map[string]*domain.FormationWithData)
 
-	// Product detail template via defaults engine
+	// Product detail template via V2 preset
 	if len(state.Current.Data.Products) > 0 {
-		resolved := engine.AutoResolve("product", 1) // single item = detail view
-		fieldConfigs := engine.BuildFieldConfigs(resolved.Fields, nil)
-		formation := engine.BuildTemplateFormation(buildGenericPreset(fieldConfigs, resolved))
-		templates[string(domain.EntityTypeProduct)] = formation
+		if preset, ok := uc.presetV2Registry.Get("product_card_detail"); ok {
+			templates[string(domain.EntityTypeProduct)] = engine.BuildTemplateFormationV2(domain.EntityTypeProduct, &preset)
+		}
 	}
 
-	// Service detail template via defaults engine
+	// Service detail template via V2 preset
 	if len(state.Current.Data.Services) > 0 {
-		resolved := engine.AutoResolve("service", 1)
-		fieldConfigs := engine.BuildFieldConfigs(resolved.Fields, nil)
-		formation := engine.BuildTemplateFormation(buildGenericPreset(fieldConfigs, resolved))
-		templates[string(domain.EntityTypeService)] = formation
+		if preset, ok := uc.presetV2Registry.Get("service_detail"); ok {
+			templates[string(domain.EntityTypeService)] = engine.BuildTemplateFormationV2(domain.EntityTypeService, &preset)
+		}
 	}
 
 	if len(templates) == 0 {
@@ -451,25 +449,6 @@ func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionSt
 	}
 
 	return templates, entities
-}
-
-// buildGenericPreset creates a Preset from field configs and resolved defaults for template building
-func buildGenericPreset(fieldConfigs []domain.FieldConfig, resolved engine.ResolvedDefaults) domain.Preset {
-	mode := domain.FormationTypeSingle
-	switch resolved.Layout {
-	case "grid":
-		mode = domain.FormationTypeGrid
-	case "list":
-		mode = domain.FormationTypeList
-	case "carousel":
-		mode = domain.FormationTypeCarousel
-	}
-	return domain.Preset{
-		Template:    "GenericCard",
-		Fields:      fieldConfigs,
-		DefaultMode: mode,
-		DefaultSize: resolved.Size,
-	}
 }
 
 // convertToFormation converts map[string]interface{} to FormationWithData

@@ -8,13 +8,7 @@ import overlayCss from './features/overlay/Overlay.css?inline'
 import chatPanelCss from './features/chat/ChatPanel.css?inline'
 import widgetCompCss from './entities/widget/Widget.css?inline'
 import formationCss from './entities/formation/Formation.css?inline'
-import atomCss from './entities/atom/Atom.css?inline'
 import marketplaceCss from './shared/theme/themes/marketplace.css?inline'
-import productCardCss from './entities/widget/templates/ProductCardTemplate.css?inline'
-import productDetailCss from './entities/widget/templates/ProductDetailTemplate.css?inline'
-import serviceCardCss from './entities/widget/templates/ServiceCardTemplate.css?inline'
-import serviceDetailCss from './entities/widget/templates/ServiceDetailTemplate.css?inline'
-import genericCardCss from './entities/widget/templates/GenericCardTemplate.css?inline'
 import comparisonCss from './entities/widget/templates/ComparisonTemplate.css?inline'
 import productGridCss from './features/catalog/ProductGrid.css?inline'
 import backButtonCss from './features/navigation/BackButton.css?inline'
@@ -28,13 +22,7 @@ const ALL_CSS = [
   chatPanelCss,
   widgetCompCss,
   formationCss,
-  atomCss,
   marketplaceCss,
-  productCardCss,
-  productDetailCss,
-  serviceCardCss,
-  serviceDetailCss,
-  genericCardCss,
   comparisonCss,
   productGridCss,
   backButtonCss,

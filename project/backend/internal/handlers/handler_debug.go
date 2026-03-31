@@ -99,19 +99,19 @@ func (s *MetricsStore) GetAll() []*PipelineMetrics {
 
 // DebugHandler handles debug/monitoring requests
 type DebugHandler struct {
-	statePort      ports.StatePort
-	cachePort      ports.CachePort
-	metricsStore   *MetricsStore
-	presetRegistry *presets.PresetRegistry
+	statePort        ports.StatePort
+	cachePort        ports.CachePort
+	metricsStore     *MetricsStore
+	presetV2Registry *presets.PresetV2Registry
 }
 
 // NewDebugHandler creates a debug handler
-func NewDebugHandler(statePort ports.StatePort, cachePort ports.CachePort, metricsStore *MetricsStore) *DebugHandler {
+func NewDebugHandler(statePort ports.StatePort, cachePort ports.CachePort, metricsStore *MetricsStore, presetV2Registry *presets.PresetV2Registry) *DebugHandler {
 	return &DebugHandler{
-		statePort:      statePort,
-		cachePort:      cachePort,
-		metricsStore:   metricsStore,
-		presetRegistry: presets.NewPresetRegistry(),
+		statePort:        statePort,
+		cachePort:        cachePort,
+		metricsStore:     metricsStore,
+		presetV2Registry: presetV2Registry,
 	}
 }
 
@@ -329,13 +329,14 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 		Fields:       []string{"id", "name", "price", "images", "rating", "brand", "category", "description", "tags", "attributes", "stockQuantity"},
 	}
 
-	// Build formation using product_grid preset
-	preset, _ := h.presetRegistry.Get(domain.PresetProductGrid)
+	// Build formation using V2 engine
 	products := state.Current.Data.Products
-	formation := engine.BuildFormation(preset, len(products), func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
-		p := products[i]
-		return engine.ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+	eng := engine.NewEngineV2()
+	v2Output := eng.Execute(engine.EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Products:   products,
 	})
+	formation := v2Output.Formation
 
 	// Save formation to state
 	state.Current.Template = map[string]interface{}{

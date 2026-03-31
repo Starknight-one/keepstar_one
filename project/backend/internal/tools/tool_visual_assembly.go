@@ -13,53 +13,21 @@ import (
 // VisualAssemblyTool renders entities using defaults engine + optional overrides
 type VisualAssemblyTool struct {
 	statePort        ports.StatePort
-	presetRegistry   *presets.PresetRegistry
-	presetV2Registry *presets.PresetV2Registry // V2 preset registry
-	fieldDefPort     ports.FieldDefinitionPort // V2: field definitions (nil = legacy mode)
-	engineVersion    string                    // "v1" (default) or "v2"
+	presetV2Registry *presets.PresetV2Registry
+	fieldDefPort     ports.FieldDefinitionPort
 }
 
-// NewVisualAssemblyTool creates the visual assembly tool
-func NewVisualAssemblyTool(statePort ports.StatePort, presetRegistry *presets.PresetRegistry) *VisualAssemblyTool {
-	return &VisualAssemblyTool{
-		statePort:      statePort,
-		presetRegistry: presetRegistry,
-		engineVersion:  "v1",
-	}
-}
-
-// NewVisualAssemblyToolV2 creates the v2 visual assembly tool with field definitions support.
-func NewVisualAssemblyToolV2(statePort ports.StatePort, presetRegistry *presets.PresetRegistry, presetV2Registry *presets.PresetV2Registry, fieldDefPort ports.FieldDefinitionPort, engineVersion string) *VisualAssemblyTool {
-	if engineVersion == "" {
-		engineVersion = "v1"
-	}
+// NewVisualAssemblyTool creates the visual assembly tool with field definitions support.
+func NewVisualAssemblyTool(statePort ports.StatePort, presetV2Registry *presets.PresetV2Registry, fieldDefPort ports.FieldDefinitionPort) *VisualAssemblyTool {
 	return &VisualAssemblyTool{
 		statePort:        statePort,
-		presetRegistry:   presetRegistry,
 		presetV2Registry: presetV2Registry,
 		fieldDefPort:     fieldDefPort,
-		engineVersion:    engineVersion,
 	}
 }
 
-// Definition returns the tool definition for LLM (version-aware)
+// Definition returns the tool definition for LLM
 func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
-	if t.engineVersion == "v2" {
-		return t.definitionV2()
-	}
-	return t.definitionV1()
-}
-
-// Execute renders entities with visual assembly and writes formation to state
-func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
-	if t.engineVersion == "v2" {
-		return t.executeV2(ctx, toolCtx, input)
-	}
-	return t.executeV1(ctx, toolCtx, input)
-}
-
-// definitionV2 returns the V2-native tool definition with atoms parameter
-func (t *VisualAssemblyTool) definitionV2() domain.ToolDefinition {
 	return domain.ToolDefinition{
 		Name:        "visual_assembly",
 		Description: "Render entities from state with smart defaults. All parameters optional — defaults engine auto-resolves layout, size, and fields. Use parameters only to override defaults.",
@@ -201,8 +169,8 @@ func (t *VisualAssemblyTool) definitionV2() domain.ToolDefinition {
 	}
 }
 
-// executeV2 runs the v2 engine pipeline.
-func (t *VisualAssemblyTool) executeV2(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
+// Execute renders entities with visual assembly and writes formation to state
+func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
 	state, err := t.statePort.GetState(ctx, toolCtx.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
@@ -220,7 +188,7 @@ func (t *VisualAssemblyTool) executeV2(ctx context.Context, toolCtx ToolContext,
 		entityType = domain.EntityTypeService
 	}
 
-	// Load field definitions from DB (v2 path)
+	// Load field definitions from DB
 	var fieldDefs []engine.FieldDefinitionEntry
 	if t.fieldDefPort != nil && toolCtx.TenantSlug != "" {
 		defs, err := t.fieldDefPort.ListFieldDefinitions(ctx, toolCtx.TenantSlug, entityType)
@@ -240,7 +208,7 @@ func (t *VisualAssemblyTool) executeV2(ctx context.Context, toolCtx ToolContext,
 		}
 	}
 
-	// Parse V2 input directly into AgentInstructions (no V1 bridge)
+	// Parse input directly into AgentInstructions
 	instructions := parseV2Input(input)
 
 	// Load PresetV2 (explicit or auto-selected)
@@ -359,28 +327,26 @@ func (t *VisualAssemblyTool) executeV2(ctx context.Context, toolCtx ToolContext,
 		return nil, fmt.Errorf("update template: %w", err)
 	}
 
-	msg := fmt.Sprintf("ok: rendered %d entities with visual_assembly_v2 layout=%s size=%s preset=%s", entityCount, formation.Mode, formation.Widgets[0].Size, presetNameV2)
+	msg := fmt.Sprintf("ok: rendered %d entities with visual_assembly layout=%s size=%s preset=%s", entityCount, formation.Mode, formation.Widgets[0].Size, presetNameV2)
 	if len(output.Warnings) > 0 {
 		msg += fmt.Sprintf(" warnings=%v", output.Warnings)
 	}
 
 	metadata := map[string]interface{}{
-		"engineVersion": "v2",
-		"preset":        presetNameV2,
-		"layout":        string(formation.Mode),
-		"size":          string(formation.Widgets[0].Size),
-		"entityType":    string(entityType),
-		"entityCount":   entityCount,
-		"widgetCount":   len(formation.Widgets),
+		"preset":      presetNameV2,
+		"layout":      string(formation.Mode),
+		"size":        string(formation.Widgets[0].Size),
+		"entityType":  string(entityType),
+		"entityCount": entityCount,
+		"widgetCount": len(formation.Widgets),
 		"fieldDefCount": len(fieldDefs),
-		"warnings":      output.Warnings,
+		"warnings":    output.Warnings,
 	}
 
 	return &domain.ToolResult{Content: msg, Metadata: metadata}, nil
 }
 
-// parseV2Input parses V2-native tool input directly into AgentInstructions.
-// Replaces the legacy convertV1ParamsToV2 bridge.
+// parseV2Input parses tool input directly into AgentInstructions.
 func parseV2Input(input map[string]interface{}) *engine.AgentInstructions {
 	instr := &engine.AgentInstructions{}
 	hasAny := false
@@ -471,7 +437,7 @@ func parseV2Input(input map[string]interface{}) *engine.AgentInstructions {
 		hasAny = true
 	}
 
-	// V2-native: parse atoms map directly
+	// Parse atoms map directly
 	if atomsRaw, ok := input["atoms"].(map[string]interface{}); ok && len(atomsRaw) > 0 {
 		instr.Atoms = make(map[string]engine.AtomOverride, len(atomsRaw))
 		for field, overrideRaw := range atomsRaw {
@@ -604,76 +570,6 @@ func parseAtomOverride(raw interface{}) engine.AtomOverride {
 	}
 
 	return ov
-}
-
-// writeFormation saves formation to state and returns result (shared by V1/V2)
-func (t *VisualAssemblyTool) writeFormation(ctx context.Context, toolCtx ToolContext, formation *domain.FormationWithData, entityType, presetName string, formationMode domain.FormationType, size domain.WidgetSize, fieldConfigs []domain.FieldConfig, fields []string, layout string, products []domain.Product, services []domain.Service, degraded bool) (*domain.ToolResult, error) {
-	fieldSpecs := make([]domain.FieldSpec, 0, len(fieldConfigs))
-	for _, fc := range fieldConfigs {
-		fieldSpecs = append(fieldSpecs, domain.FieldSpec{
-			Name:    fc.Name,
-			Slot:    string(fc.Slot),
-			Format:  string(fc.Format),
-			Display: string(fc.Display),
-		})
-	}
-	formation.Config = &domain.RenderConfig{
-		EntityType: entityType,
-		Preset:     presetName,
-		Mode:       formationMode,
-		Size:       size,
-		Fields:     fieldSpecs,
-	}
-
-	templateMap := map[string]interface{}{
-		"formation": formation,
-	}
-
-	info := domain.DeltaInfo{
-		TurnID:    toolCtx.TurnID,
-		Trigger:   domain.TriggerUserQuery,
-		Source:    domain.SourceLLM,
-		ActorID:   toolCtx.ActorID,
-		DeltaType: domain.DeltaTypeUpdate,
-		Path:      "template",
-		Action:    domain.Action{Type: domain.ActionLayout, Tool: "visual_assembly"},
-	}
-	if _, err := t.statePort.UpdateTemplate(ctx, toolCtx.SessionID, templateMap, info); err != nil {
-		return nil, fmt.Errorf("update template: %w", err)
-	}
-
-	totalEntities := len(products) + len(services)
-	msg := fmt.Sprintf("ok: rendered %d entities with visual_assembly layout=%s size=%s fields=%v", totalEntities, layout, size, fields)
-	if degraded {
-		msg += " (degraded: unsupported options ignored)"
-	}
-
-	metadata := map[string]interface{}{
-		"engineVersion": "v1",
-		"preset":        presetName,
-		"layout":        layout,
-		"size":          string(size),
-		"entityType":    entityType,
-		"entityCount":   totalEntities,
-		"widgetCount":   len(formation.Widgets),
-		"fieldCount":    len(fieldConfigs),
-		"degraded":      degraded,
-	}
-
-	return &domain.ToolResult{Content: msg, Metadata: metadata}, nil
-}
-
-// parseStringMap extracts a map[string]string from input at a given key.
-func parseStringMap(input map[string]interface{}, key string) map[string]string {
-	result := make(map[string]string)
-	if raw, ok := input[key].(map[string]interface{}); ok {
-		for k, v := range raw {
-			if s, ok := v.(string); ok {
-				result[k] = s
-			}
-		}
-	}
-	return result
 }
 
 // inferLegacyDisplayFromAtomV2 converts v2 atom textStyle+wrapper back to legacy display string.

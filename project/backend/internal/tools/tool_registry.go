@@ -29,21 +29,19 @@ type ToolExecutor interface {
 
 // Registry holds all available tools
 type Registry struct {
-	tools          map[string]ToolExecutor
-	statePort      ports.StatePort
-	catalogPort    ports.CatalogPort
-	presetRegistry *presets.PresetRegistry
-	embeddingPort  ports.EmbeddingPort
+	tools         map[string]ToolExecutor
+	statePort     ports.StatePort
+	catalogPort   ports.CatalogPort
+	embeddingPort ports.EmbeddingPort
 }
 
-// NewRegistry creates a tool registry with dependencies
-func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry, embeddingPort ports.EmbeddingPort) *Registry {
+// NewRegistry creates a tool registry with all tools.
+func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, embeddingPort ports.EmbeddingPort, fieldDefPort ports.FieldDefinitionPort, presetV2Registry *presets.PresetV2Registry) *Registry {
 	r := &Registry{
-		tools:          make(map[string]ToolExecutor),
-		statePort:      statePort,
-		catalogPort:    catalogPort,
-		presetRegistry: presetRegistry,
-		embeddingPort:  embeddingPort,
+		tools:         make(map[string]ToolExecutor),
+		statePort:     statePort,
+		catalogPort:   catalogPort,
+		embeddingPort: embeddingPort,
 	}
 
 	// Data tools (Agent1)
@@ -52,33 +50,7 @@ func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, prese
 	r.Register(NewHistoryLookupTool(statePort))
 
 	// Render tools (Agent2)
-	r.Register(NewVisualAssemblyTool(statePort, presetRegistry))
-
-	return r
-}
-
-// NewRegistryV2 creates a tool registry with v2 engine support.
-// If engineVersion is "v2" and fieldDefPort is provided, uses the v2 visual assembly tool.
-func NewRegistryV2(statePort ports.StatePort, catalogPort ports.CatalogPort, presetRegistry *presets.PresetRegistry, embeddingPort ports.EmbeddingPort, fieldDefPort ports.FieldDefinitionPort, presetV2Registry *presets.PresetV2Registry, engineVersion string) *Registry {
-	r := &Registry{
-		tools:          make(map[string]ToolExecutor),
-		statePort:      statePort,
-		catalogPort:    catalogPort,
-		presetRegistry: presetRegistry,
-		embeddingPort:  embeddingPort,
-	}
-
-	// Data tools (Agent1)
-	r.Register(NewCatalogSearchTool(statePort, catalogPort, embeddingPort))
-	r.Register(NewStateFilterTool(statePort))
-	r.Register(NewHistoryLookupTool(statePort))
-
-	// Render tools (Agent2) — v1 or v2 based on engine version
-	if engineVersion == "v2" && fieldDefPort != nil {
-		r.Register(NewVisualAssemblyToolV2(statePort, presetRegistry, presetV2Registry, fieldDefPort, engineVersion))
-	} else {
-		r.Register(NewVisualAssemblyTool(statePort, presetRegistry))
-	}
+	r.Register(NewVisualAssemblyTool(statePort, presetV2Registry, fieldDefPort))
 
 	return r
 }

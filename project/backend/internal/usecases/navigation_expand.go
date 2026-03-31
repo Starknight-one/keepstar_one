@@ -30,15 +30,17 @@ type ExpandResponse struct {
 
 // ExpandUseCase handles expanding a widget to detail view
 type ExpandUseCase struct {
-	statePort      ports.StatePort
-	presetRegistry *presets.PresetRegistry
+	statePort        ports.StatePort
+	fieldDefPort     ports.FieldDefinitionPort
+	presetV2Registry *presets.PresetV2Registry
 }
 
 // NewExpandUseCase creates a new ExpandUseCase
-func NewExpandUseCase(statePort ports.StatePort, presetRegistry *presets.PresetRegistry) *ExpandUseCase {
+func NewExpandUseCase(statePort ports.StatePort, fieldDefPort ports.FieldDefinitionPort, presetV2Registry *presets.PresetV2Registry) *ExpandUseCase {
 	return &ExpandUseCase{
-		statePort:      statePort,
-		presetRegistry: presetRegistry,
+		statePort:        statePort,
+		fieldDefPort:     fieldDefPort,
+		presetV2Registry: presetV2Registry,
 	}
 }
 
@@ -57,7 +59,7 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 
 	// 2. Find entity by ID and get preset
 	var entity interface{}
-	var preset domain.Preset
+	var preset domain.PresetV2
 	var found bool
 
 	if req.EntityType == domain.EntityTypeProduct {
@@ -67,7 +69,7 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 				break
 			}
 		}
-		preset, found = uc.presetRegistry.Get(domain.PresetProductDetail)
+		preset, found = uc.presetV2Registry.Get("product_card_detail")
 	} else {
 		for _, s := range state.Current.Data.Services {
 			if s.ID == req.EntityID {
@@ -75,7 +77,7 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 				break
 			}
 		}
-		preset, found = uc.presetRegistry.Get(domain.PresetServiceDetail)
+		preset, found = uc.presetV2Registry.Get("service_detail")
 	}
 
 	if entity == nil {
@@ -106,14 +108,14 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 	fieldSpecs := make([]domain.FieldSpec, 0, len(preset.Fields))
 	for _, f := range preset.Fields {
 		fieldSpecs = append(fieldSpecs, domain.FieldSpec{
-			Name:    f.Name,
+			Name:    f.FieldName,
 			Slot:    string(f.Slot),
-			Display: string(f.Display),
+			Display: "", // V2 uses TextStyle/Wrapper, not Display
 		})
 	}
 	formation.Config = &domain.RenderConfig{
 		EntityType: string(req.EntityType),
-		Preset:     string(preset.Name),
+		Preset:     preset.Name,
 		Mode:       preset.DefaultMode,
 		Size:       preset.DefaultSize,
 		Fields:     fieldSpecs,
@@ -175,15 +177,17 @@ func buildEntityRefs(data domain.StateData) []domain.EntityRef {
 }
 
 // buildDetailFormation creates a formation for a single entity in detail view
-func (uc *ExpandUseCase) buildDetailFormation(preset domain.Preset, entity interface{}, entityType domain.EntityType) *domain.FormationWithData {
-	if entityType == domain.EntityTypeProduct {
-		p := entity.(domain.Product)
-		return engine.BuildFormation(preset, 1, func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
-			return engine.ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
-		})
+func (uc *ExpandUseCase) buildDetailFormation(preset domain.PresetV2, entity interface{}, entityType domain.EntityType) *domain.FormationWithData {
+	eng := engine.NewEngineV2()
+	input := engine.EngineV2Input{
+		EntityType: entityType,
+		Preset:     &preset,
 	}
-	s := entity.(domain.Service)
-	return engine.BuildFormation(preset, 1, func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
-		return engine.ServiceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
-	})
+	if entityType == domain.EntityTypeProduct {
+		input.Products = []domain.Product{entity.(domain.Product)}
+	} else {
+		input.Services = []domain.Service{entity.(domain.Service)}
+	}
+	output := eng.Execute(input)
+	return output.Formation
 }

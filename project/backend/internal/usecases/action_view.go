@@ -59,15 +59,13 @@ func (uc *ActionUseCase) buildLikedView(state *domain.SessionState) (*ActionView
 		return &ActionViewResponse{Actions: state.Actions}, nil
 	}
 
-	// Use defaults engine for grid view
-	resolved := engine.AutoResolve("product", len(products))
-	fieldConfigs := engine.BuildFieldConfigs(resolved.Fields, nil)
-	preset := buildGenericPreset(fieldConfigs, resolved)
-
-	formation := engine.BuildFormation(preset, len(products), func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
-		p := products[i]
-		return engine.ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+	// Use V2 engine for grid view
+	eng := engine.NewEngineV2()
+	output := eng.Execute(engine.EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Products:   products,
 	})
+	formation := output.Formation
 
 	return &ActionViewResponse{
 		Formation: formation,
@@ -98,15 +96,13 @@ func (uc *ActionUseCase) buildCartView(state *domain.SessionState) (*ActionViewR
 		return &ActionViewResponse{Actions: state.Actions}, nil
 	}
 
-	// Use defaults engine for grid view
-	resolved := engine.AutoResolve("product", len(products))
-	fieldConfigs := engine.BuildFieldConfigs(resolved.Fields, nil)
-	preset := buildGenericPreset(fieldConfigs, resolved)
-
-	formation := engine.BuildFormation(preset, len(products), func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
-		p := products[i]
-		return engine.ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+	// Use V2 engine for grid view
+	eng := engine.NewEngineV2()
+	output := eng.Execute(engine.EngineV2Input{
+		EntityType: domain.EntityTypeProduct,
+		Products:   products,
 	})
+	formation := output.Formation
 
 	// Add quantity meta to each widget
 	if formation != nil {

@@ -129,35 +129,25 @@ func main() {
 		logCancel()
 	}
 
-	// Initialize preset registry
-	presetRegistry := presets.NewPresetRegistry()
-	appLog.Info("preset_registry_initialized", "presets", presetRegistry.List())
-
-	// Initialize field definition adapter and v2 preset registry
+	// Initialize preset registry and field definition adapter
 	var fieldDefAdapter ports.FieldDefinitionPort
-	var presetV2Registry *presets.PresetV2Registry
-	engineVersion := os.Getenv("ENGINE_VERSION") // "v1" or "v2"
-	if dbClient != nil && engineVersion == "v2" {
+	presetV2Registry := presets.NewPresetV2Registry()
+	if dbClient != nil {
 		fieldDefAdapter = postgres.NewFieldDefinitionAdapter(dbClient)
-		presetV2Registry = presets.NewPresetV2Registry()
-		appLog.Info("field_definition_adapter_initialized", "engine_version", "v2")
+		appLog.Info("field_definition_adapter_initialized")
 	}
 
 	// Initialize tool registry (requires state and catalog adapters)
 	var toolRegistry *tools.Registry
 	if stateAdapter != nil && catalogAdapter != nil {
-		if engineVersion == "v2" && fieldDefAdapter != nil {
-			toolRegistry = tools.NewRegistryV2(stateAdapter, catalogAdapter, presetRegistry, embeddingClient, fieldDefAdapter, presetV2Registry, engineVersion)
-		} else {
-			toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, presetRegistry, embeddingClient)
-		}
+		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, embeddingClient, fieldDefAdapter, presetV2Registry)
 		toolNames := make([]string, 0)
 		for _, def := range toolRegistry.GetDefinitions() {
 			if !strings.HasPrefix(def.Name, "_internal_") {
 				toolNames = append(toolNames, def.Name)
 			}
 		}
-		appLog.Info("tool_registry_initialized", "tools", strings.Join(toolNames, ", "), "count", len(toolNames), "engine_version", engineVersion)
+		appLog.Info("tool_registry_initialized", "tools", strings.Join(toolNames, ", "), "count", len(toolNames))
 	}
 
 	// Initialize Agent 1 use case (Two-Agent Pipeline)
@@ -171,20 +161,15 @@ func main() {
 	// Initialize Agent 2 use case (Preset Selector)
 	var agent2UC *usecases.Agent2ExecuteUseCase
 	if stateAdapter != nil && toolRegistry != nil {
-		if engineVersion == "v2" && fieldDefAdapter != nil {
-			agent2UC = usecases.NewAgent2ExecuteUseCaseV2(llmClient, stateAdapter, toolRegistry, appLog, fieldDefAdapter)
-			appLog.Info("agent2_usecase_initialized", "status", "ok", "prompt_version", os.Getenv("AGENT2_PROMPT_VERSION"))
-		} else {
-			agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog)
-			appLog.Info("agent2_usecase_initialized", "status", "ok")
-		}
+		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog, fieldDefAdapter)
+		appLog.Info("agent2_usecase_initialized", "status", "ok")
 	}
 	_ = agent2UC // Available for direct Agent 2 calls
 
 	// Initialize Pipeline orchestrator (Agent 1 → Agent 2 → Formation)
 	var pipelineUC *usecases.PipelineExecuteUseCase
 	if toolRegistry != nil && stateAdapter != nil && cacheAdapter != nil {
-		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, traceAdapter, catalogAdapter, toolRegistry, presetRegistry, appLog)
+		pipelineUC = usecases.NewPipelineExecuteUseCase(llmClient, stateAdapter, cacheAdapter, traceAdapter, catalogAdapter, toolRegistry, presetV2Registry, agent2UC, appLog)
 		appLog.Info("pipeline_usecase_initialized", "status", "ok")
 	}
 	_ = pipelineUC // Pipeline is ready to be called from handlers
@@ -209,9 +194,9 @@ func main() {
 
 	// Initialize Navigation handler (expand/back)
 	var navigationHandler *handlers.NavigationHandler
-	if stateAdapter != nil && presetRegistry != nil {
-		expandUC := usecases.NewExpandUseCase(stateAdapter, presetRegistry)
-		backUC := usecases.NewBackUseCase(stateAdapter, presetRegistry)
+	if stateAdapter != nil && presetV2Registry != nil {
+		expandUC := usecases.NewExpandUseCase(stateAdapter, fieldDefAdapter, presetV2Registry)
+		backUC := usecases.NewBackUseCase(stateAdapter, fieldDefAdapter, presetV2Registry)
 		navigationHandler = handlers.NewNavigationHandler(expandUC, backUC, appLog)
 		appLog.Info("navigation_handler_initialized", "status", "ok")
 	}
@@ -227,7 +212,7 @@ func main() {
 	// Initialize Debug handler
 	var debugHandler *handlers.DebugHandler
 	if stateAdapter != nil {
-		debugHandler = handlers.NewDebugHandler(stateAdapter, cacheAdapter, metricsStore)
+		debugHandler = handlers.NewDebugHandler(stateAdapter, cacheAdapter, metricsStore, presetV2Registry)
 	}
 
 	// Setup routes
@@ -317,8 +302,8 @@ func main() {
 	}
 
 	// Setup testbench routes (visual assembly testing)
-	if catalogAdapter != nil && presetRegistry != nil {
-		testbenchHandler := handlers.NewTestbenchHandler(catalogAdapter, presetRegistry)
+	if catalogAdapter != nil && presetV2Registry != nil {
+		testbenchHandler := handlers.NewTestbenchHandler(catalogAdapter, fieldDefAdapter, presetV2Registry)
 		handlers.SetupTestbenchRoutes(mux, testbenchHandler)
 		appLog.Info("testbench_routes_enabled", "url", "POST /api/v1/testbench")
 	}

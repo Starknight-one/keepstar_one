@@ -17,7 +17,8 @@ AI-powered SaaS B2B2C чат-виджет для e-commerce. Пользоват�
                     ↓
         ┌───────────────────────┐
         │  Agent 1 (NLU/Data)   │  ← catalog_search, state_filter, history_lookup
-        │  Agent 2 (Render)     │  ← visual_assembly tool
+        │  Agent 2 (Render)     │  ← 
+        embly tool
         └───────────────────────┘
                     ↓
            Formation JSON → Frontend renders

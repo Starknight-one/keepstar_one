@@ -1,4 +1,3 @@
-import { AtomRenderer } from '../../atom/AtomRenderer';
 import { AtomV2Renderer } from '../../atom/AtomV2Renderer';
 import { normalizeImages } from './templateUtils';
 import './ComparisonTemplate.css';
@@ -24,14 +23,9 @@ function getFieldLabel(fieldName) {
   return FIELD_LABELS[fieldName] || fieldName;
 }
 
-// Detect if widget uses V2 atoms
-function isV2Widget(widget) {
-  return Array.isArray(widget.atomsV2) && widget.atomsV2.length > 0;
-}
-
-// Get atoms array — V2 or V1
+// Get atoms array
 function getAtoms(widget) {
-  return isV2Widget(widget) ? widget.atomsV2 : (widget.atoms || []);
+  return widget.atomsV2 || widget.atoms || [];
 }
 
 // Collect unique fieldNames across all widgets, preserving order from first widget
@@ -137,8 +131,6 @@ export function ComparisonTemplate({ widgets = [], onWidgetClick }) {
           const brandAtom = getAtomByField(widget, 'brand');
           const imageAtom = getAtomByField(widget, 'images');
           const images = imageAtom ? normalizeImages(imageAtom.value) : [];
-          const v2 = isV2Widget(widget);
-
           return (
             <div
               key={widget.id}
@@ -172,7 +164,7 @@ export function ComparisonTemplate({ widgets = [], onWidgetClick }) {
                 return (
                   <div key={fieldName} className="comparison-cell">
                     {atom ? (
-                      <ComparisonCell atom={atom} isFeatured={isFeatured} v2={v2} />
+                      <ComparisonCell atom={atom} isFeatured={isFeatured} />
                     ) : (
                       <span className="comparison-empty">—</span>
                     )}
@@ -199,7 +191,7 @@ export function ComparisonTemplate({ widgets = [], onWidgetClick }) {
   );
 }
 
-function ComparisonCell({ atom, isFeatured, v2 }) {
+function ComparisonCell({ atom, isFeatured }) {
   // Boolean-like values → checkmark/cross
   if (isBooleanLike(atom.value)) {
     return isTruthy(atom.value) ? (
@@ -227,6 +219,5 @@ function ComparisonCell({ atom, isFeatured, v2 }) {
     );
   }
 
-  // V2 atoms → AtomV2Renderer, V1 → AtomRenderer
-  return v2 ? <AtomV2Renderer atom={atom} /> : <AtomRenderer atom={atom} />;
+  return <AtomV2Renderer atom={atom} />;
 }

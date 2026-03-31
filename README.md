@@ -6,7 +6,7 @@
 
 Традиционные чат-боты отвечают текстом. Keepstar отвечает **интерфейсом**.
 
-Пользователь спрашивает "Покажи кроссовки Nike до 15000₽" — и получает не список ссылок, а готовую галерею карточек товаров с фильтрами, сортировкой и кнопками "В корзину". Всё генерируется AI на лету.
+Пользователь спрашивает "Покажи кроссовки Nike до 15000₽" — и получает не список ссылок, а готовую галерею карточек товаров с фильтрами, сортировкой и кнопками "В корзину". Все генерируется AI на лету.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -39,23 +39,17 @@
 
 ## Архитектура
 
-Проект использует **гексагональную архитектуру** (Ports & Adapters):
-
 ```
-                    ┌──────────────────────────────────┐
-                    │           Domain Core            │
-                    │  (бизнес-логика, use cases)      │
-                    └──────────────────────────────────┘
-                              ▲           ▲
-                    ┌─────────┴───┐ ┌─────┴─────────┐
-                    │   Ports     │ │    Ports      │
-                    │  (inbound)  │ │  (outbound)   │
-                    └─────────────┘ └───────────────┘
-                          ▲               ▲
-              ┌───────────┴───┐     ┌─────┴───────────┐
-              │   Adapters    │     │    Adapters     │
-              │  HTTP, gRPC   │     │  DB, LLM, Cache │
-              └───────────────┘     └─────────────────┘
+Пользователь → Chat Widget (React 19, Shadow DOM, IIFE)
+                    ↓ REST API
+              Chat Backend (Go 1.24, порт 8080)
+                    ↓
+        ┌───────────────────────┐
+        │  Agent 1 (NLU/Data)   │  ← catalog_search, state_filter, history_lookup
+        │  Agent 2 (Render)     │  ← visual_assembly tool
+        └───────────────────────┘
+                    ↓
+           Formation JSON → Frontend renders
 ```
 
 ### Backend-First принцип
@@ -70,133 +64,175 @@ Frontend получает готовый JSON и рендерит. Никако�
 ### Атомарная композиция
 
 ```
-Atoms → Widgets → Formations
+Formation (layout: grid, list, single, carousel, comparison, table, composed)
+  └── Widget (карточка/строка/блок с атомами)
+      └── Atom (6 типов: text, number, image, icon, video, audio)
+           ├── subtype (currency, rating, url, date...)
+           ├── display/wrapper (h1, badge, tag, price, button...)
+           ├── format (currency, stars, percent, date...)
+           └── slot (hero, title, price, primary, secondary, badge...)
 ```
 
-- **Atoms**: базовые элементы (Text, Image, Button, Rating...)
-- **Widgets**: композиция атомов (карточка = Image + Text + Rating + Button)
-- **Formations**: расположение виджетов (grid, circle, stack...)
+### Двухверсионный движок (V1 + V2)
+
+| Аспект | V1 | V2 |
+|--------|----|----|
+| Layout | Плоский `Zone[]` массив | Рекурсивное `LayoutNode` дерево |
+| Пресеты | Статический `PresetRegistry` | Динамический `PresetV2Registry` + field_definitions из БД |
+| Атомы | `Atom` (display) | `AtomV2` (textStyle + wrapper + rigidity) |
+| Engine | Zone-based assembly | Two-pass algorithm (BudgetDown/NeedsUp) |
+
+Активация: `ENGINE_VERSION=v2` + `AGENT2_PROMPT_VERSION=v2` в `.env`. По умолчанию V1, полная обратная совместимость.
 
 ## Технологии
 
 | Слой | Стек |
 |------|------|
-| Backend | Go 1.24+, Chi/Fiber, PostgreSQL |
-| Frontend | React 18, Tailwind CSS, shadcn/ui |
-| LLM | Claude Haiku (Anthropic) |
-| Infra | Hetzner, Cloudflare |
+| Backend | Go 1.24, Chi, PostgreSQL (Neon serverless), pgvector |
+| Frontend | React 19, Vite 7, CSS Variables (custom, без Tailwind) |
+| LLM | Claude Haiku 4.5 (Anthropic), prompt caching |
+| Embeddings | OpenAI text-embedding-3-small (384 dim) |
+| Admin | Go 1.24 + React 19, JWT auth |
 
 ## Структура проекта
 
 ```
 Keepstar_one_ultra/
 ├── project/
-│   ├── backend/           # Go API (гексагональная архитектура)
-│   │   ├── cmd/
-│   │   │   ├── server/    # HTTP server entry point
-│   │   │   └── dbcheck/   # DB connectivity check
+│   ├── backend/                # Go API (гексагональная архитектура)
+│   │   ├── cmd/server/         # HTTP server entry point
 │   │   └── internal/
-│   │       ├── domain/    # Core бизнес-логика
-│   │       ├── ports/     # Interfaces (in/out)
-│   │       ├── adapters/  # Implementations (postgres, anthropic, openai, json_store, memory)
-│   │       ├── usecases/  # Business logic orchestration
-│   │       ├── handlers/  # HTTP handlers, middleware, routes
-│   │       ├── config/    # Configuration loading
-│   │       ├── tools/     # Agent tools (catalog_search, etc.)
-│   │       ├── prompts/   # LLM prompt templates
-│   │       ├── presets/   # Widget/formation presets
-│   │       └── logger/    # Structured logging
+│   │       ├── domain/         # 30+ сущностей (Session, State, Atom, AtomV2, Widget, Formation, LayoutNode...)
+│   │       ├── ports/          # 8 интерфейсов (LLM, Catalog, State, Trace, Embedding, FieldDefinition...)
+│   │       ├── adapters/       # Postgres (pgx), Anthropic, OpenAI, Memory
+│   │       ├── usecases/       # Pipeline, Agent1, Agent2 (v1+v2), Navigation, State, Actions
+│   │       ├── handlers/       # 10+ HTTP handlers + middleware (CORS, tenant, logging)
+│   │       ├── engine/         # Visual Assembly Engine V2 (layout tree, rules, tokens, auto_layout)
+│   │       ├── tools/          # Tool executors (catalog_search, visual_assembly, state_filter...)
+│   │       ├── prompts/        # LLM prompt templates (Agent1 + Agent2 v1/v2)
+│   │       ├── presets/        # Widget presets (v1: 16 пресетов, v2: PresetV2Registry)
+│   │       ├── config/         # Env-based configuration
+│   │       └── logger/         # Structured logging
 │   │
-│   │   Key domain files:
-│   │     span.go          # Span/waterfall tracing primitives (SpanCollector)
-│   │     trace_entity.go  # PipelineTrace with Spans []Span waterfall
-│   │
-│   └── frontend/          # React widget (iframe, FSD architecture)
+│   └── frontend/               # React widget (Shadow DOM, FSD architecture)
 │       └── src/
-│           ├── app/           # App initialization
-│           ├── entities/      # Domain entities (atom, widget, formation, message)
-│           ├── features/      # Feature modules (chat, catalog, canvas, navigation, overlay)
-│           ├── shared/        # API client, hooks, lib, theme, ui
-│           └── styles/        # Global styles
+│           ├── widget.jsx      # IIFE entry + Shadow DOM setup
+│           ├── entities/       # atom/ (v1+v2), widget/ (templates, LayoutTreeRenderer), formation/, message/
+│           ├── features/       # chat/, actions/, catalog/, navigation/, overlay/
+│           └── shared/         # api/, config/, theme/, ui/, logger/
 │
-├── docs/                  # Документация
-│   ├── ARCHITECTURE.md    # Детальная архитектура
-│   ├── SPEC_TWO_AGENT_PIPELINE.md
-│   └── UPDATES.md
+├── project_admin/
+│   ├── backend/                # Go API (порт 8081): auth, CRUD, import, enrichment
+│   │   └── cmd/                # server, crawler, seed, rebuild-embeddings
+│   └── frontend/               # React (порт 5174): каталог, импорт, тестбенч, виджет
 │
-├── AI_docs/               # Контекст для AI-агентов
-│   ├── Manifesto          # Манифест продукта
-│   ├── agent-principles.md
-│   └── ARCHITECTURE_RULES.md
+├── Keepstar_one_landing/       # Marketing landing page (React 19, Vite 7)
 │
-├── ADW/                   # SDLC оркестратор
-│   ├── sdlc.go            # Orchestrator entry point
-│   ├── adw.yaml           # Configuration
-│   ├── specs/             # Active specs + archive/
-│   └── dev-inspector/     # Element inspector proxy
+├── tests/                      # E2E тесты (Python)
+│   ├── e2e_run.py              # Main test runner
+│   ├── e2e_quick_test.py       # Quick validation
+│   └── e2e_recon.py            # Reconnaissance tests
 │
-└── architecture-map.jsx   # Visual architecture map
+├── docs/                       # Спецификации (27 файлов, вкл. archive/)
+├── AI_docs/                    # Манифест, архитектурные правила, принципы агентов
+├── ADW/                        # SDLC оркестратор + dev-inspector (порт 3457)
+├── scripts/                    # start/stop скрипты для всех сервисов
+└── .claude/                    # Claude Code: skills, commands, experts, worktrees
 ```
 
 ## LLM Pipeline
 
-Двухэтапный пайплайн для генерации ответов:
+Двухагентный пайплайн для генерации визуальных ответов:
 
 ```
 User Query
     │
     ▼
 ┌─────────────────────────┐
-│  Stage 1: Query Analysis│  ← Понимание intent, получение данных
+│  Agent 1: NLU & Data    │  ← catalog_search (keyword + vector + RRF)
+│                         │  ← state_filter, history_lookup
 └─────────────────────────┘
     │
     ▼
 ┌─────────────────────────┐
-│  Stage 2: Widget Compose│  ← Генерация структуры виджетов
+│  Agent 2: Visual Render │  ← visual_assembly tool (17 presets, 30+ constraints)
+│                         │  ← DefaultsEngine: layout, size, display auto-resolve
 └─────────────────────────┘
     │
     ▼
 ┌─────────────────────────┐
-│  Layout Engine (no LLM) │  ← Расчёт позиций, lazy loading
+│  Formation JSON         │  ← widgets[], atoms[], sections[], pagination
 └─────────────────────────┘
     │
     ▼
-Response JSON + PipelineTrace
+Frontend: FormationRenderer → WidgetRenderer → AtomRenderer (v1/v2)
 ```
 
 ### Span Waterfall Tracing
 
 Каждый pipeline execution собирает `Span`-ы через `SpanCollector` (thread-safe, context-propagated).
-Spans сортируются для waterfall-отображения (StartMs ASC, DurationMs DESC).
 Debug UI: `GET /debug/traces/` — список трейсов с визуальным waterfall.
+
+## Dev Servers
+
+| Сервис | Путь | Порт |
+|--------|------|------|
+| Chat backend | `project/backend/` | 8080 |
+| Chat frontend | `project/frontend/` | 5173 |
+| Admin backend | `project_admin/backend/` | 8081 |
+| Admin frontend | `project_admin/frontend/` | 5174 |
+| Dev Inspector | `ADW/dev-inspector/` | 3457 |
 
 ## Быстрый старт
 
 ```bash
-# Backend
-cd project/backend
-go run cmd/server/main.go
+# Все сервисы
+./scripts/start_all.sh
 
-# Frontend
-cd project/frontend
-npm install
-npm run dev
+# Или по отдельности:
+cd project/backend && go run cmd/server/main.go    # Backend :8080
+cd project/frontend && npm install && npm run dev   # Frontend :5173
+
+# Тесты
+cd project/backend && make test-unit    # быстрые (<1 сек)
+cd project/backend && make test-all     # полные (~180 сек)
+
+# E2E
+cd tests && python e2e_run.py
 ```
 
 ## Embed на сайт
 
 ```html
 <script
-  src="https://keepstar.io/chat.js"
-  data-tenant="YOUR_TENANT_ID"
+  src="https://your-domain/widget.js"
+  data-tenant="YOUR_TENANT_SLUG"
+  data-api="https://your-api/api/v1"
   async>
 </script>
 ```
 
+## API Endpoints
+
+| Endpoint | Method | Описание |
+|----------|--------|----------|
+| `/api/v1/pipeline` | POST | Основной: query → Agent1 → Agent2 → Formation |
+| `/api/v1/session/init` | POST | Создать сессию |
+| `/api/v1/session/{id}` | GET | Получить сессию + сообщения |
+| `/api/v1/chat` | POST | Отправить сообщение |
+| `/api/v1/navigation/expand` | POST | Drill-down в деталь |
+| `/api/v1/navigation/back` | POST | Назад |
+| `/api/v1/actions` | POST | Действие (лайк, корзина) |
+| `/api/v1/testbench` | POST | Тест visual assembly без LLM |
+| `/debug/traces/` | GET | Waterfall трейсы |
+| `/health`, `/ready` | GET | Health checks |
+
 ## Документация
 
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — детальная архитектура, API, roadmap
-- [Manifesto](AI_docs/Manifesto) — продуктовое видение
+- [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) — текущий статус проекта
+- [docs/ENGINE_V2_SPEC.md](docs/ENGINE_V2_SPEC.md) — спецификация Engine V2
+- [AI_docs/Manifesto.md](AI_docs/Manifesto.md) — продуктовое видение
+- [AI_docs/ARCHITECTURE_RULES.md](AI_docs/ARCHITECTURE_RULES.md) — архитектурные принципы
 
 ## Лицензия
 

@@ -28,15 +28,17 @@ type BackResponse struct {
 
 // BackUseCase handles going back to previous view
 type BackUseCase struct {
-	statePort      ports.StatePort
-	presetRegistry *presets.PresetRegistry
+	statePort        ports.StatePort
+	fieldDefPort     ports.FieldDefinitionPort
+	presetV2Registry *presets.PresetV2Registry
 }
 
 // NewBackUseCase creates a new BackUseCase
-func NewBackUseCase(statePort ports.StatePort, presetRegistry *presets.PresetRegistry) *BackUseCase {
+func NewBackUseCase(statePort ports.StatePort, fieldDefPort ports.FieldDefinitionPort, presetV2Registry *presets.PresetV2Registry) *BackUseCase {
 	return &BackUseCase{
-		statePort:      statePort,
-		presetRegistry: presetRegistry,
+		statePort:        statePort,
+		fieldDefPort:     fieldDefPort,
+		presetV2Registry: presetV2Registry,
 	}
 }
 
@@ -114,25 +116,24 @@ func (uc *BackUseCase) rebuildFormationFromState(state *domain.SessionState) *do
 	products := state.Current.Data.Products
 	services := state.Current.Data.Services
 
-	// If we have products, use product_grid preset
+	eng := engine.NewEngineV2()
+
 	if len(products) > 0 {
-		preset, _ := uc.presetRegistry.Get(domain.PresetProductGrid)
-		return engine.BuildFormation(preset, len(products), func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
-			p := products[i]
-			return engine.ProductFieldGetter(p), func() string { return p.Currency }, func() string { return p.ID }
+		output := eng.Execute(engine.EngineV2Input{
+			EntityType: domain.EntityTypeProduct,
+			Products:   products,
 		})
+		return output.Formation
 	}
 
-	// If we have services, use service_card preset
 	if len(services) > 0 {
-		preset, _ := uc.presetRegistry.Get(domain.PresetServiceCard)
-		return engine.BuildFormation(preset, len(services), func(i int) (engine.FieldGetter, engine.CurrencyGetter, engine.IDGetter) {
-			s := services[i]
-			return engine.ServiceFieldGetter(s), func() string { return s.Currency }, func() string { return s.ID }
+		output := eng.Execute(engine.EngineV2Input{
+			EntityType: domain.EntityTypeService,
+			Services:   services,
 		})
+		return output.Formation
 	}
 
-	// Empty formation if no data
 	return &domain.FormationWithData{
 		Mode:    domain.FormationTypeGrid,
 		Widgets: []domain.Widget{},
