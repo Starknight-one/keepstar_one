@@ -3,6 +3,7 @@ import { LayoutTreeRenderer } from './LayoutTreeRenderer';
 import { normalizeImages } from './templateUtils';
 import { ImageCarousel } from './ImageCarousel';
 import { useActions } from '../../../features/actions/ActionContext';
+import './GenericCardV2Template.css';
 
 /**
  * GenericCardV2Template — renders widgets using v2 LayoutNode tree + AtomV2.
@@ -86,6 +87,19 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
           )}
         </div>
       )}
+      {/* Cart button overlay */}
+      {entityId && (
+        <button
+          className={`product-card-cart-btn${cartQty > 0 ? ' in-cart' : ''}`}
+          onClick={(e) => { e.stopPropagation(); addToCart(entityRef.type, entityId); }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+          </svg>
+          {cartQty > 0 ? `In cart (${cartQty})` : 'Add to cart'}
+        </button>
+      )}
       <div className="generic-card-content">
         {layout ? (
           <LayoutTreeRenderer node={layout} atoms={atomsV2} />
@@ -94,18 +108,6 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
           atomsV2.filter(a => a.slot !== 'hero').map((atom, i) => (
             <span key={i} className="atom-v2-fallback">{String(atom.value)}</span>
           ))
-        )}
-        {entityId && (
-          <button
-            className={`product-card-cart-btn${cartQty > 0 ? ' in-cart' : ''}`}
-            onClick={(e) => { e.stopPropagation(); addToCart(entityRef.type, entityId); }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
-              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-            </svg>
-            {cartQty > 0 ? `In cart (${cartQty})` : 'Add to cart'}
-          </button>
         )}
       </div>
     </div>

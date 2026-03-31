@@ -92,6 +92,35 @@
    Like button on cards (heart)
    ============================================================================= */
 
+.product-card-favorite {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 2;
+  transition: transform 0.2s;
+}
+
+.product-card-favorite:hover {
+  transform: scale(1.1);
+}
+
+.product-card-favorite svg {
+  width: 18px;
+  height: 18px;
+  color: var(--color-text-primary, #18181B);
+}
+
 .product-card-favorite.liked svg {
   fill: #EF4444;
   stroke: #EF4444;

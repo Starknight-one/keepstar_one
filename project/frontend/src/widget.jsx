@@ -10,6 +10,7 @@ import widgetCompCss from './entities/widget/Widget.css?inline'
 import formationCss from './entities/formation/Formation.css?inline'
 import marketplaceCss from './shared/theme/themes/marketplace.css?inline'
 import comparisonCss from './entities/widget/templates/ComparisonTemplate.css?inline'
+import genericCardV2Css from './entities/widget/templates/GenericCardV2Template.css?inline'
 import productGridCss from './features/catalog/ProductGrid.css?inline'
 import backButtonCss from './features/navigation/BackButton.css?inline'
 import stepperCss from './features/navigation/Stepper.css?inline'
@@ -24,6 +25,7 @@ const ALL_CSS = [
   formationCss,
   marketplaceCss,
   comparisonCss,
+  genericCardV2Css,
   productGridCss,
   backButtonCss,
   stepperCss,
