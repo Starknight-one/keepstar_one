@@ -152,7 +152,14 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	var formationTree map[string]interface{}
 	if state.Current.Template != nil {
 		if formationData, ok := state.Current.Template["formation"]; ok {
-			if f, ok := formationData.(*domain.FormationWithData); ok && f != nil {
+			var f *domain.FormationWithData
+			if typed, ok := formationData.(*domain.FormationWithData); ok {
+				f = typed
+			} else {
+				// After DB roundtrip: map[string]interface{} → convert via JSON
+				f = convertToFormation(formationData)
+			}
+			if f != nil {
 				if f.Config != nil {
 					currentConfig = f.Config
 				}

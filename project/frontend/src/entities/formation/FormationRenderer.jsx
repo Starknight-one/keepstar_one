@@ -8,7 +8,7 @@ import './Formation.css';
 const BATCH_SIZE = 12;
 
 export function FormationRenderer({ formation, onWidgetClick, onLoadMore }) {
-  if (!formation || !formation.widgets?.length) {
+  if (!formation || (!formation.widgets?.length && !formation.sections?.length)) {
     return null;
   }
 

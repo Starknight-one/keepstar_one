@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"keepstar/internal/domain"
@@ -634,7 +635,11 @@ func (t *VisualAssemblyTool) executeOps(ctx context.Context, toolCtx ToolContext
 	}
 	formation, ok := fData.(*domain.FormationWithData)
 	if !ok || formation == nil {
-		return &domain.ToolResult{Content: "error: invalid formation in state"}, nil
+		// After DB roundtrip, formation is map[string]interface{} — convert via JSON
+		formation = convertToFormation(fData)
+		if formation == nil {
+			return &domain.ToolResult{Content: "error: invalid formation in state"}, nil
+		}
 	}
 
 	// Parse ops
@@ -814,4 +819,21 @@ func (t *VisualAssemblyTool) executeBuild(ctx context.Context, toolCtx ToolConte
 // inferLegacyDisplayFromAtomV2 converts v2 atom textStyle+wrapper back to legacy display string.
 func inferLegacyDisplayFromAtomV2(a domain.AtomV2) string {
 	return string(engine.AtomV2ToLegacy(a).Display)
+}
+
+// convertToFormation converts formation data (possibly map[string]interface{} after DB roundtrip)
+// to *domain.FormationWithData via JSON re-serialization.
+func convertToFormation(data interface{}) *domain.FormationWithData {
+	if data == nil {
+		return nil
+	}
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil
+	}
+	var formation domain.FormationWithData
+	if err := json.Unmarshal(jsonBytes, &formation); err != nil {
+		return nil
+	}
+	return &formation
 }
