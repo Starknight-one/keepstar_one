@@ -13,6 +13,7 @@ const (
 // LayoutNode represents a node in the v2 layout tree.
 // Replaces the flat Zone[] array with a recursive structure.
 type LayoutNode struct {
+	ID           string         `json:"id,omitempty"`   // Stable addressable ID for tree operations
 	Type         LayoutNodeType `json:"type"`
 	Children     []LayoutChild  `json:"children"`
 	Gap          string         `json:"gap,omitempty"`          // Semantic token: "none","xs","sm","md","lg","xl"

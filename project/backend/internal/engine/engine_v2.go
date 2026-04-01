@@ -237,6 +237,9 @@ func (e *EngineV2) Execute(input EngineV2Input) EngineV2Output {
 		WidgetV2ToLegacy(&formation.Widgets[i])
 	}
 
+	// Stamp stable IDs on all atoms and layout nodes for tree operations
+	StampTreeIDs(formation)
+
 	return EngineV2Output{
 		Formation: formation,
 		Warnings:  warnings,

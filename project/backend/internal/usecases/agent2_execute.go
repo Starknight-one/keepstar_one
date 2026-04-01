@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"keepstar/internal/domain"
+	"keepstar/internal/engine"
 	"keepstar/internal/logger"
 	"keepstar/internal/ports"
 	"keepstar/internal/prompts"
@@ -146,12 +147,16 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		}
 	}
 
-	// Extract current RenderConfig from formation (what is on screen now)
+	// Extract current RenderConfig and formation tree from state (what is on screen now)
 	var currentConfig *domain.RenderConfig
+	var formationTree map[string]interface{}
 	if state.Current.Template != nil {
 		if formationData, ok := state.Current.Template["formation"]; ok {
-			if f, ok := formationData.(*domain.FormationWithData); ok && f != nil && f.Config != nil {
-				currentConfig = f.Config
+			if f, ok := formationData.(*domain.FormationWithData); ok && f != nil {
+				if f.Config != nil {
+					currentConfig = f.Config
+				}
+				formationTree = engine.BuildTreeMap(f)
 			}
 		}
 	}
@@ -173,7 +178,7 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	systemPrompt := prompts.Agent2ToolSystemPrompt
 	// Load field labels from field_definitions for context
 	fieldLabels := uc.loadFieldLabels(ctx, req.TenantSlug, state)
-	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx, fieldLabels)
+	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx, fieldLabels, formationTree)
 
 	// Agent2's own tool call history (last 2 turns = 4 messages: assistant:tool_use + user:tool_result × 2).
 	// This replaces the old approach of including Agent1's text user messages which caused stale parameters.

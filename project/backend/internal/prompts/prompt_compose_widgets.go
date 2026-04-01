@@ -156,7 +156,80 @@ screen_state.mode="single", widget_count=1, user_request="добавь рейт�
 5. If current_formation exists and user only changes style — DON'T pass layout.
 6. If data_change=null — DON'T pass layout, DON'T pass show/hide unless explicitly asked.
 7. screen_state shows what user CURRENTLY sees. If screen_state.mode="single" and widget_count=1 — user is editing a DETAIL CARD. DO NOT pass layout. Only pass show/hide/atoms changes.
-8. Use rigidity: "locked" ONLY for explicit user requests (e.g. "make price red" → locked).`
+8. Use rigidity: "locked" ONLY for explicit user requests (e.g. "make price red" → locked).
+
+## OPS MODE
+
+When user asks to modify what's ALREADY on screen (NOT new data), use ops mode:
+  visual_assembly(mode: "ops", ops: [...])
+
+Available operations:
+  update — change properties of existing element:
+    {"op":"update","target":"a-s0-w0-price","props":{"textStyle":{"fontSize":"2xl","fontWeight":"bold"}}}
+    {"op":"update","target":"a-s0-w0-brand","props":{"wrapper":{"type":"tag","variant":"active"}}}
+    {"op":"update","target":"n-s0-w0-hero","props":{"gap":"lg","align":"center"}}
+  delete — remove element from formation:
+    {"op":"delete","target":"a-s0-w0-rating"}
+  insert — add new element:
+    {"op":"insert","parent":"n-s0-w0-content","props":{"type":"text","value":"Buy Now","wrapper":{"type":"button","variant":"primary"}}}
+    {"op":"insert","parent":"n-s0-w0-tags","after":"a-s0-w0-brand","props":{"type":"text","value":"New","wrapper":{"type":"badge","variant":"success"}}}
+    {"op":"insert","parent":"n-s0-w0-root","props":{"type":"row","name":"cta-row","gap":"md"}}
+  move — reorder element to new parent/position:
+    {"op":"move","target":"a-s0-w0-brand","parent":"n-s0-w0-tags"}
+
+### Chaining with ref (reference just-created elements):
+  [
+    {"op":"insert","ref":"cta","parent":"n-s0-w0-root","props":{"type":"row","gap":"md"}},
+    {"op":"insert","parent":"$cta","props":{"type":"text","value":"Add to Cart","wrapper":{"type":"button","variant":"primary"}}}
+  ]
+
+Target IDs come from formation_tree in your context. Use exact IDs.
+
+### When to use ops vs auto:
+- "make price bigger" → ops update (modify existing)
+- "remove rating" → ops delete
+- "add a Buy button" → ops insert (freestyle content)
+- "add divider after name" → ops insert with after
+- "move brand to tags" → ops move
+- "show me shampoos" → auto (new data query)
+- "add description" → auto with show: ["description"] (add data-bound field)
+- data_change != null → ALWAYS auto (new data means rebuild)
+- formation_tree is empty → ALWAYS auto (nothing to modify)
+
+### OPS RULES:
+1. ops mode ONLY when formation_tree is present in context
+2. NEVER use ops when data_change is present — use auto
+3. Each op targets ONE element by its ID from formation_tree
+4. Props in update are MERGED — only pass what changes
+5. Atoms modified by ops are auto-locked (rigidity: locked)
+6. insert requires "parent" — use widget ID or layout node ID
+7. Use "after" for precise positioning, omit to append at end
+8. Use "ref"/"$ref" to chain: insert creates element, subsequent ops reference it
+
+## BUILD MODE
+
+Compose multi-section pages:
+  visual_assembly(mode: "build", sections: [...])
+
+Each section has source: "auto" (data pipeline) or "freestyle" (literal atoms).
+
+### Examples:
+
+Hero heading + product grid + CTA button:
+  visual_assembly(mode: "build", sections: [
+    {"source":"freestyle","label":"","widgets":[{"atoms":[{"type":"text","value":"Best for you","textStyle":{"fontSize":"2xl","fontWeight":"bold"}}]}]},
+    {"source":"auto","preset":"product_card_grid","limit":6},
+    {"source":"freestyle","widgets":[{"atoms":[{"type":"text","value":"See all products","wrapper":{"type":"button","variant":"primary"}}]}]}
+  ])
+
+Auto sections support ALL auto-mode params (preset, layout, size, show, hide, limit, atoms, etc.).
+Freestyle widgets support: atoms (array of atom props), layout ({type, gap, align}), size.
+
+### BUILD RULES:
+1. Use build ONLY for multi-section compositions ("landing page", "hero + grid", "page with header and footer")
+2. For single-section displays, use auto or ops mode instead
+3. Auto sections use current state data — no separate data fetch needed
+4. Freestyle atoms are fully literal — type + value are required`
 
 // BuildHistorySummary creates a compact history summary from deltas for Agent2 context
 func BuildHistorySummary(deltas []domain.Delta) string {
@@ -194,6 +267,7 @@ func BuildAgent2ToolPrompt(
 	microcontext string,
 	screenCtx *ScreenContext,
 	fieldLabels map[string]string, // fieldName → human label (e.g. "price" → "Цена")
+	formationTree map[string]interface{}, // compact tree map for ops mode (widget/atom/node IDs)
 ) string {
 	input := map[string]interface{}{
 		"productCount": meta.ProductCount,
@@ -220,6 +294,11 @@ func BuildAgent2ToolPrompt(
 	// Current formation config
 	if currentConfig != nil {
 		input["current_formation"] = currentConfig
+	}
+
+	// Formation tree map — tells Agent2 what IDs exist for ops mode
+	if formationTree != nil {
+		input["formation_tree"] = formationTree
 	}
 
 	// Screen state

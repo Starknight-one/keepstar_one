@@ -143,6 +143,7 @@ type WrapperConfig struct {
 
 // AtomV2 is the engine v2 atom with separated textStyle and wrapper.
 type AtomV2 struct {
+	ID         string                 `json:"id,omitempty"`         // Stable addressable ID for tree operations
 	Type       AtomType               `json:"type"`
 	Subtype    AtomSubtype            `json:"subtype,omitempty"`
 	Value      interface{}            `json:"value"`

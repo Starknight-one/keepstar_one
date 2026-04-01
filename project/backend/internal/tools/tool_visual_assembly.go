@@ -34,6 +34,46 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"auto", "ops", "build"},
+					"description": "auto (default): rebuild formation from data. ops: modify existing formation. build: compose multi-section page.",
+				},
+				"ops": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"op":     map[string]interface{}{"type": "string", "enum": []string{"update", "delete", "insert", "move"}, "description": "Operation type"},
+							"target": map[string]interface{}{"type": "string", "description": "ID of element to modify/delete/move (from formation_tree)"},
+							"ref":    map[string]interface{}{"type": "string", "description": "Local alias for insert — subsequent ops reference via $ref"},
+							"parent": map[string]interface{}{"type": "string", "description": "Parent ID for insert/move (widget or layout node)"},
+							"after":  map[string]interface{}{"type": "string", "description": "Insert/move after this element ID"},
+							"props": map[string]interface{}{
+								"type":        "object",
+								"description": "Properties: for update — merge fields. For insert — full atom/node definition (type, value, textStyle, wrapper, etc.)",
+							},
+						},
+						"required": []string{"op"},
+					},
+					"description": "Operations to apply in ops mode. Reference node IDs from formation_tree in context.",
+				},
+				"sections": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"source": map[string]interface{}{"type": "string", "enum": []string{"auto", "freestyle"}, "description": "auto: use data pipeline. freestyle: literal atoms."},
+							"label":  map[string]interface{}{"type": "string", "description": "Section heading label"},
+							"widgets": map[string]interface{}{
+								"type":        "array",
+								"description": "Freestyle widgets: [{atoms: [{type, value, textStyle, wrapper, ...}], layout: {type, gap}, size}]",
+							},
+						},
+						"required": []string{"source"},
+					},
+					"description": "Sections for build mode. Each section is auto (data-driven) or freestyle (literal content).",
+				},
 				"preset": map[string]interface{}{
 					"type":        "string",
 					"description": "Preset name to use as base configuration.",
@@ -176,6 +216,16 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
+	// === MODE DISPATCH ===
+	mode, _ := input["mode"].(string)
+	if mode == "ops" {
+		return t.executeOps(ctx, toolCtx, state, input)
+	}
+	if mode == "build" {
+		return t.executeBuild(ctx, toolCtx, state, input)
+	}
+
+	// === AUTO MODE (default): rebuild formation from data ===
 	products := state.Current.Data.Products
 	services := state.Current.Data.Services
 	entityCount := len(products) + len(services)
@@ -570,6 +620,195 @@ func parseAtomOverride(raw interface{}) engine.AtomOverride {
 	}
 
 	return ov
+}
+
+// executeOps applies operations to the existing formation in state.
+func (t *VisualAssemblyTool) executeOps(ctx context.Context, toolCtx ToolContext, state *domain.SessionState, input map[string]interface{}) (*domain.ToolResult, error) {
+	// Load existing formation from state
+	if state.Current.Template == nil {
+		return &domain.ToolResult{Content: "error: no existing formation to modify (use auto mode first)"}, nil
+	}
+	fData, ok := state.Current.Template["formation"]
+	if !ok {
+		return &domain.ToolResult{Content: "error: no formation in state (use auto mode first)"}, nil
+	}
+	formation, ok := fData.(*domain.FormationWithData)
+	if !ok || formation == nil {
+		return &domain.ToolResult{Content: "error: invalid formation in state"}, nil
+	}
+
+	// Parse ops
+	opsRaw, ok := input["ops"].([]interface{})
+	if !ok || len(opsRaw) == 0 {
+		return &domain.ToolResult{Content: "error: ops mode requires non-empty ops array"}, nil
+	}
+	ops, err := engine.ParseOps(opsRaw)
+	if err != nil {
+		return &domain.ToolResult{Content: fmt.Sprintf("error parsing ops: %v", err)}, nil
+	}
+
+	// Apply operations
+	warnings, err := engine.ApplyOps(formation, ops)
+	if err != nil {
+		return &domain.ToolResult{Content: fmt.Sprintf("error applying ops: %v", err)}, nil
+	}
+
+	// Write modified formation back to state
+	templateMap := map[string]interface{}{"formation": formation}
+	info := domain.DeltaInfo{
+		TurnID:    toolCtx.TurnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   toolCtx.ActorID,
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
+		Action:    domain.Action{Type: domain.ActionLayout, Tool: "visual_assembly"},
+	}
+	if _, err := t.statePort.UpdateTemplate(ctx, toolCtx.SessionID, templateMap, info); err != nil {
+		return nil, fmt.Errorf("update template: %w", err)
+	}
+
+	msg := fmt.Sprintf("ok: applied %d ops to formation", len(ops))
+	if len(warnings) > 0 {
+		msg += fmt.Sprintf(" warnings=%v", warnings)
+	}
+
+	metadata := map[string]interface{}{
+		"mode":     "ops",
+		"opsCount": len(ops),
+		"warnings": warnings,
+	}
+
+	return &domain.ToolResult{Content: msg, Metadata: metadata}, nil
+}
+
+// executeBuild composes a multi-section formation from section specs.
+func (t *VisualAssemblyTool) executeBuild(ctx context.Context, toolCtx ToolContext, state *domain.SessionState, input map[string]interface{}) (*domain.ToolResult, error) {
+	sectionsRaw, ok := input["sections"].([]interface{})
+	if !ok || len(sectionsRaw) == 0 {
+		return &domain.ToolResult{Content: "error: build mode requires non-empty 'sections' array"}, nil
+	}
+
+	specs, err := engine.ParseSectionSpecs(sectionsRaw)
+	if err != nil {
+		return &domain.ToolResult{Content: fmt.Sprintf("error parsing sections: %v", err)}, nil
+	}
+
+	// Auto executor: runs the V2 engine for auto sections using state data
+	autoExecutor := func(params map[string]interface{}) (*domain.FormationWithData, []string) {
+		products := state.Current.Data.Products
+		services := state.Current.Data.Services
+		if len(products) == 0 && len(services) == 0 {
+			return nil, []string{"no data for auto section"}
+		}
+
+		entityType := domain.EntityTypeProduct
+		if len(products) == 0 {
+			entityType = domain.EntityTypeService
+		}
+
+		// Load field definitions
+		var fieldDefs []engine.FieldDefinitionEntry
+		if t.fieldDefPort != nil && toolCtx.TenantSlug != "" {
+			defs, err := t.fieldDefPort.ListFieldDefinitions(ctx, toolCtx.TenantSlug, entityType)
+			if err == nil && len(defs) > 0 {
+				fieldDefs = make([]engine.FieldDefinitionEntry, len(defs))
+				for i, d := range defs {
+					fieldDefs[i] = engine.FieldDefinitionEntry{
+						FieldName:      d.FieldName,
+						AtomType:       d.AtomType,
+						AtomSubtype:    d.AtomSubtype,
+						DefaultDisplay: d.DefaultDisplay,
+						DefaultSlot:    d.DefaultSlot,
+						Label:          d.Label,
+						Priority:       d.Priority,
+					}
+				}
+			}
+		}
+
+		instructions := parseV2Input(params)
+
+		var preset *domain.PresetV2
+		if t.presetV2Registry != nil {
+			presetName, _ := params["preset"].(string)
+			if presetName != "" {
+				if p, ok := t.presetV2Registry.Get(presetName); ok {
+					preset = &p
+				}
+			}
+			if preset == nil {
+				entityCount := len(products) + len(services)
+				resolved := engine.AutoResolve(string(entityType), entityCount)
+				if instructions != nil {
+					if instructions.Layout != "" {
+						resolved.Layout = instructions.Layout
+					}
+					if instructions.Size != "" {
+						resolved.Size = domain.WidgetSize(instructions.Size)
+					}
+				}
+				autoName := engine.AutoSelectPreset(entityType, resolved.Layout, resolved.Size)
+				if p, ok := t.presetV2Registry.Get(autoName); ok {
+					preset = &p
+				}
+			}
+		}
+
+		eng := engine.NewEngineV2()
+		output := eng.Execute(engine.EngineV2Input{
+			EntityType:   entityType,
+			Products:     products,
+			Services:     services,
+			FieldDefs:    fieldDefs,
+			Instructions: instructions,
+			Preset:       preset,
+		})
+		return output.Formation, output.Warnings
+	}
+
+	formation, warnings := engine.BuildFormation(specs, autoExecutor)
+
+	// Build render config
+	formation.Config = &domain.RenderConfig{
+		Preset: "build",
+		Mode:   formation.Mode,
+	}
+
+	// Write to state
+	templateMap := map[string]interface{}{"formation": formation}
+	info := domain.DeltaInfo{
+		TurnID:    toolCtx.TurnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   toolCtx.ActorID,
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "template",
+		Action:    domain.Action{Type: domain.ActionLayout, Tool: "visual_assembly"},
+	}
+	if _, err := t.statePort.UpdateTemplate(ctx, toolCtx.SessionID, templateMap, info); err != nil {
+		return nil, fmt.Errorf("update template: %w", err)
+	}
+
+	sectionCount := len(formation.Sections)
+	totalWidgets := 0
+	for _, s := range formation.Sections {
+		totalWidgets += len(s.Widgets)
+	}
+
+	msg := fmt.Sprintf("ok: built %d sections with %d total widgets", sectionCount, totalWidgets)
+	if len(warnings) > 0 {
+		msg += fmt.Sprintf(" warnings=%v", warnings)
+	}
+
+	metadata := map[string]interface{}{
+		"mode":         "build",
+		"sectionCount": sectionCount,
+		"widgetCount":  totalWidgets,
+		"warnings":     warnings,
+	}
+
+	return &domain.ToolResult{Content: msg, Metadata: metadata}, nil
 }
 
 // inferLegacyDisplayFromAtomV2 converts v2 atom textStyle+wrapper back to legacy display string.
