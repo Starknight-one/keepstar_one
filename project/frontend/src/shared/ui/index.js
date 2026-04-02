@@ -6,3 +6,4 @@ export { default as EmptyState } from './EmptyState';
 export { default as StatusPill } from './StatusPill';
 export { default as SelectorGroup } from './SelectorGroup';
 export { default as ColorSelector } from './ColorSelector';
+export { ErrorBoundary } from './ErrorBoundary';

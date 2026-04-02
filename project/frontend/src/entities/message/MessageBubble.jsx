@@ -1,6 +1,7 @@
 import { MessageRole } from './messageModel';
 import { FormationRenderer } from '../formation/FormationRenderer';
 import { WidgetRenderer } from '../widget/WidgetRenderer';
+import { ErrorBoundary } from '../../shared/ui';
 
 export function MessageBubble({ message, hideFormation }) {
   const isUser = message.role === MessageRole.USER;
@@ -26,7 +27,9 @@ export function MessageBubble({ message, hideFormation }) {
 
       {/* New formation support */}
       {!shouldHideFormation && message.formation && (
-        <FormationRenderer formation={message.formation} />
+        <ErrorBoundary fallback="Не удалось отрисовать результат">
+          <FormationRenderer formation={message.formation} />
+        </ErrorBoundary>
       )}
     </div>
   );
