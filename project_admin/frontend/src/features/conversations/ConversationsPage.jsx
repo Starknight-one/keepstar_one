@@ -65,41 +65,44 @@ export default function ConversationsPage() {
     {
       key: 'firstQuery',
       label: 'Сообщение',
-      render: (val) => (
-        <span className="conv-query-preview" title={val || ''}>
-          {val ? (val.length > 60 ? val.slice(0, 60) + '...' : val) : '(пустой запрос)'}
-        </span>
-      ),
+      render: (row) => {
+        const val = row.firstQuery
+        return (
+          <span className="conv-query-preview" title={val || ''}>
+            {val ? (val.length > 60 ? val.slice(0, 60) + '...' : val) : '(пустой запрос)'}
+          </span>
+        )
+      },
     },
     {
       key: 'startedAt',
       label: 'Дата',
       width: '130px',
-      render: (val) => formatDate(val),
+      render: (row) => formatDate(row.startedAt),
     },
     {
       key: 'duration',
       label: 'Длительность',
       width: '100px',
-      render: (_, row) => formatDuration(row.startedAt, row.endedAt),
+      render: (row) => formatDuration(row.startedAt, row.endedAt),
     },
     {
       key: 'messageCount',
       label: 'Сообщений',
       width: '90px',
-      render: (val) => val || 0,
+      render: (row) => row.messageCount || 0,
     },
     {
       key: 'totalCostUsd',
       label: 'Стоимость',
       width: '90px',
-      render: (val) => formatCost(val),
+      render: (row) => formatCost(row.totalCostUsd),
     },
     {
       key: 'outcome',
       label: 'Результат',
       width: '130px',
-      render: (_, row) => renderOutcome(row),
+      render: (row) => renderOutcome(row),
     },
   ]
 
