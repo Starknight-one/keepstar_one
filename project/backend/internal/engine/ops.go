@@ -364,23 +364,23 @@ func insertAtom(op Op, idx *idIndex, formation *domain.FormationWithData) (strin
 
 	// Find parent widget — either by widget ID or by finding the widget that owns a layout node
 	var targetWidget *domain.Widget
-	var parentNode *domain.LayoutNode
 	if w, ok := idx.widgets[op.Parent]; ok {
 		targetWidget = w
 	} else if ref, ok := idx.nodes[op.Parent]; ok {
 		// Find widget that owns this layout node by walking formation
 		targetWidget = findWidgetForNode(formation, ref.node)
-		parentNode = ref.node
 	}
 
 	if targetWidget == nil {
-		// Parent not found — don't silently default to first widget
-		return "", fmt.Sprintf("parent %q not found for insert (skipped)", op.Parent)
+		// Default: first widget
+		if len(formation.Widgets) > 0 {
+			targetWidget = &formation.Widgets[0]
+		} else if len(formation.Sections) > 0 && len(formation.Sections[0].Widgets) > 0 {
+			targetWidget = &formation.Sections[0].Widgets[0]
+		}
 	}
-
-	// Dedup guard: check if this widget already has a similar atom
-	if isDuplicateInsert(targetWidget, &atom) {
-		return "", fmt.Sprintf("skipped duplicate insert into widget %s", targetWidget.ID)
+	if targetWidget == nil {
+		return "", fmt.Sprintf("parent %q not found for insert", op.Parent)
 	}
 
 	// Append atom
@@ -390,8 +390,8 @@ func insertAtom(op Op, idx *idIndex, formation *domain.FormationWithData) (strin
 	// Add to layout tree
 	if targetWidget.Layout != nil {
 		child := domain.NewAtomChild(newIdx)
-		if parentNode != nil {
-			insertChildIntoNode(parentNode, child, op.After, idx)
+		if parentNode, ok := idx.nodes[op.Parent]; ok {
+			insertChildIntoNode(parentNode.node, child, op.After, idx)
 		} else {
 			// Append to root layout
 			insertChildIntoNode(targetWidget.Layout, child, op.After, idx)
@@ -406,29 +406,6 @@ func insertAtom(op Op, idx *idIndex, formation *domain.FormationWithData) (strin
 
 	// ID will be assigned by StampTreeIDs in runPostOpsConstraints
 	return fmt.Sprintf("__pending_atom_%d", newIdx), ""
-}
-
-// isDuplicateInsert checks if the widget already contains an atom that matches the insert.
-// For data-bound atoms (with FieldName), checks by FieldName.
-// For freestyle atoms (buttons, badges), checks by Value + Wrapper.Type.
-func isDuplicateInsert(w *domain.Widget, atom *domain.AtomV2) bool {
-	for _, existing := range w.AtomsV2 {
-		// Data-bound atom: same field already exists
-		if atom.FieldName != "" && existing.FieldName == atom.FieldName {
-			return true
-		}
-		// Freestyle atom: same value + wrapper type
-		if atom.FieldName == "" && existing.FieldName == "" {
-			sameValue := atom.Value != nil && existing.Value != nil &&
-				fmt.Sprintf("%v", atom.Value) == fmt.Sprintf("%v", existing.Value)
-			sameWrapper := atom.Wrapper != nil && existing.Wrapper != nil &&
-				atom.Wrapper.Type == existing.Wrapper.Type
-			if sameValue && sameWrapper {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // insertLayoutNode creates a new LayoutNode and inserts it into a parent node.
@@ -686,7 +663,7 @@ func mergeAtomProps(atom *domain.AtomV2, props map[string]interface{}) {
 		atom.Label = v
 	}
 
-	// Merge textStyle (full object)
+	// Merge textStyle
 	if tsRaw, ok := props["textStyle"]; ok {
 		ts := parseTextStyle(tsRaw)
 		if ts != nil {
@@ -695,16 +672,6 @@ func mergeAtomProps(atom *domain.AtomV2, props map[string]interface{}) {
 			} else {
 				mergeTextStyle(atom.TextStyle, ts)
 			}
-		}
-	}
-
-	// Shorthand textStyle props — auto-lift into textStyle
-	liftedTS := liftTextStyleShorthands(props)
-	if liftedTS != nil {
-		if atom.TextStyle == nil {
-			atom.TextStyle = liftedTS
-		} else {
-			mergeTextStyle(atom.TextStyle, liftedTS)
 		}
 	}
 
@@ -725,42 +692,6 @@ func mergeAtomProps(atom *domain.AtomV2, props map[string]interface{}) {
 		is := parseIconStyle(isRaw)
 		atom.IconStyle = is
 	}
-}
-
-// liftTextStyleShorthands extracts shorthand props (color, fontSize, fontWeight, etc.)
-// that Agent2 may send at top level instead of nested in textStyle.
-func liftTextStyleShorthands(props map[string]interface{}) *domain.TextStyle {
-	var ts *domain.TextStyle
-	ensure := func() {
-		if ts == nil {
-			ts = &domain.TextStyle{}
-		}
-	}
-	if v, ok := props["color"].(string); ok && v != "" {
-		ensure()
-		ts.Color = v
-	}
-	if v, ok := props["fontSize"].(string); ok && v != "" {
-		ensure()
-		ts.FontSize = v
-	}
-	if v, ok := props["fontWeight"].(string); ok && v != "" {
-		ensure()
-		ts.FontWeight = v
-	}
-	if v, ok := props["lineClamp"].(float64); ok && v > 0 {
-		ensure()
-		ts.LineClamp = int(v)
-	}
-	if v, ok := props["textDecoration"].(string); ok && v != "" {
-		ensure()
-		ts.TextDecoration = v
-	}
-	if v, ok := props["textTransform"].(string); ok && v != "" {
-		ensure()
-		ts.TextTransform = v
-	}
-	return ts
 }
 
 // mergeNodeProps merges props into a LayoutNode's visual properties.
@@ -1189,7 +1120,6 @@ func findNodeByName(node *domain.LayoutNode, name string) *domain.LayoutNode {
 
 // ExpandWildcardOps expands ops that target a field name (not a specific ID) into per-widget ops.
 // E.g. target:"price" → becomes ops for a-s0-w0-price, a-s0-w1-price, etc.
-// Uses two-pass approach: first pre-scan explicit IDs, then expand wildcards (order-independent dedup).
 func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 	if formation == nil {
 		return ops
@@ -1205,30 +1135,6 @@ func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 	}
 	seen := map[dedupKey]bool{}
 
-	// Pass 1: Pre-scan ALL ops to collect explicit ID targets.
-	// This prevents wildcard expansion from duplicating ops that already have specific IDs,
-	// regardless of op ordering (wildcard before or after explicit).
-	for _, op := range ops {
-		if op.Target != "" && isTreeID(op.Target) {
-			if ref, ok := idx.atoms[op.Target]; ok && ref.widget != nil {
-				fieldName := ref.widget.AtomsV2[ref.atomIndex].FieldName
-				if fieldName != "" {
-					dk := dedupKey{widgetID: ref.widget.ID, opType: op.Type, field: fieldName}
-					seen[dk] = true
-				}
-			}
-		}
-		if op.Parent != "" && isTreeID(op.Parent) {
-			if ref, ok := idx.nodes[op.Parent]; ok && ref.widget != nil {
-				if ref.node.Name != "" {
-					dk := dedupKey{widgetID: ref.widget.ID, opType: op.Type, field: ref.node.Name}
-					seen[dk] = true
-				}
-			}
-		}
-	}
-
-	// Pass 2: Expand wildcards, skipping widgets already covered by explicit ops.
 	for _, op := range ops {
 		target := op.Target
 		parent := op.Parent
@@ -1278,7 +1184,25 @@ func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 			continue
 		}
 
-		// Explicit ID ops pass through as-is (already tracked in pass 1)
+		// For specific ID targets, also track to prevent wildcard duplication
+		if target != "" {
+			if ref, ok := idx.atoms[target]; ok && ref.widget != nil {
+				fieldName := ref.widget.AtomsV2[ref.atomIndex].FieldName
+				if fieldName != "" {
+					dk := dedupKey{widgetID: ref.widget.ID, opType: op.Type, field: fieldName}
+					seen[dk] = true
+				}
+			}
+		}
+		if parent != "" {
+			if ref, ok := idx.nodes[parent]; ok && ref.widget != nil {
+				if ref.node.Name != "" {
+					dk := dedupKey{widgetID: ref.widget.ID, opType: op.Type, field: ref.node.Name}
+					seen[dk] = true
+				}
+			}
+		}
+
 		expanded = append(expanded, op)
 	}
 
@@ -1287,19 +1211,9 @@ func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 
 // isTreeID checks if a string looks like a tree-stamped ID (contains dashes with prefix).
 func isTreeID(s string) bool {
-	// Tree IDs: a-s0-w0-price, n-s0-w0-root (always start with a-s or n-s)
-	if len(s) > 4 && (s[0] == 'a' || s[0] == 'n') && s[1] == '-' && s[2] == 's' {
-		return true
-	}
-	// Widget UUIDs: 36-char format like "550e8400-e29b-41d4-a716-446655440000"
-	if len(s) == 36 && s[8] == '-' && s[13] == '-' {
-		return true
-	}
-	// Short widget IDs generated by generateWidgetID (w- prefix)
-	if len(s) > 2 && s[0] == 'w' && s[1] == '-' {
-		return true
-	}
-	return false
+	// Tree IDs: a-s0-w0-price, n-s0-w0-root, widget UUIDs
+	return (len(s) > 2 && (s[0] == 'a' || s[0] == 'n') && s[1] == '-') ||
+		len(s) > 8 // UUID-like widget IDs
 }
 
 // --- Fix B: Resolve entity data for inserted atoms ---
