@@ -163,36 +163,39 @@ screen_state.mode="single", widget_count=1, user_request="добавь рейт�
 When user asks to modify what's ALREADY on screen (NOT new data), use ops mode:
   visual_assembly(mode: "ops", ops: [...])
 
+IMPORTANT: Use FIELD NAME as target, NOT per-widget IDs. One op applies to ALL widgets automatically.
+  Example: target "price" applies to price in every card. Do NOT send 23 separate ops.
+
 Available operations:
-  update — change properties of existing element:
-    {"op":"update","target":"a-s0-w0-price","props":{"textStyle":{"fontSize":"2xl","fontWeight":"bold"}}}
-    {"op":"update","target":"a-s0-w0-brand","props":{"wrapper":{"type":"tag","variant":"active"}}}
-    {"op":"update","target":"n-s0-w0-hero","props":{"gap":"lg","align":"center"}}
-  delete — remove element from formation:
-    {"op":"delete","target":"a-s0-w0-rating"}
-  insert — add new element:
-    {"op":"insert","parent":"n-s0-w0-content","props":{"type":"text","value":"Buy Now","wrapper":{"type":"button","variant":"primary"}}}
-    {"op":"insert","parent":"n-s0-w0-tags","after":"a-s0-w0-brand","props":{"type":"text","value":"New","wrapper":{"type":"badge","variant":"success"}}}
-    {"op":"insert","parent":"n-s0-w0-root","props":{"type":"row","name":"cta-row","gap":"md"}}
-  move — reorder element to new parent/position:
-    {"op":"move","target":"a-s0-w0-brand","parent":"n-s0-w0-tags"}
+  update — change properties by field name:
+    {"op":"update","target":"price","props":{"textStyle":{"fontSize":"2xl","fontWeight":"bold"}}}
+    {"op":"update","target":"brand","props":{"wrapper":{"type":"tag","variant":"active"}}}
+  delete — remove field from all widgets:
+    {"op":"delete","target":"rating"}
+  insert — add new element (use layout node name as parent):
+    {"op":"insert","parent":"root","props":{"type":"text","value":"Buy Now","wrapper":{"type":"button","variant":"primary"}}}
+    {"op":"insert","parent":"tags","props":{"type":"text","value":"New","wrapper":{"type":"badge","variant":"success"}}}
+  insert with data binding — add a data field (engine resolves values automatically):
+    {"op":"insert","parent":"root","props":{"type":"text","fieldName":"brand","wrapper":{"type":"tag"}}}
+  move — reorder element:
+    {"op":"move","target":"brand","parent":"tags"}
 
 ### Chaining with ref (reference just-created elements):
   [
-    {"op":"insert","ref":"cta","parent":"n-s0-w0-root","props":{"type":"row","gap":"md"}},
+    {"op":"insert","ref":"cta","parent":"root","props":{"type":"row","gap":"md"}},
     {"op":"insert","parent":"$cta","props":{"type":"text","value":"Add to Cart","wrapper":{"type":"button","variant":"primary"}}}
   ]
 
-Target IDs come from formation_tree in your context. Use exact IDs.
+Use field names (price, brand, rating) as targets — engine applies to all widgets.
+Use layout node names (root, hero, headings, tags, body) as parents for insert.
 
 ### When to use ops vs auto:
-- "make price bigger" → ops update (modify existing)
+- "make price bigger" → ops update
 - "remove rating" → ops delete
 - "add a Buy button" → ops insert (freestyle content)
-- "add divider after name" → ops insert with after
+- "add brand as tag" → ops insert with fieldName (data-bound)
 - "move brand to tags" → ops move
 - "show me shampoos" → auto (new data query)
-- "add description" → auto with show: ["description"] (add data-bound field)
 - data_change != null → ALWAYS auto (new data means rebuild)
 - formation_tree is empty → ALWAYS auto (nothing to modify)
 

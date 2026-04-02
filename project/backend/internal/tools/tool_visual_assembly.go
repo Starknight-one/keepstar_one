@@ -290,22 +290,31 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 		}
 	}
 
-	// Extract current visible fields and mode from previous formation (for additive show/hide)
+	// Extract current visible fields, mode, and customizations from previous formation
 	var currentFields []string
 	var currentMode string
+	var customSnap *engine.FormationSnapshot
 	if state.Current.Template != nil {
 		if fData, ok := state.Current.Template["formation"]; ok {
-			if f, ok := fData.(*domain.FormationWithData); ok && f != nil {
-				currentMode = string(f.Mode)
-				if len(f.Widgets) > 0 {
+			var prevFormation *domain.FormationWithData
+			if f, ok := fData.(*domain.FormationWithData); ok {
+				prevFormation = f
+			} else {
+				prevFormation = convertToFormation(fData)
+			}
+			if prevFormation != nil {
+				currentMode = string(prevFormation.Mode)
+				if len(prevFormation.Widgets) > 0 {
 					seen := make(map[string]bool)
-					for _, a := range f.Widgets[0].AtomsV2 {
+					for _, a := range prevFormation.Widgets[0].AtomsV2 {
 						if a.FieldName != "" && !seen[a.FieldName] {
 							currentFields = append(currentFields, a.FieldName)
 							seen[a.FieldName] = true
 						}
 					}
 				}
+				// Snapshot locked customizations for carry-over
+				customSnap = engine.SnapshotCustomizations(prevFormation)
 			}
 		}
 	}
@@ -340,6 +349,11 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, i
 	}
 	emptyMap := map[string]string{}
 	formation = engine.ApplyPostProcessing(formation, emptyMap, emptyMap, emptyMap, emptyMap, emptyMap, direction, "", paginationLimit, paginationOffset)
+
+	// Re-apply locked customizations from previous formation (Fix A)
+	if customSnap != nil {
+		engine.ApplySnapshot(formation, customSnap)
+	}
 
 	// Build render config
 	fieldSpecs := make([]domain.FieldSpec, 0)
@@ -652,11 +666,17 @@ func (t *VisualAssemblyTool) executeOps(ctx context.Context, toolCtx ToolContext
 		return &domain.ToolResult{Content: fmt.Sprintf("error parsing ops: %v", err)}, nil
 	}
 
+	// Fix D: Expand wildcard targets (field name → per-widget IDs)
+	ops = engine.ExpandWildcardOps(formation, ops)
+
 	// Apply operations
 	warnings, err := engine.ApplyOps(formation, ops)
 	if err != nil {
 		return &domain.ToolResult{Content: fmt.Sprintf("error applying ops: %v", err)}, nil
 	}
+
+	// Fix B: Resolve field values for inserted atoms
+	engine.ResolveInsertedFieldValues(formation, state.Current.Data.Products, state.Current.Data.Services)
 
 	// Write modified formation back to state
 	templateMap := map[string]interface{}{"formation": formation}
@@ -733,6 +753,16 @@ func (t *VisualAssemblyTool) executeBuild(ctx context.Context, toolCtx ToolConte
 		}
 
 		instructions := parseV2Input(params)
+
+		// Apply limit by slicing data BEFORE engine (Fix C)
+		if instructions != nil && instructions.Limit > 0 {
+			if instructions.Limit < len(products) {
+				products = products[:instructions.Limit]
+			}
+			if instructions.Limit < len(services) {
+				services = services[:instructions.Limit]
+			}
+		}
 
 		var preset *domain.PresetV2
 		if t.presetV2Registry != nil {

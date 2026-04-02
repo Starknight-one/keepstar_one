@@ -112,7 +112,7 @@ func buildFreestyleWidgets(specs []FreestyleWidgetSpec) []domain.Widget {
 	for _, spec := range specs {
 		w := domain.Widget{
 			ID:   generateWidgetID(),
-			Type: domain.WidgetTypeProductCard,
+			Type: domain.WidgetTypeTextBlock,
 			Size: domain.WidgetSizeLarge,
 		}
 		if spec.Size != "" {

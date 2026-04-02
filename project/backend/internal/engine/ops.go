@@ -821,3 +821,326 @@ func runPostOpsConstraints(formation *domain.FormationWithData) {
 	// Re-stamp IDs (in case new nodes were created)
 	StampTreeIDs(formation)
 }
+
+// --- Fix A: Preserve locked customizations across auto rebuilds ---
+
+// AtomOverrideSnapshot captures styling from a locked atom for carry-over.
+type AtomOverrideSnapshot struct {
+	TextStyle  *domain.TextStyle     `json:"textStyle,omitempty"`
+	Wrapper    *domain.WrapperConfig `json:"wrapper,omitempty"`
+	MediaStyle *domain.MediaStyle    `json:"mediaStyle,omitempty"`
+	IconStyle  *domain.IconStyle     `json:"iconStyle,omitempty"`
+	Format     domain.AtomFormat     `json:"format,omitempty"`
+}
+
+// FreestyleAtomSnapshot captures a freestyle atom (no fieldName) for carry-over.
+type FreestyleAtomSnapshot struct {
+	Atom     domain.AtomV2 `json:"atom"`
+	ParentNode string      `json:"parentNode"` // layout node name where it was placed
+}
+
+// FormationSnapshot captures customizations from an existing formation.
+type FormationSnapshot struct {
+	FieldOverrides  map[string]AtomOverrideSnapshot // fieldName → overrides
+	FreestyleAtoms  []FreestyleAtomSnapshot         // atoms without fieldName (buttons, badges)
+}
+
+// SnapshotCustomizations extracts locked overrides and freestyle atoms from a formation.
+func SnapshotCustomizations(formation *domain.FormationWithData) *FormationSnapshot {
+	if formation == nil {
+		return nil
+	}
+
+	snap := &FormationSnapshot{
+		FieldOverrides: make(map[string]AtomOverrideSnapshot),
+	}
+
+	// Use first widget as reference (all widgets share the same field structure)
+	var refWidget *domain.Widget
+	if len(formation.Widgets) > 0 {
+		refWidget = &formation.Widgets[0]
+	} else if len(formation.Sections) > 0 && len(formation.Sections[0].Widgets) > 0 {
+		refWidget = &formation.Sections[0].Widgets[0]
+	}
+	if refWidget == nil {
+		return nil
+	}
+
+	for _, atom := range refWidget.AtomsV2 {
+		if atom.Rigidity != domain.RigidityLocked {
+			continue
+		}
+
+		if atom.FieldName != "" {
+			// Data-bound atom with locked overrides
+			override := AtomOverrideSnapshot{
+				Format: atom.Format,
+			}
+			if atom.TextStyle != nil {
+				ts := *atom.TextStyle
+				override.TextStyle = &ts
+			}
+			if atom.Wrapper != nil {
+				w := *atom.Wrapper
+				override.Wrapper = &w
+			}
+			if atom.MediaStyle != nil {
+				ms := *atom.MediaStyle
+				override.MediaStyle = &ms
+			}
+			if atom.IconStyle != nil {
+				is := *atom.IconStyle
+				override.IconStyle = &is
+			}
+			snap.FieldOverrides[atom.FieldName] = override
+		} else {
+			// Freestyle atom (no data binding) — carry over entirely
+			atomCopy := atom
+			atomCopy.ID = "" // will be re-stamped
+			parentName := findAtomParentNodeName(refWidget, &atom)
+			snap.FreestyleAtoms = append(snap.FreestyleAtoms, FreestyleAtomSnapshot{
+				Atom:       atomCopy,
+				ParentNode: parentName,
+			})
+		}
+	}
+
+	if len(snap.FieldOverrides) == 0 && len(snap.FreestyleAtoms) == 0 {
+		return nil
+	}
+	return snap
+}
+
+// ApplySnapshot re-applies saved customizations onto a freshly built formation.
+func ApplySnapshot(formation *domain.FormationWithData, snap *FormationSnapshot) {
+	if snap == nil || formation == nil {
+		return
+	}
+
+	applyToWidgets := func(widgets []domain.Widget) {
+		for wi := range widgets {
+			w := &widgets[wi]
+
+			// Re-apply field overrides
+			for ai := range w.AtomsV2 {
+				a := &w.AtomsV2[ai]
+				override, ok := snap.FieldOverrides[a.FieldName]
+				if !ok {
+					continue
+				}
+				if override.TextStyle != nil {
+					ts := *override.TextStyle
+					a.TextStyle = &ts
+				}
+				if override.Wrapper != nil {
+					wr := *override.Wrapper
+					a.Wrapper = &wr
+				}
+				if override.MediaStyle != nil {
+					ms := *override.MediaStyle
+					a.MediaStyle = &ms
+				}
+				if override.IconStyle != nil {
+					is := *override.IconStyle
+					a.IconStyle = &is
+				}
+				if override.Format != "" {
+					a.Format = override.Format
+				}
+				a.Rigidity = domain.RigidityLocked
+			}
+
+			// Re-insert freestyle atoms
+			for _, fs := range snap.FreestyleAtoms {
+				atomCopy := fs.Atom
+				atomCopy.ID = "" // will be re-stamped
+				newIdx := len(w.AtomsV2)
+				w.AtomsV2 = append(w.AtomsV2, atomCopy)
+
+				// Add to layout
+				if w.Layout != nil {
+					child := domain.NewAtomChild(newIdx)
+					targetNode := findNodeByName(w.Layout, fs.ParentNode)
+					if targetNode != nil {
+						targetNode.Children = append(targetNode.Children, child)
+					} else {
+						w.Layout.Children = append(w.Layout.Children, child)
+					}
+				}
+			}
+
+			WidgetV2ToLegacy(w)
+		}
+	}
+
+	applyToWidgets(formation.Widgets)
+	for si := range formation.Sections {
+		applyToWidgets(formation.Sections[si].Widgets)
+	}
+
+	StampTreeIDs(formation)
+}
+
+// findAtomParentNodeName finds which layout node contains the given atom.
+func findAtomParentNodeName(w *domain.Widget, target *domain.AtomV2) string {
+	if w.Layout == nil {
+		return ""
+	}
+	// Find atom index
+	targetIdx := -1
+	for i := range w.AtomsV2 {
+		if &w.AtomsV2[i] == target {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		return ""
+	}
+	return findNodeNameForAtomIdx(w.Layout, targetIdx)
+}
+
+func findNodeNameForAtomIdx(node *domain.LayoutNode, idx int) string {
+	for _, ch := range node.Children {
+		if ch.AtomIndex != nil && *ch.AtomIndex == idx {
+			return node.Name
+		}
+		if ch.Node != nil {
+			if name := findNodeNameForAtomIdx(ch.Node, idx); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func findNodeByName(node *domain.LayoutNode, name string) *domain.LayoutNode {
+	if name == "" {
+		return nil
+	}
+	if node.Name == name {
+		return node
+	}
+	for _, ch := range node.Children {
+		if ch.Node != nil {
+			if found := findNodeByName(ch.Node, name); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
+}
+
+// --- Fix D: Wildcard ops — field name as target applies to all widgets ---
+
+// ExpandWildcardOps expands ops that target a field name (not a specific ID) into per-widget ops.
+// E.g. target:"price" → becomes ops for a-s0-w0-price, a-s0-w1-price, etc.
+func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
+	if formation == nil {
+		return ops
+	}
+
+	idx := buildIndex(formation)
+	var expanded []Op
+
+	for _, op := range ops {
+		target := op.Target
+		parent := op.Parent
+
+		// Check if target looks like a field name (no "-" prefix = not an ID)
+		if target != "" && !isTreeID(target) {
+			// Wildcard: apply to all atoms with this fieldName
+			matched := false
+			for id, ref := range idx.atoms {
+				if ref.widget.AtomsV2[ref.atomIndex].FieldName == target {
+					expOp := op
+					expOp.Target = id
+					expanded = append(expanded, expOp)
+					matched = true
+				}
+			}
+			if !matched {
+				expanded = append(expanded, op) // pass through, will warn
+			}
+			continue
+		}
+
+		// Check if parent looks like a field name for insert/move
+		if parent != "" && !isTreeID(parent) {
+			matched := false
+			for id, ref := range idx.nodes {
+				if ref.node.Name == parent {
+					expOp := op
+					expOp.Parent = id
+					expanded = append(expanded, expOp)
+					matched = true
+				}
+			}
+			if !matched {
+				expanded = append(expanded, op)
+			}
+			continue
+		}
+
+		expanded = append(expanded, op)
+	}
+
+	return expanded
+}
+
+// isTreeID checks if a string looks like a tree-stamped ID (contains dashes with prefix).
+func isTreeID(s string) bool {
+	// Tree IDs: a-s0-w0-price, n-s0-w0-root, widget UUIDs
+	return len(s) > 2 && (s[0] == 'a' || s[0] == 'n') && s[1] == '-' ||
+		len(s) > 8 // UUID-like widget IDs
+}
+
+// --- Fix B: Resolve entity data for inserted atoms ---
+
+// ResolveInsertedFieldValues walks the formation and fills in values for atoms
+// that have a fieldName but no value (inserted via ops with field binding).
+func ResolveInsertedFieldValues(formation *domain.FormationWithData, products []domain.Product, services []domain.Service) {
+	if formation == nil {
+		return
+	}
+
+	// Build entity data maps
+	productMaps := make([]map[string]interface{}, len(products))
+	for i, p := range products {
+		productMaps[i] = ProductToMap(p)
+	}
+	serviceMaps := make([]map[string]interface{}, len(services))
+	for i, s := range services {
+		serviceMaps[i] = ServiceToMap(s)
+	}
+
+	resolveWidgets := func(widgets []domain.Widget) {
+		for wi := range widgets {
+			w := &widgets[wi]
+			// Determine which entity map to use for this widget
+			var entityData map[string]interface{}
+			if wi < len(productMaps) {
+				entityData = productMaps[wi]
+			} else if idx := wi - len(productMaps); idx < len(serviceMaps) {
+				entityData = serviceMaps[idx]
+			}
+			if entityData == nil {
+				continue
+			}
+
+			for ai := range w.AtomsV2 {
+				a := &w.AtomsV2[ai]
+				if a.FieldName != "" && (a.Value == nil || a.Value == "" || a.Value == "<UNKNOWN>") {
+					if val, ok := entityData[a.FieldName]; ok {
+						a.Value = val
+					}
+				}
+			}
+		}
+	}
+
+	resolveWidgets(formation.Widgets)
+	for si := range formation.Sections {
+		resolveWidgets(formation.Sections[si].Widgets)
+	}
+}
