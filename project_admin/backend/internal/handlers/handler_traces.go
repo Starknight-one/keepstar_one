@@ -168,6 +168,30 @@ func (h *TracesHandler) HandleSessionState(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, state)
 }
 
+// HandleConversations returns paginated list of conversations with stats.
+func (h *TracesHandler) HandleConversations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	if limit <= 0 {
+		limit = 30
+	}
+
+	conversations, total, err := h.traces.ListConversations(r.Context(), limit, offset)
+	if err != nil {
+		h.log.Error("conversations_list_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list conversations")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"conversations": conversations, "total": total})
+}
+
 // HandleKillAllSessions closes all active sessions.
 func (h *TracesHandler) HandleKillAllSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

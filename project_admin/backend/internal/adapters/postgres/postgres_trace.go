@@ -295,6 +295,64 @@ func (a *TraceAdapter) GetSessionState(ctx context.Context, sessionID string) (*
 	return &s, nil
 }
 
+// ConversationListItem is a session row shaped for the conversations list.
+type ConversationListItem struct {
+	ID            string     `json:"id"`
+	Status        string     `json:"status"`
+	StartedAt     time.Time  `json:"startedAt"`
+	EndedAt       *time.Time `json:"endedAt"`
+	MessageCount  int        `json:"messageCount"`
+	TotalCostUSD  float64    `json:"totalCostUsd"`
+	FirstQuery    *string    `json:"firstQuery"`
+	CartItemCount int        `json:"cartItemCount"`
+	LikedCount    int        `json:"likedCount"`
+}
+
+// ListConversations returns sessions with message/cart/liked stats for the conversations page.
+func (a *TraceAdapter) ListConversations(ctx context.Context, limit, offset int) ([]ConversationListItem, int, error) {
+	_ = a.CloseStaleSessions(ctx)
+
+	var total int
+	err := a.client.pool.QueryRow(ctx, `SELECT count(*) FROM chat_sessions`).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count conversations: %w", err)
+	}
+
+	rows, err := a.client.pool.Query(ctx, `
+		SELECT cs.id, cs.status, cs.started_at, cs.ended_at,
+		       COALESCE(t.trace_count, 0) AS message_count,
+		       COALESCE(t.total_cost, 0) AS total_cost_usd,
+		       t.first_query,
+		       COALESCE(jsonb_array_length(st.actions->'cartItems'), 0) AS cart_item_count,
+		       COALESCE(jsonb_array_length(st.actions->'likedIds'), 0) AS liked_count
+		FROM chat_sessions cs
+		LEFT JOIN LATERAL (
+		    SELECT COUNT(*) AS trace_count,
+		           COALESCE(SUM(cost_usd), 0) AS total_cost,
+		           MIN(query) AS first_query
+		    FROM pipeline_traces pt WHERE pt.session_id = cs.id::text
+		) t ON true
+		LEFT JOIN chat_session_state st ON st.session_id = cs.id
+		ORDER BY cs.last_activity_at DESC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list conversations: %w", err)
+	}
+	defer rows.Close()
+
+	var items []ConversationListItem
+	for rows.Next() {
+		var c ConversationListItem
+		if err := rows.Scan(&c.ID, &c.Status, &c.StartedAt, &c.EndedAt,
+			&c.MessageCount, &c.TotalCostUSD, &c.FirstQuery, &c.CartItemCount, &c.LikedCount); err != nil {
+			return nil, 0, fmt.Errorf("scan conversation: %w", err)
+		}
+		items = append(items, c)
+	}
+	return items, total, nil
+}
+
 // ListUserActions returns user-initiated deltas for a session.
 func (a *TraceAdapter) ListUserActions(ctx context.Context, sessionID string) ([]UserActionItem, error) {
 	rows, err := a.client.pool.Query(ctx,
