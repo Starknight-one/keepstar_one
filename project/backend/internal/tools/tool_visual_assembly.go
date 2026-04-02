@@ -52,7 +52,39 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 							"after":  map[string]interface{}{"type": "string", "description": "Insert/move after this element ID"},
 							"props": map[string]interface{}{
 								"type":        "object",
-								"description": "Properties: for update — merge fields. For insert — full atom/node definition (type, value, textStyle, wrapper, etc.)",
+								"description": "Properties to set. For update: only pass changed fields. For insert: full atom definition.",
+								"properties": map[string]interface{}{
+									"textStyle": map[string]interface{}{
+										"type":        "object",
+										"description": "Text styling. color, fontSize, fontWeight MUST be inside this object.",
+										"properties": map[string]interface{}{
+											"fontSize":       map[string]interface{}{"type": "string", "description": "Token: xs, sm, md, lg, xl, 2xl, 3xl"},
+											"fontWeight":     map[string]interface{}{"type": "string", "description": "Token: light, normal, medium, semibold, bold"},
+											"color":          map[string]interface{}{"type": "string", "description": "Color token (red, green, blue, orange, purple, gray, muted) or hex (#FF0000)"},
+											"textDecoration": map[string]interface{}{"type": "string"},
+											"textTransform":  map[string]interface{}{"type": "string"},
+											"lineClamp":      map[string]interface{}{"type": "number"},
+										},
+									},
+									"wrapper": map[string]interface{}{
+										"type": "object",
+										"properties": map[string]interface{}{
+											"type":    map[string]interface{}{"type": "string", "description": "Wrapper: none, badge, tag, pill, button, link, alert"},
+											"variant": map[string]interface{}{"type": "string", "description": "Variant: success, error, warning, primary, secondary, outline, active"},
+										},
+									},
+									"mediaStyle": map[string]interface{}{
+										"type": "object",
+										"properties": map[string]interface{}{
+											"aspectRatio": map[string]interface{}{"type": "string", "description": "1:1, 4:3, 16:9, auto"},
+											"objectFit":   map[string]interface{}{"type": "string", "description": "cover, contain, fill"},
+										},
+									},
+									"value":     map[string]interface{}{"type": "string", "description": "Atom value (for freestyle inserts like button text)"},
+									"type":      map[string]interface{}{"type": "string", "description": "Atom type: text, number, image, icon. For layout nodes: row, column, flow, span"},
+									"fieldName": map[string]interface{}{"type": "string", "description": "Data field name for data-bound inserts (engine resolves value from entity)"},
+									"format":    map[string]interface{}{"type": "string", "description": "Value format: currency, stars, stars-compact, percent, number, date, text"},
+								},
 							},
 						},
 						"required": []string{"op"},

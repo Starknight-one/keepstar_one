@@ -675,6 +675,15 @@ func mergeAtomProps(atom *domain.AtomV2, props map[string]interface{}) {
 		}
 	}
 
+	// Shorthand safety net: LLM may send color/fontSize/fontWeight at top level
+	if lifted := liftTextStyleShorthands(props); lifted != nil {
+		if atom.TextStyle == nil {
+			atom.TextStyle = lifted
+		} else {
+			mergeTextStyle(atom.TextStyle, lifted)
+		}
+	}
+
 	// Replace wrapper
 	if wRaw, ok := props["wrapper"]; ok {
 		w := parseWrapper(wRaw)
@@ -1264,4 +1273,32 @@ func ResolveInsertedFieldValues(formation *domain.FormationWithData, products []
 	for si := range formation.Sections {
 		resolveWidgets(formation.Sections[si].Widgets)
 	}
+}
+
+// liftTextStyleShorthands extracts shorthand props (color, fontSize, fontWeight)
+// that LLM may send at top level instead of nested in textStyle.
+func liftTextStyleShorthands(props map[string]interface{}) *domain.TextStyle {
+	var ts *domain.TextStyle
+	ensure := func() {
+		if ts == nil {
+			ts = &domain.TextStyle{}
+		}
+	}
+	if v, ok := props["color"].(string); ok && v != "" {
+		ensure()
+		ts.Color = v
+	}
+	if v, ok := props["fontSize"].(string); ok && v != "" {
+		ensure()
+		ts.FontSize = v
+	}
+	if v, ok := props["fontWeight"].(string); ok && v != "" {
+		ensure()
+		ts.FontWeight = v
+	}
+	if v, ok := props["lineClamp"].(float64); ok && v > 0 {
+		ensure()
+		ts.LineClamp = int(v)
+	}
+	return ts
 }
