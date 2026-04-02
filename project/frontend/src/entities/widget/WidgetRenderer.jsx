@@ -1,8 +1,11 @@
+import { useRef } from 'react';
 import { WidgetType } from './widgetModel';
 import { GenericCardV2Template } from './templates/GenericCardV2Template';
 import './Widget.css';
 
 export function WidgetRenderer({ widget, onClick }) {
+  const mouseDownPos = useRef(null);
+
   // Template-based rendering (new system)
   if (widget.template) {
     const content = renderTemplate(widget);
@@ -10,11 +13,27 @@ export function WidgetRenderer({ widget, onClick }) {
 
     // Make widget clickable if it has entityRef and onClick handler
     if (onClick && widget.entityRef) {
-      const handleClick = () => {
+      const handleMouseDown = (e) => {
+        mouseDownPos.current = { x: e.clientX, y: e.clientY };
+      };
+      const handleClick = (e) => {
+        // Don't navigate if user selected text
+        const selection = window.getSelection();
+        if (selection && selection.toString().length > 0) return;
+        // Don't navigate if user dragged (mouse moved significantly)
+        if (mouseDownPos.current) {
+          const dx = Math.abs(e.clientX - mouseDownPos.current.x);
+          const dy = Math.abs(e.clientY - mouseDownPos.current.y);
+          if (dx > 5 || dy > 5) return;
+        }
         onClick(widget.entityRef.type, widget.entityRef.id);
       };
       return (
-        <div className={`widget-clickable ${placeClass}`.trim()} onClick={handleClick}>
+        <div
+          className={`widget-clickable ${placeClass}`.trim()}
+          onMouseDown={handleMouseDown}
+          onClick={handleClick}
+        >
           {content}
         </div>
       );

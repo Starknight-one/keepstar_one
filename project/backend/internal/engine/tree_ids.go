@@ -74,26 +74,43 @@ func stampLayoutNodeIDs(node *domain.LayoutNode, prefix string, counter *int) {
 }
 
 // BuildTreeMap creates a compact summary of the formation tree for Agent2 context.
-// Returns a structure with widget IDs, atom IDs and field names, layout node IDs.
+// Shows one widget as template + total count to minimize tokens.
+// Agent2 uses field names with wildcard ops — no need to see all 50 widget IDs.
 func BuildTreeMap(formation *domain.FormationWithData) map[string]interface{} {
 	if formation == nil {
 		return nil
 	}
 
-	widgets := buildWidgetMaps(formation.Widgets)
-
-	// Include section widgets too
+	// Collect all widgets (top-level + sections)
+	var allWidgets []domain.Widget
+	allWidgets = append(allWidgets, formation.Widgets...)
 	for _, s := range formation.Sections {
-		widgets = append(widgets, buildWidgetMaps(s.Widgets)...)
+		allWidgets = append(allWidgets, s.Widgets...)
 	}
 
-	if len(widgets) == 0 {
+	if len(allWidgets) == 0 {
 		return nil
 	}
 
-	return map[string]interface{}{
-		"widgets": widgets,
+	// Show only the first widget as template
+	template := buildWidgetMaps(allWidgets[:1])
+
+	result := map[string]interface{}{
+		"widget_template": template[0],
+		"widget_count":    len(allWidgets),
 	}
+
+	if formation.Grid != nil {
+		result["grid"] = map[string]int{
+			"cols": formation.Grid.Cols,
+			"rows": formation.Grid.Rows,
+		}
+	}
+	if formation.Mode != "" {
+		result["mode"] = string(formation.Mode)
+	}
+
+	return result
 }
 
 func buildWidgetMaps(widgets []domain.Widget) []map[string]interface{} {

@@ -138,14 +138,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  border-radius: 18px;
-  border: none;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  border-radius: 50%;
+  border: 1.5px solid var(--color-text-primary, #18181B);
+  background: var(--color-bg-primary, #FFFFFF);
   color: var(--color-text-primary, #18181B);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -153,17 +151,81 @@
 }
 
 .product-card-cart-btn:hover {
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--color-bg-secondary, #F4F4F5);
+  transform: scale(1.1);
 }
 
 .product-card-cart-btn.in-cart {
   background: var(--color-primary, #18181B);
+  border-color: var(--color-primary, #18181B);
   color: white;
 }
 
 .product-card-cart-btn svg {
   width: 16px;
   height: 16px;
+}
+
+.cart-btn-qty {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  line-height: 1;
+}
+
+/* Stepper counter (expanded from cart button) */
+.product-card-cart-stepper {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 32px;
+  border-radius: 16px;
+  border: 1.5px solid var(--color-primary, #18181B);
+  background: var(--color-bg-primary, #FFFFFF);
+  overflow: hidden;
+  z-index: 2;
+  animation: stepper-expand 0.15s ease;
+}
+
+@keyframes stepper-expand {
+  from { width: 32px; opacity: 0.8; }
+  to { width: auto; opacity: 1; }
+}
+
+.cart-stepper-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary, #18181B);
+  cursor: pointer;
+  transition: background 0.1s;
+  padding: 0;
+}
+
+.cart-stepper-btn:hover {
+  background: var(--color-bg-secondary, #F4F4F5);
+}
+
+.cart-stepper-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cart-stepper-qty {
+  min-width: 20px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-family-base, 'Inter', sans-serif);
+  color: var(--color-text-primary, #18181B);
+  line-height: 1;
 }
 
 /* Detail templates — inline add-to-cart */

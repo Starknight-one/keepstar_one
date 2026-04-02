@@ -79,21 +79,24 @@ type atomRef struct {
 type nodeRef struct {
 	node   *domain.LayoutNode
 	parent *domain.LayoutNode // nil for root
+	widget *domain.Widget     // owning widget (for dedup tracking)
 }
 
 // idIndex maps IDs to their targets in the formation tree.
 type idIndex struct {
-	atoms   map[string]atomRef
-	nodes   map[string]nodeRef
-	widgets map[string]*domain.Widget
+	atoms     map[string]atomRef
+	nodes     map[string]nodeRef
+	widgets   map[string]*domain.Widget
+	formation *domain.FormationWithData
 }
 
 // buildIndex walks the formation and creates an ID -> target mapping.
 func buildIndex(formation *domain.FormationWithData) idIndex {
 	idx := idIndex{
-		atoms:   make(map[string]atomRef),
-		nodes:   make(map[string]nodeRef),
-		widgets: make(map[string]*domain.Widget),
+		atoms:     make(map[string]atomRef),
+		nodes:     make(map[string]nodeRef),
+		widgets:   make(map[string]*domain.Widget),
+		formation: formation,
 	}
 
 	indexWidgets := func(widgets []domain.Widget) {
@@ -108,7 +111,7 @@ func buildIndex(formation *domain.FormationWithData) idIndex {
 				}
 			}
 			if w.Layout != nil {
-				indexLayoutNode(w.Layout, nil, &idx)
+				indexLayoutNode(w.Layout, nil, w, &idx)
 			}
 		}
 	}
@@ -121,13 +124,13 @@ func buildIndex(formation *domain.FormationWithData) idIndex {
 	return idx
 }
 
-func indexLayoutNode(node *domain.LayoutNode, parent *domain.LayoutNode, idx *idIndex) {
+func indexLayoutNode(node *domain.LayoutNode, parent *domain.LayoutNode, w *domain.Widget, idx *idIndex) {
 	if node.ID != "" {
-		idx.nodes[node.ID] = nodeRef{node: node, parent: parent}
+		idx.nodes[node.ID] = nodeRef{node: node, parent: parent, widget: w}
 	}
 	for i := range node.Children {
 		if node.Children[i].Node != nil {
-			indexLayoutNode(node.Children[i].Node, node, idx)
+			indexLayoutNode(node.Children[i].Node, node, w, idx)
 		}
 	}
 }
@@ -225,6 +228,14 @@ func applyUpdate(op Op, idx *idIndex) string {
 		return ""
 	}
 
+	// Formation-level target: columns, gap, mode
+	if op.Target == "formation" || op.Target == "grid" {
+		if idx.formation != nil {
+			mergeFormationProps(idx.formation, op.Props)
+		}
+		return ""
+	}
+
 	return fmt.Sprintf("target %q not found", op.Target)
 }
 
@@ -319,7 +330,7 @@ func applyMove(op Op, idx *idIndex) string {
 		insertChildIntoNode(parentNode, child, op.After, idx)
 
 		// Update parent reference in index
-		idx.nodes[op.Target] = nodeRef{node: ref.node, parent: parentNode}
+		idx.nodes[op.Target] = nodeRef{node: ref.node, parent: parentNode, widget: ref.widget}
 		return ""
 	}
 
@@ -403,7 +414,7 @@ func insertLayoutNode(op Op, idx *idIndex) (string, string) {
 	if !ok {
 		// Try widget — insert as child of root layout
 		if w, ok := idx.widgets[op.Parent]; ok && w.Layout != nil {
-			parentRef = nodeRef{node: w.Layout}
+			parentRef = nodeRef{node: w.Layout, widget: w}
 		} else {
 			return "", fmt.Sprintf("parent node %q not found for insert", op.Parent)
 		}
@@ -415,7 +426,7 @@ func insertLayoutNode(op Op, idx *idIndex) (string, string) {
 
 	// Index the new node
 	if node.ID != "" {
-		idx.nodes[node.ID] = nodeRef{node: node, parent: parentRef.node}
+		idx.nodes[node.ID] = nodeRef{node: node, parent: parentRef.node, widget: parentRef.widget}
 	}
 
 	return fmt.Sprintf("__pending_node_%p", node), ""
@@ -724,6 +735,28 @@ func mergeWidgetProps(w *domain.Widget, props map[string]interface{}) {
 	}
 }
 
+// mergeFormationProps merges props into a FormationWithData (columns, gap, mode).
+func mergeFormationProps(f *domain.FormationWithData, props map[string]interface{}) {
+	if props == nil || f == nil {
+		return
+	}
+	if v, ok := props["columns"].(float64); ok && v > 0 {
+		if f.Grid == nil {
+			f.Grid = &domain.GridConfig{}
+		}
+		f.Grid.Cols = int(v)
+	}
+	if v, ok := props["rows"].(float64); ok && v > 0 {
+		if f.Grid == nil {
+			f.Grid = &domain.GridConfig{}
+		}
+		f.Grid.Rows = int(v)
+	}
+	if v, ok := props["mode"].(string); ok && v != "" {
+		f.Mode = domain.FormationType(v)
+	}
+}
+
 // NOTE: mergeTextStyle is defined in engine_v2.go (same package)
 
 // Parsing helpers — convert raw map[string]interface{} to typed structs via JSON roundtrip.
@@ -841,8 +874,16 @@ type FreestyleAtomSnapshot struct {
 
 // FormationSnapshot captures customizations from an existing formation.
 type FormationSnapshot struct {
-	FieldOverrides  map[string]AtomOverrideSnapshot // fieldName → overrides
-	FreestyleAtoms  []FreestyleAtomSnapshot         // atoms without fieldName (buttons, badges)
+	FieldOverrides     map[string]AtomOverrideSnapshot // fieldName → overrides
+	FreestyleAtoms     []FreestyleAtomSnapshot         // atoms without fieldName (buttons, badges)
+	FormationOverrides *FormationOverrideSnapshot       // formation-level params (grid, mode, size)
+}
+
+// FormationOverrideSnapshot captures formation-level params that should survive auto rebuild.
+type FormationOverrideSnapshot struct {
+	Grid       *domain.GridConfig  `json:"grid,omitempty"`
+	Mode       domain.FormationType `json:"mode,omitempty"`
+	WidgetSize domain.WidgetSize    `json:"widgetSize,omitempty"`
 }
 
 // SnapshotCustomizations extracts locked overrides and freestyle atoms from a formation.
@@ -855,6 +896,18 @@ func SnapshotCustomizations(formation *domain.FormationWithData) *FormationSnaps
 		FieldOverrides: make(map[string]AtomOverrideSnapshot),
 	}
 
+	// Capture formation-level overrides (grid, mode, widget size)
+	hasFormationOverrides := false
+	fo := FormationOverrideSnapshot{}
+	if formation.Grid != nil {
+		gc := *formation.Grid
+		fo.Grid = &gc
+		hasFormationOverrides = true
+	}
+	if formation.Mode != "" {
+		fo.Mode = formation.Mode
+		hasFormationOverrides = true
+	}
 	// Use first widget as reference (all widgets share the same field structure)
 	var refWidget *domain.Widget
 	if len(formation.Widgets) > 0 {
@@ -863,7 +916,18 @@ func SnapshotCustomizations(formation *domain.FormationWithData) *FormationSnaps
 		refWidget = &formation.Sections[0].Widgets[0]
 	}
 	if refWidget == nil {
+		if hasFormationOverrides {
+			snap.FormationOverrides = &fo
+			return snap
+		}
 		return nil
+	}
+	if refWidget.Size != "" {
+		fo.WidgetSize = refWidget.Size
+		hasFormationOverrides = true
+	}
+	if hasFormationOverrides {
+		snap.FormationOverrides = &fo
 	}
 
 	for _, atom := range refWidget.AtomsV2 {
@@ -905,7 +969,7 @@ func SnapshotCustomizations(formation *domain.FormationWithData) *FormationSnaps
 		}
 	}
 
-	if len(snap.FieldOverrides) == 0 && len(snap.FreestyleAtoms) == 0 {
+	if len(snap.FieldOverrides) == 0 && len(snap.FreestyleAtoms) == 0 && snap.FormationOverrides == nil {
 		return nil
 	}
 	return snap
@@ -915,6 +979,27 @@ func SnapshotCustomizations(formation *domain.FormationWithData) *FormationSnaps
 func ApplySnapshot(formation *domain.FormationWithData, snap *FormationSnapshot) {
 	if snap == nil || formation == nil {
 		return
+	}
+
+	// Restore formation-level overrides
+	if fo := snap.FormationOverrides; fo != nil {
+		if fo.Grid != nil {
+			gc := *fo.Grid
+			formation.Grid = &gc
+		}
+		if fo.Mode != "" {
+			formation.Mode = fo.Mode
+		}
+		if fo.WidgetSize != "" {
+			for wi := range formation.Widgets {
+				formation.Widgets[wi].Size = fo.WidgetSize
+			}
+			for si := range formation.Sections {
+				for wi := range formation.Sections[si].Widgets {
+					formation.Sections[si].Widgets[wi].Size = fo.WidgetSize
+				}
+			}
+		}
 	}
 
 	applyToWidgets := func(widgets []domain.Widget) {
@@ -1042,6 +1127,13 @@ func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 
 	idx := buildIndex(formation)
 	var expanded []Op
+	// Track which widgets already received an op to prevent duplicates
+	type dedupKey struct {
+		widgetID string
+		opType   OpType
+		field    string // target or parent field name
+	}
+	seen := map[dedupKey]bool{}
 
 	for _, op := range ops {
 		target := op.Target
@@ -1053,6 +1145,11 @@ func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 			matched := false
 			for id, ref := range idx.atoms {
 				if ref.widget.AtomsV2[ref.atomIndex].FieldName == target {
+					dk := dedupKey{widgetID: ref.widget.ID, opType: op.Type, field: target}
+					if seen[dk] {
+						continue
+					}
+					seen[dk] = true
 					expOp := op
 					expOp.Target = id
 					expanded = append(expanded, expOp)
@@ -1070,6 +1167,11 @@ func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 			matched := false
 			for id, ref := range idx.nodes {
 				if ref.node.Name == parent {
+					dk := dedupKey{widgetID: ref.widget.ID, opType: op.Type, field: parent}
+					if seen[dk] {
+						continue
+					}
+					seen[dk] = true
 					expOp := op
 					expOp.Parent = id
 					expanded = append(expanded, expOp)
@@ -1082,6 +1184,25 @@ func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 			continue
 		}
 
+		// For specific ID targets, also track to prevent wildcard duplication
+		if target != "" {
+			if ref, ok := idx.atoms[target]; ok && ref.widget != nil {
+				fieldName := ref.widget.AtomsV2[ref.atomIndex].FieldName
+				if fieldName != "" {
+					dk := dedupKey{widgetID: ref.widget.ID, opType: op.Type, field: fieldName}
+					seen[dk] = true
+				}
+			}
+		}
+		if parent != "" {
+			if ref, ok := idx.nodes[parent]; ok && ref.widget != nil {
+				if ref.node.Name != "" {
+					dk := dedupKey{widgetID: ref.widget.ID, opType: op.Type, field: ref.node.Name}
+					seen[dk] = true
+				}
+			}
+		}
+
 		expanded = append(expanded, op)
 	}
 
@@ -1091,7 +1212,7 @@ func ExpandWildcardOps(formation *domain.FormationWithData, ops []Op) []Op {
 // isTreeID checks if a string looks like a tree-stamped ID (contains dashes with prefix).
 func isTreeID(s string) bool {
 	// Tree IDs: a-s0-w0-price, n-s0-w0-root, widget UUIDs
-	return len(s) > 2 && (s[0] == 'a' || s[0] == 'n') && s[1] == '-' ||
+	return (len(s) > 2 && (s[0] == 'a' || s[0] == 'n') && s[1] == '-') ||
 		len(s) > 8 // UUID-like widget IDs
 }
 

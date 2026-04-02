@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { LayoutTreeRenderer } from './LayoutTreeRenderer';
 import { normalizeImages } from './templateUtils';
 import { ImageCarousel } from './ImageCarousel';
@@ -19,7 +19,7 @@ import './GenericCardV2Template.css';
  */
 export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', direction, entityRef, states }) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const { toggleLike, isLiked, addToCart, getCartQuantity } = useActions();
+  const { toggleLike, isLiked, addToCart, getCartQuantity, updateCartQuantity } = useActions();
   const entityId = entityRef?.id;
   const liked = entityId ? isLiked(entityId) : false;
   const cartQty = entityId ? getCartQuantity(entityId) : 0;
@@ -87,18 +87,14 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
           )}
         </div>
       )}
-      {/* Cart button overlay */}
+      {/* Cart button overlay — plus icon / stepper counter */}
       {entityId && (
-        <button
-          className={`product-card-cart-btn${cartQty > 0 ? ' in-cart' : ''}`}
-          onClick={(e) => { e.stopPropagation(); addToCart(entityRef.type, entityId); }}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
-            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-          </svg>
-          {cartQty > 0 ? `In cart (${cartQty})` : 'Add to cart'}
-        </button>
+        <CartOverlayButton
+          qty={cartQty}
+          onAdd={() => addToCart(entityRef.type, entityId)}
+          onIncrement={() => updateCartQuantity(entityId, 1)}
+          onDecrement={() => updateCartQuantity(entityId, -1)}
+        />
       )}
       <div className="generic-card-content">
         {layout ? (
@@ -111,6 +107,64 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
         )}
       </div>
     </div>
+  );
+}
+
+function CartOverlayButton({ qty, onAdd, onIncrement, onDecrement }) {
+  const [expanded, setExpanded] = useState(false);
+  const collapseTimer = useRef(null);
+
+  useEffect(() => {
+    return () => { if (collapseTimer.current) clearTimeout(collapseTimer.current); };
+  }, []);
+
+  const scheduleCollapse = () => {
+    if (collapseTimer.current) clearTimeout(collapseTimer.current);
+    collapseTimer.current = setTimeout(() => setExpanded(false), 2500);
+  };
+
+  if (qty > 0 && expanded) {
+    return (
+      <div
+        className="product-card-cart-stepper"
+        onClick={(e) => e.stopPropagation()}
+        onMouseLeave={scheduleCollapse}
+      >
+        <button
+          className="cart-stepper-btn"
+          onClick={(e) => { e.stopPropagation(); onDecrement(); scheduleCollapse(); }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14" /></svg>
+        </button>
+        <span className="cart-stepper-qty">{qty}</span>
+        <button
+          className="cart-stepper-btn"
+          onClick={(e) => { e.stopPropagation(); onIncrement(); scheduleCollapse(); }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </div>
+    );
+  }
+
+  if (qty > 0) {
+    return (
+      <button
+        className="product-card-cart-btn in-cart"
+        onClick={(e) => { e.stopPropagation(); setExpanded(true); scheduleCollapse(); }}
+      >
+        <span className="cart-btn-qty">{qty}</span>
+      </button>
+    );
+  }
+
+  return (
+    <button
+      className="product-card-cart-btn"
+      onClick={(e) => { e.stopPropagation(); onAdd(); setExpanded(true); scheduleCollapse(); }}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+    </button>
   );
 }
 

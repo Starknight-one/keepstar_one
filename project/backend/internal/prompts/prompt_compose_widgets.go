@@ -199,6 +199,10 @@ Use layout node names (root, hero, headings, tags, body) as parents for insert.
 - data_change != null → ALWAYS auto (new data means rebuild)
 - formation_tree is empty → ALWAYS auto (nothing to modify)
 
+### Formation-level updates:
+  {"op":"update","target":"formation","props":{"columns":5}}
+  {"op":"update","target":"formation","props":{"columns":3,"mode":"grid"}}
+
 ### OPS RULES:
 1. ops mode ONLY when formation_tree is present in context
 2. NEVER use ops when data_change is present — use auto
@@ -208,6 +212,7 @@ Use layout node names (root, hero, headings, tags, body) as parents for insert.
 6. insert requires "parent" — use widget ID or layout node ID
 7. Use "after" for precise positioning, omit to append at end
 8. Use "ref"/"$ref" to chain: insert creates element, subsequent ops reference it
+9. Use target "formation" for grid/layout changes (columns, rows, mode)
 
 ## BUILD MODE
 
@@ -225,14 +230,49 @@ Hero heading + product grid + CTA button:
     {"source":"freestyle","widgets":[{"atoms":[{"type":"text","value":"See all products","wrapper":{"type":"button","variant":"primary"}}]}]}
   ])
 
+Comparison story — creative freestyle section explaining differences:
+  visual_assembly(mode: "build", sections: [
+    {"source":"freestyle","label":"Comparison","widgets":[{
+      "layout":{"type":"column","gap":"md"},
+      "atoms":[
+        {"type":"text","value":"Who wins?","textStyle":{"fontSize":"2xl","fontWeight":"bold","color":"#fff"}},
+        {"type":"text","value":"We compared 3 top products by ingredients, texture and results.","textStyle":{"fontSize":"md","color":"#999"}},
+        {"type":"text","value":"Best for dry skin: Product A — rich ceramide formula","textStyle":{"fontSize":"lg","fontWeight":"semibold"}},
+        {"type":"text","value":"Best value: Product B — same active ingredients, half the price","textStyle":{"fontSize":"lg","fontWeight":"semibold"}},
+        {"type":"text","value":"View details","wrapper":{"type":"button","variant":"primary"}}
+      ]
+    }]},
+    {"source":"auto","preset":"product_card_grid","limit":3}
+  ])
+
+Styled banner with multiple elements:
+  {"source":"freestyle","widgets":[{
+    "layout":{"type":"row","gap":"lg","align":"center","distribution":"between"},
+    "size":"large",
+    "atoms":[
+      {"type":"text","value":"Flash Sale","textStyle":{"fontSize":"3xl","fontWeight":"bold","color":"#f59e0b"}},
+      {"type":"text","value":"Up to 40% off","wrapper":{"type":"badge","variant":"warning"}},
+      {"type":"text","value":"Shop now","wrapper":{"type":"button","variant":"primary"}}
+    ]
+  }]}
+
 Auto sections support ALL auto-mode params (preset, layout, size, show, hide, limit, atoms, etc.).
-Freestyle widgets support: atoms (array of atom props), layout ({type, gap, align}), size.
+Freestyle widgets support: atoms (array of atom props), layout ({type, gap, align, distribution}), size.
+
+### Freestyle atom props:
+- type: "text" | "image" | "icon"
+- value: literal content (text string, image URL, emoji)
+- textStyle: {fontSize: xs|sm|md|lg|xl|2xl|3xl, fontWeight: light|normal|medium|semibold|bold, color: "#hex"}
+- wrapper: {type: badge|tag|pill|button|link|alert, variant: primary|secondary|success|warning|error|active}
+- layout type options: column (default) | row | flow
 
 ### BUILD RULES:
 1. Use build ONLY for multi-section compositions ("landing page", "hero + grid", "page with header and footer")
 2. For single-section displays, use auto or ops mode instead
 3. Auto sections use current state data — no separate data fetch needed
-4. Freestyle atoms are fully literal — type + value are required`
+4. Freestyle atoms are fully literal — type + value are required
+5. Be CREATIVE with freestyle sections — write compelling copy, use bold headings, styled badges, CTA buttons
+6. Do NOT use auto preset for sections where user asks for analysis, comparison text, or storytelling — use freestyle`
 
 // BuildHistorySummary creates a compact history summary from deltas for Agent2 context
 func BuildHistorySummary(deltas []domain.Delta) string {

@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hybrid Engine — Карта режимов</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #0f0f0f;
+    color: #e0e0e0;
+    line-height: 1.6;
+    padding: 40px 20px;
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 32px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    color: #888;
+    font-size: 14px;
+    margin-bottom: 48px;
+  }
+
+  .section {
+    margin-bottom: 48px;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .section-header {
+    padding: 20px 24px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    user-select: none;
+    transition: background 0.15s;
+  }
+
+  .section-header:hover {
+    background: #1a1a1a;
+  }
+
+  .section-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+
+  .section-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .section-desc {
+    font-size: 13px;
+    color: #888;
+  }
+
+  .section-toggle {
+    margin-left: auto;
+    color: #555;
+    font-size: 20px;
+    transition: transform 0.2s;
+  }
+
+  .section.open .section-toggle {
+    transform: rotate(180deg);
+  }
+
+  .section-body {
+    display: none;
+    padding: 0 24px 24px;
+  }
+
+  .section.open .section-body {
+    display: block;
+  }
+
+  .c-auto { background: #1a3a2a; color: #4ade80; }
+  .c-ops { background: #1a2a3a; color: #60a5fa; }
+  .c-build { background: #2a1a2a; color: #c084fc; }
+  .c-tree { background: #2a2a1a; color: #facc15; }
+  .c-snap { background: #2a1a1a; color: #f87171; }
+  .c-front { background: #1a2a2a; color: #2dd4bf; }
+  .c-cases { background: #2a1a0a; color: #fb923c; }
+
+  h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 24px 0 12px;
+  }
+
+  h3:first-child {
+    margin-top: 8px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 16px;
+    font-size: 13px;
+  }
+
+  th {
+    text-align: left;
+    padding: 8px 12px;
+    background: #1a1a1a;
+    color: #999;
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #1a1a1a;
+    vertical-align: top;
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+
+  code {
+    background: #1a1a1a;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    color: #e2b96f;
+  }
+
+  pre {
+    background: #1a1a1a;
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 8px 0 16px;
+    color: #ccc;
+  }
+
+  ul {
+    padding-left: 20px;
+    margin: 8px 0;
+  }
+
+  li {
+    margin: 4px 0;
+    font-size: 14px;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .tag-yes { background: #1a3a2a; color: #4ade80; }
+  .tag-no { background: #3a1a1a; color: #f87171; }
+  .tag-partial { background: #2a2a1a; color: #facc15; }
+
+  .callout {
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+
+  .callout-warn {
+    background: #2a1a0a;
+    border-left: 3px solid #fb923c;
+    color: #fbbf24;
+  }
+
+  .callout-info {
+    background: #0a1a2a;
+    border-left: 3px solid #60a5fa;
+    color: #93c5fd;
+  }
+
+  .callout-ok {
+    background: #0a2a1a;
+    border-left: 3px solid #4ade80;
+    color: #86efac;
+  }
+
+  strong { color: #fff; }
+
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 12px 0;
+  }
+
+  .flow-step {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .flow-arrow {
+    color: #555;
+    font-size: 16px;
+  }
+
+  .fs-green { background: #1a3a2a; color: #4ade80; }
+  .fs-blue { background: #1a2a3a; color: #60a5fa; }
+  .fs-yellow { background: #2a2a1a; color: #facc15; }
+  .fs-purple { background: #2a1a2a; color: #c084fc; }
+  .fs-gray { background: #222; color: #999; }
+  .fs-red { background: #2a1a1a; color: #f87171; }
+
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    margin: 12px 0;
+  }
+
+  .compare-card {
+    padding: 16px;
+    border-radius: 8px;
+    background: #1a1a1a;
+  }
+
+  .compare-card h4 {
+    font-size: 14px;
+    margin-bottom: 8px;
+    color: #fff;
+  }
+
+  .compare-card .stat {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .compare-card .label {
+    font-size: 12px;
+    color: #888;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Hybrid Engine</h1>
+<p class="subtitle">3 режима visual_assembly: Auto, Ops, Build. Как работают, когда используются, что читают/пишут. Обновлено: 2026-04-02</p>
+
+<!-- OVERVIEW -->
+<div style="margin-bottom: 32px;">
+  <h3 style="margin-top: 0;">Общая архитектура</h3>
+  <p style="font-size: 14px; margin-bottom: 16px;">Agent2 вызывает <code>visual_assembly</code> с одним из 3 режимов. Режим определяет как Formation собирается/модифицируется.</p>
+  <div class="compare">
+    <div class="compare-card">
+      <h4 style="color: #4ade80">Auto</h4>
+      <div class="stat" style="color: #4ade80">rebuild</div>
+      <div class="label">Новые данные или стиль с нуля</div>
+      <div style="margin-top: 8px; font-size: 12px;">V2 Engine pipeline<br>Defaults + constraints<br>Пересобирает Formation</div>
+    </div>
+    <div class="compare-card">
+      <h4 style="color: #60a5fa">Ops</h4>
+      <div class="stat" style="color: #60a5fa">patch</div>
+      <div class="label">Точечные изменения на экране</div>
+      <div style="margin-top: 8px; font-size: 12px;">Update / Delete / Insert / Move<br>Wildcard по полям<br>Модифицирует Formation</div>
+    </div>
+    <div class="compare-card">
+      <h4 style="color: #c084fc">Build</h4>
+      <div class="stat" style="color: #c084fc">compose</div>
+      <div class="label">Многосекционные страницы</div>
+      <div style="margin-top: 8px; font-size: 12px;">Auto + Freestyle секции<br>Лендинги, Hero + Grid<br>Собирает Formation из секций</div>
+    </div>
+  </div>
+</div>
+
+<!-- MODE DECISION -->
+<div class="section open" id="decision">
+  <div class="section-header" onclick="toggle('decision')">
+    <div class="section-icon" style="background:#1a1a2a;color:#a78bfa;">?</div>
+    <div>
+      <div class="section-title">Как выбирается режим</div>
+      <div class="section-desc">Agent2 решает. Дерево решений из промпта</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Дерево решений Agent2</h3>
+    <pre>
+data_change != null?
+  YES &rarr; <strong style="color:#4ade80">AUTO</strong> (новые данные, строить с нуля)
+  NO &rarr;
+    formation_tree пуст?
+      YES &rarr; <strong style="color:#4ade80">AUTO</strong> (нечего модифицировать)
+      NO &rarr;
+        Юзер просит "лендинг" / "hero + grid" / "страницу с секциями"?
+          YES &rarr; <strong style="color:#c084fc">BUILD</strong>
+          NO &rarr;
+            Юзер просит изменить стиль/добавить/удалить элемент?
+              YES &rarr; <strong style="color:#60a5fa">OPS</strong>
+              NO &rarr; <strong style="color:#4ade80">AUTO</strong> (дефолт)
+    </pre>
+
+    <h3>Что Agent2 видит для принятия решения</h3>
+    <table>
+      <tr><th>Контекст</th><th>Откуда</th><th>Влияние</th></tr>
+      <tr><td><code>data_change</code></td><td>Microcontext от Agent1</td><td>!= null &rarr; всегда AUTO</td></tr>
+      <tr><td><code>formation_tree</code></td><td>BuildTreeMap из текущей Formation</td><td>Пуст &rarr; AUTO; есть &rarr; OPS доступен</td></tr>
+      <tr><td><code>screen_state</code></td><td>Фронтенд (mode, widgetCount, fields)</td><td>Контекст что видит юзер</td></tr>
+      <tr><td><code>agent2_history</code></td><td>Последние 2 turn'а Agent2</td><td>Что делал недавно</td></tr>
+      <tr><td>Запрос пользователя</td><td>HTTP request</td><td>Ключевые слова определяют режим</td></tr>
+    </table>
+
+    <div class="callout callout-warn">
+      <strong>Ловушка:</strong> Agent2 может ошибиться и выбрать AUTO когда нужен OPS (теряет кастомизации) или OPS когда нужен AUTO (пытается патчить на пустом месте). formation_tree &mdash; главный сигнал: пуст = AUTO, заполнен = OPS/BUILD возможны.
+    </div>
+  </div>
+</div>
+
+<!-- AUTO MODE -->
+<div class="section open" id="auto">
+  <div class="section-header" onclick="toggle('auto')">
+    <div class="section-icon c-auto">A</div>
+    <div>
+      <div class="section-title">Auto Mode &mdash; полная пересборка</div>
+      <div class="section-desc">V2 Engine pipeline: данные &rarr; пресет &rarr; атомы &rarr; layout &rarr; Formation</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Когда используется</h3>
+    <ul>
+      <li>Новые данные (Agent1 вызвал <code>catalog_search</code> или <code>state_filter</code>)</li>
+      <li>Первый запрос в сессии (formation_tree пуст)</li>
+      <li>Юзер меняет layout/size/show/hide (глобальные параметры формации)</li>
+      <li>Fallback когда Agent2 не уверен что делать</li>
+    </ul>
+
+    <h3>Поток</h3>
+    <div class="flow">
+      <span class="flow-step fs-green">Agent2 params</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-yellow">SnapshotCustomizations</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-blue">V2 Engine.Execute</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-yellow">ApplySnapshot</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-green">StampTreeIDs</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-purple">Formation</span>
+    </div>
+
+    <h3>10 шагов V2 Engine.Execute</h3>
+    <table>
+      <tr><th>#</th><th>Шаг</th><th>Что делает</th></tr>
+      <tr><td>1</td><td>Resolve Preset</td><td>По entity type &rarr; PresetV2 (fieldConfigs, template, defaultSize)</td></tr>
+      <tr><td>2</td><td>Merge Params</td><td>Agent2 params (show, hide, size, layout, atoms) merge с дефолтами</td></tr>
+      <tr><td>3</td><td>Build FieldConfigs</td><td>Field definitions (из БД) + preset + params &rarr; конфиг каждого поля</td></tr>
+      <tr><td>4</td><td>Build Atoms</td><td>Entity data &times; fieldConfigs &rarr; AtomV2[] на каждый виджет</td></tr>
+      <tr><td>5</td><td>AutoLayout</td><td>Строит LayoutNode tree: root &rarr; hero + headings + body + tags</td></tr>
+      <tr><td>6</td><td>BudgetDown</td><td>Считает "бюджет" на каждый node: сколько atom'ов влезает в size</td></tr>
+      <tr><td>7</td><td>NeedsUp</td><td>Обратный проход: сколько нужно каждому node</td></tr>
+      <tr><td>8</td><td>Constraints</td><td>15 правил на 5 junction'ах: валидация + нормализация</td></tr>
+      <tr><td>9</td><td>Build Widgets</td><td>Atom[] + Layout &rarr; Widget (Template: "GenericCard")</td></tr>
+      <tr><td>10</td><td>Build Formation</td><td>Widgets + GridConfig + Mode &rarr; FormationWithData</td></tr>
+    </table>
+
+    <h3>Параметры Agent2 &rarr; Auto</h3>
+    <table>
+      <tr><th>Параметр</th><th>Тип</th><th>Что делает</th></tr>
+      <tr><td><code>preset</code></td><td>string</td><td>Какой пресет использовать (product_card_grid, product_card_detail...)</td></tr>
+      <tr><td><code>layout</code></td><td>enum</td><td>grid, list, single, carousel, comparison, table</td></tr>
+      <tr><td><code>size</code></td><td>enum</td><td>tiny, small, medium, large</td></tr>
+      <tr><td><code>show</code></td><td>string[]</td><td>Добавить поля к дефолтам</td></tr>
+      <tr><td><code>hide</code></td><td>string[]</td><td>Убрать поля</td></tr>
+      <tr><td><code>order</code></td><td>string[]</td><td>Порядок полей</td></tr>
+      <tr><td><code>atoms</code></td><td>object</td><td>Per-field overrides: textStyle, wrapper, mediaStyle, format</td></tr>
+      <tr><td><code>columns</code></td><td>number</td><td>Колонки грида</td></tr>
+      <tr><td><code>direction</code></td><td>enum</td><td>vertical / horizontal</td></tr>
+      <tr><td><code>limit</code></td><td>number</td><td>Макс. виджетов</td></tr>
+    </table>
+
+    <h3>Snapshot Carry-Over</h3>
+    <p style="font-size:13px;margin:8px 0;">Перед пересборкой: извлекает locked кастомизации из старой Formation. После пересборки: накладывает обратно. Так "сделай цену красной" переживает следующий AUTO.</p>
+    <table>
+      <tr><th>Что сохраняется</th><th>Что теряется</th></tr>
+      <tr>
+        <td>
+          <span class="tag tag-yes">textStyle</span>
+          <span class="tag tag-yes">wrapper</span>
+          <span class="tag tag-yes">mediaStyle</span>
+          <span class="tag tag-yes">iconStyle</span>
+          <span class="tag tag-yes">format</span>
+          <span class="tag tag-yes">freestyle atoms</span>
+          <span class="tag tag-yes">grid columns</span>
+          <span class="tag tag-yes">grid rows</span>
+          <span class="tag tag-yes">formation mode</span>
+          <span class="tag tag-yes">widget size</span>
+        </td>
+        <td>
+          <span class="tag tag-no">layout node config (gap, align)</span>
+          <span class="tag tag-no">widget container styles</span>
+          <span class="tag tag-no">atom ordering changes</span>
+        </td>
+      </tr>
+    </table>
+
+    <div class="callout callout-info">
+      <strong>Ключевое:</strong> Snapshot работает по <code>rigidity: locked</code>. Только атомы с locked сохраняются. Ops автоматически ставит locked на все модификации. Auto ставит locked только если юзер явно попросил.
+    </div>
+
+    <h3>Что пишет в стейт</h3>
+    <table>
+      <tr><th>Зона</th><th>Что</th></tr>
+      <tr><td><code>current_template</code></td><td>Полная FormationWithData (mode, grid, widgets[], sections[])</td></tr>
+      <tr><td>Delta</td><td>tool: visual_assembly, mode: auto, count: N</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- OPS MODE -->
+<div class="section open" id="ops">
+  <div class="section-header" onclick="toggle('ops')">
+    <div class="section-icon c-ops">O</div>
+    <div>
+      <div class="section-title">Ops Mode &mdash; точечная модификация</div>
+      <div class="section-desc">Update / Delete / Insert / Move по Tree ID или Field Name</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Когда используется</h3>
+    <ul>
+      <li>"сделай цену крупнее" &rarr; <code>update target:"price"</code></li>
+      <li>"убери рейтинг" &rarr; <code>delete target:"rating"</code></li>
+      <li>"добавь кнопку купить" &rarr; <code>insert parent:"root"</code></li>
+      <li>"перенеси бренд в теги" &rarr; <code>move target:"brand" parent:"tags"</code></li>
+      <li>"5 колонок" &rarr; <code>update target:"formation" props:{columns:5}</code></li>
+    </ul>
+
+    <h3>Поток</h3>
+    <div class="flow">
+      <span class="flow-step fs-blue">Agent2 ops[]</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-yellow">ParseOps</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-red">ExpandWildcardOps</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-blue">ApplyOps</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-yellow">ResolveFieldValues</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-purple">Modified Formation</span>
+    </div>
+
+    <h3>4 операции</h3>
+    <table>
+      <tr><th>Op</th><th>Что делает</th><th>Target</th><th>Пример</th></tr>
+      <tr>
+        <td><strong style="color:#60a5fa">update</strong></td>
+        <td>Мержит props в существующий atom/node/widget/formation</td>
+        <td>field name, tree ID, widget ID, <code>"formation"</code></td>
+        <td><code>{"op":"update","target":"price","props":{"textStyle":{"fontSize":"2xl"}}}</code></td>
+      </tr>
+      <tr>
+        <td><strong style="color:#f87171">delete</strong></td>
+        <td>Удаляет atom или layout node, фиксит индексы</td>
+        <td>field name, tree ID</td>
+        <td><code>{"op":"delete","target":"rating"}</code></td>
+      </tr>
+      <tr>
+        <td><strong style="color:#4ade80">insert</strong></td>
+        <td>Добавляет новый atom или layout node</td>
+        <td>parent: node name или ID</td>
+        <td><code>{"op":"insert","parent":"root","props":{"type":"text","value":"Buy","wrapper":{"type":"button"}}}</code></td>
+      </tr>
+      <tr>
+        <td><strong style="color:#facc15">move</strong></td>
+        <td>Перемещает atom/node в другой parent</td>
+        <td>target + parent</td>
+        <td><code>{"op":"move","target":"brand","parent":"tags"}</code></td>
+      </tr>
+    </table>
+
+    <h3>Wildcard Expansion</h3>
+    <p style="font-size:13px;margin:8px 0;">Agent2 шлёт <strong>одну</strong> операцию с field name (не ID). Движок раскрывает в N операций &mdash; по одной на виджет.</p>
+    <pre>
+Вход:  {"op":"update", "target":"price", "props":{...}}
+
+Раскрытие (23 виджета):
+  {"op":"update", "target":"a-s0-w0-price", "props":{...}}
+  {"op":"update", "target":"a-s0-w1-price", "props":{...}}
+  ... &times; 23
+    </pre>
+
+    <table>
+      <tr><th>Как определяется wildcard</th><th>Логика</th></tr>
+      <tr><td>Target</td><td><code>isTreeID(target) == false</code> &rarr; ищет atoms с matching <code>fieldName</code></td></tr>
+      <tr><td>Parent (insert/move)</td><td><code>isTreeID(parent) == false</code> &rarr; ищет layout nodes с matching <code>Name</code></td></tr>
+      <tr><td><code>isTreeID(s)</code></td><td>Начинается с <code>a-</code>/<code>n-</code> или длиннее 8 символов (UUID)</td></tr>
+    </table>
+
+    <div class="callout callout-info">
+      <strong>Dedup guard:</strong> если Agent2 шлёт и конкретный ID, и field name для того же виджета &mdash; дупликат отсеивается. Трекаем (widgetID, opType, fieldName).
+    </div>
+
+    <h3>Insert &mdash; подробнее</h3>
+    <table>
+      <tr><th>Параметр</th><th>Что</th></tr>
+      <tr><td><code>parent</code></td><td>Куда вставлять: node name (<code>"root"</code>, <code>"tags"</code>) или tree ID</td></tr>
+      <tr><td><code>after</code></td><td>После какого atom/node ID. Без after &rarr; в конец</td></tr>
+      <tr><td><code>ref</code></td><td>Локальный алиас. Последующие ops могут юзать <code>$ref</code></td></tr>
+      <tr><td><code>props.type</code></td><td><code>"text"</code>, <code>"image"</code>, <code>"icon"</code> (atom) или <code>"row"</code>, <code>"column"</code>, <code>"flow"</code> (layout node)</td></tr>
+      <tr><td><code>props.fieldName</code></td><td>Data-bound: движок сам подставит значения из entity data</td></tr>
+      <tr><td><code>props.value</code></td><td>Freestyle: литеральное значение (текст, URL)</td></tr>
+    </table>
+
+    <h3>Formation-level Ops</h3>
+    <p style="font-size:13px;margin:8px 0;"><code>target:"formation"</code> &mdash; модификация грида и режима формации.</p>
+    <table>
+      <tr><th>Prop</th><th>Тип</th><th>Куда маппится</th></tr>
+      <tr><td><code>columns</code></td><td>number</td><td><code>Formation.Grid.Cols</code></td></tr>
+      <tr><td><code>rows</code></td><td>number</td><td><code>Formation.Grid.Rows</code></td></tr>
+      <tr><td><code>mode</code></td><td>string</td><td><code>Formation.Mode</code> (grid, list, carousel...)</td></tr>
+    </table>
+
+    <h3>Что пишет в стейт</h3>
+    <table>
+      <tr><th>Зона</th><th>Что</th></tr>
+      <tr><td><code>current_template</code></td><td>Модифицированная FormationWithData (in-place patched)</td></tr>
+      <tr><td>Delta</td><td>tool: visual_assembly, mode: ops, ops_count: N</td></tr>
+    </table>
+
+    <div class="callout callout-ok">
+      <strong>Auto-lock:</strong> Каждый atom, затронутый ops, автоматически получает <code>rigidity: locked</code>. Это значит snapshot при следующем AUTO сохранит эти изменения.
+    </div>
+  </div>
+</div>
+
+<!-- BUILD MODE -->
+<div class="section open" id="build">
+  <div class="section-header" onclick="toggle('build')">
+    <div class="section-icon c-build">B</div>
+    <div>
+      <div class="section-title">Build Mode &mdash; многосекционная композиция</div>
+      <div class="section-desc">Лендинги, Hero + Grid + CTA. Секции: auto (данные) + freestyle (литералы)</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Когда используется</h3>
+    <ul>
+      <li>"сделай лендинг"</li>
+      <li>"hero заголовок + грид товаров + кнопка"</li>
+      <li>"страницу с тремя секциями"</li>
+      <li>"расскажи кто круче из первых трёх" (freestyle сравнение + auto карточки)</li>
+    </ul>
+
+    <h3>Поток</h3>
+    <div class="flow">
+      <span class="flow-step fs-purple">Agent2 sections[]</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-yellow">ParseSectionSpecs</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-green">Auto executor</span>
+      <span class="flow-step fs-purple">Freestyle builder</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-blue">BuildFormation</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-green">StampTreeIDs</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-purple">Formation with Sections</span>
+    </div>
+
+    <h3>2 типа секций</h3>
+    <table>
+      <tr><th>Source</th><th>Что</th><th>Данные</th><th>Пример</th></tr>
+      <tr>
+        <td><span class="tag tag-yes">auto</span></td>
+        <td>Полный V2 Engine pipeline</td>
+        <td>Из state.data (Products/Services)</td>
+        <td><code>{"source":"auto","preset":"product_card_grid","limit":6}</code></td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-partial">freestyle</span></td>
+        <td>Литеральные атомы без данных</td>
+        <td>Значения прямо в JSON</td>
+        <td><code>{"source":"freestyle","widgets":[{"atoms":[...]}]}</code></td>
+      </tr>
+    </table>
+
+    <h3>Freestyle Widget &mdash; как собирается</h3>
+    <pre>
+Input: {"source":"freestyle","widgets":[{
+  "layout":{"type":"row","gap":"lg","align":"center"},
+  "size":"large",
+  "atoms":[
+    {"type":"text","value":"Flash Sale","textStyle":{"fontSize":"3xl","fontWeight":"bold"}},
+    {"type":"text","value":"Shop now","wrapper":{"type":"button","variant":"primary"}}
+  ]
+}]}
+
+&darr; buildFreestyleWidgets()
+
+Output: domain.Widget{
+  ID:       "uuid-...",
+  Template: "GenericCard",       // &larr; обязательно для рендера!
+  Type:     WidgetTypeTextBlock,
+  Size:     WidgetSizeLarge,
+  AtomsV2:  [AtomV2{...}, AtomV2{...}],  // rigidity: locked
+  Layout:   LayoutNode{Type: row, Gap: lg, Align: center, Children: [0, 1]},
+  Atoms:    [...],               // v1 compat
+  Zones:    [...],               // v1 compat
+}
+    </pre>
+
+    <h3>Freestyle Atom props</h3>
+    <table>
+      <tr><th>Prop</th><th>Тип</th><th>Описание</th></tr>
+      <tr><td><code>type</code></td><td>text | image | icon</td><td>Тип атома (default: text)</td></tr>
+      <tr><td><code>value</code></td><td>any</td><td>Литеральное значение</td></tr>
+      <tr><td><code>textStyle</code></td><td>object</td><td>fontSize, fontWeight, color, lineClamp, textDecoration...</td></tr>
+      <tr><td><code>wrapper</code></td><td>object</td><td>type (badge/tag/button/link/alert), variant, background</td></tr>
+      <tr><td><code>mediaStyle</code></td><td>object</td><td>aspectRatio, objectFit (для image)</td></tr>
+      <tr><td><code>format</code></td><td>string</td><td>currency, stars, percent, date (для числовых значений)</td></tr>
+      <tr><td><code>fieldName</code></td><td>string</td><td>Data-binding: движок не подставит значения в build freestyle</td></tr>
+    </table>
+
+    <h3>Formation.Sections &mdash; итоговая структура</h3>
+    <pre>
+FormationWithData {
+  Mode: "grid",
+  Sections: [
+    { Label: "Hero",   Mode: "single", Widgets: [{...}] },
+    { Label: "Grid",   Mode: "grid",   Grid: {Cols:3}, Widgets: [{...}, {...}, {...}] },
+    { Label: "Footer", Mode: "single", Widgets: [{...}] },
+  ]
+}
+    </pre>
+
+    <div class="callout callout-info">
+      <strong>Frontend рендерит секции рекурсивно:</strong> каждая Section &mdash; это мини-Formation. <code>FormationRenderer</code> проверяет <code>sections?.length > 0</code> и рендерит каждую как отдельный <code>&lt;FormationRenderer&gt;</code> с собственным mode/grid/widgets.
+    </div>
+  </div>
+</div>
+
+<!-- TREE IDS -->
+<div class="section" id="tree">
+  <div class="section-header" onclick="toggle('tree')">
+    <div class="section-icon c-tree">T</div>
+    <div>
+      <div class="section-title">Tree IDs &amp; Formation Tree</div>
+      <div class="section-desc">ID-штамповка, индексация, компактный tree map для Agent2</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Формат ID</h3>
+    <table>
+      <tr><th>Элемент</th><th>Формат ID</th><th>Пример</th></tr>
+      <tr><td>Atom (data-bound)</td><td><code>a-s{sec}-w{wgt}-{fieldName}</code></td><td><code>a-s0-w0-price</code></td></tr>
+      <tr><td>Atom (freestyle)</td><td><code>a-s{sec}-w{wgt}-{index}</code></td><td><code>a-s0-w0-5</code></td></tr>
+      <tr><td>Layout Node (named)</td><td><code>n-s{sec}-w{wgt}-{name}</code></td><td><code>n-s0-w0-root</code></td></tr>
+      <tr><td>Layout Node (anon)</td><td><code>n-s{sec}-w{wgt}-{counter}</code></td><td><code>n-s0-w0-3</code></td></tr>
+      <tr><td>Widget</td><td>UUID</td><td><code>f8a1b2c3-...</code></td></tr>
+    </table>
+
+    <h3>StampTreeIDs &mdash; когда вызывается</h3>
+    <ul>
+      <li>После <code>Engine.Execute()</code> в auto mode</li>
+      <li>После <code>BuildFormation()</code> в build mode</li>
+      <li>После <code>ApplySnapshot()</code> (re-stamp)</li>
+      <li><strong>Идемпотентно:</strong> пропускает nodes/atoms с existing IDs</li>
+    </ul>
+
+    <h3>Formation Tree (для Agent2)</h3>
+    <p style="font-size:13px;margin:8px 0;">Компактная карта: <strong>один</strong> виджет как шаблон + общий count. Agent2 использует field names с wildcard, не нужно видеть все 50 виджетов.</p>
+    <pre>
+{
+  "widget_template": {
+    "id": "f8a1b2c3-...",
+    "atoms": [
+      {"id": "a-s0-w0-images", "type": "image", "field": "images"},
+      {"id": "a-s0-w0-name",   "type": "text",  "field": "name"},
+      {"id": "a-s0-w0-price",  "type": "text",  "field": "price"},
+      {"id": "a-s0-w0-brand",  "type": "text",  "field": "brand"}
+    ],
+    "nodes": [
+      {"id": "n-s0-w0-root",     "type": "column", "name": "root"},
+      {"id": "n-s0-w0-hero",     "type": "column", "name": "hero"},
+      {"id": "n-s0-w0-headings", "type": "column", "name": "headings"},
+      {"id": "n-s0-w0-tags",     "type": "flow",   "name": "tags"}
+    ]
+  },
+  "widget_count": 23,
+  "grid": {"cols": 3, "rows": 0},
+  "mode": "grid"
+}
+    </pre>
+
+    <div class="callout callout-info">
+      <strong>Токен-экономия:</strong> вместо 23 повторов одного шаблона &mdash; 1 шаблон + count. Agent2 шлёт <code>target:"price"</code>, движок сам применяет ко всем.
+    </div>
+  </div>
+</div>
+
+<!-- SNAPSHOT -->
+<div class="section" id="snap">
+  <div class="section-header" onclick="toggle('snap')">
+    <div class="section-icon c-snap">S</div>
+    <div>
+      <div class="section-title">Snapshot &amp; Carry-Over</div>
+      <div class="section-desc">Как кастомизации переживают AUTO пересборку</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Проблема</h3>
+    <p style="font-size:14px;margin:8px 0;">Юзер делает OPS: "цену красную, добавь кнопку купить". Потом: "покажи шампуни" (новые данные &rarr; AUTO). Без snapshot все кастомизации теряются.</p>
+
+    <h3>Решение: SnapshotCustomizations &rarr; ApplySnapshot</h3>
+    <div class="flow">
+      <span class="flow-step fs-red">Prev Formation</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-yellow">SnapshotCustomizations</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step" style="background:#2a2a2a;color:#ccc;border:1px dashed #555;">Snapshot</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-green">V2 Engine (fresh)</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-yellow">ApplySnapshot</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-purple">Final Formation</span>
+    </div>
+
+    <h3>Что snapshot захватывает</h3>
+    <table>
+      <tr><th>Данные</th><th>Условие</th><th>Источник</th></tr>
+      <tr>
+        <td><strong>FieldOverrides</strong><br><span style="font-size:12px;color:#888;">textStyle, wrapper, mediaStyle, iconStyle, format</span></td>
+        <td><code>rigidity == locked</code> + <code>fieldName != ""</code></td>
+        <td>Первый виджет (все виджеты одной структуры)</td>
+      </tr>
+      <tr>
+        <td><strong>FreestyleAtoms</strong><br><span style="font-size:12px;color:#888;">полный atom + parent node name</span></td>
+        <td><code>rigidity == locked</code> + <code>fieldName == ""</code></td>
+        <td>Первый виджет</td>
+      </tr>
+      <tr>
+        <td><strong>FormationOverrides</strong><br><span style="font-size:12px;color:#888;">grid (cols, rows), mode, widget size</span></td>
+        <td>Всегда (если заполнены)</td>
+        <td>Formation + первый виджет</td>
+      </tr>
+    </table>
+
+    <h3>Как ApplySnapshot восстанавливает</h3>
+    <table>
+      <tr><th>Шаг</th><th>Что</th></tr>
+      <tr><td>1</td><td>Восстановить Grid (cols, rows) и Mode на Formation</td></tr>
+      <tr><td>2</td><td>Восстановить WidgetSize на <strong>все</strong> виджеты</td></tr>
+      <tr><td>3</td><td>Для каждого виджета: найти атомы по fieldName, восстановить overrides</td></tr>
+      <tr><td>4</td><td>Для каждого виджета: добавить freestyle atoms, найти parent node по имени</td></tr>
+      <tr><td>5</td><td>Вызвать WidgetV2ToLegacy + StampTreeIDs</td></tr>
+    </table>
+
+    <div class="callout callout-warn">
+      <strong>Ограничение:</strong> Snapshot берёт только <strong>первый виджет</strong> как reference. Если у секционных формаций разные виджеты &mdash; кастомизации виджетов 2+ теряются. Freestyle atoms при восстановлении теряют позицию (всегда appended в конец parent'а).
+    </div>
+  </div>
+</div>
+
+<!-- FRONTEND RENDERING -->
+<div class="section" id="front">
+  <div class="section-header" onclick="toggle('front')">
+    <div class="section-icon c-front">F</div>
+    <div>
+      <div class="section-title">Frontend &mdash; рендер Formation</div>
+      <div class="section-desc">FormationRenderer &rarr; WidgetRenderer &rarr; GenericCardV2 &rarr; LayoutTree &rarr; AtomV2</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Цепочка рендера</h3>
+    <div class="flow">
+      <span class="flow-step fs-purple">Formation JSON</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-green">FormationRenderer</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-blue">WidgetRenderer</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-yellow">GenericCardV2Template</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-green">LayoutTreeRenderer</span>
+      <span class="flow-arrow">&rarr;</span>
+      <span class="flow-step fs-purple">AtomV2Renderer</span>
+    </div>
+
+    <h3>FormationRenderer &mdash; маршрутизация</h3>
+    <pre>
+if (sections?.length > 0) {
+  // Рекурсия: каждая Section = мини-Formation
+  sections.map(s =&gt; &lt;FormationRenderer formation={s} /&gt;)
+} else {
+  // Обычный рендер: mode =&gt; grid layout, widgets =&gt; WidgetRenderer
+}
+    </pre>
+
+    <h3>WidgetRenderer &mdash; критический gate</h3>
+    <pre>
+if (widget.template) {         // &larr; ОБЯЗАТЕЛЬНО для V2 пути
+  renderTemplate(widget)       // &rarr; GenericCardV2Template
+} else {
+  // LEGACY FALLBACK: plain &lt;span&gt;{atom.value}&lt;/span&gt;
+  // Без стилей, без layout, без wrapper
+}
+    </pre>
+
+    <div class="callout callout-warn">
+      <strong>Widget.Template обязателен!</strong> Без <code>Template: "GenericCard"</code> виджет рендерится как plain text. Auto mode ставит Template в Engine. Freestyle widgets в build mode тоже ставят Template.
+    </div>
+
+    <h3>GenericCardV2Template</h3>
+    <p style="font-size:13px;margin:8px 0;">Единый компонент для всех типов виджетов. Рендерит через LayoutTreeRenderer.</p>
+    <ul>
+      <li>Принимает: atomsV2[], layout, size, direction, entityRef, states</li>
+      <li>LayoutTreeRenderer обходит LayoutNode дерево, рендерит flex-контейнеры</li>
+      <li>Для каждого AtomChild &rarr; AtomV2Renderer</li>
+    </ul>
+
+    <h3>AtomV2Renderer &mdash; типы</h3>
+    <table>
+      <tr><th>Type</th><th>Рендер</th><th>Стили</th></tr>
+      <tr><td><code>text</code></td><td><code>&lt;span&gt;</code></td><td>textStyle (fontSize, fontWeight, color, lineClamp, letterSpacing)</td></tr>
+      <tr><td><code>image</code></td><td><code>&lt;img&gt;</code></td><td>mediaStyle (aspectRatio, objectFit)</td></tr>
+      <tr><td><code>icon</code></td><td><code>&lt;span&gt;</code></td><td>iconStyle (size, color, style)</td></tr>
+      <tr><td><code>video</code></td><td><code>&lt;video&gt;</code></td><td>mediaStyle (controls, autoplay, muted, poster)</td></tr>
+      <tr><td><code>audio</code></td><td><code>&lt;audio&gt;</code></td><td>mediaStyle (controls)</td></tr>
+      <tr><td><code>progress</code></td><td>Bar div</td><td>width: value%</td></tr>
+    </table>
+
+    <h3>Wrapper типы</h3>
+    <table>
+      <tr><th>Type</th><th>Variants</th><th>CSS</th></tr>
+      <tr><td>badge</td><td>success, error, warning, primary, secondary</td><td>Inline rounded pill с фоном</td></tr>
+      <tr><td>tag</td><td>active, outline</td><td>Маленькая метка</td></tr>
+      <tr><td>pill</td><td>*</td><td>Capsule shape</td></tr>
+      <tr><td>button</td><td>primary, secondary, outline</td><td>Clickable button</td></tr>
+      <tr><td>link</td><td>&mdash;</td><td>Underlined clickable</td></tr>
+      <tr><td>alert</td><td>success, error, warning</td><td>Full-width banner</td></tr>
+      <tr><td>tooltip</td><td>&mdash;</td><td>Hover popup</td></tr>
+      <tr><td>avatar</td><td>&mdash;</td><td>Circular image</td></tr>
+    </table>
+
+    <h3>Layout Node типы</h3>
+    <table>
+      <tr><th>Type</th><th>CSS</th><th>Использование</th></tr>
+      <tr><td><code>column</code></td><td>flex-direction: column</td><td>Default. Вертикальная стопка</td></tr>
+      <tr><td><code>row</code></td><td>flex-direction: row, align: center</td><td>Горизонтальная линия элементов</td></tr>
+      <tr><td><code>flow</code></td><td>flex-direction: row, flex-wrap: wrap</td><td>Теги, бейджи (wrapping)</td></tr>
+      <tr><td><code>span</code></td><td>display: block, width: 100%</td><td>Full-width секция</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- CASE STUDIES -->
+<div class="section open" id="cases">
+  <div class="section-header" onclick="toggle('cases')">
+    <div class="section-icon c-cases">!</div>
+    <div>
+      <div class="section-title">Кейсы &mdash; что происходит при запросе</div>
+      <div class="section-desc">Полный путь от запроса юзера до рендера, шаг за шагом</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Кейс 1: "покажи крема" (cold start)</h3>
+    <table>
+      <tr><th>Шаг</th><th>Кто</th><th>Что</th></tr>
+      <tr><td>1</td><td>Agent1</td><td><code>catalog_search(vector_query:"крема", filters:{category:"кремы"})</code></td></tr>
+      <tr><td>2</td><td>State</td><td><code>current_data</code> = 23 products, <code>current_meta</code> = fields, counts</td></tr>
+      <tr><td>3</td><td>Microctx</td><td><code>"new_search: 23 products"</code></td></tr>
+      <tr><td>4</td><td>Agent2</td><td>data_change != null &rarr; <span class="tag tag-yes">AUTO</span></td></tr>
+      <tr><td>5</td><td>Engine</td><td><code>visual_assembly()</code> &mdash; дефолты. 23 items &rarr; grid, medium, 3 cols</td></tr>
+      <tr><td>6</td><td>Frontend</td><td>FormationRenderer: grid mode, 23 GenericCard виджетов</td></tr>
+    </table>
+    <div class="callout callout-ok">Formation tree теперь заполнен. Следующие запросы могут юзать OPS.</div>
+
+    <h3>Кейс 2: "сделай цену крупнее красным" (hot, стиль)</h3>
+    <table>
+      <tr><th>Шаг</th><th>Кто</th><th>Что</th></tr>
+      <tr><td>1</td><td>Agent1</td><td>Данные не нужны &rarr; <code>no_data_change</code></td></tr>
+      <tr><td>2</td><td>Agent2</td><td>formation_tree есть, no data_change &rarr; <span class="tag" style="background:#1a2a3a;color:#60a5fa;">OPS</span></td></tr>
+      <tr><td>3</td><td>Ops</td><td><code>[{"op":"update","target":"price","props":{"textStyle":{"fontSize":"2xl","fontWeight":"bold","color":"#ef4444"}}}]</code></td></tr>
+      <tr><td>4</td><td>Wildcard</td><td><code>target:"price"</code> &rarr; 23 ops: <code>a-s0-w0-price</code> ... <code>a-s0-w22-price</code></td></tr>
+      <tr><td>5</td><td>Engine</td><td>mergeAtomProps на каждый price atom. Rigidity &rarr; locked</td></tr>
+      <tr><td>6</td><td>Frontend</td><td>Все 23 карточки: цена 2xl, bold, красная</td></tr>
+    </table>
+
+    <h3>Кейс 3: "добавь кнопку купить" (hot, insert)</h3>
+    <table>
+      <tr><th>Шаг</th><th>Кто</th><th>Что</th></tr>
+      <tr><td>1</td><td>Agent1</td><td><code>no_data_change</code></td></tr>
+      <tr><td>2</td><td>Agent2</td><td><span class="tag" style="background:#1a2a3a;color:#60a5fa;">OPS</span> insert</td></tr>
+      <tr><td>3</td><td>Ops</td><td><code>[{"op":"insert","parent":"root","props":{"type":"text","value":"Buy","wrapper":{"type":"button","variant":"primary"}}}]</code></td></tr>
+      <tr><td>4</td><td>Wildcard</td><td><code>parent:"root"</code> &rarr; 23 inserts: в <code>n-s0-w0-root</code> ... <code>n-s0-w22-root</code></td></tr>
+      <tr><td>5</td><td>Dedup</td><td>Каждый виджет получает <strong>ровно 1</strong> insert (dedup guard)</td></tr>
+      <tr><td>6</td><td>Engine</td><td>New atom appended to AtomsV2, layout child added to root node</td></tr>
+      <tr><td>7</td><td>Frontend</td><td>Кнопка "Buy" внизу каждой карточки</td></tr>
+    </table>
+
+    <h3>Кейс 4: "покажи шампуни" (hot, новые данные)</h3>
+    <table>
+      <tr><th>Шаг</th><th>Кто</th><th>Что</th></tr>
+      <tr><td>1</td><td>Agent1</td><td><code>catalog_search(vector_query:"шампуни")</code> &rarr; 15 products</td></tr>
+      <tr><td>2</td><td>Microctx</td><td><code>"new_search: 15 products"</code></td></tr>
+      <tr><td>3</td><td>Agent2</td><td>data_change != null &rarr; <span class="tag tag-yes">AUTO</span></td></tr>
+      <tr><td>4</td><td>Snapshot</td><td>Из prev Formation: price textStyle (2xl, bold, red) + кнопка Buy (freestyle atom)</td></tr>
+      <tr><td>5</td><td>Engine</td><td>V2 pipeline &rarr; 15 новых виджетов</td></tr>
+      <tr><td>6</td><td>Restore</td><td>ApplySnapshot: red price на все 15, кнопка Buy в каждый, grid 3 cols</td></tr>
+      <tr><td>7</td><td>Frontend</td><td>15 карточек шампуней. Цена красная, кнопка Buy &mdash; кастомизации пережили смену данных</td></tr>
+    </table>
+    <div class="callout callout-ok">Snapshot carry-over работает! Locked atoms и formation-level params сохраняются.</div>
+
+    <h3>Кейс 5: "в 5 колонок" (hot, formation-level)</h3>
+    <table>
+      <tr><th>Шаг</th><th>Кто</th><th>Что</th></tr>
+      <tr><td>1</td><td>Agent1</td><td><code>no_data_change</code></td></tr>
+      <tr><td>2</td><td>Agent2</td><td><span class="tag" style="background:#1a2a3a;color:#60a5fa;">OPS</span></td></tr>
+      <tr><td>3</td><td>Ops</td><td><code>[{"op":"update","target":"formation","props":{"columns":5}}]</code></td></tr>
+      <tr><td>4</td><td>Engine</td><td><code>mergeFormationProps</code>: <code>Formation.Grid.Cols = 5</code></td></tr>
+      <tr><td>5</td><td>Frontend</td><td>Grid перестраивается: 5 колонок</td></tr>
+    </table>
+
+    <h3>Кейс 6: "сделай лендинг из первых трёх" (build)</h3>
+    <table>
+      <tr><th>Шаг</th><th>Кто</th><th>Что</th></tr>
+      <tr><td>1</td><td>Agent1</td><td><code>state_filter(limit:3)</code> или <code>no_data_change</code></td></tr>
+      <tr><td>2</td><td>Agent2</td><td><span class="tag" style="background:#2a1a2a;color:#c084fc;">BUILD</span></td></tr>
+      <tr><td>3</td><td>Sections</td><td><pre style="margin:0;padding:8px;">[
+  {"source":"freestyle","widgets":[{"atoms":[
+    {"type":"text","value":"Top 3 Picks","textStyle":{"fontSize":"3xl","fontWeight":"bold"}},
+    {"type":"text","value":"Our best sellers this month","textStyle":{"color":"#888"}}
+  ]}]},
+  {"source":"auto","preset":"product_card_grid","limit":3},
+  {"source":"freestyle","widgets":[{"atoms":[
+    {"type":"text","value":"See all products","wrapper":{"type":"button","variant":"primary"}}
+  ]}]}
+]</pre></td></tr>
+      <tr><td>4</td><td>Engine</td><td>Section 0: freestyle &rarr; 1 widget (Template:"GenericCard")<br>Section 1: auto &rarr; V2 pipeline, 3 product widgets<br>Section 2: freestyle &rarr; 1 widget</td></tr>
+      <tr><td>5</td><td>Frontend</td><td>3 секции: заголовок Hero, грид карточек, кнопка CTA</td></tr>
+    </table>
+
+    <h3>Кейс 7: "добавь бренд как тег" (insert with data binding)</h3>
+    <table>
+      <tr><th>Шаг</th><th>Кто</th><th>Что</th></tr>
+      <tr><td>1</td><td>Agent2</td><td><span class="tag" style="background:#1a2a3a;color:#60a5fa;">OPS</span> insert с fieldName</td></tr>
+      <tr><td>2</td><td>Ops</td><td><code>[{"op":"insert","parent":"tags","props":{"type":"text","fieldName":"brand","wrapper":{"type":"tag"}}}]</code></td></tr>
+      <tr><td>3</td><td>Wildcard</td><td><code>parent:"tags"</code> &rarr; 23 inserts</td></tr>
+      <tr><td>4</td><td>Engine</td><td>Atom inserted: <code>fieldName:"brand"</code>, <code>value: nil</code></td></tr>
+      <tr><td>5</td><td>Resolve</td><td><code>ResolveInsertedFieldValues</code>: widget[0].brand = "COSRX", widget[1].brand = "MEDI-PEEL", ...</td></tr>
+      <tr><td>6</td><td>Frontend</td><td>Каждая карточка: тег с названием бренда в зоне tags</td></tr>
+    </table>
+
+  </div>
+</div>
+
+<!-- FILES -->
+<div class="section" id="files">
+  <div class="section-header" onclick="toggle('files')">
+    <div class="section-icon" style="background:#1a1a1a;color:#888;">F</div>
+    <div>
+      <div class="section-title">Файлы &mdash; что где</div>
+      <div class="section-desc">Карта файлов движка и фронтенда</div>
+    </div>
+    <div class="section-toggle">&#9662;</div>
+  </div>
+  <div class="section-body">
+
+    <h3>Backend &mdash; Engine</h3>
+    <table>
+      <tr><th>Файл</th><th>LOC</th><th>Что</th></tr>
+      <tr><td><code>engine/engine_v2.go</code></td><td>~800</td><td>V2 pipeline: Execute, AutoLayout, BudgetDown, NeedsUp, constraints</td></tr>
+      <tr><td><code>engine/ops.go</code></td><td>~1200</td><td>Ops: ApplyOps, ExpandWildcard, Snapshot, Insert/Delete/Update/Move</td></tr>
+      <tr><td><code>engine/build.go</code></td><td>~240</td><td>Build: BuildFormation, buildFreestyleWidgets, ParseSectionSpecs</td></tr>
+      <tr><td><code>engine/tree_ids.go</code></td><td>~160</td><td>StampTreeIDs, BuildTreeMap</td></tr>
+      <tr><td><code>engine/compat.go</code></td><td>~180</td><td>V2&rarr;V1 conversion: WidgetV2ToLegacy, AtomsV2ToLegacy</td></tr>
+    </table>
+
+    <h3>Backend &mdash; Integration</h3>
+    <table>
+      <tr><th>Файл</th><th>Что</th></tr>
+      <tr><td><code>tools/tool_visual_assembly.go</code></td><td>Mode dispatch, auto/ops/build executor, snapshot carry-over</td></tr>
+      <tr><td><code>usecases/agent2_execute.go</code></td><td>BuildTreeMap &rarr; formation_tree в контекст Agent2</td></tr>
+      <tr><td><code>prompts/prompt_compose_widgets.go</code></td><td>System prompt: auto/ops/build rules и примеры</td></tr>
+    </table>
+
+    <h3>Frontend</h3>
+    <table>
+      <tr><th>Файл</th><th>Что</th></tr>
+      <tr><td><code>entities/formation/FormationRenderer.jsx</code></td><td>Sections routing, grid/list/single layout</td></tr>
+      <tr><td><code>entities/widget/WidgetRenderer.jsx</code></td><td>Template gate: template &rarr; V2, else legacy spans</td></tr>
+      <tr><td><code>entities/widget/templates/GenericCardV2Template.jsx</code></td><td>Единый компонент: atomsV2 + layout &rarr; рендер</td></tr>
+      <tr><td><code>entities/widget/templates/LayoutTreeRenderer.jsx</code></td><td>Рекурсивный рендер LayoutNode tree (flex containers)</td></tr>
+      <tr><td><code>entities/atom/AtomV2Renderer.jsx</code></td><td>Atom типы (text/image/icon/video/audio) + wrapper + textStyle</td></tr>
+    </table>
+
+  </div>
+</div>
+
+</div>
+
+<script>
+function toggle(id) {
+  document.getElementById(id).classList.toggle('open');
+}
+</script>
+</body>
+</html>
