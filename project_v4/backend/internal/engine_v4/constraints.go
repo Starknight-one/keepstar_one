@@ -1,0 +1,176 @@
+package engine_v4
+
+import (
+	"unicode/utf8"
+
+	"keepstar_v4/internal/domain"
+)
+
+// ApplyConstraints runs constraint rules on the formation.
+// ALL atoms go through constraints — no RigidityLocked bypass for inserted atoms.
+func ApplyConstraints(formation *domain.FormationWithData) {
+	if formation == nil {
+		return
+	}
+
+	var allWidgets []*domain.Widget
+	for i := range formation.Widgets {
+		allWidgets = append(allWidgets, &formation.Widgets[i])
+	}
+	for i := range formation.Sections {
+		for j := range formation.Sections[i].Widgets {
+			allWidgets = append(allWidgets, &formation.Sections[i].Widgets[j])
+		}
+	}
+
+	// Per-atom constraints
+	for _, w := range allWidgets {
+		applyAtomConstraints(w.Atoms)
+	}
+
+	// Per-widget constraints
+	for _, w := range allWidgets {
+		applyWidgetConstraints(w)
+	}
+
+	// Cross-widget constraints
+	if len(allWidgets) > 1 {
+		applyCrossWidgetConstraints(allWidgets)
+	}
+}
+
+// applyAtomConstraints applies per-atom rules.
+func applyAtomConstraints(atoms []domain.Atom) {
+	for i := range atoms {
+		a := &atoms[i]
+
+		// A1: Badge text > 20 chars → tag
+		if a.Wrapper != nil && a.Wrapper.Type == "badge" {
+			if strVal, ok := a.Value.(string); ok && utf8.RuneCountInString(strVal) > 20 {
+				a.Wrapper.Type = "tag"
+			}
+		}
+
+		// A2: Tag text > 40 chars → unwrap
+		if a.Wrapper != nil && a.Wrapper.Type == "tag" {
+			if strVal, ok := a.Value.(string); ok && utf8.RuneCountInString(strVal) > 40 {
+				a.Wrapper = nil
+			}
+		}
+
+		// D5: Truncate by slot
+		if a.TextStyle == nil {
+			a.TextStyle = &domain.TextStyle{}
+		}
+		switch a.Slot {
+		case domain.AtomSlotTitle:
+			if a.TextStyle.LineClamp == 0 {
+				a.TextStyle.LineClamp = 2
+			}
+		case domain.AtomSlotSecondary, domain.AtomSlotDescription:
+			if a.TextStyle.LineClamp == 0 {
+				a.TextStyle.LineClamp = 3
+			}
+		}
+		// Clean up empty TextStyle
+		if a.TextStyle != nil && *a.TextStyle == (domain.TextStyle{}) {
+			a.TextStyle = nil
+		}
+	}
+}
+
+// applyWidgetConstraints applies per-widget rules.
+func applyWidgetConstraints(w *domain.Widget) {
+	// W1: Max 2 badges per widget
+	badgeCount := 0
+	for i := range w.Atoms {
+		if w.Atoms[i].Wrapper != nil && w.Atoms[i].Wrapper.Type == "badge" {
+			badgeCount++
+			if badgeCount > 2 {
+				w.Atoms[i].Wrapper.Type = "tag"
+			}
+		}
+	}
+
+	// W2: Max 5 tags per widget
+	tagCount := 0
+	for i := range w.Atoms {
+		if w.Atoms[i].Wrapper != nil && w.Atoms[i].Wrapper.Type == "tag" {
+			tagCount++
+			if tagCount > 5 {
+				w.Atoms[i].Wrapper = nil // unwrap excess
+			}
+		}
+	}
+
+	// W8: Tiny size → remove image atoms
+	if w.Size == domain.WidgetSizeTiny {
+		filtered := w.Atoms[:0]
+		for _, a := range w.Atoms {
+			if a.Type != domain.AtomTypeImage {
+				filtered = append(filtered, a)
+			}
+		}
+		w.Atoms = filtered
+	}
+}
+
+// applyCrossWidgetConstraints ensures consistency across widgets.
+func applyCrossWidgetConstraints(widgets []*domain.Widget) {
+	if len(widgets) < 2 {
+		return
+	}
+
+	// C1: Field present in < 70% of widgets → remove from all
+	fieldCounts := make(map[string]int)
+	for _, w := range widgets {
+		seen := make(map[string]bool)
+		for _, a := range w.Atoms {
+			if a.FieldName != "" && !seen[a.FieldName] {
+				fieldCounts[a.FieldName]++
+				seen[a.FieldName] = true
+			}
+		}
+	}
+
+	threshold := int(float64(len(widgets)) * 0.7)
+	removeFields := make(map[string]bool)
+	for field, count := range fieldCounts {
+		if count < threshold {
+			removeFields[field] = true
+		}
+	}
+
+	if len(removeFields) > 0 {
+		for _, w := range widgets {
+			filtered := w.Atoms[:0]
+			for _, a := range w.Atoms {
+				if !removeFields[a.FieldName] {
+					filtered = append(filtered, a)
+				}
+			}
+			w.Atoms = filtered
+		}
+	}
+
+	// C3: Same field → same format across all widgets
+	fieldFormat := make(map[string]domain.AtomFormat)
+	for _, w := range widgets {
+		for _, a := range w.Atoms {
+			if a.FieldName != "" && a.Format != "" {
+				if _, exists := fieldFormat[a.FieldName]; !exists {
+					fieldFormat[a.FieldName] = a.Format
+				}
+			}
+		}
+	}
+	for _, w := range widgets {
+		for i := range w.Atoms {
+			if w.Atoms[i].FieldName != "" {
+				if fmt, ok := fieldFormat[w.Atoms[i].FieldName]; ok {
+					w.Atoms[i].Format = fmt
+				}
+			}
+		}
+	}
+}
