@@ -226,6 +226,12 @@ func main() {
 		tenantMiddleware = handlers.NewTenantMiddleware(catalogAdapter)
 	}
 
+	// Version probe — hardcoded string to verify which build Railway is running
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"build":"v4-nesting-fix-1c8634d","prompt":"ui-builder","date":"2026-04-04"}`))
+	})
+
 	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler, tenantMiddleware, cfg.TenantSlug)
 
 	// Setup navigation routes (expand/back)
