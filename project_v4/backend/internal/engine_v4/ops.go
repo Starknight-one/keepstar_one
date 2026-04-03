@@ -397,12 +397,16 @@ func insertLayoutNode(op Op, idx *idIndex) (string, string) {
 	child := domain.NewNodeChild(node)
 	insertChildIntoNode(parentRef.node, child, op.After, idx)
 
-	// Index the new node
+	// Register pending ID so subsequent ops can reference via $ref chaining
+	pendingID := fmt.Sprintf("__pending_node_%p", node)
+	idx.nodes[pendingID] = nodeRef{node: node, parent: parentRef.node, widget: parentRef.widget}
+
+	// Also index by real ID if present
 	if node.ID != "" {
 		idx.nodes[node.ID] = nodeRef{node: node, parent: parentRef.node, widget: parentRef.widget}
 	}
 
-	return fmt.Sprintf("__pending_node_%p", node), ""
+	return pendingID, ""
 }
 
 // insertWidget creates a new empty Widget and adds it to the formation.
