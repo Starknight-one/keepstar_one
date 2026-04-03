@@ -2,6 +2,7 @@ package engine_v4
 
 import (
 	"fmt"
+	"strings"
 
 	"keepstar_v4/internal/domain"
 )
@@ -15,12 +16,20 @@ func StampTreeIDs(formation *domain.FormationWithData) {
 
 	for si := range formation.Sections {
 		for wi := range formation.Sections[si].Widgets {
-			stampWidgetIDs(&formation.Sections[si].Widgets[wi], si, wi)
+			w := &formation.Sections[si].Widgets[wi]
+			if w.ID == "" || strings.HasPrefix(w.ID, "__pending_") {
+				w.ID = fmt.Sprintf("w-s%d-w%d", si, wi)
+			}
+			stampWidgetIDs(w, si, wi)
 		}
 	}
 
 	for wi := range formation.Widgets {
-		stampWidgetIDs(&formation.Widgets[wi], 0, wi)
+		w := &formation.Widgets[wi]
+		if w.ID == "" || strings.HasPrefix(w.ID, "__pending_") {
+			w.ID = fmt.Sprintf("w-s0-w%d", wi)
+		}
+		stampWidgetIDs(w, 0, wi)
 	}
 }
 

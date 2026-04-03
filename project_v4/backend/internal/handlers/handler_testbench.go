@@ -123,14 +123,23 @@ func (h *TestbenchHandler) HandleTestbench(w http.ResponseWriter, r *http.Reques
 
 	// Build engine input
 	input := engine_v4.ExecuteInput{
-		Preset:     "product_card_grid",
+		Ops:        engine_v4.ProductCardGridOps(),
+		Layout:     "grid",
+		Columns:    engine_v4.GridColumnsForCount(len(data)),
 		EntityType: string(domain.EntityTypeProduct),
 		Data:       data,
 	}
 
-	// Apply overrides from params
+	// Apply overrides from params — map legacy preset names to ops
 	if presetName, ok := params["preset"].(string); ok && presetName != "" {
-		input.Preset = presetName
+		switch presetName {
+		case "product_detail":
+			input.Ops = engine_v4.ProductDetailOps()
+			input.Layout = "single"
+			input.Columns = 0
+		case "product_card_grid":
+			// already default
+		}
 	}
 	if layout, ok := params["layout"].(string); ok && layout != "" {
 		input.Layout = layout

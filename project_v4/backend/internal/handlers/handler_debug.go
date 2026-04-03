@@ -336,7 +336,9 @@ func (h *DebugHandler) HandleSeedState(w http.ResponseWriter, r *http.Request) {
 		data[i] = tools.ProductToMap(p)
 	}
 	v4Output := h.engine.Execute(engine_v4.ExecuteInput{
-		Preset:     "product_card_grid",
+		Ops:        engine_v4.ProductCardGridOps(),
+		Layout:     "grid",
+		Columns:    engine_v4.GridColumnsForCount(len(data)),
 		EntityType: string(domain.EntityTypeProduct),
 		Data:       data,
 	})

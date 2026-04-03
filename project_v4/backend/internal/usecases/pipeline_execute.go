@@ -427,7 +427,8 @@ func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionSt
 	if len(state.Current.Data.Products) > 0 {
 		data := []map[string]interface{}{tools.ProductToMap(state.Current.Data.Products[0])}
 		output := uc.engine.Execute(engine_v4.ExecuteInput{
-			Preset:     "product_detail",
+			Ops:        engine_v4.ProductDetailOps(),
+			Layout:     "single",
 			EntityType: string(domain.EntityTypeProduct),
 			Data:       data,
 		})
@@ -440,7 +441,8 @@ func (uc *PipelineExecuteUseCase) buildAdjacentTemplates(state *domain.SessionSt
 	if len(state.Current.Data.Services) > 0 {
 		data := []map[string]interface{}{tools.ServiceToMap(state.Current.Data.Services[0])}
 		output := uc.engine.Execute(engine_v4.ExecuteInput{
-			Preset:     "product_detail",
+			Ops:        engine_v4.ProductDetailOps(),
+			Layout:     "single",
 			EntityType: string(domain.EntityTypeService),
 			Data:       data,
 		})

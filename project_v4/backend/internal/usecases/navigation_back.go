@@ -120,7 +120,9 @@ func (uc *BackUseCase) rebuildFormationFromState(state *domain.SessionState) *do
 			data[i] = tools.ProductToMap(p)
 		}
 		output := uc.engine.Execute(engine_v4.ExecuteInput{
-			Preset:     "product_card_grid",
+			Ops:        engine_v4.ProductCardGridOps(),
+			Layout:     "grid",
+			Columns:    engine_v4.GridColumnsForCount(len(data)),
 			EntityType: string(domain.EntityTypeProduct),
 			Data:       data,
 		})
@@ -133,7 +135,9 @@ func (uc *BackUseCase) rebuildFormationFromState(state *domain.SessionState) *do
 			data[i] = tools.ServiceToMap(s)
 		}
 		output := uc.engine.Execute(engine_v4.ExecuteInput{
-			Preset:     "product_card_grid",
+			Ops:        engine_v4.ProductCardGridOps(),
+			Layout:     "grid",
+			Columns:    engine_v4.GridColumnsForCount(len(data)),
 			EntityType: string(domain.EntityTypeService),
 			Data:       data,
 		})

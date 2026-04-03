@@ -316,15 +316,19 @@ func applyInsert(op Op, idx *idIndex, formation *domain.FormationWithData) (stri
 		return "", "insert requires props"
 	}
 
-	// Determine if inserting an atom or a layout node
 	propType, _ := op.Props["type"].(string)
 
-	// If type matches a LayoutNodeType, insert a layout node
+	// Widget insert: type:"widget" or parent:"formation"
+	if propType == "widget" || op.Parent == "formation" {
+		return insertWidget(op, idx, formation)
+	}
+
+	// Layout node insert
 	if propType == "row" || propType == "column" || propType == "flow" || propType == "span" {
 		return insertLayoutNode(op, idx)
 	}
 
-	// Otherwise insert an atom
+	// Atom insert
 	return insertAtom(op, idx, formation)
 }
 
@@ -399,6 +403,34 @@ func insertLayoutNode(op Op, idx *idIndex) (string, string) {
 	}
 
 	return fmt.Sprintf("__pending_node_%p", node), ""
+}
+
+// insertWidget creates a new empty Widget and adds it to the formation.
+// Subsequent ops can insert atoms/nodes into this widget via $ref chaining.
+func insertWidget(op Op, idx *idIndex, formation *domain.FormationWithData) (string, string) {
+	size := domain.WidgetSizeMedium
+	if v, ok := op.Props["size"].(string); ok && v != "" {
+		size = domain.WidgetSize(v)
+	}
+
+	w := domain.Widget{
+		Size:   size,
+		Layout: &domain.LayoutNode{Type: domain.LayoutNodeColumn, Name: "root", Children: []domain.LayoutChild{}},
+		Atoms:  []domain.Atom{},
+	}
+
+	formation.Widgets = append(formation.Widgets, w)
+	ptr := &formation.Widgets[len(formation.Widgets)-1]
+
+	tempID := fmt.Sprintf("__pending_widget_%d", len(formation.Widgets)-1)
+	ptr.ID = tempID
+
+	idx.widgets[tempID] = ptr
+	// Also index root layout node under widget's ID so $ref chaining works:
+	// parent:"$w" resolves to tempID → insertLayoutNode finds it in idx.nodes → uses widget.Layout
+	idx.nodes[tempID] = nodeRef{node: ptr.Layout, parent: nil, widget: ptr}
+
+	return tempID, ""
 }
 
 // insertChildIntoNode inserts a LayoutChild into a node, optionally after a specific ID.

@@ -24,12 +24,9 @@ type Op struct {
 }
 
 // ExecuteInput is the single entry point for all engine operations.
-// No separate auto/ops/build modes — ONE pipeline.
+// Ops-only pipeline: build from scratch or modify existing.
 type ExecuteInput struct {
-	// Preset name — macro-operation that creates initial formation tree
-	Preset string
-
-	// Operations — micro-operations on the tree (modify, extend, build from scratch)
+	// Operations — build widgets from scratch or modify existing formation
 	Ops []Op
 
 	// Entity data for data-binding (atoms with FieldName get values from here)
@@ -51,7 +48,3 @@ type ExecuteOutput struct {
 	TreeMap   map[string]interface{} // compact context for Agent2 next turn
 	Warnings  []string
 }
-
-// PresetFunc generates an initial formation tree from data.
-// The agent can then modify via ops.
-type PresetFunc func(data []map[string]interface{}, entityType string) *domain.FormationWithData
