@@ -63,6 +63,13 @@ func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 		}
 	}
 
+	// Step 4.5: Inject default actions for entity-bound widgets
+	for i := range formation.Widgets {
+		if formation.Widgets[i].EntityRef != nil && len(formation.Widgets[i].Actions) == 0 {
+			formation.Widgets[i].Actions = DefaultWidgetActions()
+		}
+	}
+
 	// Step 5: Bind data to atoms with FieldName
 	if len(input.Data) > 0 {
 		BindData(formation, input.Data)

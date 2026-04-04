@@ -1,5 +1,7 @@
 package engine_v4
 
+import "keepstar_v4/internal/domain"
+
 // ProductCardGridOps returns ops that build a product card template.
 // Engine replicates this template for N data items.
 func ProductCardGridOps() []Op {
@@ -32,6 +34,15 @@ func ProductDetailOps() []Op {
 		{Type: OpInsert, Ref: "tags", Parent: "$content", Props: map[string]interface{}{"type": "flow", "gap": "sm"}},
 		{Type: OpInsert, Parent: "$tags", Props: map[string]interface{}{"type": "text", "fieldName": "category", "wrapper": map[string]interface{}{"type": "tag", "variant": "outline"}, "slot": "tags"}},
 		{Type: OpInsert, Parent: "$tags", Props: map[string]interface{}{"type": "text", "fieldName": "tags", "wrapper": map[string]interface{}{"type": "tag", "variant": "subtle"}, "slot": "tags"}},
+	}
+}
+
+// DefaultWidgetActions returns the default set of actions for entity-bound widgets.
+// Injected by engine after replication; agent can override by setting Actions via ops.
+func DefaultWidgetActions() []domain.ActionDef {
+	return []domain.ActionDef{
+		{Type: domain.WidgetActionLike},
+		{Type: domain.WidgetActionAddToCart},
 	}
 }
 

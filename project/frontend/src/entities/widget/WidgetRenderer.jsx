@@ -69,6 +69,7 @@ function renderTemplate(widget) {
         direction={widget.meta?.direction}
         entityRef={entityRef}
         states={widget.states}
+        actions={widget.actions || []}
       />
     );
   }
@@ -82,6 +83,7 @@ function renderTemplate(widget) {
       direction={widget.meta?.direction}
       entityRef={entityRef}
       states={widget.states}
+      actions={widget.actions || []}
     />
   );
 }
