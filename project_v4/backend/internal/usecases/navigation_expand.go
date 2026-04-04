@@ -95,7 +95,8 @@ func (uc *ExpandUseCase) Execute(ctx context.Context, req ExpandRequest) (*Expan
 
 	// 5. Build detail formation using V4 engine
 	output := uc.engine.Execute(engine_v4.ExecuteInput{
-		Preset:     "product_detail",
+		Ops:        engine_v4.ProductDetailOps(),
+		Layout:     "single",
 		EntityType: string(req.EntityType),
 		Data:       []map[string]interface{}{dataMap},
 	})

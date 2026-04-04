@@ -1,46 +1,34 @@
 package engine_v4
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"keepstar_v4/internal/domain"
 )
 
 // Engine is the V4 Pencil-based visual assembly engine.
-// ONE pipeline: preset → ops → data-binding → constraints → IDs.
-type Engine struct {
-	presets map[string]PresetFunc
-}
+// Ops-only pipeline: ops → replicate → bind → constraints → IDs.
+type Engine struct{}
 
-// NewEngine creates a V4 engine with registered presets.
+// NewEngine creates a V4 engine.
 func NewEngine() *Engine {
-	return &Engine{
-		presets: defaultPresets(),
-	}
+	return &Engine{}
 }
 
-// Execute runs the single unified pipeline.
+// Execute runs the ops-only pipeline.
 func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 	var warnings []string
 	var formation *domain.FormationWithData
 
-	// Step 1: Start with existing formation or create from preset
+	// Step 1: Start with existing formation or empty
 	if input.Formation != nil {
 		formation = input.Formation
-	} else if input.Preset != "" {
-		presetFn, ok := e.presets[input.Preset]
-		if !ok {
-			return ExecuteOutput{
-				Warnings: []string{fmt.Sprintf("unknown preset: %s", input.Preset)},
-			}
-		}
-		formation = presetFn(input.Data, input.EntityType)
 	} else {
-		// No preset, no existing formation — start with empty
 		formation = &domain.FormationWithData{}
 	}
 
-	// Apply formation-level settings
+	// Step 2: Apply formation-level settings
 	if input.Layout != "" {
 		formation.Mode = domain.FormationType(input.Layout)
 	}
@@ -50,25 +38,43 @@ func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 		}
 		formation.Grid.Cols = input.Columns
 	}
+	if input.Size != "" {
+		for i := range formation.Widgets {
+			formation.Widgets[i].Size = domain.WidgetSize(input.Size)
+		}
+	}
 
-	// Step 2: Apply operations
+	// Step 3: Apply operations
 	if len(input.Ops) > 0 {
 		opWarnings := ApplyOps(formation, input.Ops)
 		warnings = append(warnings, opWarnings...)
 	}
 
-	// Step 3: Bind data to atoms with FieldName
+	// Step 4: Replicate — 1 widget template + N data items → N widgets
+	if len(input.Data) > 1 && len(formation.Widgets) == 1 && len(formation.Sections) == 0 {
+		replicateWidgets(formation, input.Data, input.EntityType)
+	} else if len(input.Data) == 1 && len(formation.Widgets) == 1 {
+		// Single data item — just set EntityRef
+		if id, ok := input.Data[0]["id"]; ok {
+			formation.Widgets[0].EntityRef = &domain.EntityRef{
+				Type: domain.EntityType(input.EntityType),
+				ID:   fmt.Sprintf("%v", id),
+			}
+		}
+	}
+
+	// Step 5: Bind data to atoms with FieldName
 	if len(input.Data) > 0 {
 		BindData(formation, input.Data)
 	}
 
-	// Step 4: Apply constraints (ALL atoms, no bypass)
+	// Step 6: Apply constraints (ALL atoms, no bypass)
 	ApplyConstraints(formation)
 
-	// Step 5: Stamp stable IDs
+	// Step 7: Stamp stable IDs
 	StampTreeIDs(formation)
 
-	// Step 6: Build compact tree map for Agent2 context
+	// Step 8: Build compact tree map for Agent2 context
 	treeMap := BuildTreeMap(formation)
 
 	return ExecuteOutput{
@@ -78,11 +84,35 @@ func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 	}
 }
 
-// GetPresetNames returns available preset names for tool schema.
-func (e *Engine) GetPresetNames() []string {
-	names := make([]string, 0, len(e.presets))
-	for name := range e.presets {
-		names = append(names, name)
+// replicateWidgets deep-copies the single template widget for each data item.
+func replicateWidgets(formation *domain.FormationWithData, data []map[string]interface{}, entityType string) {
+	template := formation.Widgets[0]
+	widgets := make([]domain.Widget, len(data))
+
+	for i := range data {
+		widgets[i] = deepCopyWidget(template)
+		widgets[i].ID = "" // will be stamped by StampTreeIDs
+		if id, ok := data[i]["id"]; ok {
+			widgets[i].EntityRef = &domain.EntityRef{
+				Type: domain.EntityType(entityType),
+				ID:   fmt.Sprintf("%v", id),
+			}
+		}
 	}
-	return names
+
+	formation.Widgets = widgets
 }
+
+// deepCopyWidget creates a deep copy via JSON roundtrip.
+func deepCopyWidget(src domain.Widget) domain.Widget {
+	data, err := json.Marshal(src)
+	if err != nil {
+		return src
+	}
+	var dst domain.Widget
+	if err := json.Unmarshal(data, &dst); err != nil {
+		return src
+	}
+	return dst
+}
+

@@ -27,19 +27,14 @@ func NewVisualAssemblyTool(statePort ports.StatePort, eng *engine_v4.Engine) *Vi
 
 // Definition returns the tool definition for LLM.
 // Key difference from V2: no mode field, no atoms override map, no show/hide/order.
-// Everything is either preset or ops.
+// Ops-only: build from scratch or modify existing formation.
 func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 	return domain.ToolDefinition{
 		Name:        "visual_assembly",
-		Description: "Build or modify visual formation. Use 'preset' for instant templates, 'ops' for custom modifications, or both together.",
+		Description: "Build or modify visual formation using ops. Insert widgets, atoms, and layout nodes to build any UI.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"preset": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"product_card_grid", "product_detail", "product_row"},
-					"description": "Apply preset template — creates formation with data-bound atoms instantly. Use when a matching template exists.",
-				},
 				"ops": map[string]interface{}{
 					"type": "array",
 					"items": map[string]interface{}{
@@ -70,7 +65,7 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 								"properties": map[string]interface{}{
 									"type": map[string]interface{}{
 										"type":        "string",
-										"description": "Atom type: text, number, image, icon. For layout: row, column, flow, span.",
+										"description": "Atom: text, number, image, icon. Layout: row, column, flow, span. Container: widget.",
 									},
 									"value":     map[string]interface{}{"description": "Literal value for freestyle atoms."},
 									"fieldName": map[string]interface{}{"type": "string", "description": "Field name for data-bound atoms."},
@@ -147,11 +142,6 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 	// Build engine input
 	engineInput := engine_v4.ExecuteInput{}
 
-	// Preset
-	if preset, ok := params["preset"].(string); ok {
-		engineInput.Preset = preset
-	}
-
 	// Ops
 	if opsRaw, ok := params["ops"].([]interface{}); ok && len(opsRaw) > 0 {
 		ops, parseErr := engine_v4.ParseOps(opsRaw)
@@ -188,15 +178,24 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 		}
 	}
 
-	// Load existing formation for ops-only calls (no preset)
-	if engineInput.Preset == "" && len(engineInput.Ops) > 0 {
+	// Detect build-from-scratch: first op inserts a widget
+	buildFromScratch := false
+	if len(engineInput.Ops) > 0 {
+		firstOp := engineInput.Ops[0]
+		propType, _ := firstOp.Props["type"].(string)
+		if propType == "widget" || firstOp.Parent == "formation" {
+			buildFromScratch = true
+		}
+	}
+
+	// Load existing formation for modification ops (not build-from-scratch)
+	if !buildFromScratch && len(engineInput.Ops) > 0 {
 		if state.Current.Template != nil {
 			if fData, ok := state.Current.Template["formation"]; ok {
 				engineInput.Formation = convertToFormation(fData)
 			}
 		}
 		if engineInput.Formation != nil {
-			// Expand wildcard ops (field name → per-widget IDs)
 			engineInput.Ops = engine_v4.ExpandWildcardOps(engineInput.Formation, engineInput.Ops)
 		}
 	}

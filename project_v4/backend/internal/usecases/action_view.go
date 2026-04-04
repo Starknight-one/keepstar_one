@@ -67,7 +67,9 @@ func (uc *ActionUseCase) buildLikedView(state *domain.SessionState) (*ActionView
 		data[i] = tools.ProductToMap(p)
 	}
 	output := eng.Execute(engine_v4.ExecuteInput{
-		Preset:     "product_card_grid",
+		Ops:        engine_v4.ProductCardGridOps(),
+		Layout:     "grid",
+		Columns:    engine_v4.GridColumnsForCount(len(data)),
 		EntityType: string(domain.EntityTypeProduct),
 		Data:       data,
 	})
@@ -109,7 +111,9 @@ func (uc *ActionUseCase) buildCartView(state *domain.SessionState) (*ActionViewR
 		data[i] = tools.ProductToMap(p)
 	}
 	output := eng.Execute(engine_v4.ExecuteInput{
-		Preset:     "product_card_grid",
+		Ops:        engine_v4.ProductCardGridOps(),
+		Layout:     "grid",
+		Columns:    engine_v4.GridColumnsForCount(len(data)),
 		EntityType: string(domain.EntityTypeProduct),
 		Data:       data,
 	})

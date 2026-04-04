@@ -57,52 +57,11 @@ func applyAtomConstraints(atoms []domain.Atom) {
 				a.Wrapper = nil
 			}
 		}
-
-		// D5: Truncate by slot
-		if a.TextStyle == nil {
-			a.TextStyle = &domain.TextStyle{}
-		}
-		switch a.Slot {
-		case domain.AtomSlotTitle:
-			if a.TextStyle.LineClamp == 0 {
-				a.TextStyle.LineClamp = 2
-			}
-		case domain.AtomSlotSecondary, domain.AtomSlotDescription:
-			if a.TextStyle.LineClamp == 0 {
-				a.TextStyle.LineClamp = 3
-			}
-		}
-		// Clean up empty TextStyle
-		if a.TextStyle != nil && *a.TextStyle == (domain.TextStyle{}) {
-			a.TextStyle = nil
-		}
 	}
 }
 
 // applyWidgetConstraints applies per-widget rules.
 func applyWidgetConstraints(w *domain.Widget) {
-	// W1: Max 2 badges per widget
-	badgeCount := 0
-	for i := range w.Atoms {
-		if w.Atoms[i].Wrapper != nil && w.Atoms[i].Wrapper.Type == "badge" {
-			badgeCount++
-			if badgeCount > 2 {
-				w.Atoms[i].Wrapper.Type = "tag"
-			}
-		}
-	}
-
-	// W2: Max 5 tags per widget
-	tagCount := 0
-	for i := range w.Atoms {
-		if w.Atoms[i].Wrapper != nil && w.Atoms[i].Wrapper.Type == "tag" {
-			tagCount++
-			if tagCount > 5 {
-				w.Atoms[i].Wrapper = nil // unwrap excess
-			}
-		}
-	}
-
 	// W8: Tiny size → remove image atoms
 	if w.Size == domain.WidgetSizeTiny {
 		filtered := w.Atoms[:0]

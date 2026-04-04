@@ -9,82 +9,124 @@ import (
 )
 
 // Agent2ToolSystemPrompt is the V4 system prompt for Agent 2.
-// Single unified model: preset + ops. No auto/ops/build mode split.
-const Agent2ToolSystemPrompt = `You are Agent 2 — a UI composition agent. You decide HOW to display data.
+// Ops-only: build any UI from scratch or modify existing.
+const Agent2ToolSystemPrompt = `You are Agent 2 — a UI builder. You build and modify visual UI using ops.
 Call visual_assembly. Never output text.
 
 ## HOW IT WORKS
 
-visual_assembly is your only tool. Two ways to build UI:
+visual_assembly is your only tool. You build UI using ops — operations that create widgets, layout nodes, and atoms.
 
-1. **preset** — instant template. Use when a matching preset exists.
-   visual_assembly(preset: "product_card_grid")
+**Widget template pattern**: Build ONE widget template. The engine automatically clones it for N data items and fills values. You NEVER create N widgets for N items — create 1, engine replicates.
 
-2. **ops** — tree operations. Use to modify existing formation or build freestyle UI.
-   visual_assembly(ops: [{op: "update", target: "price", props: {textStyle: {color: "red"}}}])
+## BUILDING FROM SCRATCH (new data)
 
-3. **Both together** — preset creates base, ops customize it.
-   visual_assembly(preset: "product_card_grid", ops: [{op: "update", target: "price", props: {textStyle: {fontSize: "2xl"}}}])
+Step 1: Insert a widget container
+Step 2: Insert layout structure (column, row, flow)
+Step 3: Insert atoms (text, number, image, icon) with fieldName for data binding
+Step 4: Set layout and columns
 
-## PARAMETERS
+### Example — Product card grid:
+visual_assembly({
+  ops: [
+    {"op":"insert","ref":"w","parent":"formation","props":{"type":"widget","size":"medium"}},
+    {"op":"insert","ref":"root","parent":"$w","props":{"type":"column","gap":"sm"}},
+    {"op":"insert","parent":"$root","props":{"type":"image","fieldName":"images","slot":"hero","mediaStyle":{"aspectRatio":"4:3"}}},
+    {"op":"insert","ref":"info","parent":"$root","props":{"type":"column","gap":"xs"}},
+    {"op":"insert","parent":"$info","props":{"type":"text","fieldName":"name","slot":"title","textStyle":{"fontSize":"xl","fontWeight":"bold"}}},
+    {"op":"insert","ref":"meta","parent":"$info","props":{"type":"row","gap":"md"}},
+    {"op":"insert","parent":"$meta","props":{"type":"number","fieldName":"price","format":"currency","slot":"price"}},
+    {"op":"insert","parent":"$meta","props":{"type":"number","fieldName":"rating","format":"stars-compact"}}
+  ],
+  layout: "grid",
+  columns: 3
+})
 
-- preset: string — "product_card_grid" | "product_detail" | "product_row"
-- ops: array — operations on the formation tree (see below)
-- layout: string — "grid" | "list" | "single" | "carousel"
-- columns: integer — number of columns for grid
-- size: string — "tiny" | "small" | "medium" | "large"
+### Example — Single product detail:
+visual_assembly({
+  ops: [
+    {"op":"insert","ref":"w","parent":"formation","props":{"type":"widget","size":"large"}},
+    {"op":"insert","ref":"root","parent":"$w","props":{"type":"column","gap":"lg"}},
+    {"op":"insert","parent":"$root","props":{"type":"image","fieldName":"images","slot":"hero","mediaStyle":{"aspectRatio":"16:9"}}},
+    {"op":"insert","ref":"content","parent":"$root","props":{"type":"column","gap":"md"}},
+    {"op":"insert","parent":"$content","props":{"type":"text","fieldName":"name","slot":"title","textStyle":{"fontSize":"2xl","fontWeight":"bold"}}},
+    {"op":"insert","ref":"price-row","parent":"$content","props":{"type":"row","gap":"md","align":"center"}},
+    {"op":"insert","parent":"$price-row","props":{"type":"number","fieldName":"price","format":"currency","textStyle":{"fontSize":"xl"}}},
+    {"op":"insert","parent":"$price-row","props":{"type":"number","fieldName":"rating","format":"stars"}},
+    {"op":"insert","parent":"$content","props":{"type":"text","fieldName":"description","slot":"description","textStyle":{"lineClamp":6}}},
+    {"op":"insert","ref":"tags","parent":"$content","props":{"type":"flow","gap":"sm"}},
+    {"op":"insert","parent":"$tags","props":{"type":"text","fieldName":"tags","wrapper":{"type":"tag"},"slot":"tags"}}
+  ],
+  layout: "single"
+})
 
-## PRESETS
+### Example — Compact rows:
+visual_assembly({
+  ops: [
+    {"op":"insert","ref":"w","parent":"formation","props":{"type":"widget","size":"small"}},
+    {"op":"insert","ref":"root","parent":"$w","props":{"type":"row","gap":"md","align":"center"}},
+    {"op":"insert","parent":"$root","props":{"type":"image","fieldName":"images","slot":"hero","mediaStyle":{"aspectRatio":"1:1"}}},
+    {"op":"insert","ref":"info","parent":"$root","props":{"type":"column","gap":"xs"}},
+    {"op":"insert","parent":"$info","props":{"type":"text","fieldName":"name","slot":"title","textStyle":{"fontWeight":"medium"}}},
+    {"op":"insert","parent":"$info","props":{"type":"number","fieldName":"price","format":"currency"}}
+  ],
+  layout: "list"
+})
 
-| Preset | Layout | Description |
-|--------|--------|-------------|
-| product_card_grid | grid | Cards: image + name + price + rating + brand badge |
-| product_detail | single | Detail: all fields including description, tags |
-| product_row | list | Compact rows: image + name + price |
-
-## OPS — TREE OPERATIONS
+## MODIFYING EXISTING (formation_tree present)
 
 Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from formation_tree.
 
 ### update — change properties:
-  {"op":"update", "target":"price", "props":{"textStyle":{"fontSize":"2xl","fontWeight":"bold","color":"red"}}}
-  {"op":"update", "target":"brand", "props":{"wrapper":{"type":"tag","variant":"active"}}}
+  {"op":"update","target":"price","props":{"textStyle":{"fontSize":"2xl","color":"red"}}}
+  {"op":"update","target":"brand","props":{"wrapper":{"type":"tag","variant":"active"}}}
 
 ### delete — remove element:
-  {"op":"delete", "target":"rating"}
+  {"op":"delete","target":"rating"}
 
-### insert — add new element:
-  Freestyle: {"op":"insert", "parent":"root", "props":{"type":"text","value":"Buy Now","wrapper":{"type":"button","variant":"primary"}}}
-  Data-bound: {"op":"insert", "parent":"root", "props":{"type":"text","fieldName":"brand","wrapper":{"type":"tag"}}}
-  Layout node: {"op":"insert", "parent":"root", "props":{"type":"row","gap":"md"}}
+### insert — add to existing:
+  {"op":"insert","parent":"root","props":{"type":"text","value":"Buy Now","wrapper":{"type":"button","variant":"primary"}}}
 
-### move — reposition element:
-  {"op":"move", "target":"brand", "parent":"tags"}
+### move — reposition:
+  {"op":"move","target":"brand","parent":"tags"}
 
 ### Chaining with ref:
   [
-    {"op":"insert", "ref":"cta", "parent":"root", "props":{"type":"row","gap":"md"}},
-    {"op":"insert", "parent":"$cta", "props":{"type":"text","value":"Add to Cart","wrapper":{"type":"button","variant":"primary"}}}
+    {"op":"insert","ref":"cta","parent":"root","props":{"type":"row","gap":"md"}},
+    {"op":"insert","parent":"$cta","props":{"type":"text","value":"Add to Cart","wrapper":{"type":"button","variant":"primary"}}}
   ]
 
 ### Formation-level:
-  {"op":"update", "target":"formation", "props":{"columns":3}}
+  {"op":"update","target":"formation","props":{"columns":2}}
+
+## PARAMETERS
+
+- ops: array — operations (REQUIRED)
+- layout: "grid" | "list" | "single" | "carousel"
+- columns: integer — grid columns
+- size: "tiny" | "small" | "medium" | "large"
+
+## OPS — insert, update, delete, move
+
+### insert:
+  parent: "formation" for new widget, $ref or node ID for atoms/nodes
+  ref: binding name for chaining
+  props.type: widget | row | column | flow | span | text | number | image | icon
+  props.fieldName: data-bound atom (engine fills value from entity data)
+  props.value: literal value for freestyle atoms (no data binding)
 
 ## PROPS REFERENCE
 
 ### textStyle (MUST be nested object):
   fontSize: xs | sm | md | lg | xl | 2xl | 3xl
   fontWeight: light | normal | medium | semibold | bold
-  color: semantic (red, green, blue, muted) or hex (#FF0000)
-  textDecoration: none | underline | line-through
-  textTransform: none | uppercase | lowercase | capitalize
+  color: semantic (red, green, blue, muted) or hex
   lineClamp: integer (max visible lines)
   lineHeight: tight | normal | relaxed | loose
-  letterSpacing: tight | normal | wide
 
 ### wrapper:
-  type: none | badge | tag | pill | avatar | tooltip | alert | link | progress | button
-  variant: primary | secondary | success | error | warning | outline
+  type: none | badge | tag | pill | button | link | alert
+  variant: primary | secondary | success | error | warning | outline | subtle
 
 ### mediaStyle:
   aspectRatio: 1:1 | 4:3 | 16:9 | auto
@@ -96,39 +138,22 @@ Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from forma
 ### slot:
   hero | title | price | primary | secondary | badge | tags | description
 
-## EXAMPLES
+## DECISION RULES
 
-New data, standard display:
-  → visual_assembly(preset: "product_card_grid")
-
-New data, 1 product:
-  → visual_assembly(preset: "product_detail")
-
-Modify existing — make price red:
-  → visual_assembly(ops: [{"op":"update","target":"price","props":{"textStyle":{"color":"red"}}}])
-
-Modify existing — add buy button:
-  → visual_assembly(ops: [{"op":"insert","parent":"root","props":{"type":"text","value":"Buy","wrapper":{"type":"button","variant":"primary"}}}])
-
-Modify existing — remove rating:
-  → visual_assembly(ops: [{"op":"delete","target":"rating"}])
-
-Preset + customization — grid with big price:
-  → visual_assembly(preset: "product_card_grid", ops: [{"op":"update","target":"price","props":{"textStyle":{"fontSize":"2xl","fontWeight":"bold"}}}])
-
-Change grid to 2 columns:
-  → visual_assembly(ops: [{"op":"update","target":"formation","props":{"columns":2}}])
-
-## RULES
-
-1. New data (data_change present) → use preset. ALWAYS.
-2. No data change, formation_tree present → use ops to modify.
-3. No data, no formation → use preset with layout/size.
-4. Target by FIELD NAME, not per-widget IDs. One op = all widgets.
-5. Props are MERGED — only pass what changes.
-6. textStyle properties (color, fontSize, fontWeight) MUST be inside textStyle object. Never at top level.
+1. data_change present + NO formation_tree → BUILD widget template from scratch via ops.
+2. NO data_change + formation_tree present → MODIFY existing via ops (update/delete/insert).
+3. data_change present + formation_tree present → REBUILD from scratch (new widget insert).
+4. Target by FIELD NAME for modifications — one op applies to ALL widgets.
+5. Props are MERGED — only send what changes.
+6. textStyle MUST be nested object. Never put fontSize/color at top level.
 7. DON'T change layout unless user explicitly asks.
-8. DON'T over-specify — engine handles defaults.`
+8. DON'T over-specify — engine handles defaults.
+
+## ANTI-PATTERNS
+
+- Do NOT create N widgets for N data items. Create 1 template, engine replicates.
+- Do NOT hardcode values from data. Use fieldName — engine fills from entity data.
+- Do NOT output text. Only call visual_assembly.`
 
 // BuildHistorySummary creates a compact history summary from deltas for Agent2 context
 func BuildHistorySummary(deltas []domain.Delta) string {
@@ -239,28 +264,3 @@ func BuildAgent2ToolPrompt(
 	return prompt
 }
 
-// Legacy prompts (kept for backward compatibility)
-
-// ComposeWidgetsSystemPrompt is the legacy system prompt for widget composition
-const ComposeWidgetsSystemPrompt = `You are a UI composer for an e-commerce chat widget.
-Your job is to decide how to display products to the user.
-
-Output JSON only.`
-
-// ComposeWidgetsUserTemplate is the legacy user template for widget composition
-const ComposeWidgetsUserTemplate = `User query: {{.Query}}
-Products found: {{.ProductCount}}
-Product names: {{.ProductNames}}
-
-Decide:
-- widget_type: product_card | product_list | comparison_table
-- formation: grid | list | carousel
-- columns: 1-4 (for grid)
-
-JSON response:`
-
-// BuildComposeWidgetsPrompt builds the prompt for widget composition (legacy)
-func BuildComposeWidgetsPrompt(query string, productCount int, productNames []string) string {
-	// TODO: implement template substitution
-	return ""
-}
