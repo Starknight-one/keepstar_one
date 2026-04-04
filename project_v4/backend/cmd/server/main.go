@@ -163,7 +163,7 @@ func main() {
 	// Initialize Agent 2 use case (Preset Selector)
 	var agent2UC *usecases.Agent2ExecuteUseCase
 	if stateAdapter != nil && toolRegistry != nil {
-		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog, fieldDefAdapter, cfg.Agent2PromptVersion)
+		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog, fieldDefAdapter)
 		appLog.Info("agent2_usecase_initialized", "status", "ok")
 	}
 	_ = agent2UC // Available for direct Agent 2 calls

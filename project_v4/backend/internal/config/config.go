@@ -4,16 +4,15 @@ import "os"
 
 // Config holds application configuration
 type Config struct {
-	Port               string
-	Environment        string
-	AnthropicAPIKey    string
-	LLMModel           string
-	LogLevel           string
-	DatabaseURL        string
-	TenantSlug         string
-	OpenAIAPIKey       string
-	EmbeddingModel     string
-	Agent2PromptVersion string // "default" or "guided"
+	Port            string
+	Environment     string
+	AnthropicAPIKey string
+	LLMModel        string
+	LogLevel        string
+	DatabaseURL     string
+	TenantSlug      string
+	OpenAIAPIKey    string
+	EmbeddingModel  string
 }
 
 // Load loads configuration from environment variables
@@ -26,9 +25,8 @@ func Load() *Config {
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		DatabaseURL:     getEnv("DATABASE_URL", ""),
 		TenantSlug:      getEnv("TENANT_SLUG", "nike"),
-		OpenAIAPIKey:       getEnv("OPENAI_API_KEY", ""),
-		EmbeddingModel:    getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
-		Agent2PromptVersion: getEnv("AGENT2_PROMPT_VERSION", "default"),
+		OpenAIAPIKey:    getEnv("OPENAI_API_KEY", ""),
+		EmbeddingModel:  getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
 	}
 }
 

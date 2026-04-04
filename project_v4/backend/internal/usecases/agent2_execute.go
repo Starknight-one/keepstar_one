@@ -56,7 +56,6 @@ type Agent2ExecuteUseCase struct {
 	toolRegistry   *tools.Registry
 	log            *logger.Logger
 	fieldDefPort   ports.FieldDefinitionPort // field definitions
-	promptVersion  string                    // "default" or "guided"
 }
 
 // NewAgent2ExecuteUseCase creates Agent 2 use case with field definitions support
@@ -66,15 +65,13 @@ func NewAgent2ExecuteUseCase(
 	toolRegistry *tools.Registry,
 	log *logger.Logger,
 	fieldDefPort ports.FieldDefinitionPort,
-	promptVersion string,
 ) *Agent2ExecuteUseCase {
 	return &Agent2ExecuteUseCase{
-		llm:           llm,
-		statePort:     statePort,
-		toolRegistry:  toolRegistry,
-		log:           log,
-		fieldDefPort:  fieldDefPort,
-		promptVersion: promptVersion,
+		llm:          llm,
+		statePort:    statePort,
+		toolRegistry: toolRegistry,
+		log:          log,
+		fieldDefPort: fieldDefPort,
 	}
 }
 
@@ -193,9 +190,6 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 
 	// Build user message and system prompt
 	systemPrompt := prompts.Agent2ToolSystemPrompt
-	if uc.promptVersion == "guided" {
-		systemPrompt = prompts.Agent2GuidedSystemPrompt
-	}
 	// Load field labels from field_definitions for context
 	fieldLabels := uc.loadFieldLabels(ctx, req.TenantSlug, state)
 	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx, fieldLabels, formationTree)
