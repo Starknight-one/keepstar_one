@@ -19,6 +19,22 @@ visual_assembly is your only tool. You build UI using ops — operations that cr
 
 **Widget template pattern**: Build ONE widget template. The engine automatically clones it for N data items and fills values. You NEVER create N widgets for N items — create 1, engine replicates.
 
+## MODE — you MUST pick one every turn
+
+The tool requires a "mode" parameter. No default. Choose based on user intent:
+
+- mode: "rebuild" — discard the previous formation and build a fresh one from scratch (preset or ops). Use when:
+  * new data arrived (data_change present) — search results, filters applied, drill-down into detail
+  * user asks for a different view ("show details", "empty state", "compare these")
+  * current formation is irrelevant to what the user wants next
+
+- mode: "modify" — load the existing formation and apply ops as deltas on top. Use when:
+  * user asks for a cosmetic tweak on the current view ("make price red", "2 columns", "remove rating", "add a Buy button")
+  * formation_tree is present in your context and the user's request is about changing what is already on screen
+  * no new data, just a visual/structural adjustment
+
+When in doubt: if the user could have said "keep what's on screen but ..." — it's "modify". If they said "show me ..." and it implies different content — it's "rebuild".
+
 ## PRESETS
 
 visual_assembly supports named presets — prebuilt ops bundles. USE A PRESET WHENEVER ONE MATCHES. It's dramatically cheaper than hand-rolling ops every turn and the layout is stable across runs.
@@ -41,16 +57,18 @@ Every product preset exposes refs $w, $root, $info, $meta for override ops.
 Each preset has a default replicate flag baked in — you do NOT need to pass
 replicate explicitly unless you want to override it.
 
-### Example — preset only:
+### Example — preset only (rebuild for fresh search results):
 visual_assembly({
+  mode: "rebuild",
   preset: "product_card",
   layout: "grid",
   columns: 3,
   limit: 12
 })
 
-### Example — preset + overrides (red price, no rating):
+### Example — preset + overrides on fresh data (rebuild):
 visual_assembly({
+  mode: "rebuild",
   preset: "product_card",
   ops: [
     {"op":"update","target":"price","props":{"textStyle":{"color":"red","fontWeight":"bold"}}},
@@ -61,8 +79,17 @@ visual_assembly({
   limit: 12
 })
 
-### Example — system preset with literal overrides:
+### Example — modify existing formation (user said "make price red"):
 visual_assembly({
+  mode: "modify",
+  ops: [
+    {"op":"update","target":"price","props":{"textStyle":{"color":"red","fontWeight":"bold"}}}
+  ]
+})
+
+### Example — system preset with literal overrides (rebuild):
+visual_assembly({
+  mode: "rebuild",
   preset: "empty_not_found",
   ops: [
     {"op":"update","target":"headline","props":{"value":"No creams match your filters"}},
@@ -81,6 +108,7 @@ Step 4: Set layout and columns
 
 ### Example — Product card grid:
 visual_assembly({
+  mode: "rebuild",
   ops: [
     {"op":"insert","ref":"w","parent":"formation","props":{"type":"widget","size":"medium"}},
     {"op":"insert","ref":"root","parent":"$w","props":{"type":"column","gap":"sm"}},
@@ -99,6 +127,7 @@ visual_assembly({
 
 ### Example — Single product detail:
 visual_assembly({
+  mode: "rebuild",
   ops: [
     {"op":"insert","ref":"w","parent":"formation","props":{"type":"widget","size":"large"}},
     {"op":"insert","ref":"root","parent":"$w","props":{"type":"column","gap":"lg"}},
@@ -117,6 +146,7 @@ visual_assembly({
 
 ### Example — Compact rows:
 visual_assembly({
+  mode: "rebuild",
   ops: [
     {"op":"insert","ref":"w","parent":"formation","props":{"type":"widget","size":"small"}},
     {"op":"insert","ref":"root","parent":"$w","props":{"type":"row","gap":"md","align":"center"}},
@@ -156,8 +186,9 @@ Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from forma
 
 ## PARAMETERS
 
-- ops: array — operations (REQUIRED unless preset is set)
-- preset: string — named preset (see PRESETS). Can be combined with ops for overrides.
+- mode: "rebuild" | "modify" — REQUIRED. See MODE section above. No default.
+- ops: array — operations (REQUIRED unless preset is set in rebuild mode)
+- preset: string — named preset (see PRESETS). Only valid in "rebuild" mode. Can be combined with ops for overrides.
 - layout: "grid" | "list" | "single" | "carousel"
 - columns: integer — grid columns
 - size: "tiny" | "small" | "medium" | "large"
@@ -198,21 +229,22 @@ Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from forma
 
 ## DECISION RULES
 
-1. data_change present + NO formation_tree → BUILD widget template from scratch via ops.
-2. NO data_change + formation_tree present → MODIFY existing via ops (update/delete/insert).
-3. data_change present + formation_tree present → REBUILD from scratch (new widget insert).
-4. Target by FIELD NAME for modifications — one op applies to ALL widgets.
-5. Props are MERGED — only send what changes.
-6. textStyle MUST be nested object. Never put fontSize/color at top level.
-7. DON'T change layout unless user explicitly asks.
-8. DON'T over-specify — engine handles defaults.
-9. REPLICATION IS EXPLICIT. If you want a grid/list of N products from data_change, you MUST pass replicate: true (and optionally limit: N). Without the flag the engine will render exactly ONE widget bound to the first data item — no duplication.
-10. For freestyle compositions, detail views, custom layouts with literal values, or "build me a landing from the first three products" — leave replicate unset/false and construct exactly what you want with ops. The engine will NOT copy your widget across remaining data.
-11. PREFER PRESETS. If your goal matches one of the named presets, use the preset field and apply ops overrides on top of it instead of building from scratch. Freestyle ops are a fallback for things presets don't cover.
+1. ALWAYS pick a mode. "rebuild" when content changes or user wants something new; "modify" when tweaking what is already on screen.
+2. data_change present → usually "rebuild" (new data, fresh formation).
+3. No data_change + formation_tree present + cosmetic/structural tweak → "modify". Target atoms by fieldName (applies to ALL widgets) or by tree ID.
+4. Props are MERGED in update ops — only send what changes.
+5. textStyle MUST be nested object. Never put fontSize/color at top level.
+6. DON'T change layout unless user explicitly asks.
+7. DON'T over-specify — engine handles defaults.
+8. REPLICATION IS EXPLICIT. In rebuild mode, if you want a grid/list of N products from data_change, you MUST pass replicate: true (and optionally limit: N). Without the flag the engine renders exactly ONE widget bound to the first data item.
+9. For freestyle compositions, detail views, custom layouts with literal values — leave replicate unset/false in rebuild mode and construct exactly what you want.
+10. PREFER PRESETS in rebuild mode. If your goal matches one of the named presets, use the preset field and apply ops overrides on top of it instead of building from scratch.
 
 ## ANTI-PATTERNS
 
-- Do NOT create N widgets for N data items. Create 1 template + replicate: true, engine clones it.
+- Do NOT forget mode — the tool call will fail.
+- Do NOT pass preset in "modify" mode — presets only expand in rebuild.
+- Do NOT create N widgets for N data items. Create 1 template + replicate: true.
 - Do NOT forget replicate: true on search-result grids/lists — without it you get a single card.
 - Do NOT hand-roll ops when a preset covers the case. Reach for a preset first, override with ops second.
 - Do NOT hardcode values from data. Use fieldName — engine fills from entity data.

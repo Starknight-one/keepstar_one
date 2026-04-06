@@ -33,8 +33,14 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 		Name:        "visual_assembly",
 		Description: "Build or modify visual formation using ops. Insert widgets, atoms, and layout nodes to build any UI.",
 		InputSchema: map[string]interface{}{
-			"type": "object",
+			"type":     "object",
+			"required": []string{"mode"},
 			"properties": map[string]interface{}{
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"rebuild", "modify"},
+					"description": "REQUIRED. \"rebuild\" discards the previous formation and builds a fresh one from ops/preset — use when the user asks for something new (new data, detail view, empty state, different layout). \"modify\" loads the existing formation and applies ops as deltas targeting atoms by fieldName or tree ID — use for style tweaks, removals, additions on the current view (\"make price red\", \"remove rating\", \"2 columns\"). No default: pick per turn based on user intent.",
+				},
 				"ops": map[string]interface{}{
 					"type": "array",
 					"items": map[string]interface{}{
@@ -152,6 +158,14 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
+	// Mode — explicit, no default. Agent2 MUST decide per turn:
+	//   "rebuild" → discard existing formation, build fresh from ops/preset
+	//   "modify"  → load existing formation, apply ops as deltas (target by fieldName / tree id)
+	mode, _ := params["mode"].(string)
+	if mode != "rebuild" && mode != "modify" {
+		return &domain.ToolResult{Content: fmt.Sprintf("invalid mode: %q — must be \"rebuild\" or \"modify\"", mode)}, nil
+	}
+
 	// Build engine input
 	engineInput := engine_v4.ExecuteInput{}
 
@@ -187,6 +201,9 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 	// the same ApplyOps batch. Inherit the preset's DefaultReplicate only when
 	// the caller did not pass `replicate` explicitly.
 	if presetName, ok := params["preset"].(string); ok && presetName != "" {
+		if mode != "rebuild" {
+			return &domain.ToolResult{Content: "preset can only be used with mode=\"rebuild\""}, nil
+		}
 		p, found := engine_v4.GetPreset(presetName)
 		if !found {
 			return &domain.ToolResult{Content: fmt.Sprintf("unknown preset: %q", presetName)}, nil
@@ -214,18 +231,10 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 		}
 	}
 
-	// Detect build-from-scratch: first op inserts a widget
-	buildFromScratch := false
-	if len(engineInput.Ops) > 0 {
-		firstOp := engineInput.Ops[0]
-		propType, _ := firstOp.Props["type"].(string)
-		if propType == "widget" || firstOp.Parent == "formation" {
-			buildFromScratch = true
-		}
-	}
-
-	// Load existing formation for modification ops (not build-from-scratch)
-	if !buildFromScratch && len(engineInput.Ops) > 0 {
+	// Mode routing — explicit per-turn decision from Agent2.
+	//   rebuild → formation starts empty, previous turn is discarded
+	//   modify  → load existing formation, ops apply as deltas
+	if mode == "modify" && len(engineInput.Ops) > 0 {
 		if state.Current.Template != nil {
 			if fData, ok := state.Current.Template["formation"]; ok {
 				engineInput.Formation = convertToFormation(fData)
