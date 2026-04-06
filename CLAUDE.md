@@ -187,6 +187,20 @@ Ops-driven движок — Agent2 строит и модифицирует UI �
 - **Краулер**: `cmd/crawler/` — scrape JSON-LD с e-commerce сайтов
 - **Данные**: 967 продуктов heybabescosmetics в `project_admin/Crawler_results/crawl_enriched_967.json`
 
+## Plan mode → обязательный update log
+
+Если в сессии использовался plan mode (ExitPlanMode был вызван и план утверждён), то **финальным действием сессии** обязательно должен быть update log в `docs/Updates/`.
+
+Формат имени: `<branch-name>_<YYYY-MM-DD>_<HH-MM>.md` (например `feature-engine-v4_2026-04-07_14-30.md`). Время и дата — момент коммита. Внутри файла обязательно:
+- Шапка: branch, date (UTC), commit sha, parent commit
+- Context: зачем делалось, какой gap/задача закрывается
+- Approach: что поменяли и почему именно так
+- Files changed: таблица
+- Verification: как проверяли локально + что смотреть на проде
+- Known gaps / caveats: что НЕ закрыто, отложенные нюансы
+
+Это правило действует всегда когда был plan mode, независимо от размера задачи. Даже маленькое изменение — всё равно лог. Формат уже устоялся, смотри последние файлы в `docs/Updates/` как образец.
+
 ## Документация
 
 - `docs/Updates/` — дев-логи сессий V4 (актуальное состояние, по дате)
