@@ -8,6 +8,12 @@ import (
 
 // ApplyConstraints runs constraint rules on the formation.
 // ALL atoms go through constraints — no RigidityLocked bypass for inserted atoms.
+//
+// Cross-widget constraints (C1 field-presence threshold, C3 format consistency)
+// are scoped to replicate groups: clones from one template share a GroupID and
+// get cross-checked against each other only. Literal widgets (no GroupID) are
+// each treated as their own group of one — no cross-constraints apply, so a
+// hero with one field doesn't drag down a gallery of cards or vice versa.
 func ApplyConstraints(formation *domain.FormationWithData) {
 	if formation == nil {
 		return
@@ -33,9 +39,21 @@ func ApplyConstraints(formation *domain.FormationWithData) {
 		applyWidgetConstraints(w)
 	}
 
-	// Cross-widget constraints
-	if len(allWidgets) > 1 {
-		applyCrossWidgetConstraints(allWidgets)
+	// Group-aware cross-widget constraints.
+	// Bucket widgets by ReplicateConfig.GroupID. Literals (no GroupID) are skipped:
+	// a single literal widget is a group of one and has no peers to compare against.
+	groups := make(map[string][]*domain.Widget)
+	for _, w := range allWidgets {
+		if w.ReplicateConfig == nil || w.ReplicateConfig.GroupID == "" {
+			continue
+		}
+		gid := w.ReplicateConfig.GroupID
+		groups[gid] = append(groups[gid], w)
+	}
+	for _, group := range groups {
+		if len(group) > 1 {
+			applyCrossWidgetConstraints(group)
+		}
 	}
 }
 

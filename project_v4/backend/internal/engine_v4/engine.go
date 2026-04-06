@@ -2,7 +2,6 @@ package engine_v4
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"keepstar_v4/internal/domain"
 )
@@ -56,21 +55,26 @@ func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 		input.Data = input.Data[:input.Limit]
 	}
 
-	switch {
-	case input.Replicate && len(formation.Widgets) == 1 && len(formation.Sections) == 0 && len(input.Data) > 0:
-		// Duplicate the template for every data item.
-		replicateWidgets(formation, input.Data, input.EntityType)
-	case !input.Replicate && len(formation.Widgets) == 1 && len(input.Data) > 0:
-		// No replication — bind the first data item to the single widget.
-		// Trim data so BindData (indexed by widget position) does not leak extras.
-		input.Data = input.Data[:1]
-		if id, ok := input.Data[0]["id"]; ok {
-			formation.Widgets[0].EntityRef = &domain.EntityRef{
-				Type: domain.EntityType(input.EntityType),
-				ID:   fmt.Sprintf("%v", id),
+	// Bridge: legacy top-level input.Replicate flag → set ReplicateConfig on the
+	// single template widget. After this point only ReplicateConfig is consulted.
+	// Multi-widget compositions set ReplicateConfig per-widget via ops.insertWidget
+	// (Phase 2) and skip this bridge entirely.
+	if input.Replicate && len(formation.Widgets) == 1 && len(formation.Sections) == 0 && len(input.Data) > 0 {
+		if formation.Widgets[0].ReplicateConfig == nil {
+			formation.Widgets[0].ReplicateConfig = &domain.ReplicateConfig{Enabled: true, Limit: input.Limit}
+		} else {
+			formation.Widgets[0].ReplicateConfig.Enabled = true
+			if formation.Widgets[0].ReplicateConfig.Limit == 0 {
+				formation.Widgets[0].ReplicateConfig.Limit = input.Limit
 			}
 		}
 	}
+
+	// Step 4a: Expand replicated widget templates in place (multi-widget safe).
+	expandReplicatedWidgets(formation, input.Data, input.EntityType)
+
+	// Step 4b: Auto-detect EntityRef + inline bind for single non-replicated entity widgets.
+	autoDetectEntityRefs(formation, input.Data, input.EntityType)
 
 	// Step 4.5: Inject default actions for entity-bound widgets
 	for i := range formation.Widgets {
@@ -98,25 +102,6 @@ func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 		TreeMap:   treeMap,
 		Warnings:  warnings,
 	}
-}
-
-// replicateWidgets deep-copies the single template widget for each data item.
-func replicateWidgets(formation *domain.FormationWithData, data []map[string]interface{}, entityType string) {
-	template := formation.Widgets[0]
-	widgets := make([]domain.Widget, len(data))
-
-	for i := range data {
-		widgets[i] = deepCopyWidget(template)
-		widgets[i].ID = "" // will be stamped by StampTreeIDs
-		if id, ok := data[i]["id"]; ok {
-			widgets[i].EntityRef = &domain.EntityRef{
-				Type: domain.EntityType(entityType),
-				ID:   fmt.Sprintf("%v", id),
-			}
-		}
-	}
-
-	formation.Widgets = widgets
 }
 
 // deepCopyWidget creates a deep copy via JSON roundtrip.

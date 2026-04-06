@@ -38,6 +38,14 @@ func bindWidgetAtoms(w *domain.Widget, entityData map[string]interface{}) {
 	if entityData == nil {
 		return
 	}
+	// Skip widgets already inline-bound by expandReplicatedWidgets or
+	// autoDetectEntityRefs. Top-level positional BindData would otherwise
+	// shift data between literal and replicated widgets in compositions.
+	if w.Meta != nil {
+		if bound, _ := w.Meta["__bound"].(bool); bound {
+			return
+		}
+	}
 	for i := range w.Atoms {
 		a := &w.Atoms[i]
 		if a.FieldName == "" {
