@@ -73,16 +73,16 @@ Formation (layout: grid, list, single, carousel, comparison, table, composed)
            └── slot (hero, title, price, primary, secondary, badge...)
 ```
 
-### Двухверсионный движок (V1 + V2)
+### Движки: V1, V2, V4
 
-| Аспект | V1 | V2 |
-|--------|----|----|
-| Layout | Плоский `Zone[]` массив | Рекурсивное `LayoutNode` дерево |
-| Пресеты | Статический `PresetRegistry` | Динамический `PresetV2Registry` + field_definitions из БД |
-| Атомы | `Atom` (display) | `AtomV2` (textStyle + wrapper + rigidity) |
-| Engine | Zone-based assembly | Two-pass algorithm (BudgetDown/NeedsUp) |
+| Аспект | V1 | V2 | V4 (актуальный) |
+|--------|----|----|-----------------|
+| Layout | Плоский `Zone[]` массив | Рекурсивное `LayoutNode` дерево | Ops-driven `LayoutNode` |
+| Пресеты | Статический `PresetRegistry` | Динамический `PresetV2Registry` + field_definitions | Реестр пресетов + concat-override через ops |
+| Атомы | `Atom` (display) | `AtomV2` (textStyle + wrapper + rigidity) | `AtomV2` + литералы для freestyle |
+| Как Agent2 работает | Fixed tool params | Fixed tool params | Ops + optional preset + explicit replicate |
 
-Активация: `ENGINE_VERSION=v2` + `AGENT2_PROMPT_VERSION=v2` в `.env`. По умолчанию V1, полная обратная совместимость.
+V4 живёт в `project_v4/backend/` на ветке `feature/engine-v4` и задеплоен на `v4-engine-production.up.railway.app`. V1/V2 остались в `project/backend/` как legacy. Основной прод использует V4.
 
 ## Технологии
 
@@ -98,15 +98,26 @@ Formation (layout: grid, list, single, carousel, comparison, table, composed)
 
 ```
 Keepstar_one_ultra/
-├── project/
+├── project_v4/                 # АКТУАЛЬНЫЙ движок (feature/engine-v4)
+│   └── backend/
+│       └── internal/
+│           ├── engine_v4/      # Ops-driven engine: presets.go, ops.go, binding.go, constraints.go
+│           ├── tools/          # visual_assembly tool (preset/ops/replicate/limit params)
+│           ├── prompts/        # Agent2 prompt with PRESETS section
+│           ├── usecases/       # Pipeline, Agent1, Agent2, navigation
+│           ├── handlers/       # HTTP + debug/traces
+│           ├── adapters/       # Postgres, Anthropic, OpenAI
+│           └── domain/         # Widget, AtomV2, LayoutNode, Formation
+│
+├── project/                    # LEGACY V1/V2 (main ветка)
 │   ├── backend/                # Go API (гексагональная архитектура)
 │   │   ├── cmd/server/         # HTTP server entry point
 │   │   └── internal/
-│   │       ├── domain/         # 30+ сущностей (Session, State, Atom, AtomV2, Widget, Formation, LayoutNode...)
-│   │       ├── ports/          # 8 интерфейсов (LLM, Catalog, State, Trace, Embedding, FieldDefinition...)
+│   │       ├── domain/         # Session, State, Atom, AtomV2, Widget, Formation, LayoutNode
+│   │       ├── ports/          # LLM, Catalog, State, Trace, Embedding, FieldDefinition
 │   │       ├── adapters/       # Postgres (pgx), Anthropic, OpenAI, Memory
 │   │       ├── usecases/       # Pipeline, Agent1, Agent2 (v1+v2), Navigation, State, Actions
-│   │       ├── handlers/       # 10+ HTTP handlers + middleware (CORS, tenant, logging)
+│   │       ├── handlers/       # HTTP handlers + middleware (CORS, tenant, logging)
 │   │       ├── engine/         # Visual Assembly Engine V2 (layout tree, rules, tokens, auto_layout)
 │   │       ├── tools/          # Tool executors (catalog_search, visual_assembly, state_filter...)
 │   │       ├── prompts/        # LLM prompt templates (Agent1 + Agent2 v1/v2)
@@ -114,7 +125,7 @@ Keepstar_one_ultra/
 │   │       ├── config/         # Env-based configuration
 │   │       └── logger/         # Structured logging
 │   │
-│   └── frontend/               # React widget (Shadow DOM, FSD architecture)
+│   └── frontend/               # React widget (Shadow DOM, FSD architecture) — общий на V2 и V4
 │       └── src/
 │           ├── widget.jsx      # IIFE entry + Shadow DOM setup
 │           ├── entities/       # atom/ (v1+v2), widget/ (templates, LayoutTreeRenderer), formation/, message/
@@ -133,7 +144,7 @@ Keepstar_one_ultra/
 │   ├── e2e_quick_test.py       # Quick validation
 │   └── e2e_recon.py            # Reconnaissance tests
 │
-├── docs/                       # Спецификации (27 файлов, вкл. archive/)
+├── docs/                       # Updates/ (live session logs), archive/ (legacy specs), bugs/, ответы/, Engine_hustle/, New features/
 ├── AI_docs/                    # Манифест, архитектурные правила, принципы агентов
 ├── ADW/                        # SDLC оркестратор + dev-inspector (порт 3457)
 ├── scripts/                    # start/stop скрипты для всех сервисов
@@ -155,8 +166,8 @@ User Query
     │
     ▼
 ┌─────────────────────────┐
-│  Agent 2: Visual Render │  ← visual_assembly tool (17 presets, 30+ constraints)
-│                         │  ← DefaultsEngine: layout, size, display auto-resolve
+│  Agent 2: Visual Render │  ← visual_assembly tool: preset + ops (overrides) + replicate/limit
+│                         │  ← V4: 12 named presets (6 product card variants, 3 system, 3 nav)
 └─────────────────────────┘
     │
     ▼
@@ -229,8 +240,9 @@ cd tests && python e2e_run.py
 
 ## Документация
 
-- [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) — текущий статус проекта
-- [docs/ENGINE_V2_SPEC.md](docs/ENGINE_V2_SPEC.md) — спецификация Engine V2
+- [docs/Updates/](docs/Updates/) — дев-логи сессий (актуальное состояние V4, по дате)
+- [docs/PRE_LAUNCH_TASKS.md](docs/PRE_LAUNCH_TASKS.md) — трекер задач до релиза (волны B2/B3/B4/E1/E2...)
+- [docs/archive/](docs/archive/) — старые спеки (V1/V2 движок, ENGINE_V2_SPEC, PROJECT_STATUS и др.)
 - [AI_docs/Manifesto.md](AI_docs/Manifesto.md) — продуктовое видение
 - [AI_docs/ARCHITECTURE_RULES.md](AI_docs/ARCHITECTURE_RULES.md) — архитектурные принципы
 
