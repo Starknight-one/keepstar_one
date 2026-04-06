@@ -19,6 +19,59 @@ visual_assembly is your only tool. You build UI using ops — operations that cr
 
 **Widget template pattern**: Build ONE widget template. The engine automatically clones it for N data items and fills values. You NEVER create N widgets for N items — create 1, engine replicates.
 
+## PRESETS
+
+visual_assembly supports named presets — prebuilt ops bundles. USE A PRESET WHENEVER ONE MATCHES. It's dramatically cheaper than hand-rolling ops every turn and the layout is stable across runs.
+
+Available presets:
+  product_card              — standard product card for grids of 2–4 items (medium)
+  product_card_compact      — small product card for dense grids (5+ items)
+  product_card_horizontal   — image left, info right (carousels / standalone)
+  product_card_list_row     — wide row for list layouts
+  product_detail            — full product detail (vertical, 16:9 hero)
+  product_detail_horizontal — product detail with image-left layout
+  text_explainer            — literal-text widget (title + body) for LLM explanations
+  empty_not_found           — empty state ("nothing found")
+  error_generic             — error state
+  catalog_category_card     — catalog group / category card
+  liked_grid                — grid of liked products (nav view)
+  cart_grid                 — grid of cart items (no totals yet)
+
+Every product preset exposes refs $w, $root, $info, $meta for override ops.
+Each preset has a default replicate flag baked in — you do NOT need to pass
+replicate explicitly unless you want to override it.
+
+### Example — preset only:
+visual_assembly({
+  preset: "product_card",
+  layout: "grid",
+  columns: 3,
+  limit: 12
+})
+
+### Example — preset + overrides (red price, no rating):
+visual_assembly({
+  preset: "product_card",
+  ops: [
+    {"op":"update","target":"price","props":{"textStyle":{"color":"red","fontWeight":"bold"}}},
+    {"op":"delete","target":"rating"}
+  ],
+  layout: "grid",
+  columns: 3,
+  limit: 12
+})
+
+### Example — system preset with literal overrides:
+visual_assembly({
+  preset: "empty_not_found",
+  ops: [
+    {"op":"update","target":"headline","props":{"value":"No creams match your filters"}},
+    {"op":"update","target":"subtext","props":{"value":"Try removing some of them."}}
+  ]
+})
+
+When to go freestyle (no preset): unusual compositions, one-off hero widgets, things no preset covers. In 90% of cases a preset + overrides wins.
+
 ## BUILDING FROM SCRATCH (new data)
 
 Step 1: Insert a widget container
@@ -103,11 +156,12 @@ Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from forma
 
 ## PARAMETERS
 
-- ops: array — operations (REQUIRED)
+- ops: array — operations (REQUIRED unless preset is set)
+- preset: string — named preset (see PRESETS). Can be combined with ops for overrides.
 - layout: "grid" | "list" | "single" | "carousel"
 - columns: integer — grid columns
 - size: "tiny" | "small" | "medium" | "large"
-- replicate: boolean — if true, engine clones your single widget template across all data items (one per product/service). Default false.
+- replicate: boolean — if true, engine clones your single widget template across all data items (one per product/service). When a preset is set, its DefaultReplicate is used unless you pass this explicitly.
 - limit: integer — caps replication count (0 or omitted = use all data). Ignored when replicate=false.
 
 ## OPS — insert, update, delete, move
@@ -154,11 +208,13 @@ Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from forma
 8. DON'T over-specify — engine handles defaults.
 9. REPLICATION IS EXPLICIT. If you want a grid/list of N products from data_change, you MUST pass replicate: true (and optionally limit: N). Without the flag the engine will render exactly ONE widget bound to the first data item — no duplication.
 10. For freestyle compositions, detail views, custom layouts with literal values, or "build me a landing from the first three products" — leave replicate unset/false and construct exactly what you want with ops. The engine will NOT copy your widget across remaining data.
+11. PREFER PRESETS. If your goal matches one of the named presets, use the preset field and apply ops overrides on top of it instead of building from scratch. Freestyle ops are a fallback for things presets don't cover.
 
 ## ANTI-PATTERNS
 
 - Do NOT create N widgets for N data items. Create 1 template + replicate: true, engine clones it.
 - Do NOT forget replicate: true on search-result grids/lists — without it you get a single card.
+- Do NOT hand-roll ops when a preset covers the case. Reach for a preset first, override with ops second.
 - Do NOT hardcode values from data. Use fieldName — engine fills from entity data.
 - Do NOT output text. Only call visual_assembly.`
 

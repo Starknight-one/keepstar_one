@@ -134,6 +134,11 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 					"type":        "integer",
 					"description": "Max number of data items to use (0 or omitted = all). Caps replication count. Ignored when replicate=false.",
 				},
+				"preset": map[string]interface{}{
+					"type":        "string",
+					"enum":        engine_v4.PresetNames(),
+					"description": "Named preset — expands to a prebuilt ops batch. Pair with `ops` to apply overrides on top (update/delete/insert targeting preset refs like $w, $root, $info, $meta). Each preset has a DefaultReplicate baked in; passing `replicate` explicitly overrides it.",
+				},
 			},
 		},
 	}
@@ -169,11 +174,28 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 	if size, ok := params["size"].(string); ok {
 		engineInput.Size = size
 	}
+	_, replicatePassed := params["replicate"]
 	if rep, ok := params["replicate"].(bool); ok {
 		engineInput.Replicate = rep
 	}
 	if lim, ok := params["limit"].(float64); ok {
 		engineInput.Limit = int(lim)
+	}
+
+	// Preset expansion (B2). Prepend preset ops to any user-supplied overrides
+	// so $ref bindings created by the preset are visible to override ops in
+	// the same ApplyOps batch. Inherit the preset's DefaultReplicate only when
+	// the caller did not pass `replicate` explicitly.
+	if presetName, ok := params["preset"].(string); ok && presetName != "" {
+		p, found := engine_v4.GetPreset(presetName)
+		if !found {
+			return &domain.ToolResult{Content: fmt.Sprintf("unknown preset: %q", presetName)}, nil
+		}
+		presetOps := p.Build()
+		engineInput.Ops = append(presetOps, engineInput.Ops...)
+		if !replicatePassed {
+			engineInput.Replicate = p.DefaultReplicate
+		}
 	}
 
 	// Entity data from state
