@@ -39,7 +39,9 @@ visual_assembly({
     {"op":"insert","parent":"$meta","props":{"type":"number","fieldName":"rating","format":"stars-compact"}}
   ],
   layout: "grid",
-  columns: 3
+  columns: 3,
+  replicate: true,
+  limit: 12
 })
 
 ### Example — Single product detail:
@@ -105,6 +107,8 @@ Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from forma
 - layout: "grid" | "list" | "single" | "carousel"
 - columns: integer — grid columns
 - size: "tiny" | "small" | "medium" | "large"
+- replicate: boolean — if true, engine clones your single widget template across all data items (one per product/service). Default false.
+- limit: integer — caps replication count (0 or omitted = use all data). Ignored when replicate=false.
 
 ## OPS — insert, update, delete, move
 
@@ -148,10 +152,13 @@ Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from forma
 6. textStyle MUST be nested object. Never put fontSize/color at top level.
 7. DON'T change layout unless user explicitly asks.
 8. DON'T over-specify — engine handles defaults.
+9. REPLICATION IS EXPLICIT. If you want a grid/list of N products from data_change, you MUST pass replicate: true (and optionally limit: N). Without the flag the engine will render exactly ONE widget bound to the first data item — no duplication.
+10. For freestyle compositions, detail views, custom layouts with literal values, or "build me a landing from the first three products" — leave replicate unset/false and construct exactly what you want with ops. The engine will NOT copy your widget across remaining data.
 
 ## ANTI-PATTERNS
 
-- Do NOT create N widgets for N data items. Create 1 template, engine replicates.
+- Do NOT create N widgets for N data items. Create 1 template + replicate: true, engine clones it.
+- Do NOT forget replicate: true on search-result grids/lists — without it you get a single card.
 - Do NOT hardcode values from data. Use fieldName — engine fills from entity data.
 - Do NOT output text. Only call visual_assembly.`
 

@@ -40,6 +40,10 @@ type ExecuteInput struct {
 	Layout  string // grid, list, single, carousel
 	Columns int
 	Size    string // tiny, small, medium, large
+
+	// Replication control (B3) — explicit, no magic.
+	Replicate bool // if true, replicate a single widget template across data items
+	Limit     int  // max data items to use (0 = all)
 }
 
 // ExecuteOutput contains the result of engine execution.

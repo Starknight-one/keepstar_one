@@ -126,6 +126,14 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 					"enum":        []string{"tiny", "small", "medium", "large"},
 					"description": "Widget size.",
 				},
+				"replicate": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, replicate the single widget template across data items from state (one widget per product/service). Default false. Use for grids/lists of search results. Leave false for freestyle compositions, detail views, or widgets built from literal values.",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Max number of data items to use (0 or omitted = all). Caps replication count. Ignored when replicate=false.",
+				},
 			},
 		},
 	}
@@ -160,6 +168,12 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 	}
 	if size, ok := params["size"].(string); ok {
 		engineInput.Size = size
+	}
+	if rep, ok := params["replicate"].(bool); ok {
+		engineInput.Replicate = rep
+	}
+	if lim, ok := params["limit"].(float64); ok {
+		engineInput.Limit = int(lim)
 	}
 
 	// Entity data from state

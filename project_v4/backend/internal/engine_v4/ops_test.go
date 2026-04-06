@@ -124,6 +124,7 @@ func TestReplicationPreservesLayout(t *testing.T) {
 		EntityType: "product",
 		Layout:     "grid",
 		Columns:    3,
+		Replicate:  true, // B3: replication is now explicit
 	}
 
 	output := NewEngine().Execute(input)

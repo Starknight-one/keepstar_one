@@ -50,11 +50,20 @@ func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 		warnings = append(warnings, opWarnings...)
 	}
 
-	// Step 4: Replicate — 1 widget template + N data items → N widgets
-	if len(input.Data) > 1 && len(formation.Widgets) == 1 && len(formation.Sections) == 0 {
+	// Step 4: Replicate — explicit flag (B3). No magic auto-replication.
+	// Apply Limit first so both replication and single-bind see the sliced slice.
+	if input.Limit > 0 && input.Limit < len(input.Data) {
+		input.Data = input.Data[:input.Limit]
+	}
+
+	switch {
+	case input.Replicate && len(formation.Widgets) == 1 && len(formation.Sections) == 0 && len(input.Data) > 0:
+		// Duplicate the template for every data item.
 		replicateWidgets(formation, input.Data, input.EntityType)
-	} else if len(input.Data) == 1 && len(formation.Widgets) == 1 {
-		// Single data item — just set EntityRef
+	case !input.Replicate && len(formation.Widgets) == 1 && len(input.Data) > 0:
+		// No replication — bind the first data item to the single widget.
+		// Trim data so BindData (indexed by widget position) does not leak extras.
+		input.Data = input.Data[:1]
 		if id, ok := input.Data[0]["id"]; ok {
 			formation.Widgets[0].EntityRef = &domain.EntityRef{
 				Type: domain.EntityType(input.EntityType),
