@@ -74,26 +74,101 @@ func stampLayoutNodeIDs(node *domain.LayoutNode, prefix string, counter *int) {
 }
 
 // BuildTreeMap creates a compact summary of the formation tree for Agent2 context.
+//
+// Schema:
+//
+//	{
+//	  "widgets": [
+//	    {"kind": "literal",    "id": "w-s0-w0",    "atoms": [...], "nodes": [...]},
+//	    {"kind": "replicated", "count": 6, "ids": [...], "template": {...}},
+//	    ...
+//	  ],
+//	  "widget_count": N,
+//	  "mode": "composed" | "grid" | "single" | ...,
+//	  "grid": {"cols": N, "rows": N}
+//	}
+//
+// Each entry in `widgets` represents either a literal widget (hero, explainer,
+// cta — no replication) or a replicated group (e.g. 6 product cards from one
+// template). For replicated entries, modify ops can target the group by
+// fieldName (broadcasts to every clone) or by a specific clone ID via `ids`.
+//
+// Walks formation.Sections first if populated, then formation.Widgets — covers
+// both the multi-section composed path and the legacy flat path produced by
+// Phase 3 single-section rollback.
 func BuildTreeMap(formation *domain.FormationWithData) map[string]interface{} {
 	if formation == nil {
 		return nil
 	}
 
 	var allWidgets []domain.Widget
-	allWidgets = append(allWidgets, formation.Widgets...)
-	for _, s := range formation.Sections {
-		allWidgets = append(allWidgets, s.Widgets...)
+	if len(formation.Sections) > 0 {
+		for _, s := range formation.Sections {
+			allWidgets = append(allWidgets, s.Widgets...)
+		}
+	} else {
+		allWidgets = append(allWidgets, formation.Widgets...)
 	}
 
 	if len(allWidgets) == 0 {
 		return nil
 	}
 
-	template := buildWidgetMap(allWidgets[0])
+	// Group consecutive widgets by ReplicateConfig.GroupID. Literals (no GroupID)
+	// each become their own group. This mirrors the grouping done by
+	// groupIntoSections so the tree map and the rendered formation share the
+	// same logical structure.
+	type widgetGroup struct {
+		gid     string
+		widgets []domain.Widget
+	}
+	var groups []widgetGroup
+	currentGid := "__init__"
+	for _, w := range allWidgets {
+		gid := ""
+		if w.ReplicateConfig != nil {
+			gid = w.ReplicateConfig.GroupID
+		}
+		if gid == "" {
+			groups = append(groups, widgetGroup{gid: "", widgets: []domain.Widget{w}})
+			currentGid = ""
+			continue
+		}
+		if gid != currentGid {
+			groups = append(groups, widgetGroup{gid: gid, widgets: []domain.Widget{w}})
+			currentGid = gid
+			continue
+		}
+		groups[len(groups)-1].widgets = append(groups[len(groups)-1].widgets, w)
+	}
+
+	widgets := make([]map[string]interface{}, 0, len(groups))
+	for _, g := range groups {
+		if g.gid == "" {
+			// Literal widget — flatten buildWidgetMap fields into the entry.
+			entry := map[string]interface{}{"kind": "literal"}
+			for k, v := range buildWidgetMap(g.widgets[0]) {
+				entry[k] = v
+			}
+			widgets = append(widgets, entry)
+			continue
+		}
+		// Replicated group — collect IDs of every clone, expose first as template.
+		ids := make([]string, len(g.widgets))
+		for i, w := range g.widgets {
+			ids[i] = w.ID
+		}
+		widgets = append(widgets, map[string]interface{}{
+			"kind":     "replicated",
+			"count":    len(g.widgets),
+			"ids":      ids,
+			"template": buildWidgetMap(g.widgets[0]),
+		})
+	}
 
 	result := map[string]interface{}{
-		"widget_template": template,
-		"widget_count":    len(allWidgets),
+		"widgets":      widgets,
+		"widget_count": len(allWidgets),
 	}
 
 	if formation.Grid != nil {

@@ -860,3 +860,155 @@ func literalValue(w domain.Widget) interface{} {
 	}
 	return nil
 }
+
+// ─── Phase 4 — BuildTreeMap multi-widget schema ───
+
+// TestBuildTreeMap_SingleGrid_Replicated — legacy "show me creams" path:
+// 6 cards from one preset → tree map has one replicated entry with count=6.
+func TestBuildTreeMap_SingleGrid_Replicated(t *testing.T) {
+	out := NewEngine().Execute(ExecuteInput{
+		Ops:        ProductCardGridOps(),
+		Data:       sampleProducts(6),
+		EntityType: "product",
+		Layout:     "grid",
+		Columns:    3,
+		Replicate:  true,
+	})
+
+	tree := out.TreeMap
+	if tree == nil {
+		t.Fatal("expected tree map, got nil")
+	}
+	widgets, ok := tree["widgets"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("expected widgets array, got %T", tree["widgets"])
+	}
+	if len(widgets) != 1 {
+		t.Fatalf("expected 1 entry (single replicate group), got %d", len(widgets))
+	}
+	if kind, _ := widgets[0]["kind"].(string); kind != "replicated" {
+		t.Errorf("entry kind=%v, expected replicated", widgets[0]["kind"])
+	}
+	if count, _ := widgets[0]["count"].(int); count != 6 {
+		t.Errorf("entry count=%v, expected 6", widgets[0]["count"])
+	}
+	ids, _ := widgets[0]["ids"].([]string)
+	if len(ids) != 6 {
+		t.Errorf("entry ids length=%d, expected 6", len(ids))
+	}
+	if widgets[0]["template"] == nil {
+		t.Error("entry missing template")
+	}
+	if total, _ := tree["widget_count"].(int); total != 6 {
+		t.Errorf("widget_count=%v, expected 6", tree["widget_count"])
+	}
+	if mode, _ := tree["mode"].(string); mode != "grid" {
+		t.Errorf("mode=%v, expected grid", tree["mode"])
+	}
+}
+
+// TestBuildTreeMap_SingleDetail_Literal — legacy "show me detail" path:
+// 1 entity widget without replication → one literal entry.
+func TestBuildTreeMap_SingleDetail_Literal(t *testing.T) {
+	out := NewEngine().Execute(ExecuteInput{
+		Ops:        ProductDetailOps(),
+		Data:       sampleProducts(1),
+		EntityType: "product",
+	})
+
+	tree := out.TreeMap
+	if tree == nil {
+		t.Fatal("expected tree map, got nil")
+	}
+	widgets, ok := tree["widgets"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("expected widgets array, got %T", tree["widgets"])
+	}
+	if len(widgets) != 1 {
+		t.Fatalf("expected 1 literal entry, got %d", len(widgets))
+	}
+	if kind, _ := widgets[0]["kind"].(string); kind != "literal" {
+		t.Errorf("entry kind=%v, expected literal", widgets[0]["kind"])
+	}
+	if widgets[0]["id"] == nil {
+		t.Error("literal entry missing id")
+	}
+	if widgets[0]["atoms"] == nil {
+		t.Error("literal entry missing atoms")
+	}
+	if total, _ := tree["widget_count"].(int); total != 1 {
+		t.Errorf("widget_count=%v, expected 1", tree["widget_count"])
+	}
+}
+
+// TestBuildTreeMap_MultiWidgetComposition — full composition: hero + gallery×3
+// + cta produces 3 entries (literal/replicated/literal) in order.
+func TestBuildTreeMap_MultiWidgetComposition(t *testing.T) {
+	formation := &domain.FormationWithData{
+		Widgets: []domain.Widget{
+			makeLiteralWidget("Hero"),
+			makeReplicateTemplate(),
+			makeLiteralWidget("Buy now"),
+		},
+	}
+	expandReplicatedWidgets(formation, sampleProductData(3), "product")
+	groupIntoSections(formation)
+	StampTreeIDs(formation)
+	tree := BuildTreeMap(formation)
+
+	if tree == nil {
+		t.Fatal("expected tree map, got nil")
+	}
+	widgets, ok := tree["widgets"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("expected widgets array, got %T", tree["widgets"])
+	}
+	if len(widgets) != 3 {
+		t.Fatalf("expected 3 entries (hero/gallery/cta), got %d", len(widgets))
+	}
+
+	// Entry 0: hero literal
+	if kind, _ := widgets[0]["kind"].(string); kind != "literal" {
+		t.Errorf("entry[0] kind=%v, expected literal (hero)", widgets[0]["kind"])
+	}
+	if id, _ := widgets[0]["id"].(string); id != "w-s0-w0" {
+		t.Errorf("entry[0] id=%v, expected w-s0-w0", widgets[0]["id"])
+	}
+
+	// Entry 1: gallery replicated
+	if kind, _ := widgets[1]["kind"].(string); kind != "replicated" {
+		t.Errorf("entry[1] kind=%v, expected replicated (gallery)", widgets[1]["kind"])
+	}
+	if count, _ := widgets[1]["count"].(int); count != 3 {
+		t.Errorf("entry[1] count=%v, expected 3", widgets[1]["count"])
+	}
+	ids, _ := widgets[1]["ids"].([]string)
+	if len(ids) != 3 || ids[0] != "w-s1-w0" || ids[1] != "w-s1-w1" || ids[2] != "w-s1-w2" {
+		t.Errorf("entry[1] ids=%v, expected [w-s1-w0, w-s1-w1, w-s1-w2]", ids)
+	}
+
+	// Entry 2: cta literal
+	if kind, _ := widgets[2]["kind"].(string); kind != "literal" {
+		t.Errorf("entry[2] kind=%v, expected literal (cta)", widgets[2]["kind"])
+	}
+	if id, _ := widgets[2]["id"].(string); id != "w-s2-w0" {
+		t.Errorf("entry[2] id=%v, expected w-s2-w0", widgets[2]["id"])
+	}
+
+	if total, _ := tree["widget_count"].(int); total != 5 {
+		t.Errorf("widget_count=%v, expected 5 (1 hero + 3 clones + 1 cta)", tree["widget_count"])
+	}
+	if mode, _ := tree["mode"].(string); mode != "composed" {
+		t.Errorf("mode=%v, expected composed", tree["mode"])
+	}
+}
+
+// TestBuildTreeMap_EmptyFormation — empty formation returns nil.
+func TestBuildTreeMap_EmptyFormation(t *testing.T) {
+	if tree := BuildTreeMap(nil); tree != nil {
+		t.Errorf("expected nil for nil formation, got %v", tree)
+	}
+	if tree := BuildTreeMap(&domain.FormationWithData{}); tree != nil {
+		t.Errorf("expected nil for empty formation, got %v", tree)
+	}
+}
