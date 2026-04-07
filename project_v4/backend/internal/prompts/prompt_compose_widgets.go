@@ -158,9 +158,38 @@ visual_assembly({
   layout: "list"
 })
 
+## COMPOSING — multi-widget responses
+
+When the user wants a "presentation", "landing", or any response combining different block types (hero + gallery + cta), insert MULTIPLE widget templates in ONE rebuild call. Per-widget preset/replicate go in props. The engine groups them: consecutive replicate clones → grid sections, literals → single sections, all rendered as a composed formation.
+
+### Example — product line presentation:
+visual_assembly({
+  mode: "rebuild",
+  ops: [
+    {"op":"insert","ref":"hero","parent":"formation","props":{"type":"widget","size":"large"}},
+    {"op":"insert","parent":"$hero","props":{"type":"text","value":"New glossy collection","textStyle":{"fontSize":"3xl","fontWeight":"bold"}}},
+    {"op":"insert","parent":"formation","props":{"type":"widget","preset":"product_card_compact","replicate":true,"replicateLimit":12}},
+    {"op":"insert","ref":"cta","parent":"formation","props":{"type":"widget","size":"small"}},
+    {"op":"insert","parent":"$cta","props":{"type":"text","value":"Shop the line","wrapper":{"type":"button","variant":"primary"}}}
+  ]
+})
+
+### Rules:
+- Per-widget preset goes inside the widget insert's props: {type:"widget", preset:"...", replicate:true, replicateLimit:N}
+- Top-level preset + multiple widget inserts → ERROR. Use per-widget preset for compositions.
+- Two widgets sharing the same per-widget preset don't collide on refs (auto-namespaced as p0_w / p1_w / ...)
+- Literal widgets (hero, explainer, cta) use {value:"..."}; entity widgets use {fieldName:"..."}
+- For non-replicated entity widgets, engine assigns EntityRef from data[0]; pass props.dataIndex:N to pick a specific item
+
 ## MODIFYING EXISTING (formation_tree present)
 
-Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from formation_tree.
+formation_tree.widgets is an array of entries:
+- {"kind":"literal","id":"w-s0-w0","atoms":[...]} — single widget (hero, cta, explainer)
+- {"kind":"replicated","count":N,"ids":[...],"template":{...}} — N clones of one template (gallery)
+
+Target atoms:
+- by FIELD NAME — broadcasts to ALL atoms with that name in ALL widgets (use for "make all prices red")
+- by ATOM ID from a specific entry — surgical, targets one atom (use for "make THE hero text larger" in compositions)
 
 ### update — change properties:
   {"op":"update","target":"price","props":{"textStyle":{"fontSize":"2xl","color":"red"}}}
@@ -233,18 +262,17 @@ Target atoms by FIELD NAME (applies to ALL widgets) or by specific ID from forma
 2. data_change present → usually "rebuild" (new data, fresh formation).
 3. No data_change + formation_tree present + cosmetic/structural tweak → "modify". Target atoms by fieldName (applies to ALL widgets) or by tree ID.
 4. Props are MERGED in update ops — only send what changes.
-5. textStyle MUST be nested object. Never put fontSize/color at top level.
-6. DON'T change layout unless user explicitly asks.
-7. DON'T over-specify — engine handles defaults.
-8. REPLICATION IS EXPLICIT. In rebuild mode, if you want a grid/list of N products from data_change, you MUST pass replicate: true (and optionally limit: N). Without the flag the engine renders exactly ONE widget bound to the first data item.
-9. For freestyle compositions, detail views, custom layouts with literal values — leave replicate unset/false in rebuild mode and construct exactly what you want.
-10. PREFER PRESETS in rebuild mode. If your goal matches one of the named presets, use the preset field and apply ops overrides on top of it instead of building from scratch.
+5. DON'T change layout unless user explicitly asks.
+6. DON'T over-specify — engine handles defaults.
+7. REPLICATION IS EXPLICIT. In rebuild mode, if you want a grid/list of N products from data_change, you MUST pass replicate: true (and optionally limit: N). Without the flag the engine renders exactly ONE widget bound to the first data item.
+8. For freestyle compositions, detail views, custom layouts with literal values — leave replicate unset/false in rebuild mode and construct exactly what you want.
+9. For mixed responses (presentation, landing, comparison) — insert multiple widget templates in one rebuild call with per-widget preset/replicate in props. See COMPOSING.
 
 ## ANTI-PATTERNS
 
 - Do NOT forget mode — the tool call will fail.
 - Do NOT pass preset in "modify" mode — presets only expand in rebuild.
-- Do NOT create N widgets for N data items. Create 1 template + replicate: true.
+- Do NOT combine top-level preset with multiple widget insert ops — it errors. Use per-widget preset in props for compositions.
 - Do NOT forget replicate: true on search-result grids/lists — without it you get a single card.
 - Do NOT hand-roll ops when a preset covers the case. Reach for a preset first, override with ops second.
 - Do NOT hardcode values from data. Use fieldName — engine fills from entity data.

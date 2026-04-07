@@ -204,6 +204,9 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 		if mode != "rebuild" {
 			return &domain.ToolResult{Content: "preset can only be used with mode=\"rebuild\""}, nil
 		}
+		if errMsg := validatePresetWithUserOps(presetName, engineInput.Ops); errMsg != "" {
+			return &domain.ToolResult{Content: errMsg}, nil
+		}
 		p, found := engine_v4.GetPreset(presetName)
 		if !found {
 			return &domain.ToolResult{Content: fmt.Sprintf("unknown preset: %q", presetName)}, nil
@@ -335,6 +338,43 @@ func ProductToMap(p domain.Product) map[string]interface{} {
 		m["tags"] = p.Tags
 	}
 	return m
+}
+
+// validatePresetWithUserOps enforces that top-level `preset` is mutually
+// exclusive with multi-widget composition. The intent: top-level preset means
+// "build one widget template from this preset" (legacy single-grid/detail
+// flow). Multi-widget compositions use per-widget preset in props instead.
+//
+// Rules:
+//   - Top-level preset + >1 widget insert in user ops → error.
+//     The user is composing multiple widgets but using the legacy preset slot
+//     instead of per-widget preset. Force them to migrate.
+//   - Top-level preset + ANY widget insert with props.preset → error.
+//     Mixing the two preset paradigms is ambiguous.
+//
+// Returns "" when valid, an error message otherwise.
+func validatePresetWithUserOps(presetName string, ops []engine_v4.Op) string {
+	if presetName == "" {
+		return ""
+	}
+	widgetInsertCount := 0
+	for _, op := range ops {
+		if op.Type != engine_v4.OpInsert || op.Props == nil {
+			continue
+		}
+		opType, _ := op.Props["type"].(string)
+		if opType != "widget" {
+			continue
+		}
+		widgetInsertCount++
+		if perWidgetPreset, _ := op.Props["preset"].(string); perWidgetPreset != "" {
+			return fmt.Sprintf("top-level preset %q cannot be combined with per-widget preset %q in props; pick one", presetName, perWidgetPreset)
+		}
+	}
+	if widgetInsertCount > 1 {
+		return fmt.Sprintf("top-level preset %q cannot be combined with %d widget insert ops; use per-widget preset in props for multi-widget composition", presetName, widgetInsertCount)
+	}
+	return ""
 }
 
 // ServiceToMap converts a Service to a flat map for data binding.
