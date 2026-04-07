@@ -117,14 +117,22 @@ func indexLayoutNode(node *domain.LayoutNode, parent *domain.LayoutNode, w *doma
 
 // ApplyOps applies a batch of operations to an existing formation.
 // Returns warnings only — the engine pipeline handles errors.
+//
+// Pre-pass: ExpandInlinePresets rewrites any `insert widget` op carrying
+// `props.preset = "<name>"` into the preset's full op sequence with refs
+// namespaced per-widget so multiple inline presets in the same batch don't
+// collide.
 func ApplyOps(formation *domain.FormationWithData, ops []Op) []string {
 	if formation == nil {
 		return []string{"no existing formation to modify"}
 	}
 
+	expandedOps, expandWarnings := ExpandInlinePresets(ops)
+	ops = expandedOps
+
 	idx := buildIndex(formation)
 	refs := make(map[string]string) // ref alias → assigned ID (for insert chaining)
-	var warnings []string
+	warnings := append([]string(nil), expandWarnings...)
 
 	for i, op := range ops {
 		// Resolve ref aliases in target/parent/after fields
@@ -411,6 +419,16 @@ func insertLayoutNode(op Op, idx *idIndex) (string, string) {
 
 // insertWidget creates a new empty Widget and adds it to the formation.
 // Subsequent ops can insert atoms/nodes into this widget via $ref chaining.
+//
+// Recognised props:
+//   - size            string  — widget size (tiny/small/medium/large)
+//   - replicate       bool    — mark this widget as a replicate template
+//   - replicateLimit  number  — cap on clone count
+//   - dataIndex       number  — for non-replicated single entity widgets, pick data[i]
+//
+// Replicate flags become ReplicateConfig (engine-internal, json:"-") and are
+// consumed by expandReplicatedWidgets / autoDetectEntityRefs in the engine
+// pipeline. They never reach the frontend.
 func insertWidget(op Op, idx *idIndex, formation *domain.FormationWithData) (string, string) {
 	size := domain.WidgetSizeMedium
 	if v, ok := op.Props["size"].(string); ok && v != "" {
@@ -421,6 +439,10 @@ func insertWidget(op Op, idx *idIndex, formation *domain.FormationWithData) (str
 		Size:   size,
 		Layout: &domain.LayoutNode{Type: domain.LayoutNodeColumn, Name: "root", Children: []domain.LayoutChild{}},
 		Atoms:  []domain.Atom{},
+	}
+
+	if rcfg := readReplicateConfigFromProps(op.Props); rcfg != nil {
+		w.ReplicateConfig = rcfg
 	}
 
 	formation.Widgets = append(formation.Widgets, w)
@@ -435,6 +457,46 @@ func insertWidget(op Op, idx *idIndex, formation *domain.FormationWithData) (str
 	idx.nodes[tempID] = nodeRef{node: ptr.Layout, parent: nil, widget: ptr}
 
 	return tempID, ""
+}
+
+// readReplicateConfigFromProps lifts the per-widget replicate fields out of
+// op.Props. Returns nil if none are set so callers can leave Widget.ReplicateConfig
+// pointer-nil for the common literal-widget case.
+func readReplicateConfigFromProps(props map[string]interface{}) *domain.ReplicateConfig {
+	if props == nil {
+		return nil
+	}
+	var rcfg *domain.ReplicateConfig
+	ensure := func() {
+		if rcfg == nil {
+			rcfg = &domain.ReplicateConfig{}
+		}
+	}
+	if rep, ok := props["replicate"].(bool); ok && rep {
+		ensure()
+		rcfg.Enabled = true
+	}
+	if v, ok := props["replicateLimit"]; ok {
+		switch n := v.(type) {
+		case int:
+			ensure()
+			rcfg.Limit = n
+		case float64:
+			ensure()
+			rcfg.Limit = int(n)
+		}
+	}
+	if v, ok := props["dataIndex"]; ok {
+		switch n := v.(type) {
+		case int:
+			ensure()
+			rcfg.DataIndex = n
+		case float64:
+			ensure()
+			rcfg.DataIndex = int(n)
+		}
+	}
+	return rcfg
 }
 
 // insertChildIntoNode inserts a LayoutChild into a node, optionally after a specific ID.

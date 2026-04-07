@@ -296,3 +296,307 @@ func atomValue(w domain.Widget, fieldName string) interface{} {
 	}
 	return nil
 }
+
+// ─── Phase 2 — per-widget preset + replicate via insertWidget props ───
+
+// TestOpsInlinePreset_TwoWidgetsNoCollision verifies that two `insert widget`
+// ops with `props.preset = "product_card"` in the same batch produce two
+// independent product_card widgets — no ref collisions on $w/$root/$info/$meta.
+func TestOpsInlinePreset_TwoWidgetsNoCollision(t *testing.T) {
+	formation := &domain.FormationWithData{}
+	ops := []Op{
+		{Type: OpInsert, Ref: "card1", Parent: "formation", Props: map[string]interface{}{"type": "widget", "preset": "product_card"}},
+		{Type: OpInsert, Ref: "card2", Parent: "formation", Props: map[string]interface{}{"type": "widget", "preset": "product_card"}},
+	}
+	warnings := ApplyOps(formation, ops)
+
+	for _, w := range warnings {
+		t.Errorf("unexpected warning: %s", w)
+	}
+	if len(formation.Widgets) != 2 {
+		t.Fatalf("expected 2 widgets after inline preset expansion, got %d", len(formation.Widgets))
+	}
+
+	// Both widgets should have the full product_card layout: 5 atoms,
+	// nested $root → image + $info → name + $meta → price + rating, brand badge.
+	for i, w := range formation.Widgets {
+		if len(w.Atoms) != 5 {
+			t.Errorf("widget[%d]: expected 5 atoms, got %d", i, len(w.Atoms))
+		}
+		if w.Layout == nil || len(w.Layout.Children) == 0 {
+			t.Errorf("widget[%d]: layout is empty", i)
+			continue
+		}
+		// The deep nesting check from TestRefChainingLayoutNesting:
+		// root has at least one nested node child (the $root column).
+		nested := false
+		for _, ch := range w.Layout.Children {
+			if ch.Node != nil && len(ch.Node.Children) > 0 {
+				nested = true
+				break
+			}
+		}
+		if !nested {
+			t.Errorf("widget[%d]: layout is flat — refs collided or expansion broke nesting", i)
+		}
+	}
+}
+
+// TestOpsInlinePreset_UserRefSubstituted verifies that the user-provided
+// `op.Ref` substitutes the preset's first ref (`w`), so subsequent override
+// ops can target the inserted widget via $<userRef>.
+func TestOpsInlinePreset_UserRefSubstituted(t *testing.T) {
+	formation := &domain.FormationWithData{}
+	ops := []Op{
+		{Type: OpInsert, Ref: "myCard", Parent: "formation", Props: map[string]interface{}{"type": "widget", "preset": "product_card"}},
+		// Override op uses $myCard to add a literal text into the widget root.
+		{Type: OpInsert, Parent: "$myCard", Props: map[string]interface{}{"type": "text", "value": "BADGE"}},
+	}
+	warnings := ApplyOps(formation, ops)
+
+	for _, w := range warnings {
+		// Note: insertAtom on the widget root works only if root has space; we
+		// expect either success or "parent not found" — we accept success here.
+		if w == "" {
+			continue
+		}
+	}
+	if len(formation.Widgets) != 1 {
+		t.Fatalf("expected 1 widget, got %d", len(formation.Widgets))
+	}
+	w := formation.Widgets[0]
+	// Original 5 product_card atoms + 1 user-injected literal "BADGE".
+	if len(w.Atoms) != 6 {
+		t.Errorf("expected 6 atoms (5 preset + 1 override), got %d", len(w.Atoms))
+	}
+	foundBadge := false
+	for _, a := range w.Atoms {
+		if a.Value == "BADGE" {
+			foundBadge = true
+			break
+		}
+	}
+	if !foundBadge {
+		t.Error("user override op did not land on the inserted widget — $myCard substitution broken")
+	}
+}
+
+// TestOpsPerWidgetReplicate verifies that `props.replicate = true` on a widget
+// insert sets ReplicateConfig.Enabled, and a subsequent expandReplicatedWidgets
+// produces N clones bound to data items.
+func TestOpsPerWidgetReplicate(t *testing.T) {
+	formation := &domain.FormationWithData{}
+	ops := []Op{
+		{
+			Type:   OpInsert,
+			Parent: "formation",
+			Props: map[string]interface{}{
+				"type":           "widget",
+				"preset":         "product_card",
+				"replicate":      true,
+				"replicateLimit": float64(3), // JSON unmarshal would give float64
+			},
+		},
+	}
+	warnings := ApplyOps(formation, ops)
+	for _, w := range warnings {
+		t.Errorf("unexpected warning: %s", w)
+	}
+	if len(formation.Widgets) != 1 {
+		t.Fatalf("expected 1 template widget after ops, got %d", len(formation.Widgets))
+	}
+	tmpl := formation.Widgets[0]
+	if tmpl.ReplicateConfig == nil || !tmpl.ReplicateConfig.Enabled {
+		t.Fatal("ReplicateConfig.Enabled should be true after props.replicate")
+	}
+	if tmpl.ReplicateConfig.Limit != 3 {
+		t.Errorf("ReplicateConfig.Limit: expected 3, got %d", tmpl.ReplicateConfig.Limit)
+	}
+
+	// Now run the engine post-process steps.
+	data := sampleProductData(5) // 5 items but limit=3
+	expandReplicatedWidgets(formation, data, "product")
+
+	if len(formation.Widgets) != 3 {
+		t.Fatalf("expected 3 clones (limit=3 from props.replicateLimit), got %d", len(formation.Widgets))
+	}
+	for i, w := range formation.Widgets {
+		if w.EntityRef == nil {
+			t.Errorf("clone[%d] missing EntityRef", i)
+		}
+		if got := atomValue(w, "name"); got == nil {
+			t.Errorf("clone[%d] name not bound", i)
+		}
+	}
+}
+
+// TestOpsPerWidgetDataIndex verifies that `props.dataIndex` on a widget insert
+// sets ReplicateConfig.DataIndex which autoDetectEntityRefs honours.
+func TestOpsPerWidgetDataIndex(t *testing.T) {
+	formation := &domain.FormationWithData{}
+	ops := []Op{
+		{
+			Type:   OpInsert,
+			Parent: "formation",
+			Props: map[string]interface{}{
+				"type":      "widget",
+				"preset":    "product_card",
+				"dataIndex": float64(2),
+			},
+		},
+	}
+	warnings := ApplyOps(formation, ops)
+	for _, w := range warnings {
+		t.Errorf("unexpected warning: %s", w)
+	}
+
+	if len(formation.Widgets) != 1 {
+		t.Fatalf("expected 1 widget, got %d", len(formation.Widgets))
+	}
+	w := formation.Widgets[0]
+	if w.ReplicateConfig == nil {
+		t.Fatal("ReplicateConfig should be set from props.dataIndex")
+	}
+	if w.ReplicateConfig.Enabled {
+		t.Error("ReplicateConfig.Enabled should be false (only dataIndex set)")
+	}
+	if w.ReplicateConfig.DataIndex != 2 {
+		t.Errorf("DataIndex: expected 2, got %d", w.ReplicateConfig.DataIndex)
+	}
+
+	data := sampleProductData(5)
+	expandReplicatedWidgets(formation, data, "product")
+	autoDetectEntityRefs(formation, data, "product")
+
+	if len(formation.Widgets) != 1 {
+		t.Fatalf("expected 1 widget after expand (no replicate), got %d", len(formation.Widgets))
+	}
+	got := formation.Widgets[0]
+	if got.EntityRef == nil {
+		t.Fatal("EntityRef should be auto-set from dataIndex=2")
+	}
+	if got.EntityRef.ID != "3" {
+		t.Errorf("EntityRef.ID: expected '3' (data[2]), got %q", got.EntityRef.ID)
+	}
+	if name := atomValue(got, "name"); name != "gamma" {
+		t.Errorf("name: expected gamma (data[2]), got %v", name)
+	}
+}
+
+// TestOpsInlinePreset_UnknownPresetWarns verifies that an unknown preset name
+// produces a warning + falls through to insertWidget without crashing.
+func TestOpsInlinePreset_UnknownPresetWarns(t *testing.T) {
+	formation := &domain.FormationWithData{}
+	ops := []Op{
+		{Type: OpInsert, Parent: "formation", Props: map[string]interface{}{"type": "widget", "preset": "no_such_preset"}},
+	}
+	warnings := ApplyOps(formation, ops)
+
+	if len(warnings) == 0 {
+		t.Error("expected warning for unknown preset")
+	}
+	foundUnknown := false
+	for _, w := range warnings {
+		if containsString(w, "unknown preset") {
+			foundUnknown = true
+			break
+		}
+	}
+	if !foundUnknown {
+		t.Errorf("warnings did not mention 'unknown preset': %v", warnings)
+	}
+
+	// Empty widget should still be created via fall-through.
+	if len(formation.Widgets) != 1 {
+		t.Errorf("expected 1 fall-through widget, got %d", len(formation.Widgets))
+	}
+}
+
+// TestOpsInlinePreset_PresetMixedWithLiterals verifies a presentation-style
+// composition: literal hero + preset card replicate + literal cta. After
+// expansion + post-process the formation should have 1 hero + N clones + 1 cta.
+func TestOpsInlinePreset_PresetMixedWithLiterals(t *testing.T) {
+	formation := &domain.FormationWithData{}
+	ops := []Op{
+		// Hero literal
+		{Type: OpInsert, Ref: "hero", Parent: "formation", Props: map[string]interface{}{"type": "widget", "size": "large"}},
+		{Type: OpInsert, Parent: "$hero", Props: map[string]interface{}{"type": "text", "value": "New collection"}},
+		// Gallery via preset + replicate
+		{Type: OpInsert, Parent: "formation", Props: map[string]interface{}{"type": "widget", "preset": "product_card", "replicate": true}},
+		// CTA literal
+		{Type: OpInsert, Ref: "cta", Parent: "formation", Props: map[string]interface{}{"type": "widget", "size": "small"}},
+		{Type: OpInsert, Parent: "$cta", Props: map[string]interface{}{"type": "text", "value": "Buy now"}},
+	}
+
+	warnings := ApplyOps(formation, ops)
+	for _, w := range warnings {
+		t.Errorf("unexpected warning: %s", w)
+	}
+
+	// Before expand: 3 widgets (hero, gallery template, cta).
+	if len(formation.Widgets) != 3 {
+		t.Fatalf("expected 3 widgets after ApplyOps, got %d", len(formation.Widgets))
+	}
+
+	data := sampleProductData(4)
+	expandReplicatedWidgets(formation, data, "product")
+	autoDetectEntityRefs(formation, data, "product")
+	BindData(formation, data)
+	ApplyConstraints(formation)
+
+	// After expand: hero + 4 clones + cta = 6 widgets.
+	if len(formation.Widgets) != 6 {
+		t.Fatalf("expected 6 widgets (hero + 4 clones + cta), got %d", len(formation.Widgets))
+	}
+
+	// Hero literal at index 0.
+	if formation.Widgets[0].EntityRef != nil {
+		t.Error("hero literal should not have EntityRef")
+	}
+	heroHasText := false
+	for _, a := range formation.Widgets[0].Atoms {
+		if a.Value == "New collection" {
+			heroHasText = true
+			break
+		}
+	}
+	if !heroHasText {
+		t.Error("hero literal text was not preserved")
+	}
+
+	// Clones at 1..4 with EntityRef + bound name.
+	for i := 1; i <= 4; i++ {
+		w := formation.Widgets[i]
+		if w.EntityRef == nil {
+			t.Errorf("clone[%d] missing EntityRef", i)
+		}
+		if name := atomValue(w, "name"); name == nil {
+			t.Errorf("clone[%d] name not bound", i)
+		}
+	}
+
+	// CTA literal at index 5.
+	cta := formation.Widgets[5]
+	if cta.EntityRef != nil {
+		t.Error("cta literal should not have EntityRef")
+	}
+	ctaHasText := false
+	for _, a := range cta.Atoms {
+		if a.Value == "Buy now" {
+			ctaHasText = true
+			break
+		}
+	}
+	if !ctaHasText {
+		t.Error("cta literal text was not preserved")
+	}
+}
+
+func containsString(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
