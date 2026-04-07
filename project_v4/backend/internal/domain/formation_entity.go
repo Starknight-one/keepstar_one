@@ -10,6 +10,7 @@ const (
 	FormationTypeSingle     FormationType = "single"
 	FormationTypeComparison FormationType = "comparison"
 	FormationTypeTable      FormationType = "table"
+	FormationTypeComposed   FormationType = "composed"
 )
 
 // Formation defines how widgets are laid out

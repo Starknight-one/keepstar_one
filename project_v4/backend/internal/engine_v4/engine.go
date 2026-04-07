@@ -91,6 +91,11 @@ func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 	// Step 6: Apply constraints (ALL atoms, no bypass)
 	ApplyConstraints(formation)
 
+	// Step 6.5: Group widgets into sections by ReplicateConfig.GroupID.
+	// Multi-widget compositions become formation.Sections; single-widget flows
+	// stay flat (rollback). Frontend FormationRenderer handles both paths.
+	groupIntoSections(formation)
+
 	// Step 7: Stamp stable IDs
 	StampTreeIDs(formation)
 

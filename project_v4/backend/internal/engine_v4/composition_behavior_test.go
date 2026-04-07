@@ -1,6 +1,7 @@
 package engine_v4
 
 import (
+	"fmt"
 	"testing"
 
 	"keepstar_v4/internal/domain"
@@ -599,4 +600,263 @@ func containsString(haystack, needle string) bool {
 		}
 	}
 	return false
+}
+
+// ─── Phase 3 — auto-sections post-process ───
+
+// TestGroupIntoSections_SingleGroup_Flat — 6 cards from one replicate group
+// produce a single grid section, which then rolls back to flat formation for
+// backwards compat with legacy single-widget flows ("show me creams").
+func TestGroupIntoSections_SingleGroup_Flat(t *testing.T) {
+	formation := &domain.FormationWithData{
+		Widgets: []domain.Widget{makeReplicateTemplate()},
+	}
+	expandReplicatedWidgets(formation, sampleProductData(6), "product")
+	if got := len(formation.Widgets); got != 6 {
+		t.Fatalf("setup: expected 6 widgets after expand, got %d", got)
+	}
+
+	groupIntoSections(formation)
+
+	if len(formation.Sections) != 0 {
+		t.Errorf("expected sections cleared (single-section rollback), got %d", len(formation.Sections))
+	}
+	if len(formation.Widgets) != 6 {
+		t.Errorf("expected 6 flat widgets after rollback, got %d", len(formation.Widgets))
+	}
+	if formation.Mode != domain.FormationTypeGrid {
+		t.Errorf("expected mode=grid, got %s", formation.Mode)
+	}
+	if formation.Grid == nil || formation.Grid.Cols != 3 {
+		t.Errorf("expected grid cols=3 (GridColumnsForCount(6)), got %+v", formation.Grid)
+	}
+}
+
+// TestGroupIntoSections_LiteralsOnly_Composed — 3 literal widgets each become
+// their own single-mode section. Result is composed (not flat) because there
+// are multiple sections.
+func TestGroupIntoSections_LiteralsOnly_Composed(t *testing.T) {
+	formation := &domain.FormationWithData{
+		Widgets: []domain.Widget{
+			makeLiteralWidget("Hero"),
+			makeLiteralWidget("Explainer"),
+			makeLiteralWidget("CTA"),
+		},
+	}
+
+	groupIntoSections(formation)
+
+	if formation.Mode != domain.FormationTypeComposed {
+		t.Errorf("expected mode=composed, got %s", formation.Mode)
+	}
+	if len(formation.Widgets) != 0 {
+		t.Errorf("expected formation.Widgets cleared, got %d", len(formation.Widgets))
+	}
+	if len(formation.Sections) != 3 {
+		t.Fatalf("expected 3 single-mode sections, got %d", len(formation.Sections))
+	}
+	for i, sec := range formation.Sections {
+		if sec.Mode != domain.FormationTypeSingle {
+			t.Errorf("section[%d] mode=%s, expected single", i, sec.Mode)
+		}
+		if len(sec.Widgets) != 1 {
+			t.Errorf("section[%d] widget count=%d, expected 1", i, len(sec.Widgets))
+		}
+	}
+}
+
+// TestGroupIntoSections_MixedComposition — hero + gallery (3 replicated cards)
+// + cta produces 3 sections in order: single/grid/single. This is the canonical
+// "presentation" use case.
+func TestGroupIntoSections_MixedComposition(t *testing.T) {
+	formation := &domain.FormationWithData{
+		Widgets: []domain.Widget{
+			makeLiteralWidget("Hero"),
+			makeReplicateTemplate(),
+			makeLiteralWidget("Buy now"),
+		},
+	}
+	expandReplicatedWidgets(formation, sampleProductData(3), "product")
+	if got := len(formation.Widgets); got != 5 {
+		t.Fatalf("setup: expected 5 widgets after expand (1 hero + 3 clones + 1 cta), got %d", got)
+	}
+
+	groupIntoSections(formation)
+
+	if formation.Mode != domain.FormationTypeComposed {
+		t.Errorf("expected mode=composed, got %s", formation.Mode)
+	}
+	if len(formation.Widgets) != 0 {
+		t.Errorf("expected formation.Widgets cleared, got %d", len(formation.Widgets))
+	}
+	if len(formation.Sections) != 3 {
+		t.Fatalf("expected 3 sections (hero/gallery/cta), got %d", len(formation.Sections))
+	}
+
+	// Section 0: hero literal
+	if formation.Sections[0].Mode != domain.FormationTypeSingle {
+		t.Errorf("section[0] mode=%s, expected single (hero)", formation.Sections[0].Mode)
+	}
+	if got := len(formation.Sections[0].Widgets); got != 1 {
+		t.Errorf("section[0] widget count=%d, expected 1 (hero)", got)
+	}
+
+	// Section 1: gallery — 3 clones, grid, cols=2 (GridColumnsForCount(3))
+	if formation.Sections[1].Mode != domain.FormationTypeGrid {
+		t.Errorf("section[1] mode=%s, expected grid (gallery)", formation.Sections[1].Mode)
+	}
+	if got := len(formation.Sections[1].Widgets); got != 3 {
+		t.Errorf("section[1] widget count=%d, expected 3 (gallery)", got)
+	}
+	if formation.Sections[1].Grid == nil || formation.Sections[1].Grid.Cols != 2 {
+		t.Errorf("section[1] expected grid cols=2 (GridColumnsForCount(3)), got %+v", formation.Sections[1].Grid)
+	}
+
+	// Section 2: cta literal
+	if formation.Sections[2].Mode != domain.FormationTypeSingle {
+		t.Errorf("section[2] mode=%s, expected single (cta)", formation.Sections[2].Mode)
+	}
+	if got := len(formation.Sections[2].Widgets); got != 1 {
+		t.Errorf("section[2] widget count=%d, expected 1 (cta)", got)
+	}
+}
+
+// TestGroupIntoSections_OrderPreserved — section order matches widget order;
+// gallery sandwiched between two literals stays in the middle.
+func TestGroupIntoSections_OrderPreserved(t *testing.T) {
+	formation := &domain.FormationWithData{
+		Widgets: []domain.Widget{
+			makeLiteralWidget("first"),
+			makeReplicateTemplate(),
+			makeLiteralWidget("middle"),
+		},
+	}
+	expandReplicatedWidgets(formation, sampleProductData(2), "product")
+	groupIntoSections(formation)
+
+	if len(formation.Sections) != 3 {
+		t.Fatalf("expected 3 sections, got %d", len(formation.Sections))
+	}
+
+	first := formation.Sections[0].Widgets[0]
+	if len(first.Atoms) == 0 || first.Atoms[0].Value != "first" {
+		t.Errorf("section[0] should hold 'first' literal, got value=%v", literalValue(first))
+	}
+
+	if formation.Sections[1].Mode != domain.FormationTypeGrid {
+		t.Errorf("section[1] should be grid (gallery), got %s", formation.Sections[1].Mode)
+	}
+
+	middle := formation.Sections[2].Widgets[0]
+	if len(middle.Atoms) == 0 || middle.Atoms[0].Value != "middle" {
+		t.Errorf("section[2] should hold 'middle' literal, got value=%v", literalValue(middle))
+	}
+}
+
+// TestGroupIntoSections_SingleEntityDetail_Flat — 1 entity-bound widget that
+// went through autoDetectEntityRefs (no GroupID) is treated as a literal,
+// becomes one single-section, then rolls back to flat with mode=single.
+// This is the legacy "show me detail" flow.
+func TestGroupIntoSections_SingleEntityDetail_Flat(t *testing.T) {
+	formation := &domain.FormationWithData{
+		Widgets: []domain.Widget{makeEntityWidget()},
+	}
+	autoDetectEntityRefs(formation, sampleProductData(2), "product")
+
+	groupIntoSections(formation)
+
+	if len(formation.Sections) != 0 {
+		t.Errorf("expected sections cleared (single-section rollback), got %d", len(formation.Sections))
+	}
+	if len(formation.Widgets) != 1 {
+		t.Errorf("expected 1 flat widget after rollback, got %d", len(formation.Widgets))
+	}
+	if formation.Mode != domain.FormationTypeSingle {
+		t.Errorf("expected mode=single, got %s", formation.Mode)
+	}
+	if formation.Widgets[0].EntityRef == nil {
+		t.Error("expected EntityRef preserved across grouping")
+	}
+}
+
+// TestStampTreeIDs_Composed — after groupIntoSections produces a composed
+// formation, StampTreeIDs walks formation.Sections and assigns stable IDs
+// in the w-s{N}-w{M} format. Verifies the existing stampWidgetIDs handles
+// the composed path correctly.
+func TestStampTreeIDs_Composed(t *testing.T) {
+	formation := &domain.FormationWithData{
+		Widgets: []domain.Widget{
+			makeLiteralWidget("Hero"),
+			makeReplicateTemplate(),
+			makeLiteralWidget("CTA"),
+		},
+	}
+	expandReplicatedWidgets(formation, sampleProductData(3), "product")
+	groupIntoSections(formation)
+	StampTreeIDs(formation)
+
+	if formation.Mode != domain.FormationTypeComposed {
+		t.Fatalf("setup: expected composed, got %s", formation.Mode)
+	}
+	if len(formation.Sections) != 3 {
+		t.Fatalf("setup: expected 3 sections, got %d", len(formation.Sections))
+	}
+
+	// Section 0: hero literal — w-s0-w0
+	if id := formation.Sections[0].Widgets[0].ID; id != "w-s0-w0" {
+		t.Errorf("section[0] widget[0] id=%q, expected w-s0-w0", id)
+	}
+
+	// Section 1: 3 gallery clones — w-s1-w0, w-s1-w1, w-s1-w2
+	for i := 0; i < 3; i++ {
+		expected := fmt.Sprintf("w-s1-w%d", i)
+		if id := formation.Sections[1].Widgets[i].ID; id != expected {
+			t.Errorf("section[1] widget[%d] id=%q, expected %s", i, id, expected)
+		}
+	}
+
+	// Section 2: cta literal — w-s2-w0
+	if id := formation.Sections[2].Widgets[0].ID; id != "w-s2-w0" {
+		t.Errorf("section[2] widget[0] id=%q, expected w-s2-w0", id)
+	}
+}
+
+// TestEngineExecute_LegacyReplicateGridStaysFlat — sanity that the full
+// engine pipeline preserves backwards compat for the legacy "show me creams"
+// case. After Phase 3 grouping the result must still look like flat
+// formation.Widgets with mode=grid.
+func TestEngineExecute_LegacyReplicateGridStaysFlat(t *testing.T) {
+	out := NewEngine().Execute(ExecuteInput{
+		Ops:        ProductCardGridOps(),
+		Data:       sampleProducts(5),
+		EntityType: "product",
+		Layout:     "grid",
+		Columns:    3,
+		Replicate:  true,
+	})
+
+	f := out.Formation
+	if len(f.Sections) != 0 {
+		t.Errorf("expected no sections (rollback), got %d", len(f.Sections))
+	}
+	if len(f.Widgets) != 5 {
+		t.Errorf("expected 5 flat widgets, got %d", len(f.Widgets))
+	}
+	if f.Mode != domain.FormationTypeGrid {
+		t.Errorf("expected mode=grid, got %s", f.Mode)
+	}
+	if f.Grid == nil || f.Grid.Cols != 3 {
+		t.Errorf("expected grid cols=3 (preserved from input.Columns), got %+v", f.Grid)
+	}
+}
+
+// literalValue returns the value of the first non-FieldName atom for a widget.
+// Used in tests where we need to inspect literal text content.
+func literalValue(w domain.Widget) interface{} {
+	for _, a := range w.Atoms {
+		if a.FieldName == "" {
+			return a.Value
+		}
+	}
+	return nil
 }
