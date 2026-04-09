@@ -34,18 +34,13 @@
 
 ---
 
-## 1.2 Tenant metadata digest в system prompt (open)
+## 1.2 Tenant metadata digest в system prompt (done)
 
 **Контекст**: sheet row 2. Чтобы Agent1 лучше использовал `catalog_search` (vector + SQL + merge), ему нужна сжатая метаинформация о каталоге тенанта в закэшированной части system prompt.
 
-**Что сделать**:
-- При старте сессии обогатить system prompt digest'ом: список категорий, брендов, диапазон цен, характерные атрибуты из `catalog.field_definitions`, размер каталога.
-- Закэшировать (Anthropic prompt cache, TTL 5 мин).
-- **Открытый вопрос**: что делать при каталоге 10k+ items или когда сама метаинформация превышает N токенов. Гипотеза из sheet: дать Agent1 второй tool для явного discovery доступных полей/значений — медленнее на первый запрос, но лучше качество. Решить в рамках задачи.
+**Закрыто** 2026-04-09 (`403d1fe` + `64dc6ae`) — дайджест инлайнится в Agent1 system prompt через `buildSystemPromptWithDigest()` с per-tenant мемоизацией (sync.Map). Prompt cache активирован: single breakpoint на конце system покрывает [tools+system] одним блоком >2048 токенов. Logs: `2026-04-09_01-21.md`, `2026-04-09_02-05.md`.
 
-**Как проверить**: запрос «покажи товары с керамидами» на каталоге где нет ingredient-фильтра в UI — Agent1 должен знать что такой атрибут есть и составить правильный catalog_search. До задачи — не знает.
-
-**Якоря**: `project_v4/backend/internal/usecases/agent1_execute.go`, `catalog.field_definitions` table, `project_v4/backend/internal/prompts/prompt_agent1.go` (если есть — создать).
+**Открытый под-вопрос**: что делать при каталоге 10k+ items когда сам дайджест превышает N токенов — пока не актуально (heybabes 967 продуктов укладывается), задача отложена до появления большого тенанта.
 
 ---
 
@@ -385,6 +380,79 @@
 
 ---
 
+## 4.9 Parallel multi tool_use (split visual_assembly на узкие tools) (open)
+
+**Контекст**: обсуждение 2026-04-09. Сейчас Agent2 имеет один tool `visual_assembly` с широкой schema на все режимы (build, modify, compose, replicate). Альтернатива — разбить на несколько узких tools, которые Agent2 эмитит **параллельно** в одном assistant message: `assemble_hero`, `assemble_grid`, `assemble_comparison`, `assemble_detail`, `modify_widget`. Anthropic поддерживает несколько tool_use блоков в одном response.
+
+**Что приобретаешь**:
+- Узкие schemas → Agent2 меньше галлюцинирует, output короче, cost ниже
+- Параллельная обработка на бэке (goroutine per tool_use)
+- Чище error reporting (один блок упал — остальные ок)
+- Хорошая совместимость со streaming (явные границы блоков в потоке)
+
+**Что не приобретаешь**: self-correction (Agent2 не видит результаты до конца своей генерации — все блоки в одном проходе).
+
+**Стоимость**: ~+5-10% output tokens на boilerplate (tool_use IDs, обёртки), input не меняется. ≈ +0.05-0.1¢/turn.
+
+**Что сделать**:
+- Спроектировать tool registry: 5-7 узких tools вместо одного `visual_assembly`.
+- Каждый tool — своя схема с минимально необходимыми полями.
+- Backend dispatch: один handler на каждый tool, общий движок под капотом.
+- Промпт переписать: больше нет COMPOSING секции с множественными widget inserts в одном вызове — теперь Agent2 эмитит несколько tool_use блоков.
+- Aggregation на бэке: собрать results всех tool_use в одну формацию перед отдачей фронту (или стримить по мере готовности — связь с задачей streaming).
+
+**Как проверить**: те же E2E что Phase 6 (#3) — composition, regression, modify. Замер cost + quality на 10 трейсах.
+
+**Якоря**: `project_v4/backend/internal/tools/tool_visual_assembly.go` (split), `project_v4/backend/internal/tools/registry.go` (или где регистрируются tools), `project_v4/backend/internal/prompts/prompt_compose_widgets.go` (rewrite COMPOSING), `project_v4/backend/internal/usecases/agent2_execute.go` (handle multiple tool_use results).
+
+---
+
+## 4.10 Sequential multi tool_use для freestyle / iterative building (deferred)
+
+**Контекст**: обсуждение 2026-04-09. Другая парадигма: Agent2 эмитит один tool_use → backend исполняет → result возвращается → Agent2 видит результат → решает следующий шаг → следующий tool_use. Это N round-trips в одном пользовательском turn.
+
+**Когда это нужно**:
+- Freestyle / from-scratch генерация UI без пресета (связь с задачей 2.8 / волной A2): Agent2 строит каркас, видит, наполняет.
+- Self-correction: tool_use упал на validation → Agent2 видит error → пробует иначе в том же turn'е.
+- Адаптивная композиция: hero оказался жирнее ожидаемого → grid делает 2 колонки вместо 3.
+
+**Стоимость**: **жёсткая**. Latency N× (каждый round-trip ~300-500ms TTFT + генерация). Cost +30-60% на 2 step'а, до 2× на 3 step'ах (input растёт с conversation, prompt cache частично спасает).
+
+**Когда не делать**: regression queries (preset reuse), composition с известными пресетами — sequential тут чистое зло, single call побеждает.
+
+**Что сделать**: отложено. Триггер — старт работы над A2 (freestyle / from-scratch UI generation, задача 2.8). Тогда sequential станет естественным механизмом её реализации.
+
+**Якоря**: `project_v4/backend/internal/usecases/agent2_execute.go` (loop с stop_reason check), Anthropic API streaming docs.
+
+---
+
+## 4.11 Streaming Agent2 + прогрессивный рендер фронта (open, demo-критично)
+
+**Контекст**: обсуждение 2026-04-09. Anthropic стримит токены tool_use как `input_json_delta` events. Backend парсит частичный JSON, по мере появления полных widget ops применяет partial Execute и пушит результат фронту через SSE. Фронт инкрементально дорисовывает UI. **LLM call ровно один**, тот же промпт, тот же cache, та же стоимость — выигрыш чисто subjective latency.
+
+**Ожидаемый эффект**: hero появляется через ~25-30% времени генерации Agent2 (300-500ms вместо 1.5-2s). Subjective latency -40-50% на composition. На демо — продаваемый wow-эффект.
+
+**Что сделать**:
+- Backend: streaming JSON parser в Anthropic adapter (накопительный буфер + bracket counting).
+- Engine: разрешить partial Execute — per-widget constraints применяются сразу, cross-widget (C1) откладываются на финальный pass.
+- HTTP layer: новый SSE endpoint `/api/v1/pipeline/stream` (или флаг на existing) с events `widget_ready`, `formation_complete`, `error`.
+- Frontend: SSE reader, инкрементальный renderer с **скелетонами** для loading state (плейсхолдер пока виджет ещё не пришёл, smooth fade-in при готовности).
+- Traces: расширить `/debug/traces/` на streaming events (несколько snapshots в одном turn).
+
+**Edge cases**:
+- Agent2 ломается на middle widget → фронт уже отрендерил предыдущие. Решение: показать error inline под отрендеренным куском, не rollback.
+- Constraint C1 (cross-widget coverage) применяется в конце → может удалить уже отрендеренные атомы. Решение: либо отложить рендер до конца C1 pass, либо C1 emits update events.
+- Single-widget кейсы (детали товара) — стримить нечего, ведут себя как сейчас. Не регрессия.
+
+**Как проверить**:
+- E2E на 5 composition сценариях, замер subjective latency через DevTools Performance (TTFB → first widget visible).
+- Regression: «покажи крема», «покажи деталь» — не сломаны.
+- Cost trace: до/после, должно быть идентично.
+
+**Якоря**: `project_v4/backend/internal/adapters/anthropic/` (streaming), `project_v4/backend/internal/handlers/handler_pipeline.go` (SSE endpoint), `project_v4/backend/internal/engine_v4/engine.go` (partial Execute), `project_v4/backend/internal/engine_v4/constraints.go` (C1 deferred), `project_v4/frontend/src/features/chat/` (SSE consumer), `project_v4/frontend/src/entities/widget/WidgetSkeleton.tsx` (новый компонент).
+
+---
+
 ## 4.8 Button wrapper visual check во фронте (open, мелкое)
 
 **Контекст**: `2026-04-07_03-51.md` gap #6. Пример COMPOSING промпта показывает `{type:"text","wrapper":{"type":"button","variant":"primary"}}` для CTA. Supported V4 engine'ом, но визуальный рендер надо проверить.
@@ -563,3 +631,5 @@
 - **Multi-widget tree map schema** → Phase 4 of #3
 - **Tool validation + COMPOSING prompt** → Phase 5 of #3
 - **Phase 6 E2E verification** → `2026-04-07_04-11.md`
+- **1.2** Agent1 tenant digest в system prompt + prompt cache → `2026-04-09_01-21.md` + `2026-04-09_02-05.md`
+- **ReplicateConfig persistence** (fix: `json:"-"` → `json:"replicate"`, чинит tree_map dedupe и groupIntoSections на modify-turn'ах) → `2026-04-09_02-05.md`
