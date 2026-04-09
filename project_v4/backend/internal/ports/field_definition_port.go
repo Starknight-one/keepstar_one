@@ -28,4 +28,14 @@ type FieldDefinitionPort interface {
 
 	// GetFieldDefinition returns a single field definition by name.
 	GetFieldDefinition(ctx context.Context, tenantID string, entityType domain.EntityType, fieldName string) (*FieldDefinition, error)
+
+	// SampleFieldValues returns up to `limit` sample values per field for the given
+	// tenant+entity type. Keys are field names; values are raw sample values pulled
+	// from real rows (strings for text, numbers for price/rating, []interface{} for
+	// JSONB arrays like images/tags). Used by Agent2 to populate the <fields> block
+	// in its system prompt so the LLM can match atom slots against real data shapes.
+	//
+	// Returns a possibly-partial map — fields with no samples are omitted rather
+	// than returning an error. Callers should treat this as best-effort enrichment.
+	SampleFieldValues(ctx context.Context, tenantID string, entityType domain.EntityType, limit int) (map[string][]interface{}, error)
 }

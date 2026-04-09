@@ -189,15 +189,44 @@ func buildWidgetMap(w domain.Widget) map[string]interface{} {
 		"id": w.ID,
 	}
 
-	var atoms []map[string]string
+	// Conditional atom schema: bound atoms emit a minimal {id, field} pair,
+	// open atoms emit rich metadata the LLM needs to pick a binding.
+	//
+	// Bound   → {"id": "a-s0-w0-title", "field": "name"}
+	// Open    → {"id": "a-s0-w2-slot",  "type": "text", "subtype": "string",
+	//            "slot": "title", "format": "text", "open": true}
+	//
+	// See docs/New features/METADATA_DRIVEN_BINDING_2026-04-09.md for the
+	// reasoning (bound = "solved", open = "work for me").
+	var atoms []map[string]interface{}
 	for _, a := range w.Atoms {
-		am := map[string]string{
+		if isBoundAtom(a) {
+			atoms = append(atoms, map[string]interface{}{
+				"id":    a.ID,
+				"field": a.FieldName,
+			})
+			continue
+		}
+		am := map[string]interface{}{
 			"id":   a.ID,
 			"type": string(a.Type),
 		}
+		if a.Subtype != "" {
+			am["subtype"] = string(a.Subtype)
+		}
+		if a.Slot != "" {
+			am["slot"] = string(a.Slot)
+		}
+		if a.Format != "" {
+			am["format"] = string(a.Format)
+		}
 		if a.FieldName != "" {
+			// Carries an intended fieldName but no resolved value — still open
+			// (missing in data or not yet bound). Expose it so the LLM can decide
+			// whether to keep or override.
 			am["field"] = a.FieldName
 		}
+		am["open"] = true
 		atoms = append(atoms, am)
 	}
 	if len(atoms) > 0 {
@@ -213,6 +242,22 @@ func buildWidgetMap(w domain.Widget) map[string]interface{} {
 	}
 
 	return wm
+}
+
+// isBoundAtom reports whether an atom has both a FieldName and a usable Value.
+// "Usable" excludes nil, the empty string, and the "<UNKNOWN>" placeholder that
+// catalog enrichment uses for missing data. Numeric and structured values count
+// as bound whenever they are non-nil.
+func isBoundAtom(a domain.Atom) bool {
+	if a.FieldName == "" || a.Value == nil {
+		return false
+	}
+	if s, ok := a.Value.(string); ok {
+		if s == "" || s == "<UNKNOWN>" {
+			return false
+		}
+	}
+	return true
 }
 
 func collectLayoutNodes(node *domain.LayoutNode, out *[]map[string]string) {

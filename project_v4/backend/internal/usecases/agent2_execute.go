@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"keepstar_v4/internal/domain"
@@ -51,11 +53,16 @@ type Agent2ExecuteResponse struct {
 
 // Agent2ExecuteUseCase executes Agent 2 (Preset Selector)
 type Agent2ExecuteUseCase struct {
-	llm            ports.LLMPort
-	statePort      ports.StatePort
-	toolRegistry   *tools.Registry
-	log            *logger.Logger
-	fieldDefPort   ports.FieldDefinitionPort // field definitions
+	llm          ports.LLMPort
+	statePort    ports.StatePort
+	toolRegistry *tools.Registry
+	log          *logger.Logger
+	fieldDefPort ports.FieldDefinitionPort // field definitions
+	// fieldsPromptCache memoizes the per-tenant system prompt with the
+	// <fields> block already appended. Mirrors Agent1's digestCache so the
+	// system prompt stays byte-stable across turns (required for Anthropic
+	// prompt caching). Invalidated by process restart.
+	fieldsPromptCache sync.Map // key: tenantSlug (string) → value: systemPrompt (string)
 }
 
 // NewAgent2ExecuteUseCase creates Agent 2 use case with field definitions support
@@ -188,8 +195,11 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		}
 	}
 
-	// Build user message and system prompt
-	systemPrompt := prompts.Agent2ToolSystemPrompt
+	// Build user message and system prompt. The system prompt now includes
+	// a per-tenant <fields> block so Agent2 can match atom slots against
+	// the tenant's actual data fields (metadata-driven binding, see
+	// docs/New features/METADATA_DRIVEN_BINDING_2026-04-09.md).
+	systemPrompt := uc.buildSystemPromptWithFields(ctx, req.TenantSlug)
 	// Load field labels from field_definitions for context
 	fieldLabels := uc.loadFieldLabels(ctx, req.TenantSlug, state)
 	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx, fieldLabels, formationTree)
@@ -407,6 +417,130 @@ func (uc *Agent2ExecuteUseCase) loadFieldLabels(ctx context.Context, tenantSlug 
 		return nil
 	}
 	return labels
+}
+
+// buildSystemPromptWithFields returns the base Agent2 system prompt with a
+// per-tenant <fields> block appended. The result is memoized per tenantSlug
+// in fieldsPromptCache so it stays byte-stable across turns (required for
+// Anthropic prompt caching). On missing tenant, missing port, empty field
+// definitions, or any error, returns the base prompt unchanged — the LLM
+// still has presets and hey-babes examples to fall back on.
+//
+// Called from Execute in place of the static prompts.Agent2ToolSystemPrompt
+// constant. Symmetric to Agent1ExecuteUseCase.buildSystemPromptWithDigest.
+func (uc *Agent2ExecuteUseCase) buildSystemPromptWithFields(ctx context.Context, tenantSlug string) string {
+	if tenantSlug == "" || uc.fieldDefPort == nil {
+		return prompts.Agent2ToolSystemPrompt
+	}
+	if cached, ok := uc.fieldsPromptCache.Load(tenantSlug); ok {
+		return cached.(string)
+	}
+
+	fields, err := uc.fieldDefPort.ListFieldDefinitions(ctx, tenantSlug, domain.EntityTypeProduct)
+	if err != nil || len(fields) == 0 {
+		return prompts.Agent2ToolSystemPrompt
+	}
+	// Samples are best-effort enrichment. A failure or empty result is fine —
+	// the block will still carry label/type/slot info which is the minimum
+	// the LLM needs to reason about field binding.
+	samples, _ := uc.fieldDefPort.SampleFieldValues(ctx, tenantSlug, domain.EntityTypeProduct, 3)
+	block := formatFieldsBlock(fields, samples)
+	if block == "" {
+		return prompts.Agent2ToolSystemPrompt
+	}
+
+	full := prompts.Agent2ToolSystemPrompt + "\n\n" + block + "\n"
+	uc.fieldsPromptCache.Store(tenantSlug, full)
+	return full
+}
+
+// formatFieldsBlock renders a compact <fields entity="product">...</fields>
+// text block for injection into Agent2's system prompt. One line per field,
+// ordered by priority ASC (most important first).
+//
+// Example output:
+//
+//	<fields entity="product">
+//	images         image   label="Images"         samples=["https://..."]
+//	name           text    label="Name"           samples=["COSRX BHA Power","Laneige Moisture"]
+//	price          number  label="Price"          samples=[2490,3990,1200]
+//	brand          text    label="Brand"          samples=["COSRX","Laneige"]
+//	...
+//	</fields>
+//
+// Fields without samples still appear (label+type are informative alone).
+// Fields with samples get them JSON-encoded so the LLM sees the data shape.
+func formatFieldsBlock(fields []ports.FieldDefinition, samples map[string][]interface{}) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	// Copy + sort by priority (lower = more important)
+	sorted := make([]ports.FieldDefinition, len(fields))
+	copy(sorted, fields)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].Priority < sorted[j].Priority
+	})
+
+	var b strings.Builder
+	b.WriteString(`<fields entity="product">`)
+	b.WriteByte('\n')
+	for _, fd := range sorted {
+		b.WriteString(fd.FieldName)
+		// Pad field name to a consistent column width for readability.
+		if pad := 16 - len(fd.FieldName); pad > 0 {
+			b.WriteString(strings.Repeat(" ", pad))
+		} else {
+			b.WriteByte(' ')
+		}
+
+		// Type descriptor — atom_type + subtype gives more info than type alone
+		// (e.g. "number/currency" vs "number/rating").
+		typeStr := string(fd.AtomType)
+		if fd.AtomSubtype != "" && string(fd.AtomSubtype) != typeStr {
+			typeStr = typeStr + "/" + string(fd.AtomSubtype)
+		}
+		b.WriteString(typeStr)
+		if pad := 18 - len(typeStr); pad > 0 {
+			b.WriteString(strings.Repeat(" ", pad))
+		} else {
+			b.WriteByte(' ')
+		}
+
+		// Label in quotes for human context.
+		if fd.Label != "" {
+			b.WriteString(`label=`)
+			if labelJSON, err := json.Marshal(fd.Label); err == nil {
+				b.Write(labelJSON)
+			}
+			b.WriteString("  ")
+		}
+
+		// Unit if present (e.g. "RUB" for price).
+		if fd.Unit != "" {
+			b.WriteString(`unit="`)
+			b.WriteString(fd.Unit)
+			b.WriteString(`"  `)
+		}
+
+		// Default slot hints where this field "wants" to live.
+		if fd.DefaultSlot != "" {
+			b.WriteString(`slot=`)
+			b.WriteString(string(fd.DefaultSlot))
+			b.WriteString("  ")
+		}
+
+		// Samples — JSON-encoded array of the first few real values.
+		if vals, ok := samples[fd.FieldName]; ok && len(vals) > 0 {
+			if sampleJSON, err := json.Marshal(vals); err == nil {
+				b.WriteString(`samples=`)
+				b.Write(sampleJSON)
+			}
+		}
+
+		b.WriteByte('\n')
+	}
+	b.WriteString(`</fields>`)
+	return b.String()
 }
 
 // Note: convertToFormation is defined in pipeline_execute.go and reused here
