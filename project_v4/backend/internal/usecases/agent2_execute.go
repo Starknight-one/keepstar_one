@@ -221,9 +221,10 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 		messages,
 		toolDefs,
 		&ports.CacheConfig{
-			CacheTools:  true,
-			CacheSystem: true,
-			ToolChoice:  "any", // Force tool call — Agent2 must always render
+			CacheTools:        true,
+			CacheSystem:       true,
+			CacheConversation: len(messages) > 1, // also cache Agent2History when present
+			ToolChoice:        "any",              // Force tool call — Agent2 must always render
 		},
 	)
 	llmDuration := time.Since(llmStart).Milliseconds()

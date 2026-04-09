@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"keepstar_v4/internal/domain"
 	engine_v4 "keepstar_v4/internal/engine_v4"
@@ -67,6 +68,9 @@ func (r *Registry) GetDefinitions() []domain.ToolDefinition {
 	for _, tool := range r.tools {
 		defs = append(defs, tool.Definition())
 	}
+	// Stable order — Anthropic prompt caching hashes the tool-array prefix byte-for-byte,
+	// so map iteration randomness here was breaking cache_read for Agent1 every call.
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 
 	return defs
 }

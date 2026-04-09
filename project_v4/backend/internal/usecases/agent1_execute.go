@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"keepstar_v4/internal/domain"
@@ -59,6 +60,10 @@ type Agent1ExecuteUseCase struct {
 	catalogPort  ports.CatalogPort
 	toolRegistry *tools.Registry
 	log          *logger.Logger
+	// digestCache stores per-tenant-slug rendered digest text so the Agent1 system
+	// prompt stays byte-stable across turns (required for Anthropic prompt caching)
+	// without a DB hit per turn. Invalidated by process restart.
+	digestCache sync.Map // key: tenantSlug (string) → value: digestText (string)
 }
 
 // NewAgent1ExecuteUseCase creates Agent 1 use case
@@ -190,7 +195,6 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	}
 
 	// Build enriched query with state context for LLM (ephemeral, not saved to history)
-	// Note: catalog digest is already in conversation_history from session init — no per-turn loading
 	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, currentConfig, &state.Actions, req.Query)
 
 	// Build messages with conversation history
@@ -203,11 +207,18 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 	// Get data-only tool definitions (Agent1 = data layer, no render tools)
 	toolDefs := uc.getAgent1Tools()
 
+	// Build per-tenant system prompt with inlined <catalog> digest.
+	// This replaces the old "seed digest into history at /session/init" approach which
+	// (a) depended on session init being called, (b) kept history-cached blocks under the
+	// 2048-token Haiku minimum so caching silently skipped. Inlining into system makes the
+	// prefix byte-stable across turns for a given tenant → cache breakpoint finally activates.
+	systemPrompt := uc.buildSystemPromptWithDigest(ctx, req.TenantSlug)
+
 	// Call LLM with caching
 	llmStart := time.Now()
 	llmResp, err := uc.llm.ChatWithToolsCached(
 		ctx,
-		prompts.Agent1SystemPrompt,
+		systemPrompt,
 		messages,
 		toolDefs,
 		&ports.CacheConfig{
@@ -347,8 +358,8 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		ToolMetadata:      toolMetadata,
 		ProductsFound:     productsFound,
 		StopReason:        llmResp.StopReason,
-		SystemPrompt:      prompts.Agent1SystemPrompt,
-		SystemPromptChars: len(prompts.Agent1SystemPrompt),
+		SystemPrompt:      systemPrompt,
+		SystemPromptChars: len(systemPrompt),
 		EnrichedQuery:     enrichedQuery,
 		MessageCount:      len(messages),
 		ToolDefCount:      len(toolDefs),
@@ -371,4 +382,35 @@ func (uc *Agent1ExecuteUseCase) getAgent1Tools() []domain.ToolDefinition {
 // GetToolDefs returns the filtered tool definitions for Agent1 (exported for testing)
 func (uc *Agent1ExecuteUseCase) GetToolDefs() []domain.ToolDefinition {
 	return uc.getAgent1Tools()
+}
+
+// buildSystemPromptWithDigest returns the base Agent1 system prompt with a <catalog> digest
+// block appended for the given tenant. The digest is fetched once per tenant and memoized for
+// the process lifetime so the prompt is byte-stable across turns (prompt-cache requirement).
+// On missing tenant, missing digest, or any error, returns the base prompt unchanged.
+func (uc *Agent1ExecuteUseCase) buildSystemPromptWithDigest(ctx context.Context, tenantSlug string) string {
+	if tenantSlug == "" || uc.catalogPort == nil {
+		return prompts.Agent1SystemPrompt
+	}
+
+	if cached, ok := uc.digestCache.Load(tenantSlug); ok {
+		return cached.(string)
+	}
+
+	tenant, err := uc.catalogPort.GetTenantBySlug(ctx, tenantSlug)
+	if err != nil || tenant == nil {
+		return prompts.Agent1SystemPrompt
+	}
+	digest, err := uc.catalogPort.GetCatalogDigest(ctx, tenant.ID)
+	if err != nil || digest == nil {
+		return prompts.Agent1SystemPrompt
+	}
+	digestText := digest.ToPromptText()
+	if digestText == "" {
+		return prompts.Agent1SystemPrompt
+	}
+
+	full := prompts.Agent1SystemPrompt + "\n\n<catalog>\n" + digestText + "</catalog>\n"
+	uc.digestCache.Store(tenantSlug, full)
+	return full
 }

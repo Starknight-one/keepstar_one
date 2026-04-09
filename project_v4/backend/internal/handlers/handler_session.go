@@ -185,21 +185,10 @@ func (h *SessionHandler) HandleInitSession(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-		// Seed catalog digest into conversation history (sent once, cached by Anthropic)
-		if h.catalogPort != nil {
-			if digest, err := h.catalogPort.GetCatalogDigest(r.Context(), tenant.ID); err == nil && digest != nil {
-				digestText := digest.ToPromptText()
-				if digestText != "" {
-					initialHistory := []domain.LLMMessage{
-						{Role: "user", Content: "<catalog>\n" + digestText + "</catalog>"},
-						{Role: "assistant", Content: "ok"},
-					}
-					if err := h.statePort.AppendConversation(r.Context(), sessionID, initialHistory); err != nil {
-						h.log.Warn("digest_seed_failed", "session_id", sessionID, "error", err)
-					}
-				}
-			}
-		}
+		// Note: catalog digest is now inlined into the Agent1 system prompt on each call
+		// (see usecases.Agent1ExecuteUseCase.buildSystemPromptWithDigest). It used to be
+		// seeded here into conversation_history, but that kept the cacheable prefix under
+		// Haiku's 2048-token minimum so prompt caching never activated.
 	}
 
 	resp := InitSessionResponse{
