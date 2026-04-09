@@ -219,6 +219,36 @@ func applyUpdate(op Op, idx *idIndex) string {
 		return ""
 	}
 
+	// FieldName fallback: when target is a field name (not a stamped tree ID),
+	// scan all atoms in the formation and update any whose FieldName matches.
+	// Needed in rebuild mode where freshly inserted atoms don't have tree IDs yet,
+	// and for metadata-driven binding where LLM targets by fieldName via preset
+	// override ops (e.g. target:"name" props:{fieldName:"model"}).
+	if idx.formation != nil && op.Target != "" && !IsTreeID(op.Target) {
+		matched := 0
+		updateInWidgets := func(widgets []domain.Widget) {
+			for wi := range widgets {
+				w := &widgets[wi]
+				for ai := range w.Atoms {
+					if w.Atoms[ai].FieldName == op.Target {
+						mergeAtomProps(&w.Atoms[ai], op.Props)
+						if w.Atoms[ai].Rigidity != domain.RigidityLocked {
+							w.Atoms[ai].Rigidity = domain.RigidityLocked
+						}
+						matched++
+					}
+				}
+			}
+		}
+		updateInWidgets(idx.formation.Widgets)
+		for si := range idx.formation.Sections {
+			updateInWidgets(idx.formation.Sections[si].Widgets)
+		}
+		if matched > 0 {
+			return ""
+		}
+	}
+
 	return fmt.Sprintf("target %q not found", op.Target)
 }
 
@@ -728,6 +758,19 @@ func mergeAtomProps(atom *domain.Atom, props map[string]interface{}) {
 	}
 	if v, ok := props["label"].(string); ok {
 		atom.Label = v
+	}
+
+	// Metadata-driven binding: allow LLM to override fieldName/slot via update ops.
+	// Used when Agent2 consults the <fields> block and remaps a preset's default
+	// atom (e.g. fieldName:"name") to a tenant-specific field (e.g. "model").
+	// BindData later re-binds atom.Value from data[i][atom.FieldName].
+	if v, ok := props["fieldName"].(string); ok {
+		atom.FieldName = v
+		// Clear stale Value so BindData repopulates from the new field.
+		atom.Value = nil
+	}
+	if v, ok := props["slot"].(string); ok && v != "" {
+		atom.Slot = domain.AtomSlot(v)
 	}
 
 	// Merge textStyle

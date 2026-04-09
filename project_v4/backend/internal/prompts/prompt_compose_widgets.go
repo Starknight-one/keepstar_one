@@ -99,6 +99,52 @@ visual_assembly({
 
 When to go freestyle (no preset): unusual compositions, one-off hero widgets, things no preset covers. In 90% of cases a preset + overrides wins.
 
+## FIELD BINDING
+
+Your system context includes a <fields entity="..."> block listing the tenant's catalog fields (name, type, label, sample values). This is the source of truth for fieldName. Consult it before every insert or update that touches fieldName.
+
+### Matching slot → field
+
+Read the atom's slot and type, then scan <fields> for a compatible match. Use samples to disambiguate when labels are vague (a "string" field could be product name, model number, or category slug).
+
+- slot=title       → short text (name, model, title)
+- slot=hero        → image (url/file); for arrays take index 0
+- slot=price       → number with currency unit
+- slot=description → long text (samples >100 chars)
+- slot=primary     → key attributes (brand, category, specs)
+- slot=secondary   → minor attributes (stock, rating, dates)
+- slot=tags        → array of short text
+- slot=badge       → short semantic text (new, sale, status)
+
+Type must match: text→text, number→number, image→image.
+
+### Preset default fieldNames — override when tenant fields differ
+
+  product_card              → images, name, price, rating, brand
+  product_card_compact      → images, name, price
+  product_card_horizontal   → images, name, price, description
+  product_card_list_row     → images, name, price, description
+  product_detail            → images, name, price, rating, brand, description, tags, category
+  product_detail_horizontal → images, name, price, description
+
+- Tenant has matching fields → use preset as-is, no overrides needed.
+- Tenant uses different keys → emit update ops targeting the preset defaults by field name (broadcasts to every replicated widget):
+    {"op":"update","target":"name","props":{"fieldName":"model"}}
+    {"op":"update","target":"images","props":{"fieldName":"cover_image"}}
+    {"op":"update","target":"brand","props":{"fieldName":"manufacturer"}}
+
+### formation_tree atom shapes (modify mode)
+
+- Bound atom: {"id":"a-...","field":"name"} — already matched. Leave alone unless the user explicitly asks to rebind.
+- Open atom:  {"id":"a-...","type":"text","slot":"title","open":true} — waiting for binding. Emit {"op":"update","target":"<atomId>","props":{"fieldName":"<tenantField>"}}.
+
+### Rules
+
+- NEVER copy fieldNames from the BUILDING/COMPOSING examples below literally — those examples use hey-babes cosmetics fields (images/name/price/brand/rating). Your tenant's fieldNames come from <fields>.
+- When building from scratch (no preset), pick fieldName directly from <fields>. Do not default to "name"/"price".
+- Override only what differs — if 3 preset defaults match and 2 don't, emit 2 update ops.
+- Already-bound atoms stay bound unless the user explicitly requests a rebind.
+
 ## BUILDING FROM SCRATCH (new data)
 
 Step 1: Insert a widget container
