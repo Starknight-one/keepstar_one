@@ -186,51 +186,79 @@ func (uc *Agent2StreamUseCase) Execute(
 		entityData = append(entityData, tools.ServiceToMap(s))
 	}
 
-	// Streaming decoder and widget counter
-	decoder := tools.NewStreamingToolDecoder()
+	// Streaming decoder (per content block). When a tool_use block ends we
+	// parse the full accumulated JSON and run a preset-aware partial engine
+	// pass so skeletons can be replaced with real widgets before the heavy
+	// tool Execute path (state writes + cross-widget constraints).
+	decoders := make(map[int]*tools.StreamingToolDecoder)
 	widgetIdx := 0
 
-	emitDecoded := func(decodedEvents []tools.DecodedEvent) {
-		for _, ev := range decodedEvents {
-			if ev.Kind == tools.DecodeError {
-				uc.log.Warn("stream_decode_error", "error", ev.Err)
-				continue
-			}
-			if ev.Kind != tools.WidgetComplete {
-				continue
-			}
-			// Partial engine pass over this widget group.
-			partial := uc.engine.ExecuteWidgetPartial(engine_v4.PartialInput{
-				Ops:        ev.Ops,
-				Data:       entityData,
-				EntityType: entityType,
-			})
-			if len(partial.Widgets) == 0 {
-				continue
-			}
-			select {
-			case events <- StreamEvent{
-				Kind:      StreamEventWidgetProvisional,
-				SessionID: req.SessionID,
-				TurnID:    req.TurnID,
-				Index:     widgetIdx,
-				Widgets:   partial.Widgets,
-			}:
-			case <-ctx.Done():
-				return
-			}
+	emitProvisionalFromRaw := func(raw string) {
+		if raw == "" {
+			return
+		}
+		var parsed struct {
+			Preset       string        `json:"preset"`
+			Layout       string        `json:"layout"`
+			Columns      int           `json:"columns"`
+			Size         string        `json:"size"`
+			Replicate    *bool         `json:"replicate"`
+			Limit        int           `json:"limit"`
+			Ops          []engine_v4.Op `json:"ops"`
+		}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			uc.log.Warn("stream_provisional_parse_failed", "error", err)
+			return
+		}
+		pi := engine_v4.PartialInput{
+			Ops:        parsed.Ops,
+			Data:       entityData,
+			EntityType: entityType,
+			Layout:     parsed.Layout,
+			Columns:    parsed.Columns,
+			Size:       parsed.Size,
+			Preset:     parsed.Preset,
+			Limit:      parsed.Limit,
+		}
+		if parsed.Replicate != nil {
+			pi.Replicate = *parsed.Replicate
+			pi.ReplicateSet = true
+		}
+		partial := uc.engine.ExecuteWidgetPartial(pi)
+		if len(partial.Widgets) == 0 {
+			return
+		}
+		select {
+		case events <- StreamEvent{
+			Kind:      StreamEventWidgetProvisional,
+			SessionID: req.SessionID,
+			TurnID:    req.TurnID,
+			Index:     widgetIdx,
+			Widgets:   partial.Widgets,
+		}:
 			widgetIdx++
+		case <-ctx.Done():
 		}
 	}
 
-	// Streaming callbacks — feed decoder, emit partial render events.
 	callbacks := &anthropic.StreamCallbacks{
+		OnToolUseStart: func(blockIndex int, toolUseID, toolName string) error {
+			decoders[blockIndex] = tools.NewStreamingToolDecoder()
+			return nil
+		},
 		OnInputJSONDelta: func(blockIndex int, partialJSON string) error {
-			emitDecoded(decoder.Feed(partialJSON))
+			if d, ok := decoders[blockIndex]; ok {
+				d.Feed(partialJSON)
+			}
 			return nil
 		},
 		OnContentBlockStop: func(blockIndex int) error {
-			emitDecoded(decoder.Flush())
+			d, ok := decoders[blockIndex]
+			if !ok {
+				return nil
+			}
+			d.Flush()
+			emitProvisionalFromRaw(d.FullRawJSON())
 			return nil
 		},
 	}

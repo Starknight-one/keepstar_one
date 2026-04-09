@@ -7,14 +7,16 @@ import (
 // PartialInput is the input for ExecuteWidgetPartial — a slice of ops that
 // represent a single widget group (one insert-widget op + its child ops).
 type PartialInput struct {
-	Ops        []Op
-	Data       []map[string]interface{}
-	EntityType string
-	Layout     string
-	Columns    int
-	Size       string
-	Replicate  bool
-	Limit      int
+	Ops           []Op
+	Data          []map[string]interface{}
+	EntityType    string
+	Layout        string
+	Columns       int
+	Size          string
+	Preset        string
+	Replicate     bool
+	ReplicateSet  bool // true if caller explicitly set Replicate (else inherit from preset)
+	Limit         int
 }
 
 // PartialOutput returns the widgets produced by one partial execution.
@@ -41,9 +43,22 @@ func (e *Engine) ExecuteWidgetPartial(input PartialInput) PartialOutput {
 		formation.Grid = &domain.GridConfig{Cols: input.Columns}
 	}
 
+	// Preset expansion — same logic as tool_visual_assembly.go. Prepend preset
+	// ops to user ops so $ref bindings are visible to overrides.
+	ops := input.Ops
+	replicate := input.Replicate
+	if input.Preset != "" {
+		if p, found := GetPreset(input.Preset); found {
+			ops = append(p.Build(), ops...)
+			if !input.ReplicateSet {
+				replicate = p.DefaultReplicate
+			}
+		}
+	}
+
 	var warnings []string
-	if len(input.Ops) > 0 {
-		warnings = append(warnings, ApplyOps(formation, input.Ops)...)
+	if len(ops) > 0 {
+		warnings = append(warnings, ApplyOps(formation, ops)...)
 	}
 	if input.Size != "" {
 		for i := range formation.Widgets {
@@ -57,7 +72,7 @@ func (e *Engine) ExecuteWidgetPartial(input PartialInput) PartialOutput {
 	}
 
 	// Legacy Replicate bridge — only when exactly one widget produced.
-	if input.Replicate && len(formation.Widgets) == 1 && len(data) > 0 {
+	if replicate && len(formation.Widgets) == 1 && len(data) > 0 {
 		if formation.Widgets[0].ReplicateConfig == nil {
 			formation.Widgets[0].ReplicateConfig = &domain.ReplicateConfig{Enabled: true, Limit: input.Limit}
 		} else {
