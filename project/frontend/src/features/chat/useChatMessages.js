@@ -18,6 +18,16 @@ export function useChatMessages() {
     }));
   }, []);
 
+  // updateMessage: merge `patch` into the message with matching id.
+  // Used by streaming pipeline to mutate an assistant placeholder as
+  // widget_provisional / formation_complete events arrive.
+  const updateMessage = useCallback((id, patch) => {
+    setState((prev) => ({
+      ...prev,
+      messages: prev.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    }));
+  }, []);
+
   const setLoading = useCallback((isLoading) => {
     setState((prev) => ({ ...prev, isLoading }));
   }, []);
@@ -33,6 +43,7 @@ export function useChatMessages() {
   return {
     ...state,
     addMessage,
+    updateMessage,
     setMessages,
     setLoading,
     setError,

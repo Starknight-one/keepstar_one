@@ -1,5 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
-import { sendPipelineQuery } from '../../shared/api/apiClient';
+import { streamPipelineQuery } from '../../shared/api/apiClient';
 import { MessageRole } from '../../entities/message/messageModel';
 
 const SESSION_STORAGE_KEY = 'chatSessionId';
@@ -14,29 +14,23 @@ function getProductWord(count) {
   return 'товаров';
 }
 
-export function useChatSubmit({ sessionId, addMessage, setLoading, setError, setSessionId, onFormationReceived, lastFormationRef }) {
-  // useRef to avoid stale closure — callback doesn't depend on sessionId re-renders
+export function useChatSubmit({ sessionId, addMessage, updateMessage, setLoading, setError, setSessionId, onFormationReceived, lastFormationRef }) {
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
-  // Request versioning: monotonic counter prevents stale responses from overwriting fresh state
   const requestIdRef = useRef(0);
-  // AbortController for cancelling in-flight requests when a new one is submitted
   const abortRef = useRef(null);
 
-  const submit = useCallback(async (text) => {
+  const submit = useCallback((text) => {
     if (!text.trim()) return;
 
-    // Abort any in-flight request — new request always wins
+    // Cancel any in-flight stream
     if (abortRef.current) {
       abortRef.current.abort();
     }
 
     const thisRequestId = ++requestIdRef.current;
-    const controller = new AbortController();
-    abortRef.current = controller;
 
-    // Add user message
     addMessage({
       id: Date.now().toString(),
       role: MessageRole.USER,
@@ -44,68 +38,93 @@ export function useChatSubmit({ sessionId, addMessage, setLoading, setError, set
       timestamp: new Date(),
     });
 
+    // Assistant placeholder — gets its formation mutated as stream arrives.
+    const assistantId = (Date.now() + 1).toString();
+    const provisionalFormation = {
+      mode: 'grid',
+      widgets: [],
+      isStreaming: true,
+    };
+    addMessage({
+      id: assistantId,
+      role: MessageRole.ASSISTANT,
+      content: '',
+      formation: provisionalFormation,
+      timestamp: new Date(),
+    });
+
     setLoading(true);
     setError(null);
 
-    try {
-      // Build screen context from current formation for Agent2
-      let screenContext = null;
-      const currentFormation = lastFormationRef?.current;
-      if (currentFormation) {
-        const w0 = currentFormation.widgets?.[0];
-        screenContext = {
-          mode: currentFormation.mode || 'grid',
-          widgetCount: currentFormation.widgets?.length || 0,
-          fields: w0?.atoms?.map(a => a.fieldName).filter(Boolean) || [],
+    // Build screen context from current formation
+    let screenContext = null;
+    const currentFormation = lastFormationRef?.current;
+    if (currentFormation) {
+      const w0 = currentFormation.widgets?.[0];
+      screenContext = {
+        mode: currentFormation.mode || 'grid',
+        widgetCount: currentFormation.widgets?.length || 0,
+        fields: w0?.atoms?.map(a => a.fieldName).filter(Boolean) || [],
+      };
+    }
+
+    // Accumulated provisional widgets
+    const widgetsAcc = [];
+
+    const controller = streamPipelineQuery(sessionIdRef.current, text, screenContext, {
+      onSessionInit: (ev) => {
+        if (thisRequestId !== requestIdRef.current) return;
+        if (ev.sessionId && ev.sessionId !== sessionIdRef.current) {
+          sessionIdRef.current = ev.sessionId;
+          localStorage.setItem(SESSION_STORAGE_KEY, ev.sessionId);
+          setSessionId(ev.sessionId);
+        }
+      },
+      onWidgetProvisional: (ev) => {
+        if (thisRequestId !== requestIdRef.current) return;
+        if (Array.isArray(ev.widgets)) {
+          widgetsAcc.push(...ev.widgets);
+        }
+        const liveFormation = {
+          mode: 'grid',
+          widgets: [...widgetsAcc],
+          isStreaming: true,
         };
-      }
-
-      const response = await sendPipelineQuery(sessionIdRef.current, text, screenContext, controller.signal);
-
-      // Stale response guard: discard if a newer request was issued
-      if (thisRequestId !== requestIdRef.current) return;
-
-      // Save sessionId to localStorage if new
-      if (response.sessionId && response.sessionId !== sessionIdRef.current) {
-        sessionIdRef.current = response.sessionId;
-        localStorage.setItem(SESSION_STORAGE_KEY, response.sessionId);
-        setSessionId(response.sessionId);
-      }
-
-      // Notify parent about formation + adjacent templates + entities for instant expand
-      if (response.formation && onFormationReceived) {
-        onFormationReceived(response.formation, response.adjacentTemplates || null, response.entities || null);
-      }
-
-      // Add assistant message with formation
-      const widgets = response.formation?.widgets || [];
-      const widgetCount = widgets.length;
-      const isTextOnly = widgets.every(w => w.type === 'text_block');
-      addMessage({
-        id: (Date.now() + 1).toString(),
-        role: MessageRole.ASSISTANT,
-        content: (widgetCount > 0 && !isTextOnly) ? `Нашёл ${widgetCount} ${getProductWord(widgetCount)}` : '',
-        formation: response.formation,
-        timestamp: new Date(),
-      });
-    } catch (err) {
-      if (err.name === 'AbortError') return; // Request was cancelled by a newer one
-      if (thisRequestId !== requestIdRef.current) return; // Stale error
-
-      setError(err.message);
-      addMessage({
-        id: (Date.now() + 1).toString(),
-        role: MessageRole.ASSISTANT,
-        content: 'Sorry, something went wrong. Please try again.',
-        timestamp: new Date(),
-      });
-    } finally {
-      if (thisRequestId === requestIdRef.current) {
+        updateMessage(assistantId, { formation: liveFormation });
+        if (onFormationReceived) {
+          onFormationReceived(liveFormation, null, null);
+        }
+      },
+      onFormationComplete: (ev) => {
+        if (thisRequestId !== requestIdRef.current) return;
+        const finalFormation = ev.formation || { mode: 'grid', widgets: widgetsAcc };
+        const widgets = finalFormation.widgets || [];
+        const widgetCount = widgets.length + (finalFormation.sections?.reduce((s, sec) => s + (sec.widgets?.length || 0), 0) || 0);
+        const isTextOnly = widgets.every(w => w.type === 'text_block');
+        updateMessage(assistantId, {
+          content: (widgetCount > 0 && !isTextOnly) ? `Нашёл ${widgetCount} ${getProductWord(widgetCount)}` : '',
+          formation: finalFormation,
+        });
+        if (onFormationReceived) {
+          onFormationReceived(finalFormation, null, null);
+        }
         setLoading(false);
         abortRef.current = null;
-      }
-    }
-  }, [addMessage, setLoading, setError, setSessionId, onFormationReceived]);
+      },
+      onError: (err) => {
+        if (thisRequestId !== requestIdRef.current) return;
+        setError(err.message);
+        updateMessage(assistantId, {
+          content: 'Sorry, something went wrong. Please try again.',
+          formation: null,
+        });
+        setLoading(false);
+        abortRef.current = null;
+      },
+    });
+
+    abortRef.current = controller;
+  }, [addMessage, updateMessage, setLoading, setError, setSessionId, onFormationReceived]);
 
   return { submit };
 }

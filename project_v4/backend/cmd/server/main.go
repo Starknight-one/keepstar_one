@@ -176,6 +176,14 @@ func main() {
 	}
 	_ = pipelineUC // Pipeline is ready to be called from handlers
 
+	// Initialize streaming Agent2 + pipeline (Phase 4 — SSE path)
+	var pipelineStreamUC *usecases.PipelineStreamUseCase
+	if toolRegistry != nil && stateAdapter != nil && cacheAdapter != nil {
+		agent2Stream := usecases.NewAgent2StreamUseCase(llmClient, stateAdapter, toolRegistry, eng, appLog, fieldDefAdapter)
+		pipelineStreamUC = usecases.NewPipelineStreamUseCase(llmClient, stateAdapter, cacheAdapter, traceAdapter, catalogAdapter, toolRegistry, eng, agent2Stream, appLog)
+		appLog.Info("pipeline_stream_initialized", "status", "ok")
+	}
+
 	// Initialize use cases
 	sendMessage := usecases.NewSendMessageUseCase(llmClient, cacheAdapter, eventAdapter, appLog)
 
@@ -192,6 +200,13 @@ func main() {
 	if pipelineUC != nil {
 		pipelineHandler = handlers.NewPipelineHandler(pipelineUC, metricsStore, appLog)
 		appLog.Info("pipeline_handler_initialized", "status", "ok")
+	}
+
+	// Streaming pipeline handler (SSE)
+	var pipelineStreamHandler *handlers.PipelineStreamHandler
+	if pipelineStreamUC != nil {
+		pipelineStreamHandler = handlers.NewPipelineStreamHandler(pipelineStreamUC, appLog)
+		appLog.Info("pipeline_stream_handler_initialized", "status", "ok")
 	}
 
 	// Initialize Navigation handler (expand/back)
@@ -232,7 +247,7 @@ func main() {
 		w.Write([]byte(`{"build":"v4-nesting-fix-1c8634d","prompt":"ui-builder","date":"2026-04-04"}`))
 	})
 
-	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler, tenantMiddleware, cfg.TenantSlug)
+	handlers.SetupRoutes(mux, chatHandler, sessionHandler, healthHandler, pipelineHandler, pipelineStreamHandler, tenantMiddleware, cfg.TenantSlug)
 
 	// Setup navigation routes (expand/back)
 	if navigationHandler != nil {

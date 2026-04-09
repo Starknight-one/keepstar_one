@@ -20,6 +20,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
     isLoading,
     error,
     addMessage,
+    updateMessage,
     setMessages,
     setLoading,
     setError,
@@ -47,6 +48,7 @@ export function ChatPanel({ onClose, onFormationReceived, onNavigationStateChang
   const { submit: rawSubmit } = useChatSubmit({
     sessionId,
     addMessage,
+    updateMessage,
     setLoading,
     setError,
     setSessionId,

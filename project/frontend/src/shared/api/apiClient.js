@@ -138,6 +138,80 @@ export async function sendPipelineQuery(sessionId, query, screenContext, signal)
   return response.json();
 }
 
+// Pipeline API (streaming) - SSE stream of widget_provisional and formation_complete events.
+// handlers: { onSessionInit, onWidgetProvisional, onFormationComplete, onError }
+// Returns an AbortController so caller can cancel.
+export function streamPipelineQuery(sessionId, query, screenContext, handlers = {}) {
+  const controller = new AbortController();
+  const body = { query };
+  if (sessionId) body.sessionId = sessionId;
+  if (screenContext) body.screenContext = screenContext;
+
+  (async () => {
+    try {
+      const response = await fetch(`${_apiBaseUrl}/pipeline/stream`, {
+        method: 'POST',
+        headers: { ...getHeaders(), Accept: 'text/event-stream' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      // Loop: accumulate chunks, split on blank line (SSE frame delimiter)
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let eventName = 'message';
+          let dataLines = [];
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+          }
+          if (dataLines.length === 0) continue;
+          let payload;
+          try {
+            payload = JSON.parse(dataLines.join('\n'));
+          } catch (e) {
+            continue;
+          }
+          switch (eventName) {
+            case 'session_init':
+              handlers.onSessionInit?.(payload);
+              break;
+            case 'widget_provisional':
+              handlers.onWidgetProvisional?.(payload);
+              break;
+            case 'widget_finalized':
+              handlers.onWidgetFinalized?.(payload);
+              break;
+            case 'formation_complete':
+              handlers.onFormationComplete?.(payload);
+              break;
+            case 'error':
+              handlers.onError?.(new Error(payload.error || 'stream error'));
+              break;
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        handlers.onError?.(err);
+      }
+    }
+  })();
+
+  return controller;
+}
+
 // Navigation API - expand widget to detail view
 export async function expandView(sessionId, entityType, entityId) {
   const response = await timedFetch('POST', '/navigation/expand', {
