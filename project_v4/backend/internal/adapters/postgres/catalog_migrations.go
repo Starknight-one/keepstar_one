@@ -28,6 +28,8 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		migrationCatalogDropLegacyColumns,
 		migrationCatalogFieldDefinitions,
 		migrationCatalogFieldDefinitionsSeed,
+		migrationCatalogProductsExtra,
+		migrationCatalogTestElectronicsSeed,
 	}
 
 	for i, migration := range migrations {
@@ -315,6 +317,9 @@ CREATE INDEX IF NOT EXISTS idx_field_defs_tenant_type
 
 // Seed all currently hardcoded fields for every existing tenant.
 // Uses INSERT ... ON CONFLICT DO NOTHING so it's idempotent.
+// Excludes test-* tenants — those have their own tailored field definitions
+// (e.g. migrationCatalogTestElectronicsSeed) and should not inherit the
+// hey-babes-shaped catalog.
 const migrationCatalogFieldDefinitionsSeed = `
 INSERT INTO catalog.field_definitions (tenant_id, field_name, entity_type, atom_type, atom_subtype, unit, label, default_display, default_slot, priority)
 SELECT t.id, v.field_name, v.entity_type, v.atom_type, v.atom_subtype, v.unit, v.label, v.default_display, v.default_slot, v.priority
@@ -345,5 +350,100 @@ CROSS JOIN (VALUES
     ('description',    'service', 'text',   'string',   NULL,  'Description',    'body-sm',        'secondary', 7),
     ('attributes',     'service', 'text',   'string',   NULL,  'Attributes',     'body-sm',        'secondary', 8)
 ) AS v(field_name, entity_type, atom_type, atom_subtype, unit, label, default_display, default_slot, priority)
+WHERE t.slug NOT LIKE 'test-%'
 ON CONFLICT DO NOTHING;
+`
+
+// --- Metadata-driven binding: tenant-specific field storage ---
+
+// Adds a JSONB column to catalog.products so tenants can store catalog fields
+// that don't fit the hey-babes shape (model/manufacturer/cpu/ram for electronics,
+// title/author/isbn for books, etc.). ListProducts scans this column into
+// domain.Product.Extra and ProductToMap spreads it into the data[i] map for
+// Agent2 binding. SampleFieldValues pulls samples from it for the <fields> block.
+const migrationCatalogProductsExtra = `
+ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS extra JSONB DEFAULT '{}'::jsonb;
+`
+
+// Seeds a synthetic test-electronics tenant for the metadata-driven binding
+// PoC. Proves one engine + one preset works across domains without code
+// changes: the LLM reads the <fields> block, sees model/manufacturer/cover_image
+// instead of name/brand/images, and emits override ops that remap atom
+// fieldNames at ApplyOps time.
+//
+// Idempotency:
+//   - tenant inserted via ON CONFLICT (slug) DO NOTHING.
+//   - field_definitions protected by composite PK (tenant_id, entity_type, field_name).
+//   - products only inserted if the tenant has zero products yet (WHERE NOT EXISTS).
+//
+// Closes: docs/PRE_LAUNCH_TASKS.md → 4.3 B7 (role-based field resolution, replaced
+// by metadata-driven binding). Design doc: docs/New features/METADATA_DRIVEN_BINDING_2026-04-09.md
+const migrationCatalogTestElectronicsSeed = `
+-- 1. Tenant
+INSERT INTO catalog.tenants (slug, name, type)
+VALUES ('test-electronics', 'Test Electronics', 'b2c')
+ON CONFLICT (slug) DO NOTHING;
+
+-- 2. Field definitions (9 tenant-specific fields — no images/name/brand)
+INSERT INTO catalog.field_definitions (tenant_id, field_name, entity_type, atom_type, atom_subtype, unit, label, default_display, default_slot, priority)
+SELECT t.id, v.field_name, v.entity_type, v.atom_type, v.atom_subtype, v.unit, v.label, v.default_display, v.default_slot, v.priority
+FROM catalog.tenants t
+CROSS JOIN (VALUES
+    ('cover_image',   'product', 'image',  'url',      NULL,   'Cover Image',   'image-cover',    'hero',      0),
+    ('model',         'product', 'text',   'string',   NULL,   'Model',         'h2',             'title',     1),
+    ('price',         'product', 'number', 'currency', 'RUB',  'Price',         'price',          'price',     2),
+    ('manufacturer',  'product', 'text',   'string',   NULL,   'Manufacturer',  'tag',            'primary',   3),
+    ('rating',        'product', 'number', 'rating',   NULL,   'Rating',        'rating-compact', 'secondary', 4),
+    ('cpu',           'product', 'text',   'string',   NULL,   'CPU',           'tag',            'primary',   5),
+    ('ram',           'product', 'text',   'string',   NULL,   'RAM',           'tag',            'primary',   6),
+    ('display_size',  'product', 'text',   'string',   NULL,   'Display',       'tag',            'primary',   7),
+    ('battery_life',  'product', 'text',   'string',   NULL,   'Battery',       'body-sm',        'secondary', 8)
+) AS v(field_name, entity_type, atom_type, atom_subtype, unit, label, default_display, default_slot, priority)
+WHERE t.slug = 'test-electronics'
+ON CONFLICT DO NOTHING;
+
+-- 3. Products (8 laptops, tenant-specific fields go into extra JSONB).
+--    "Ноутбук" prefix lets keyword search match; empty images + everything
+--    non-hey-babes into extra forces the LLM to emit override ops.
+INSERT INTO catalog.products (tenant_id, name, description, price, currency, rating, images, extra)
+SELECT t.id, v.name, v.description, v.price, 'RUB', v.rating, '[]'::jsonb, v.extra::jsonb
+FROM catalog.tenants t
+CROSS JOIN (VALUES
+    ('Ноутбук Apple MacBook Pro 14',
+     'Флагманский ноутбук для профессионалов на чипе Apple Silicon',
+     24999000, 4.9,
+     '{"model":"MacBook Pro 14","manufacturer":"Apple","cpu":"Apple M3 Pro","ram":"18GB","display_size":"14.2\" Liquid Retina XDR","battery_life":"18 hours","cover_image":"https://cdn.example.com/mbp14-m3.webp"}'),
+    ('Ноутбук Apple MacBook Air 13',
+     'Тонкий и лёгкий ноутбук для повседневных задач',
+     11999000, 4.8,
+     '{"model":"MacBook Air 13","manufacturer":"Apple","cpu":"Apple M2","ram":"8GB","display_size":"13.6\" Liquid Retina","battery_life":"18 hours","cover_image":"https://cdn.example.com/mba13-m2.webp"}'),
+    ('Ноутбук Lenovo ThinkPad X1 Carbon Gen 11',
+     'Бизнес-ноутбук с лёгким углеволоконным корпусом',
+     18999000, 4.6,
+     '{"model":"ThinkPad X1 Carbon Gen 11","manufacturer":"Lenovo","cpu":"Intel Core i7-1355U","ram":"16GB","display_size":"14\" WUXGA IPS","battery_life":"15 hours","cover_image":"https://cdn.example.com/x1c-gen11.webp"}'),
+    ('Ноутбук Dell XPS 15 9530',
+     'Производительный ноутбук для работы с графикой и видео',
+     21999000, 4.5,
+     '{"model":"XPS 15 9530","manufacturer":"Dell","cpu":"Intel Core i7-13700H","ram":"32GB","display_size":"15.6\" OLED 3.5K","battery_life":"13 hours","cover_image":"https://cdn.example.com/xps15-9530.webp"}'),
+    ('Ноутбук Asus ROG Strix G16',
+     'Игровой ноутбук с RTX 4070 для требовательных игр',
+     17999000, 4.4,
+     '{"model":"ROG Strix G16","manufacturer":"Asus","cpu":"Intel Core i9-13980HX","ram":"32GB","display_size":"16\" QHD 240Hz","battery_life":"6 hours","cover_image":"https://cdn.example.com/rog-strix-g16.webp"}'),
+    ('Ноутбук HP Spectre x360 14',
+     'Премиум-ноутбук 2-в-1 с сенсорным OLED-экраном',
+     16999000, 4.7,
+     '{"model":"Spectre x360 14","manufacturer":"HP","cpu":"Intel Core Ultra 7 155H","ram":"16GB","display_size":"14\" OLED 2.8K touch","battery_life":"17 hours","cover_image":"https://cdn.example.com/spectre-x360-14.webp"}'),
+    ('Ноутбук Acer Swift 5',
+     'Ультрапортативный ноутбук с антимикробным покрытием',
+     9999000, 4.3,
+     '{"model":"Swift 5 SF514","manufacturer":"Acer","cpu":"Intel Core i7-1260P","ram":"16GB","display_size":"14\" 2560x1600 IPS","battery_life":"14 hours","cover_image":"https://cdn.example.com/swift-5.webp"}'),
+    ('Ноутбук Microsoft Surface Laptop 5',
+     'Элегантный ноутбук от Microsoft с корпусом из магния',
+     14999000, 4.5,
+     '{"model":"Surface Laptop 5","manufacturer":"Microsoft","cpu":"Intel Core i7-1255U","ram":"16GB","display_size":"13.5\" PixelSense touch","battery_life":"18 hours","cover_image":"https://cdn.example.com/surface-laptop-5.webp"}')
+) AS v(name, description, price, rating, extra)
+WHERE t.slug = 'test-electronics'
+  AND NOT EXISTS (
+    SELECT 1 FROM catalog.products p2 WHERE p2.tenant_id = t.id
+  );
 `

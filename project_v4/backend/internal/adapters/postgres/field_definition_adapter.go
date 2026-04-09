@@ -94,7 +94,8 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 		    COALESCE(mp.product_form, '') AS product_form,
 		    COALESCE(mp.skin_type, '{}') AS skin_type,
 		    COALESCE(mp.concern, '{}') AS concern,
-		    COALESCE(mp.key_ingredients, '{}') AS key_ingredients
+		    COALESCE(mp.key_ingredients, '{}') AS key_ingredients,
+		    COALESCE(p.extra, '{}'::jsonb) AS extra
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
@@ -149,7 +150,7 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 			name, description, brand, category, productForm string
 			price, stockQuantity                             int
 			rating                                           float64
-			imagesRaw, tagsRaw                               []byte
+			imagesRaw, tagsRaw, extraRaw                     []byte
 			skinType, concern, keyIngredients                []string
 		)
 		if err := rows.Scan(
@@ -157,6 +158,7 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 			&imagesRaw, &tagsRaw,
 			&brand, &category, &productForm,
 			&skinType, &concern, &keyIngredients,
+			&extraRaw,
 		); err != nil {
 			return nil, fmt.Errorf("scan sample row: %w", err)
 		}
@@ -196,6 +198,17 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 		}
 		if len(keyIngredients) > 0 {
 			appendSample("keyIngredients", toInterfaceSlice(keyIngredients))
+		}
+
+		// Tenant-specific extension fields: each key in the extra JSONB becomes
+		// its own sample entry so tenants with custom catalog shapes (electronics,
+		// books, furniture) get the same sample coverage as hey-babes-style fields.
+		var extra map[string]interface{}
+		if len(extraRaw) > 0 {
+			_ = json.Unmarshal(extraRaw, &extra)
+		}
+		for k, v := range extra {
+			appendSample(k, v)
 		}
 	}
 

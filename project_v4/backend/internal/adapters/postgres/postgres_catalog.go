@@ -154,7 +154,8 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			COALESCE(mp.routine_step, '') as routine_step,
 			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
 			COALESCE(mp.marketing_claim, '') as marketing_claim,
-			mp.benefits
+			mp.benefits,
+			COALESCE(p.extra, '{}'::jsonb) as extra
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
@@ -310,7 +311,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	for rows.Next() {
 		var p domain.Product
 		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-		var productImagesJSON, tagsJSON, mpImagesJSON []byte
+		var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
 		var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 		var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 
@@ -323,6 +324,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			&mpProductForm, &mpTexture, &mpRoutineStep,
 			&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
 			&mpMarketingClaim, &mpBenefits,
+			&extraJSON,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan product: %w", err)
@@ -338,6 +340,13 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		// Parse tags
 		if len(tagsJSON) > 0 {
 			json.Unmarshal(tagsJSON, &p.Tags)
+		}
+
+		// Parse tenant-specific extension fields (metadata-driven binding).
+		// Failures here are non-fatal: the product still renders with typed
+		// fields, we just lose the tenant-specific keys.
+		if len(extraJSON) > 0 {
+			_ = json.Unmarshal(extraJSON, &p.Extra)
 		}
 
 		// Merge with master product data
@@ -390,7 +399,8 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 			COALESCE(mp.routine_step, '') as routine_step,
 			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
 			COALESCE(mp.marketing_claim, '') as marketing_claim,
-			mp.benefits
+			mp.benefits,
+			COALESCE(p.extra, '{}'::jsonb) as extra
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
@@ -400,7 +410,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 
 	var p domain.Product
 	var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-	var productImagesJSON, tagsJSON, mpImagesJSON []byte
+	var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
 	var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 	var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 
@@ -413,6 +423,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		&mpProductForm, &mpTexture, &mpRoutineStep,
 		&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
 		&mpMarketingClaim, &mpBenefits,
+		&extraJSON,
 	)
 
 	if err != nil {
@@ -432,6 +443,11 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 	// Parse tags
 	if len(tagsJSON) > 0 {
 		json.Unmarshal(tagsJSON, &p.Tags)
+	}
+
+	// Parse tenant-specific extension fields (metadata-driven binding).
+	if len(extraJSON) > 0 {
+		_ = json.Unmarshal(extraJSON, &p.Extra)
 	}
 
 	// Merge with master product data

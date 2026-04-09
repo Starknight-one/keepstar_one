@@ -308,6 +308,12 @@ func convertToFormation(data interface{}) *domain.FormationWithData {
 
 // ProductToMap converts a Product to a flat map for data binding.
 // Exported so usecases/handlers can prepare data for engine_v4.
+//
+// Tenant-specific fields stored in Product.Extra (e.g. model/manufacturer/cpu
+// for an electronics catalog, title/author/isbn for books) are spread into the
+// map alongside the typed hey-babes-shape fields. Typed fields win on key
+// collision so a tenant can't accidentally override a well-known field by
+// putting the same key in Extra.
 func ProductToMap(p domain.Product) map[string]interface{} {
 	m := make(map[string]interface{})
 	if p.Name != "" {
@@ -336,6 +342,13 @@ func ProductToMap(p domain.Product) map[string]interface{} {
 	}
 	if len(p.Tags) > 0 {
 		m["tags"] = p.Tags
+	}
+	// Spread tenant-specific extension fields. Typed fields above already
+	// claimed the hey-babes-shape keys, so Extra only fills in what's missing.
+	for k, v := range p.Extra {
+		if _, exists := m[k]; !exists {
+			m[k] = v
+		}
 	}
 	return m
 }
