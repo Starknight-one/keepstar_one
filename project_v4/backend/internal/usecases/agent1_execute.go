@@ -222,7 +222,13 @@ func (uc *Agent1ExecuteUseCase) Execute(ctx context.Context, req Agent1ExecuteRe
 		messages,
 		toolDefs,
 		&ports.CacheConfig{
-			CacheTools:        true,
+			// CacheTools deliberately OFF: Agent1's 3 tool definitions sum to
+			// ~1500 tokens — below Haiku 4.5's 2048-token per-block minimum.
+			// With CacheTools on, the first breakpoint (end of tools) is invalid
+			// and Anthropic appears to silently skip the remaining breakpoints too,
+			// so no caching happens at all. With only CacheSystem, a single
+			// breakpoint at the end of system covers [tools+system] as one block
+			// (~3700 tokens), well above the minimum.
 			CacheSystem:       true,
 			CacheConversation: len(messages) > 1, // cache if history exists
 		},

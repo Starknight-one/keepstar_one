@@ -19,10 +19,10 @@ const (
 //                    template share a GroupID so group-aware constraints can scope cross-widget
 //                    rules to the gallery instead of mixing with literal widgets.
 type ReplicateConfig struct {
-	Enabled   bool
-	Limit     int
-	DataIndex int
-	GroupID   string
+	Enabled   bool   `json:"enabled,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	DataIndex int    `json:"dataIndex,omitempty"`
+	GroupID   string `json:"groupId,omitempty"`
 }
 
 // Widget is a composed UI element — a tree of layout nodes containing atoms.
@@ -39,6 +39,10 @@ type Widget struct {
 	States  *WidgetStates `json:"states,omitempty"`
 
 	// ReplicateConfig is engine-internal — set by ops or the legacy top-level
-	// Replicate flag, consumed by expandReplicatedWidgets, never reaches the frontend.
-	ReplicateConfig *ReplicateConfig `json:"-"`
+	// Replicate flag, consumed by expandReplicatedWidgets. Persisted to JSON so
+	// it survives DB roundtrip: Agent2's BuildTreeMap needs GroupID to collapse
+	// replicated clones back into a single {kind:"replicated", count:N} entry
+	// instead of dumping all N identical widgets into the Agent2 context.
+	// Frontend ignores this field (unknown props are dropped by the renderer).
+	ReplicateConfig *ReplicateConfig `json:"replicate,omitempty"`
 }
