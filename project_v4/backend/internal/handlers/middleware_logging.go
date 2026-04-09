@@ -22,6 +22,14 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// Flush exposes the underlying Flusher so SSE handlers (pipeline/stream) can
+// push events incrementally through this middleware wrapper.
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // LoggingMiddleware creates a middleware that:
 // 1. Assigns a UUID request_id and sets X-Request-ID header
 // 2. Attaches a SpanCollector to context for waterfall tracing
