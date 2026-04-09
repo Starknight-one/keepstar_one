@@ -3,21 +3,16 @@ import { FormationMode } from './formationModel';
 import { WidgetRenderer } from '../widget/WidgetRenderer';
 import { ComparisonTemplate } from '../widget/templates/ComparisonTemplate';
 import { StatusPill } from '../../shared/ui';
-import SkeletonCard from '../../shared/ui/SkeletonCard';
 import './Formation.css';
-
-const STREAMING_SKELETON_COUNT = 3;
 
 const BATCH_SIZE = 12;
 
 export function FormationRenderer({ formation, onWidgetClick, onLoadMore }) {
-  if (!formation) return null;
+  if (!formation || (!formation.widgets?.length && !formation.sections?.length)) {
+    return null;
+  }
 
-  const isStreaming = !!formation.isStreaming;
-  const hasContent = formation.widgets?.length || formation.sections?.length;
-  if (!hasContent && !isStreaming) return null;
-
-  const { mode, grid, widgets = [], sections, pagination } = formation;
+  const { mode, grid, widgets, sections, pagination } = formation;
 
   // Composed formation: render each section separately
   if (sections?.length > 0) {
@@ -68,12 +63,11 @@ export function FormationRenderer({ formation, onWidgetClick, onLoadMore }) {
       onWidgetClick={onWidgetClick}
       pagination={pagination}
       onLoadMore={onLoadMore}
-      isStreaming={isStreaming}
     />
   );
 }
 
-function WidgetList({ mode, cols, widgets, onWidgetClick, pagination, onLoadMore, isStreaming }) {
+function WidgetList({ mode, cols, widgets, onWidgetClick, pagination, onLoadMore }) {
   const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
   const sentinelRef = useRef(null);
 
@@ -131,9 +125,6 @@ function WidgetList({ mode, cols, widgets, onWidgetClick, pagination, onLoadMore
             widget={widget}
             onClick={onWidgetClick}
           />
-        ))}
-        {isStreaming && Array.from({ length: Math.max(0, STREAMING_SKELETON_COUNT - widgets.length) }).map((_, i) => (
-          <SkeletonCard key={`__skeleton_${i}`} />
         ))}
         {hasMore && (
           <div ref={sentinelRef} className="formation-sentinel" />
