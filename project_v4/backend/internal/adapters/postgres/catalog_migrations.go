@@ -379,19 +379,36 @@ ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS extra JSONB DEFAULT '{}'::
 // Closes: docs/PRE_LAUNCH_TASKS.md → 4.3 B7 (role-based field resolution, replaced
 // by metadata-driven binding). Design doc: docs/New features/METADATA_DRIVEN_BINDING_2026-04-09.md
 const migrationCatalogTestElectronicsSeed = `
+-- 0a. One-time cleanup of the legacy Russian seed (orphan products without a
+--     master_product_id). After the first English re-seed, every test product
+--     has master_product_id set, so this DELETE is a no-op on subsequent runs.
+DELETE FROM catalog.products
+WHERE tenant_id IN (SELECT id FROM catalog.tenants WHERE slug = 'test-electronics')
+  AND master_product_id IS NULL;
+
+-- 0b. One-time cleanup of the legacy price field_definition that used 'RUB'
+--     as the unit. Composite PK (tenant_id, entity_type, field_name) blocks
+--     a simple re-INSERT with 'USD', so nuke the row first. After the first
+--     run the fresh row with 'USD' exists, so this DELETE is a no-op.
+DELETE FROM catalog.field_definitions
+WHERE tenant_id IN (SELECT id FROM catalog.tenants WHERE slug = 'test-electronics')
+  AND field_name = 'price'
+  AND unit = 'RUB';
+
 -- 1. Tenant
 INSERT INTO catalog.tenants (slug, name, type)
 VALUES ('test-electronics', 'Test Electronics', 'b2c')
 ON CONFLICT (slug) DO NOTHING;
 
--- 2. Field definitions (9 tenant-specific fields — no images/name/brand)
+-- 2. Field definitions (9 tenant-specific fields — no images/name/brand).
+--    English labels, USD unit for price. Product is US-targeted.
 INSERT INTO catalog.field_definitions (tenant_id, field_name, entity_type, atom_type, atom_subtype, unit, label, default_display, default_slot, priority)
 SELECT t.id, v.field_name, v.entity_type, v.atom_type, v.atom_subtype, v.unit, v.label, v.default_display, v.default_slot, v.priority
 FROM catalog.tenants t
 CROSS JOIN (VALUES
     ('cover_image',   'product', 'image',  'url',      NULL,   'Cover Image',   'image-cover',    'hero',      0),
     ('model',         'product', 'text',   'string',   NULL,   'Model',         'h2',             'title',     1),
-    ('price',         'product', 'number', 'currency', 'RUB',  'Price',         'price',          'price',     2),
+    ('price',         'product', 'number', 'currency', 'USD',  'Price',         'price',          'price',     2),
     ('manufacturer',  'product', 'text',   'string',   NULL,   'Manufacturer',  'tag',            'primary',   3),
     ('rating',        'product', 'number', 'rating',   NULL,   'Rating',        'rating-compact', 'secondary', 4),
     ('cpu',           'product', 'text',   'string',   NULL,   'CPU',           'tag',            'primary',   5),
@@ -402,57 +419,104 @@ CROSS JOIN (VALUES
 WHERE t.slug = 'test-electronics'
 ON CONFLICT DO NOTHING;
 
--- 3. Products (8 laptops, tenant-specific fields go into extra JSONB).
---    "Ноутбук" prefix lets keyword search match; empty images + everything
---    non-hey-babes into extra forces the LLM to emit override ops.
-INSERT INTO catalog.products (tenant_id, name, description, price, currency, rating, images, extra)
-SELECT t.id, v.name, v.description, v.price, 'RUB', v.rating, '[]'::jsonb, v.extra::jsonb
+-- 3a. Categories (shared globally across tenants — no tenant_id on this table).
+--     Electronics → Laptops. Needed so catalog_search can satisfy the
+--     LEFT JOIN master_products → categories path when Agent1 filters by
+--     category:"laptops".
+INSERT INTO catalog.categories (slug, name, parent_id)
+SELECT 'electronics', 'Electronics', NULL
+WHERE NOT EXISTS (SELECT 1 FROM catalog.categories WHERE slug = 'electronics');
+
+INSERT INTO catalog.categories (slug, name, parent_id)
+SELECT 'laptops', 'Laptops',
+       (SELECT id FROM catalog.categories WHERE slug = 'electronics' LIMIT 1)
+WHERE NOT EXISTS (SELECT 1 FROM catalog.categories WHERE slug = 'laptops');
+
+-- 3b. Master products. 8 laptops with SKU markers so idempotency is via
+--     NOT EXISTS(sku). Product names include the word "Laptop" so the
+--     ILIKE keyword search matches on "laptop" / "laptops".
+INSERT INTO catalog.master_products (sku, name, brand, category_id, owner_tenant_id)
+SELECT v.sku, v.name, v.brand,
+       (SELECT id FROM catalog.categories WHERE slug = 'laptops' LIMIT 1),
+       t.id
 FROM catalog.tenants t
 CROSS JOIN (VALUES
-    ('Ноутбук Apple MacBook Pro 14',
-     'Флагманский ноутбук для профессионалов на чипе Apple Silicon',
-     24999000, 4.9,
+    ('test-el-mbp14',      'Apple MacBook Pro 14 Laptop',              'Apple'),
+    ('test-el-mba13',      'Apple MacBook Air 13 Laptop',              'Apple'),
+    ('test-el-tpx1c',      'Lenovo ThinkPad X1 Carbon Gen 11 Laptop',  'Lenovo'),
+    ('test-el-dellxps15',  'Dell XPS 15 9530 Laptop',                  'Dell'),
+    ('test-el-asusrog16',  'Asus ROG Strix G16 Gaming Laptop',         'Asus'),
+    ('test-el-hpspectre',  'HP Spectre x360 14 Laptop',                'HP'),
+    ('test-el-acerswift5', 'Acer Swift 5 Ultraportable Laptop',        'Acer'),
+    ('test-el-surfacel5',  'Microsoft Surface Laptop 5',               'Microsoft')
+) AS v(sku, name, brand)
+WHERE t.slug = 'test-electronics'
+  AND NOT EXISTS (SELECT 1 FROM catalog.master_products mp WHERE mp.sku = v.sku);
+
+-- 3c. Products (8 laptops). Prices in USD cents. Tenant-specific fields
+--     (model, manufacturer, cpu, ram, display_size, battery_life, cover_image)
+--     go into extra JSONB — this is the whole point of the PoC: prove the
+--     pipeline works when the product shape doesn't match preset defaults
+--     (images/name/price/rating/brand), forcing the LLM to emit override ops.
+INSERT INTO catalog.products (tenant_id, master_product_id, name, description, price, currency, rating, images, extra)
+SELECT t.id,
+       (SELECT id FROM catalog.master_products WHERE sku = v.sku LIMIT 1),
+       v.name, v.description, v.price, 'USD', v.rating, '[]'::jsonb, v.extra::jsonb
+FROM catalog.tenants t
+CROSS JOIN (VALUES
+    ('test-el-mbp14',
+     'Apple MacBook Pro 14 Laptop',
+     'Flagship professional laptop with Apple Silicon performance',
+     249900, 4.9,
      '{"model":"MacBook Pro 14","manufacturer":"Apple","cpu":"Apple M3 Pro","ram":"18GB","display_size":"14.2\" Liquid Retina XDR","battery_life":"18 hours","cover_image":"https://cdn.example.com/mbp14-m3.webp"}'),
-    ('Ноутбук Apple MacBook Air 13',
-     'Тонкий и лёгкий ноутбук для повседневных задач',
-     11999000, 4.8,
+    ('test-el-mba13',
+     'Apple MacBook Air 13 Laptop',
+     'Thin and light laptop for everyday productivity',
+     119900, 4.8,
      '{"model":"MacBook Air 13","manufacturer":"Apple","cpu":"Apple M2","ram":"8GB","display_size":"13.6\" Liquid Retina","battery_life":"18 hours","cover_image":"https://cdn.example.com/mba13-m2.webp"}'),
-    ('Ноутбук Lenovo ThinkPad X1 Carbon Gen 11',
-     'Бизнес-ноутбук с лёгким углеволоконным корпусом',
-     18999000, 4.6,
+    ('test-el-tpx1c',
+     'Lenovo ThinkPad X1 Carbon Gen 11 Laptop',
+     'Business laptop with a lightweight carbon fiber chassis',
+     189900, 4.6,
      '{"model":"ThinkPad X1 Carbon Gen 11","manufacturer":"Lenovo","cpu":"Intel Core i7-1355U","ram":"16GB","display_size":"14\" WUXGA IPS","battery_life":"15 hours","cover_image":"https://cdn.example.com/x1c-gen11.webp"}'),
-    ('Ноутбук Dell XPS 15 9530',
-     'Производительный ноутбук для работы с графикой и видео',
-     21999000, 4.5,
+    ('test-el-dellxps15',
+     'Dell XPS 15 9530 Laptop',
+     'Performance laptop for graphics and video workloads',
+     219900, 4.5,
      '{"model":"XPS 15 9530","manufacturer":"Dell","cpu":"Intel Core i7-13700H","ram":"32GB","display_size":"15.6\" OLED 3.5K","battery_life":"13 hours","cover_image":"https://cdn.example.com/xps15-9530.webp"}'),
-    ('Ноутбук Asus ROG Strix G16',
-     'Игровой ноутбук с RTX 4070 для требовательных игр',
-     17999000, 4.4,
+    ('test-el-asusrog16',
+     'Asus ROG Strix G16 Gaming Laptop',
+     'Gaming laptop with RTX 4070 for demanding titles',
+     179900, 4.4,
      '{"model":"ROG Strix G16","manufacturer":"Asus","cpu":"Intel Core i9-13980HX","ram":"32GB","display_size":"16\" QHD 240Hz","battery_life":"6 hours","cover_image":"https://cdn.example.com/rog-strix-g16.webp"}'),
-    ('Ноутбук HP Spectre x360 14',
-     'Премиум-ноутбук 2-в-1 с сенсорным OLED-экраном',
-     16999000, 4.7,
+    ('test-el-hpspectre',
+     'HP Spectre x360 14 Laptop',
+     'Premium 2-in-1 laptop with touchscreen OLED display',
+     169900, 4.7,
      '{"model":"Spectre x360 14","manufacturer":"HP","cpu":"Intel Core Ultra 7 155H","ram":"16GB","display_size":"14\" OLED 2.8K touch","battery_life":"17 hours","cover_image":"https://cdn.example.com/spectre-x360-14.webp"}'),
-    ('Ноутбук Acer Swift 5',
-     'Ультрапортативный ноутбук с антимикробным покрытием',
-     9999000, 4.3,
+    ('test-el-acerswift5',
+     'Acer Swift 5 Ultraportable Laptop',
+     'Ultraportable laptop with antimicrobial coating',
+     99900, 4.3,
      '{"model":"Swift 5 SF514","manufacturer":"Acer","cpu":"Intel Core i7-1260P","ram":"16GB","display_size":"14\" 2560x1600 IPS","battery_life":"14 hours","cover_image":"https://cdn.example.com/swift-5.webp"}'),
-    ('Ноутбук Microsoft Surface Laptop 5',
-     'Элегантный ноутбук от Microsoft с корпусом из магния',
-     14999000, 4.5,
+    ('test-el-surfacel5',
+     'Microsoft Surface Laptop 5',
+     'Elegant laptop from Microsoft with a magnesium chassis',
+     149900, 4.5,
      '{"model":"Surface Laptop 5","manufacturer":"Microsoft","cpu":"Intel Core i7-1255U","ram":"16GB","display_size":"13.5\" PixelSense touch","battery_life":"18 hours","cover_image":"https://cdn.example.com/surface-laptop-5.webp"}')
-) AS v(name, description, price, rating, extra)
+) AS v(sku, name, description, price, rating, extra)
 WHERE t.slug = 'test-electronics'
   AND NOT EXISTS (
-    SELECT 1 FROM catalog.products p2 WHERE p2.tenant_id = t.id
+    SELECT 1 FROM catalog.products p2
+    WHERE p2.tenant_id = t.id AND p2.master_product_id IS NOT NULL
   );
 
 -- 4. Catalog digest (Agent1 context). Hand-crafted because GenerateCatalogDigest
---    pulls skin_type/concern/product_form from master_products which is NULL for
---    this tenant. Without a digest, Agent1 reads catalog_search tool enums
---    (cream/gel/serum/skin_type) and refuses to search for laptops, replying
---    with text "this catalog is cosmetics". The digest block tells Agent1
---    explicitly what this tenant sells.
+--    pulls skin_type/concern/product_form from master_products.attributes which
+--    this tenant does not populate. Without a digest, Agent1 reads the
+--    catalog_search tool enums (cream/gel/serum/skin_type) and infers the
+--    catalog is cosmetics, refusing to call the tool for laptop queries.
+--    Unconditional UPDATE so the digest can evolve across redeploys.
 UPDATE catalog.tenants
 SET catalog_digest = jsonb_build_object(
     'generated_at', NOW(),
@@ -469,5 +533,5 @@ SET catalog_digest = jsonb_build_object(
     'shared_filters', jsonb_build_array(),
     'top_brands', jsonb_build_array('Apple', 'Lenovo', 'Dell', 'Asus', 'HP', 'Acer', 'Microsoft')
 )
-WHERE slug = 'test-electronics' AND catalog_digest IS NULL;
+WHERE slug = 'test-electronics';
 `
