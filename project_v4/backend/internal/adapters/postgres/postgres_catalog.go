@@ -590,7 +590,8 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			COALESCE(mp.routine_step, '') as routine_step,
 			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
 			COALESCE(mp.marketing_claim, '') as marketing_claim,
-			mp.benefits
+			mp.benefits,
+			COALESCE(p.extra, '{}'::jsonb) as extra
 		FROM catalog.products p
 		JOIN catalog.master_products mp ON p.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
@@ -663,7 +664,7 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 	for rows.Next() {
 		var p domain.Product
 		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-		var productImagesJSON, tagsJSON, mpImagesJSON []byte
+		var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
 		var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 		var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 
@@ -676,6 +677,7 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			&mpProductForm, &mpTexture, &mpRoutineStep,
 			&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
 			&mpMarketingClaim, &mpBenefits,
+			&extraJSON,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan vector product: %w", err)
@@ -689,6 +691,16 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 
 		if len(tagsJSON) > 0 {
 			json.Unmarshal(tagsJSON, &p.Tags)
+		}
+
+		// Tenant-specific custom fields live in products.extra JSONB. Must
+		// be read here so ProductToMap can spread them into the data map for
+		// metadata-driven binding on non-hey-babes tenants. Without this,
+		// VectorSearch silently returned products with p.Extra=nil and the
+		// engine had no values to bind to atoms whose fieldName targets an
+		// extra-JSONB key (e.g. model/manufacturer/cover_image for test-electronics).
+		if len(extraJSON) > 0 {
+			_ = json.Unmarshal(extraJSON, &p.Extra)
 		}
 
 		if err := mergeProductWithMaster(&p, masterProductRow{
