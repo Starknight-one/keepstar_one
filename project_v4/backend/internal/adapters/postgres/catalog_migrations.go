@@ -446,4 +446,28 @@ WHERE t.slug = 'test-electronics'
   AND NOT EXISTS (
     SELECT 1 FROM catalog.products p2 WHERE p2.tenant_id = t.id
   );
+
+-- 4. Catalog digest (Agent1 context). Hand-crafted because GenerateCatalogDigest
+--    pulls skin_type/concern/product_form from master_products which is NULL for
+--    this tenant. Without a digest, Agent1 reads catalog_search tool enums
+--    (cream/gel/serum/skin_type) and refuses to search for laptops, replying
+--    with text "this catalog is cosmetics". The digest block tells Agent1
+--    explicitly what this tenant sells.
+UPDATE catalog.tenants
+SET catalog_digest = jsonb_build_object(
+    'generated_at', NOW(),
+    'total_products', 8,
+    'category_tree', jsonb_build_array(
+        jsonb_build_object(
+            'name', 'Electronics',
+            'slug', 'electronics',
+            'children', jsonb_build_array(
+                jsonb_build_object('name', 'Laptops', 'slug', 'laptops', 'count', 8)
+            )
+        )
+    ),
+    'shared_filters', jsonb_build_array(),
+    'top_brands', jsonb_build_array('Apple', 'Lenovo', 'Dell', 'Asus', 'HP', 'Acer', 'Microsoft')
+)
+WHERE slug = 'test-electronics' AND catalog_digest IS NULL;
 `
