@@ -30,10 +30,19 @@ func (a *TraceAdapter) Record(ctx context.Context, trace *domain.PipelineTrace) 
 		return fmt.Errorf("marshal trace: %w", err)
 	}
 
+	// Normalize session_id to lowercase. pipeline_traces.session_id is
+	// TEXT (case-sensitive), but chat_sessions.id is UUID (postgres
+	// stores as lowercase). The admin sessions list JOINs them via
+	// `WHERE pt.session_id = cs.id::text`, so any uppercase here breaks
+	// per-session aggregation. Defense-in-depth: handler entry already
+	// lowercases sessionId, but we normalize here too in case any future
+	// code path creates traces with un-normalized IDs.
+	sessionID := strings.ToLower(trace.SessionID)
+
 	_, err = a.client.pool.Exec(ctx, `
 		INSERT INTO pipeline_traces (id, session_id, query, turn_id, timestamp, trace_data, total_ms, cost_usd, error)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, trace.ID, trace.SessionID, trace.Query, trace.TurnID, trace.Timestamp,
+	`, trace.ID, sessionID, trace.Query, trace.TurnID, trace.Timestamp,
 		traceJSON, trace.TotalMs, trace.CostUSD, trace.Error)
 	if err != nil {
 		return fmt.Errorf("insert trace: %w", err)

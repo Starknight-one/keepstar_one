@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,8 +86,14 @@ func (h *PipelineHandler) HandlePipeline(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Generate session ID if not provided
-	sessionID := req.SessionID
+	// Generate session ID if not provided. Normalize to lowercase so it
+	// matches chat_sessions.id (UUID column — postgres stores lowercase)
+	// and pipeline_traces.session_id (TEXT column — case-sensitive).
+	// Without normalization, a client sending an uppercase UUID creates
+	// a lowercase row in chat_sessions but writes uppercase into
+	// pipeline_traces.session_id, breaking the admin aggregation JOIN
+	// (`WHERE pt.session_id = cs.id::text`).
+	sessionID := strings.ToLower(req.SessionID)
 	if sessionID == "" {
 		sessionID = generateSessionID()
 	}

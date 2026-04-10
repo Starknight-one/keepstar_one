@@ -155,12 +155,17 @@ func (a *CacheAdapter) SaveSession(ctx context.Context, session *domain.Session)
 		userID = &session.UserID
 	}
 
-	// Upsert session
+	// Upsert session. tenant_id is COALESCE'd so an empty value in the
+	// new payload doesn't blank out a previously-set tenant — the first
+	// non-empty wins. This lets handlers that don't know the tenant
+	// (e.g. action/navigation) call SaveSession without losing the
+	// tenant set by the original pipeline call.
 	_, err = tx.Exec(ctx, `
 		INSERT INTO chat_sessions (id, user_id, tenant_id, status, metadata, started_at, ended_at, last_activity_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE SET
 			user_id = EXCLUDED.user_id,
+			tenant_id = COALESCE(NULLIF(EXCLUDED.tenant_id, ''), chat_sessions.tenant_id),
 			status = EXCLUDED.status,
 			metadata = EXCLUDED.metadata,
 			ended_at = EXCLUDED.ended_at,

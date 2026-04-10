@@ -107,12 +107,16 @@ func (uc *PipelineExecuteUseCase) Execute(ctx context.Context, req PipelineExecu
 		Timestamp: time.Now(),
 	}
 
-	// Ensure session exists (required for FK constraint on state table)
+	// Ensure session exists (required for FK constraint on state table).
+	// Persist TenantID so the admin sessions list can show which tenant
+	// each session belongs to (otherwise chat_sessions.tenant_id stays
+	// empty and the admin UI shows blank).
 	if uc.cachePort != nil {
 		_, err := uc.cachePort.GetSession(ctx, req.SessionID)
 		if err == domain.ErrSessionNotFound {
 			session := &domain.Session{
 				ID:             req.SessionID,
+				TenantID:       req.TenantSlug,
 				Status:         domain.SessionStatusActive,
 				Messages:       []domain.Message{},
 				StartedAt:      time.Now(),
