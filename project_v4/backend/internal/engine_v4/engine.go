@@ -45,7 +45,7 @@ func (e *Engine) Execute(input ExecuteInput) ExecuteOutput {
 
 	// Step 3: Apply operations
 	if len(input.Ops) > 0 {
-		opWarnings := ApplyOps(formation, input.Ops)
+		opWarnings := ApplyOpsWithResolver(formation, input.Ops, input.PresetResolver)
 		warnings = append(warnings, opWarnings...)
 	}
 

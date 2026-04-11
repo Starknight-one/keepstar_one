@@ -75,7 +75,21 @@ func PresetNames() []string {
 // produce a warning and the original op is left as-is (with `preset` stripped),
 // so the standard insertWidget path runs and the user gets an empty widget
 // instead of a silent crash.
+//
+// Thin wrapper for the legacy zero-resolver path. New callers threading a
+// KeepstarCanvas tenant-aware resolver should use
+// ExpandInlinePresetsWithResolver directly.
 func ExpandInlinePresets(ops []Op) ([]Op, []string) {
+	return ExpandInlinePresetsWithResolver(ops, nil)
+}
+
+// ExpandInlinePresetsWithResolver is the tenant-aware variant. When resolver
+// is nil, it behaves identically to ExpandInlinePresets: the global registry
+// via GetPreset is the only lookup source. When resolver is non-nil, it is
+// consulted first — typically via TenantPresetLoader.ResolverFor — and only
+// a miss falls back to the global registry. This is how per-tenant published
+// presets show up inside multi-widget compositions (ops with props.preset).
+func ExpandInlinePresetsWithResolver(ops []Op, resolver PresetResolver) ([]Op, []string) {
 	out := make([]Op, 0, len(ops))
 	var warnings []string
 	presetCounter := 0
@@ -91,7 +105,7 @@ func ExpandInlinePresets(ops []Op) ([]Op, []string) {
 			continue
 		}
 
-		preset, ok := GetPreset(presetName)
+		preset, ok := resolvePreset(resolver, presetName)
 		if !ok {
 			warnings = append(warnings, fmt.Sprintf("op[%d]: unknown preset %q", i, presetName))
 			out = append(out, stripPresetProp(op))
@@ -203,6 +217,19 @@ func deepCopyOpProps(m map[string]interface{}) map[string]interface{} {
 		}
 	}
 	return out
+}
+
+// resolvePreset looks a preset up through the caller's resolver first, then
+// falls back to the global registry. A nil resolver goes straight to GetPreset,
+// which preserves the legacy single-source behaviour for tests and any caller
+// that does not need tenant scoping.
+func resolvePreset(resolver PresetResolver, name string) (*Preset, bool) {
+	if resolver != nil {
+		if p, ok := resolver(name); ok {
+			return p, true
+		}
+	}
+	return GetPreset(name)
 }
 
 // stripPresetProp returns a copy of op with `preset` removed from props.

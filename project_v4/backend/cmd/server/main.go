@@ -136,13 +136,25 @@ func main() {
 		appLog.Info("field_definition_adapter_initialized")
 	}
 
+	// Initialize KeepstarCanvas tenant preset loader (Phase 2). Reads the
+	// same Postgres cluster that the admin backend writes to via the canvas
+	// CRUD endpoints. Nil when the DB is unavailable — the loader itself is
+	// nil-tolerant and the visual assembly tool then serves only global
+	// presets, which is the boot-without-DB fallback we've used since V4 day 1.
+	var tenantPresetLoader *engine_v4.TenantPresetLoader
+	if dbClient != nil {
+		canvasPresetAdapter := postgres.NewCanvasPresetAdapter(dbClient)
+		tenantPresetLoader = engine_v4.NewTenantPresetLoader(canvasPresetAdapter)
+		appLog.Info("tenant_preset_loader_initialized")
+	}
+
 	// Initialize V4 engine
 	eng := engine_v4.NewEngine()
 
 	// Initialize tool registry (requires state and catalog adapters)
 	var toolRegistry *tools.Registry
 	if stateAdapter != nil && catalogAdapter != nil {
-		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, embeddingClient, eng)
+		toolRegistry = tools.NewRegistry(stateAdapter, catalogAdapter, embeddingClient, eng, tenantPresetLoader)
 		toolNames := make([]string, 0)
 		for _, def := range toolRegistry.GetDefinitions() {
 			if !strings.HasPrefix(def.Name, "_internal_") {

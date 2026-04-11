@@ -44,7 +44,19 @@ type ExecuteInput struct {
 	// Replication control (B3) — explicit, no magic.
 	Replicate bool // if true, replicate a single widget template across data items
 	Limit     int  // max data items to use (0 = all)
+
+	// PresetResolver, if non-nil, is consulted by ExpandInlinePresets in place
+	// of the global registry. The visual assembly tool sets this to a tenant-
+	// aware closure (ResolverFor) so inline per-widget presets in multi-widget
+	// compositions honour per-tenant published overrides. A nil resolver
+	// preserves the pre-KeepstarCanvas behaviour (global registry only).
+	PresetResolver PresetResolver
 }
+
+// PresetResolver returns a Preset for a given name, matching the signature of
+// the package-level GetPreset function. ExpandInlinePresets uses it when a
+// non-nil resolver is threaded through ExecuteInput → ApplyOps.
+type PresetResolver func(name string) (*Preset, bool)
 
 // ExecuteOutput contains the result of engine execution.
 type ExecuteOutput struct {

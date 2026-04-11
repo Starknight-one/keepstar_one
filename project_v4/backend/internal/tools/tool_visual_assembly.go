@@ -13,15 +13,19 @@ import (
 // VisualAssemblyTool renders entities using the V4 Pencil-based engine.
 // ONE mode: preset (macro) + ops (micro). No auto/ops/build split.
 type VisualAssemblyTool struct {
-	statePort ports.StatePort
-	engine    *engine_v4.Engine
+	statePort     ports.StatePort
+	engine        *engine_v4.Engine
+	tenantPresets *engine_v4.TenantPresetLoader // may be nil — loader handles nil
 }
 
 // NewVisualAssemblyTool creates the V4 visual assembly tool.
-func NewVisualAssemblyTool(statePort ports.StatePort, eng *engine_v4.Engine) *VisualAssemblyTool {
+// tenantPresets may be nil — the tool then serves only the global engine_v4
+// registry, which is the boot-without-DB fallback.
+func NewVisualAssemblyTool(statePort ports.StatePort, eng *engine_v4.Engine, tenantPresets *engine_v4.TenantPresetLoader) *VisualAssemblyTool {
 	return &VisualAssemblyTool{
-		statePort: statePort,
-		engine:    eng,
+		statePort:     statePort,
+		engine:        eng,
+		tenantPresets: tenantPresets,
 	}
 }
 
@@ -196,6 +200,14 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 		engineInput.Limit = int(lim)
 	}
 
+	// Tenant-aware resolver (KeepstarCanvas Phase 2). Captured once per turn
+	// so both the top-level preset lookup below and inline per-widget preset
+	// expansion inside ApplyOps honour the tenant's published library. When
+	// the loader is nil (no DB) ResolverFor returns nil and the engine falls
+	// back to the global engine_v4 registry — same path as pre-Phase-2.
+	resolver := t.tenantPresets.ResolverFor(ctx, toolCtx.TenantSlug)
+	engineInput.PresetResolver = resolver
+
 	// Preset expansion (B2). Prepend preset ops to any user-supplied overrides
 	// so $ref bindings created by the preset are visible to override ops in
 	// the same ApplyOps batch. Inherit the preset's DefaultReplicate only when
@@ -207,7 +219,13 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 		if errMsg := validatePresetWithUserOps(presetName, engineInput.Ops); errMsg != "" {
 			return &domain.ToolResult{Content: errMsg}, nil
 		}
-		p, found := engine_v4.GetPreset(presetName)
+		// Tenant-scoped published preset wins when present; otherwise fall
+		// back to the global Go registry via resolvePreset. This is the
+		// primary Phase 2 integration point — a tenant that publishes
+		// `product_card` via the admin canvas CRUD endpoints will serve
+		// their version starting on the next Agent2 turn (modulo the
+		// loader's 60s TTL cache).
+		p, found := t.resolvePresetForTenant(ctx, toolCtx.TenantSlug, presetName)
 		if !found {
 			return &domain.ToolResult{Content: fmt.Sprintf("unknown preset: %q", presetName)}, nil
 		}
@@ -288,6 +306,19 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx ToolContext, p
 	}
 
 	return &domain.ToolResult{Content: result}, nil
+}
+
+// resolvePresetForTenant consults the tenant preset loader first, then the
+// global engine_v4 registry. A nil loader means the V4 server is running
+// without the admin DB wired in — in that case this collapses to the legacy
+// global-only behaviour. Safe to call with an empty tenantSlug.
+func (t *VisualAssemblyTool) resolvePresetForTenant(ctx context.Context, tenantSlug, name string) (*engine_v4.Preset, bool) {
+	if t.tenantPresets != nil {
+		if p, ok := t.tenantPresets.Resolve(ctx, tenantSlug, name); ok {
+			return p, true
+		}
+	}
+	return engine_v4.GetPreset(name)
 }
 
 // convertToFormation converts a map[string]interface{} to FormationWithData via JSON roundtrip.

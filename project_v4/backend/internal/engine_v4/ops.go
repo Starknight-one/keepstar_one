@@ -122,12 +122,23 @@ func indexLayoutNode(node *domain.LayoutNode, parent *domain.LayoutNode, w *doma
 // `props.preset = "<name>"` into the preset's full op sequence with refs
 // namespaced per-widget so multiple inline presets in the same batch don't
 // collide.
+//
+// Thin wrapper for the legacy zero-resolver callers (tests, testbench). The
+// engine pipeline routes tenant-aware traffic through ApplyOpsWithResolver
+// so ExpandInlinePresets sees the tenant's published library.
 func ApplyOps(formation *domain.FormationWithData, ops []Op) []string {
+	return ApplyOpsWithResolver(formation, ops, nil)
+}
+
+// ApplyOpsWithResolver is the tenant-aware variant. A non-nil resolver is
+// forwarded to ExpandInlinePresets so inline per-widget `props.preset`
+// references resolve against per-tenant published overrides first.
+func ApplyOpsWithResolver(formation *domain.FormationWithData, ops []Op, resolver PresetResolver) []string {
 	if formation == nil {
 		return []string{"no existing formation to modify"}
 	}
 
-	expandedOps, expandWarnings := ExpandInlinePresets(ops)
+	expandedOps, expandWarnings := ExpandInlinePresetsWithResolver(ops, resolver)
 	ops = expandedOps
 
 	idx := buildIndex(formation)

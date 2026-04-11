@@ -37,7 +37,9 @@ type Registry struct {
 }
 
 // NewRegistry creates a tool registry with all tools.
-func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, embeddingPort ports.EmbeddingPort, eng *engine_v4.Engine) *Registry {
+// tenantPresets may be nil — the visual assembly tool then serves only the
+// global engine_v4 preset registry, which is the boot-without-DB fallback.
+func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, embeddingPort ports.EmbeddingPort, eng *engine_v4.Engine, tenantPresets *engine_v4.TenantPresetLoader) *Registry {
 	r := &Registry{
 		tools:         make(map[string]ToolExecutor),
 		statePort:     statePort,
@@ -51,7 +53,7 @@ func NewRegistry(statePort ports.StatePort, catalogPort ports.CatalogPort, embed
 	r.Register(NewHistoryLookupTool(statePort))
 
 	// Render tools (Agent2)
-	r.Register(NewVisualAssemblyTool(statePort, eng))
+	r.Register(NewVisualAssemblyTool(statePort, eng, tenantPresets))
 
 	return r
 }
