@@ -87,10 +87,12 @@ func main() {
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient, log)
 	importAdapter := postgres.NewImportAdapter(dbClient)
 	traceAdapter := postgres.NewTraceAdapter(dbClient)
+	canvasAdapter := postgres.NewCanvasAdapter(dbClient)
 
 	// Initialize use cases
 	authUC := usecases.NewAuthUseCase(authAdapter, catalogAdapter, cfg.JWTSecret)
 	productsUC := usecases.NewProductsUseCase(catalogAdapter)
+	canvasUC := usecases.NewCanvasUseCase(canvasAdapter)
 
 	var enrichUC *usecases.EnrichmentUseCase
 	if enrichmentClient != nil {
@@ -108,6 +110,7 @@ func main() {
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
 	stockHandler := handlers.NewStockHandler(stockUC, log)
 	tracesHandler := handlers.NewTracesHandler(traceAdapter, log)
+	canvasHandler := handlers.NewCanvasHandler(canvasUC, log)
 
 	var enrichmentHandler *handlers.EnrichmentHandler
 	if enrichUC != nil {
@@ -179,6 +182,15 @@ func main() {
 	protected.HandleFunc("/admin/api/sessions/kill-all", tracesHandler.HandleKillAllSessions)
 	protected.HandleFunc("/admin/api/sessions/", tracesHandler.HandleSessionDetail)
 	protected.HandleFunc("/admin/api/conversations", tracesHandler.HandleConversations)
+
+	// KeepstarCanvas editor
+	protected.HandleFunc("/admin/api/canvas/presets", canvasHandler.HandlePresets)
+	protected.HandleFunc("/admin/api/canvas/presets/", canvasHandler.HandlePresetByID)
+	protected.HandleFunc("/admin/api/canvas/components", canvasHandler.HandleComponents)
+	protected.HandleFunc("/admin/api/canvas/components/", canvasHandler.HandleComponentByID)
+	protected.HandleFunc("/admin/api/canvas/tokens", canvasHandler.HandleTokens)
+	protected.HandleFunc("/admin/api/canvas/tokens/", canvasHandler.HandleTokenByID)
+
 	if enrichmentHandler != nil {
 		protected.HandleFunc("/admin/api/catalog/enrich", enrichmentHandler.HandleEnrich)
 		protected.HandleFunc("/admin/api/catalog/enrich-v2", enrichmentHandler.HandleEnrichV2)
@@ -201,6 +213,12 @@ func main() {
 	mux.Handle("/admin/api/sessions/kill-all", authMW(protected))
 	mux.Handle("/admin/api/sessions/", authMW(protected))
 	mux.Handle("/admin/api/conversations", authMW(protected))
+	mux.Handle("/admin/api/canvas/presets", authMW(protected))
+	mux.Handle("/admin/api/canvas/presets/", authMW(protected))
+	mux.Handle("/admin/api/canvas/components", authMW(protected))
+	mux.Handle("/admin/api/canvas/components/", authMW(protected))
+	mux.Handle("/admin/api/canvas/tokens", authMW(protected))
+	mux.Handle("/admin/api/canvas/tokens/", authMW(protected))
 	if enrichmentHandler != nil {
 		mux.Handle("/admin/api/catalog/enrich", authMW(protected))
 		mux.Handle("/admin/api/catalog/enrich-v2", authMW(protected))
