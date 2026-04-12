@@ -136,16 +136,23 @@ func main() {
 		appLog.Info("field_definition_adapter_initialized")
 	}
 
-	// Initialize KeepstarCanvas tenant preset loader (Phase 2). Reads the
-	// same Postgres cluster that the admin backend writes to via the canvas
-	// CRUD endpoints. Nil when the DB is unavailable — the loader itself is
-	// nil-tolerant and the visual assembly tool then serves only global
-	// presets, which is the boot-without-DB fallback we've used since V4 day 1.
+	// Initialize KeepstarCanvas tenant preset loader (Phase 2 + Phase 3).
+	// Reads the same Postgres cluster that the admin backend writes to via
+	// the canvas CRUD endpoints. Phase 3 adds component + design context
+	// ports for the <tenant_design_context> block in Agent2's system prompt.
+	// Nil when the DB is unavailable — the loader itself is nil-tolerant and
+	// the visual assembly tool then serves only global presets, which is the
+	// boot-without-DB fallback we've used since V4 day 1.
 	var tenantPresetLoader *engine_v4.TenantPresetLoader
 	if dbClient != nil {
-		canvasPresetAdapter := postgres.NewCanvasPresetAdapter(dbClient)
-		tenantPresetLoader = engine_v4.NewTenantPresetLoader(canvasPresetAdapter)
-		appLog.Info("tenant_preset_loader_initialized")
+		presetAdapter := postgres.NewCanvasPresetAdapter(dbClient)
+		componentAdapter := postgres.NewCanvasComponentAdapter(dbClient)
+		designContextAdapter := postgres.NewCanvasDesignContextAdapter(dbClient)
+		tenantPresetLoader = engine_v4.NewTenantPresetLoaderWithPorts(
+			presetAdapter, componentAdapter, designContextAdapter,
+		)
+		appLog.Info("tenant_preset_loader_initialized",
+			"components", true, "design_context", true)
 	}
 
 	// Initialize V4 engine
@@ -175,7 +182,7 @@ func main() {
 	// Initialize Agent 2 use case (Preset Selector)
 	var agent2UC *usecases.Agent2ExecuteUseCase
 	if stateAdapter != nil && toolRegistry != nil {
-		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog, fieldDefAdapter)
+		agent2UC = usecases.NewAgent2ExecuteUseCase(llmClient, stateAdapter, toolRegistry, appLog, fieldDefAdapter, tenantPresetLoader)
 		appLog.Info("agent2_usecase_initialized", "status", "ok")
 	}
 	_ = agent2UC // Available for direct Agent 2 calls

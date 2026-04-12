@@ -13,28 +13,29 @@ import (
 // assembly tool, falling back to the global engine_v4 preset registry when
 // the tenant has no custom version of the requested preset.
 //
-// It sits in front of a ports.CanvasPresetPort with a process-local TTL cache
-// so that a single chat session does not hit Postgres on every Agent2 turn.
-// Cache invalidation is time-based (60s in Phase 2) — a publish in admin
-// becomes visible everywhere within the TTL window. Phase 3 will switch to
-// explicit bumping via the `admin.tenant_design_context_version` counter.
+// Phase 2 introduced the core Resolve/ResolverFor/ListForTenant paths with a
+// strict 60s TTL cache. Phase 3 extends the loader with:
+//   - component + design-context ports for the <tenant_design_context> block
+//   - DesignContextSnapshot — a read-only struct capturing presets, components,
+//     tokens, and the version counter for Agent2's prompt builder
+//   - LoadDesignContext — version-aware snapshot method; rebuilds only when the
+//     admin.tenant_design_context_version counter changes
+//   - 5s coalescing window on version counter reads to bound DB load
 //
-// The loader is nil-tolerant at every seam:
-//   - nil loader   → callers must use GetPreset directly (main.go guards this
-//                    by passing nil when the DB is unavailable and the tool
-//                    falls through to the global registry).
-//   - nil port     → Resolve always misses the tenant tier and returns the
-//                    global registry result.
-//   - empty tenant → same as nil port; global registry only.
-//
-// This matches the boot-without-DB pattern already used by the rest of V4.
+// Nil-tolerance at every seam is a contract:
+//   - nil loader   → callers must use GetPreset directly
+//   - nil port     → Resolve always misses the tenant tier
+//   - nil componentPort / nil designContextPort → that section stays empty
+//   - empty tenant → global registry only
 type TenantPresetLoader struct {
-	port ports.CanvasPresetPort
-	ttl  time.Duration
+	port              ports.CanvasPresetPort
+	componentPort     ports.CanvasComponentPort     // Phase 3; may be nil
+	designContextPort ports.CanvasDesignContextPort // Phase 3; may be nil
+	ttl               time.Duration
+	versionTTL        time.Duration // coalescing window for version counter reads
 
 	// cache is keyed by tenantIDOrSlug. Each entry is an independent
-	// tenantCache so invalidations (future phase) can drop one tenant without
-	// touching others.
+	// tenantCache so invalidations can drop one tenant without touching others.
 	cache sync.Map // map[string]*tenantCache
 }
 
@@ -47,6 +48,12 @@ type tenantCache struct {
 	list           []*Preset
 	listExpiresAt  time.Time
 	listPopulated  bool
+
+	// Phase 3 additions: version-aware invalidation
+	version          int64
+	versionFetchedAt time.Time
+	snapshot         *DesignContextSnapshot
+	snapshotVersion  int64
 }
 
 // presetCacheEntry is one cached Preset with its expiry. A nil preset with a
@@ -57,19 +64,56 @@ type presetCacheEntry struct {
 	expiresAt time.Time
 }
 
+// DesignContextSnapshot is the loader's per-tenant payload consumed by
+// Agent2's prompt builder. Captures everything the <tenant_design_context>
+// block needs in a single read-only struct so the formatter stays pure and
+// unit-testable.
+type DesignContextSnapshot struct {
+	TenantIDOrSlug  string
+	Version         int64 // admin.tenant_design_context_version.version, 0 when missing
+	Presets         []*Preset
+	Components      []ports.CanvasComponentView
+	Tokens          []ports.CanvasDesignTokenView
+	// OverridesGlobal is the set of preset names that exist both in the
+	// tenant library AND the global registry. Pre-computed so the formatter
+	// can flag them without a second pass.
+	OverridesGlobal map[string]bool
+}
+
 // defaultPresetCacheTTL is the 60s window specified in the KeepstarCanvas
 // Phase 2 plan. Tuned short enough that a publish in admin becomes visible
 // quickly, long enough that chat turns don't thrash Postgres.
 const defaultPresetCacheTTL = 60 * time.Second
 
-// NewTenantPresetLoader constructs a loader. The port may be nil — the loader
-// then degrades to a plain wrapper around the global registry, which keeps
-// boot-without-DB working.
-func NewTenantPresetLoader(port ports.CanvasPresetPort) *TenantPresetLoader {
+// defaultVersionCheckTTL is the 5s coalescing window. A burst of concurrent
+// Agent2 turns on the same tenant only hits the DB for the version counter
+// once per 5s, while a publish in admin becomes visible within ~5s.
+const defaultVersionCheckTTL = 5 * time.Second
+
+// NewTenantPresetLoaderWithPorts constructs a loader with all three port
+// dependencies. Any port may be nil — the loader degrades gracefully:
+//   - nil presetPort  → Resolve/ListForTenant miss the tenant tier
+//   - nil componentPort → snap.Components == nil
+//   - nil designContextPort → snap.Version stays 0, TTL-only invalidation
+func NewTenantPresetLoaderWithPorts(
+	presetPort ports.CanvasPresetPort,
+	componentPort ports.CanvasComponentPort,
+	designContextPort ports.CanvasDesignContextPort,
+) *TenantPresetLoader {
 	return &TenantPresetLoader{
-		port: port,
-		ttl:  defaultPresetCacheTTL,
+		port:              presetPort,
+		componentPort:     componentPort,
+		designContextPort: designContextPort,
+		ttl:               defaultPresetCacheTTL,
+		versionTTL:        defaultVersionCheckTTL,
 	}
+}
+
+// NewTenantPresetLoader is the Phase 2 compatibility wrapper. Leaves the new
+// ports nil; loader degrades gracefully (no components, no tokens, version
+// stays 0 forever, falls back to TTL-only invalidation).
+func NewTenantPresetLoader(port ports.CanvasPresetPort) *TenantPresetLoader {
+	return NewTenantPresetLoaderWithPorts(port, nil, nil)
 }
 
 // Resolve returns the preset the tool should run with, preferring a
@@ -124,24 +168,83 @@ func (l *TenantPresetLoader) ListForTenant(ctx context.Context, tenantIDOrSlug s
 	defer tc.mu.Unlock()
 
 	now := time.Now()
-	if tc.listPopulated && now.Before(tc.listExpiresAt) {
-		return cloneSlice(tc.list)
-	}
+	return cloneSlice(l.listForTenantLocked(ctx, tc, tenantIDOrSlug, now))
+}
 
-	views, err := l.port.ListPublishedPresets(ctx, tenantIDOrSlug)
-	if err != nil {
+// LoadDesignContext returns a snapshot of the tenant's published canvas
+// library (presets + components + tokens) paired with the current design
+// context version counter. Memoized per tenant; rebuilt when the version
+// counter changes. Returns nil for a nil loader or empty tenant — callers
+// skip the <tenant_design_context> block entirely in that case.
+//
+// Graceful degradation at every seam:
+//   - nil componentPort → snap.Components == nil
+//   - nil designContextPort → snap.Version stays 0, behaves like Phase 2 (TTL only)
+//   - individual query error → that section is empty, rest of snapshot populates
+func (l *TenantPresetLoader) LoadDesignContext(ctx context.Context, tenantIDOrSlug string) *DesignContextSnapshot {
+	if l == nil || tenantIDOrSlug == "" {
 		return nil
 	}
-	out := make([]*Preset, 0, len(views))
-	for i := range views {
-		if p := viewToPreset(&views[i]); p != nil {
-			out = append(out, p)
+	tc := l.tenantCacheFor(tenantIDOrSlug)
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	now := time.Now()
+
+	// 1. Version check, coalesced within versionTTL (default 5s) so a burst
+	//    of concurrent Agent2 turns on the same tenant only hits DB once.
+	if l.designContextPort != nil &&
+		(tc.versionFetchedAt.IsZero() || now.Sub(tc.versionFetchedAt) >= l.versionTTL) {
+		if v, err := l.designContextPort.GetVersion(ctx, tenantIDOrSlug); err == nil {
+			if v != tc.version {
+				// Version changed — invalidate derived state so every downstream
+				// (Resolve list, snapshot) rebuilds against the new version.
+				tc.version = v
+				tc.list = nil
+				tc.listPopulated = false
+				tc.snapshot = nil
+				tc.snapshotVersion = 0
+				// Also invalidate per-preset cache entries so Resolve picks up
+				// newly published / deleted presets.
+				tc.presets = make(map[string]*presetCacheEntry)
+			}
+			tc.versionFetchedAt = now
 		}
 	}
-	tc.list = out
-	tc.listPopulated = true
-	tc.listExpiresAt = now.Add(l.ttl)
-	return cloneSlice(out)
+
+	// 2. Snapshot reuse.
+	if tc.snapshot != nil && tc.snapshotVersion == tc.version {
+		return tc.snapshot
+	}
+
+	// 3. Build fresh snapshot at current version.
+	snap := &DesignContextSnapshot{
+		TenantIDOrSlug:  tenantIDOrSlug,
+		Version:         tc.version,
+		OverridesGlobal: make(map[string]bool),
+	}
+	if l.port != nil {
+		snap.Presets = l.listForTenantLocked(ctx, tc, tenantIDOrSlug, now)
+		for _, p := range snap.Presets {
+			if _, ok := GetPreset(p.Name); ok {
+				snap.OverridesGlobal[p.Name] = true
+			}
+		}
+	}
+	if l.componentPort != nil {
+		if comps, err := l.componentPort.ListPublishedComponents(ctx, tenantIDOrSlug); err == nil {
+			snap.Components = comps
+		}
+	}
+	if l.designContextPort != nil {
+		if toks, err := l.designContextPort.ListDesignTokens(ctx, tenantIDOrSlug); err == nil {
+			snap.Tokens = toks
+		}
+	}
+
+	tc.snapshot = snap
+	tc.snapshotVersion = tc.version
+	return snap
 }
 
 // lookupTenant hits the cache first, then the port. Both positive and
@@ -173,6 +276,31 @@ func (l *TenantPresetLoader) lookupTenant(ctx context.Context, tenantIDOrSlug, n
 	}
 	l.storeEntry(tc, name, preset, now)
 	return preset, true
+}
+
+// listForTenantLocked is the shared helper for ListForTenant and
+// LoadDesignContext. Caller must hold tc.mu. Does NOT clone the result —
+// ListForTenant clones on return, LoadDesignContext stores the slice in the
+// snapshot (which is read-only once published).
+func (l *TenantPresetLoader) listForTenantLocked(ctx context.Context, tc *tenantCache, tenantIDOrSlug string, now time.Time) []*Preset {
+	if tc.listPopulated && now.Before(tc.listExpiresAt) {
+		return tc.list
+	}
+
+	views, err := l.port.ListPublishedPresets(ctx, tenantIDOrSlug)
+	if err != nil {
+		return nil
+	}
+	out := make([]*Preset, 0, len(views))
+	for i := range views {
+		if p := viewToPreset(&views[i]); p != nil {
+			out = append(out, p)
+		}
+	}
+	tc.list = out
+	tc.listPopulated = true
+	tc.listExpiresAt = now.Add(l.ttl)
+	return out
 }
 
 // tenantCacheFor returns (creating if needed) the per-tenant cache bucket.

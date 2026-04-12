@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,34 +53,49 @@ type Agent2ExecuteResponse struct {
 	ToolDefCount      int                    `json:"toolDefCount,omitempty"`
 }
 
-// Agent2ExecuteUseCase executes Agent 2 (Preset Selector)
-type Agent2ExecuteUseCase struct {
-	llm          ports.LLMPort
-	statePort    ports.StatePort
-	toolRegistry *tools.Registry
-	log          *logger.Logger
-	fieldDefPort ports.FieldDefinitionPort // field definitions
-	// fieldsPromptCache memoizes the per-tenant system prompt with the
-	// <fields> block already appended. Mirrors Agent1's digestCache so the
-	// system prompt stays byte-stable across turns (required for Anthropic
-	// prompt caching). Invalidated by process restart.
-	fieldsPromptCache sync.Map // key: tenantSlug (string) → value: systemPrompt (string)
+// promptCacheEntry is one cached system prompt with its design context
+// version. When the version counter bumps (admin publish), the next
+// buildSystemPrompt call rebuilds and .Store replaces this entry.
+type promptCacheEntry struct {
+	version int64
+	prompt  string
 }
 
-// NewAgent2ExecuteUseCase creates Agent 2 use case with field definitions support
+// Agent2ExecuteUseCase executes Agent 2 (Preset Selector)
+type Agent2ExecuteUseCase struct {
+	llm                 ports.LLMPort
+	statePort           ports.StatePort
+	toolRegistry        *tools.Registry
+	log                 *logger.Logger
+	fieldDefPort        ports.FieldDefinitionPort        // field definitions
+	designContextLoader *engine_v4.TenantPresetLoader    // Phase 3: design context
+
+	// promptCache memoizes the per-tenant system prompt (base + <fields> +
+	// <tenant_design_context>). Keyed by tenantSlug, value is
+	// *promptCacheEntry. Version-aware: a design context version bump causes
+	// a rebuild on the next Agent2 turn. Byte-stable output is load-bearing
+	// for Anthropic prompt caching.
+	promptCache sync.Map // key: tenantSlug (string) → value: *promptCacheEntry
+}
+
+// NewAgent2ExecuteUseCase creates Agent 2 use case with field definitions and
+// design context support. designContextLoader may be nil — the usecase then
+// skips the <tenant_design_context> block (boot-without-DB fallback).
 func NewAgent2ExecuteUseCase(
 	llm ports.LLMPort,
 	statePort ports.StatePort,
 	toolRegistry *tools.Registry,
 	log *logger.Logger,
 	fieldDefPort ports.FieldDefinitionPort,
+	designContextLoader *engine_v4.TenantPresetLoader,
 ) *Agent2ExecuteUseCase {
 	return &Agent2ExecuteUseCase{
-		llm:          llm,
-		statePort:    statePort,
-		toolRegistry: toolRegistry,
-		log:          log,
-		fieldDefPort: fieldDefPort,
+		llm:                 llm,
+		statePort:           statePort,
+		toolRegistry:        toolRegistry,
+		log:                 log,
+		fieldDefPort:        fieldDefPort,
+		designContextLoader: designContextLoader,
 	}
 }
 
@@ -199,7 +216,7 @@ func (uc *Agent2ExecuteUseCase) Execute(ctx context.Context, req Agent2ExecuteRe
 	// a per-tenant <fields> block so Agent2 can match atom slots against
 	// the tenant's actual data fields (metadata-driven binding, see
 	// docs/New features/METADATA_DRIVEN_BINDING_2026-04-09.md).
-	systemPrompt := uc.buildSystemPromptWithFields(ctx, req.TenantSlug)
+	systemPrompt := uc.buildSystemPrompt(ctx, req.TenantSlug)
 	// Load field labels from field_definitions for context
 	fieldLabels := uc.loadFieldLabels(ctx, req.TenantSlug, state)
 	userPrompt := prompts.BuildAgent2ToolPrompt(state.Current.Meta, state.View, req.UserQuery, dataDelta, currentConfig, allDeltas, req.Microcontext, screenCtx, fieldLabels, formationTree)
@@ -419,38 +436,69 @@ func (uc *Agent2ExecuteUseCase) loadFieldLabels(ctx context.Context, tenantSlug 
 	return labels
 }
 
-// buildSystemPromptWithFields returns the base Agent2 system prompt with a
-// per-tenant <fields> block appended. The result is memoized per tenantSlug
-// in fieldsPromptCache so it stays byte-stable across turns (required for
-// Anthropic prompt caching). On missing tenant, missing port, empty field
-// definitions, or any error, returns the base prompt unchanged — the LLM
-// still has presets and hey-babes examples to fall back on.
+// buildSystemPrompt returns the fully-assembled Agent2 system prompt:
 //
-// Called from Execute in place of the static prompts.Agent2ToolSystemPrompt
-// constant. Symmetric to Agent1ExecuteUseCase.buildSystemPromptWithDigest.
-func (uc *Agent2ExecuteUseCase) buildSystemPromptWithFields(ctx context.Context, tenantSlug string) string {
-	if tenantSlug == "" || uc.fieldDefPort == nil {
-		return prompts.Agent2ToolSystemPrompt
-	}
-	if cached, ok := uc.fieldsPromptCache.Load(tenantSlug); ok {
-		return cached.(string)
-	}
-
-	fields, err := uc.fieldDefPort.ListFieldDefinitions(ctx, tenantSlug, domain.EntityTypeProduct)
-	if err != nil || len(fields) == 0 {
-		return prompts.Agent2ToolSystemPrompt
-	}
-	// Samples are best-effort enrichment. A failure or empty result is fine —
-	// the block will still carry label/type/slot info which is the minimum
-	// the LLM needs to reason about field binding.
-	samples, _ := uc.fieldDefPort.SampleFieldValues(ctx, tenantSlug, domain.EntityTypeProduct, 3)
-	block := formatFieldsBlock(fields, samples)
-	if block == "" {
+//	base prompt + <fields entity="product"> block + <tenant_design_context> block
+//
+// Memoized per (tenantSlug, designContextVersion). A version bump on the
+// admin side causes the next read to rebuild and .Store under the same key.
+// Byte-stable output is load-bearing for Anthropic prompt caching.
+//
+// Graceful degradation:
+//   - empty tenantSlug → base prompt unchanged
+//   - nil fieldDefPort → skip <fields> block
+//   - nil designContextLoader → skip <tenant_design_context> block
+//   - per-section errors → skip that section, keep others
+func (uc *Agent2ExecuteUseCase) buildSystemPrompt(ctx context.Context, tenantSlug string) string {
+	if tenantSlug == "" {
 		return prompts.Agent2ToolSystemPrompt
 	}
 
-	full := prompts.Agent2ToolSystemPrompt + "\n\n" + block + "\n"
-	uc.fieldsPromptCache.Store(tenantSlug, full)
+	// Phase 3: fetch design context snapshot (version-aware).
+	var snapshot *engine_v4.DesignContextSnapshot
+	var version int64
+	if uc.designContextLoader != nil {
+		snapshot = uc.designContextLoader.LoadDesignContext(ctx, tenantSlug)
+		if snapshot != nil {
+			version = snapshot.Version
+		}
+	}
+
+	// Cache check — reuse if version hasn't changed.
+	if cached, ok := uc.promptCache.Load(tenantSlug); ok {
+		if entry := cached.(*promptCacheEntry); entry.version == version {
+			return entry.prompt
+		}
+	}
+
+	// Rebuild the prompt.
+	var b strings.Builder
+	b.WriteString(prompts.Agent2ToolSystemPrompt)
+
+	// <fields> block (Phase 2 — unchanged logic, just moved here).
+	if uc.fieldDefPort != nil {
+		fields, err := uc.fieldDefPort.ListFieldDefinitions(ctx, tenantSlug, domain.EntityTypeProduct)
+		if err == nil && len(fields) > 0 {
+			samples, _ := uc.fieldDefPort.SampleFieldValues(ctx, tenantSlug, domain.EntityTypeProduct, 3)
+			if block := formatFieldsBlock(fields, samples); block != "" {
+				b.WriteString("\n\n")
+				b.WriteString(block)
+				b.WriteByte('\n')
+			}
+		}
+	}
+
+	// <tenant_design_context> block (Phase 3).
+	if snapshot != nil {
+		if block := formatDesignContextBlock(snapshot); block != "" {
+			b.WriteString("\n\n")
+			b.WriteString(block)
+			b.WriteByte('\n')
+		}
+	}
+
+	full := b.String()
+	uc.promptCache.Store(tenantSlug, &promptCacheEntry{version: version, prompt: full})
 	return full
 }
 
@@ -541,6 +589,180 @@ func formatFieldsBlock(fields []ports.FieldDefinition, samples map[string][]inte
 	}
 	b.WriteString(`</fields>`)
 	return b.String()
+}
+
+// formatDesignContextBlock renders a compact <tenant_design_context> XML
+// block for Agent2's system prompt. Describes what the tenant has published
+// so Agent2 can reference tenant-only preset names, components, and tokens.
+// Returns "" when the snapshot has nothing to show.
+//
+// Truncation caps: presets 50, components 25, tokens 80. Stable alphabetical
+// ordering for cache warmth. Overflows append a <more count="N"/> footer so
+// the LLM knows something was hidden. English only (feedback_prompt_language).
+func formatDesignContextBlock(snap *engine_v4.DesignContextSnapshot) string {
+	if snap == nil ||
+		(len(snap.Presets) == 0 && len(snap.Components) == 0 && len(snap.Tokens) == 0) {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, `<tenant_design_context version="%d">`, snap.Version)
+
+	// ---- presets ----
+	if len(snap.Presets) > 0 {
+		b.WriteString("\n  <presets>\n")
+		presets := sortPresetsByName(snap.Presets)
+		const maxPresets = 50
+		shown := len(presets)
+		if shown > maxPresets {
+			shown = maxPresets
+		}
+		for i := 0; i < shown; i++ {
+			p := presets[i]
+			fmt.Fprintf(&b, `    <preset name=%q category=%q`, p.Name, p.Category)
+			if snap.OverridesGlobal[p.Name] {
+				b.WriteString(` overrides="global"`)
+			}
+			if p.DefaultReplicate {
+				b.WriteString(` replicate="true"`)
+			}
+			b.WriteString(">\n")
+			if p.Description != "" {
+				fmt.Fprintf(&b, "      <desc>%s</desc>\n", escapeXMLInline(p.Description))
+			}
+			if binds := compactPresetBinds(p); binds != "" {
+				fmt.Fprintf(&b, "      <binds>%s</binds>\n", binds)
+			}
+			b.WriteString("    </preset>\n")
+		}
+		if len(presets) > maxPresets {
+			fmt.Fprintf(&b, `    <more count=%q/>`, strconv.Itoa(len(presets)-maxPresets))
+			b.WriteByte('\n')
+		}
+		b.WriteString("  </presets>\n")
+	}
+
+	// ---- components ----
+	if len(snap.Components) > 0 {
+		b.WriteString("  <components>\n")
+		comps := sortComponentsByName(snap.Components)
+		const maxComponents = 25
+		shown := len(comps)
+		if shown > maxComponents {
+			shown = maxComponents
+		}
+		for i := 0; i < shown; i++ {
+			c := comps[i]
+			fmt.Fprintf(&b, "    <component name=%q category=%q>%s</component>\n",
+				c.Name, c.Category, escapeXMLInline(c.Description))
+		}
+		if len(comps) > maxComponents {
+			fmt.Fprintf(&b, `    <more count=%q/>`, strconv.Itoa(len(comps)-maxComponents))
+			b.WriteByte('\n')
+		}
+		b.WriteString("  </components>\n")
+	}
+
+	// ---- tokens ----
+	if len(snap.Tokens) > 0 {
+		b.WriteString("  <tokens>\n")
+		grouped := groupTokensByCategory(snap.Tokens)
+		catKeys := sortedCategoryKeys(grouped)
+		const maxTokens = 80
+		total := 0
+		for _, cat := range catKeys {
+			if total >= maxTokens {
+				break
+			}
+			fmt.Fprintf(&b, "    <category name=%q>\n", cat)
+			for _, tok := range grouped[cat] {
+				if total >= maxTokens {
+					break
+				}
+				total++
+				fmt.Fprintf(&b, "      %s=%q", tok.Name, tok.Value)
+				if tok.ThemeAxis != "" && tok.ThemeValue != "" {
+					fmt.Fprintf(&b, " theme=%q:%q", tok.ThemeAxis, tok.ThemeValue)
+				}
+				b.WriteByte('\n')
+			}
+			b.WriteString("    </category>\n")
+		}
+		remaining := len(snap.Tokens) - total
+		if remaining > 0 {
+			fmt.Fprintf(&b, `    <more count=%q/>`, strconv.Itoa(remaining))
+			b.WriteByte('\n')
+		}
+		b.WriteString("  </tokens>\n")
+	}
+
+	b.WriteString("</tenant_design_context>")
+	return b.String()
+}
+
+// compactPresetBinds walks a preset's ops once and returns an ordered
+// comma-separated list of unique fieldName values from atom-level props.
+// Deliberately agnostic to Op.Type normalization — we just look at Props for
+// "fieldName", which only atom inserts populate. Widget/row/column inserts
+// don't have fieldName, so they're skipped automatically.
+func compactPresetBinds(p *engine_v4.Preset) string {
+	if p == nil || p.Build == nil {
+		return ""
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, op := range p.Build() {
+		if op.Props == nil {
+			continue
+		}
+		if fn, _ := op.Props["fieldName"].(string); fn != "" && !seen[fn] {
+			names = append(names, fn)
+			seen[fn] = true
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+// sortPresetsByName returns a sorted copy of the preset slice. Alphabetical
+// order ensures byte-stable prompt output for Anthropic cache hits.
+func sortPresetsByName(in []*engine_v4.Preset) []*engine_v4.Preset {
+	out := make([]*engine_v4.Preset, len(in))
+	copy(out, in)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// sortComponentsByName returns a sorted copy of the component slice.
+func sortComponentsByName(in []ports.CanvasComponentView) []ports.CanvasComponentView {
+	out := make([]ports.CanvasComponentView, len(in))
+	copy(out, in)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// groupTokensByCategory groups tokens by Category for the formatted output.
+func groupTokensByCategory(tokens []ports.CanvasDesignTokenView) map[string][]ports.CanvasDesignTokenView {
+	m := make(map[string][]ports.CanvasDesignTokenView)
+	for _, t := range tokens {
+		m[t.Category] = append(m[t.Category], t)
+	}
+	return m
+}
+
+// sortedCategoryKeys returns the keys of a category map in sorted order.
+func sortedCategoryKeys(m map[string][]ports.CanvasDesignTokenView) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// escapeXMLInline escapes &, <, > in a string for safe embedding in XML-ish
+// text nodes. Does not escape quotes — those appear only in attribute values
+// which are already handled by %q formatting.
+func escapeXMLInline(s string) string {
+	return html.EscapeString(s)
 }
 
 // Note: convertToFormation is defined in pipeline_execute.go and reused here

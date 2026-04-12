@@ -145,9 +145,18 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 					"description": "Max number of data items to use (0 or omitted = all). Caps replication count. Ignored when replicate=false.",
 				},
 				"preset": map[string]interface{}{
-					"type":        "string",
-					"enum":        engine_v4.PresetNames(),
-					"description": "Named preset — expands to a prebuilt ops batch. Pair with `ops` to apply overrides on top (update/delete/insert targeting preset refs like $w, $root, $info, $meta). Each preset has a DefaultReplicate baked in; passing `replicate` explicitly overrides it.",
+					"type": "string",
+					"description": "Named preset — expands to a prebuilt ops batch. " +
+						"Global fallbacks: product_card, product_card_compact, " +
+						"product_card_horizontal, product_card_list_row, product_detail, " +
+						"product_detail_horizontal, text_explainer, empty_not_found, " +
+						"error_generic, catalog_category_card, liked_grid, cart_grid. " +
+						"Tenant-scoped presets (and overrides of the fallbacks above) are " +
+						"listed in the <tenant_design_context> block of the system prompt — " +
+						"pass those names verbatim. Pair with `ops` to apply overrides on " +
+						"top (update/delete/insert targeting preset refs like $w, $root, " +
+						"$info, $meta). Each preset has a DefaultReplicate baked in; " +
+						"passing `replicate` explicitly overrides it.",
 				},
 			},
 		},
