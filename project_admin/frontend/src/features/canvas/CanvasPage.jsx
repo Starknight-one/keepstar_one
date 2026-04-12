@@ -13,6 +13,9 @@ const INSPECTOR_TABS = [
   { key: 'data', label: 'Data' },
 ]
 
+const CATEGORY_OPTIONS = ['product', 'service', 'nav', 'system']
+const ENTITY_TYPE_OPTIONS = ['product', 'service']
+
 const SHAPE_UTILS = [PresetTileShapeUtil]
 
 const TILE_GAP = 32
@@ -30,9 +33,14 @@ function saveCamera(camera) {
 }
 
 /** Inner component rendered inside <Tldraw> — has access to useEditor() */
-function CanvasInner({ presets, onSelectPreset }) {
+function CanvasInner({ presets, onSelectPreset, editorRef }) {
   const editor = useEditor()
   const mountedRef = useRef(false)
+
+  // Expose editor to parent via ref
+  useEffect(() => {
+    if (editor) editorRef.current = editor
+  }, [editor, editorRef])
 
   // On first mount: create preset tile shapes from loaded presets
   useEffect(() => {
@@ -54,8 +62,8 @@ function CanvasInner({ presets, onSelectPreset }) {
       const row = Math.floor(idx / TILES_PER_ROW)
       let opsCount = 0
       try {
-        const ops = p.latestVersion?.ops_json
-        if (ops) opsCount = JSON.parse(ops).length
+        const ops = p.latestVersion?.ops_json || p.latestVersion?.ops
+        if (ops) opsCount = (typeof ops === 'string' ? JSON.parse(ops) : ops).length
       } catch { /* noop */ }
 
       newShapes.push({
@@ -87,7 +95,6 @@ function CanvasInner({ presets, onSelectPreset }) {
     if (cam) {
       editor.setCamera({ x: cam.x, y: cam.y, z: cam.z })
     } else if (newShapes.length > 0) {
-      // Zoom to fit all shapes
       editor.zoomToFit({ animation: { duration: 0 } })
     }
   }, [editor, presets])
@@ -104,7 +111,6 @@ function CanvasInner({ presets, onSelectPreset }) {
         onSelectPreset(null)
       }
     }
-    // Subscribe to the store for selection changes
     const unsub = editor.store.listen(handleChange, {
       source: 'user',
       scope: 'session',
@@ -128,6 +134,25 @@ function CanvasInner({ presets, onSelectPreset }) {
   return null
 }
 
+/** Find the tldraw shape ID for a given presetId */
+function findShapeByPresetId(editor, presetId) {
+  if (!editor || !presetId) return null
+  return editor.getCurrentPageShapes().find(
+    s => s.type === PRESET_TILE_TYPE && s.props.presetId === presetId
+  )
+}
+
+/** Update the tldraw tile's visual props to match updated preset data */
+function syncTileProps(editor, presetId, updates) {
+  const shape = findShapeByPresetId(editor, presetId)
+  if (!shape) return
+  editor.updateShapes([{
+    id: shape.id,
+    type: PRESET_TILE_TYPE,
+    props: updates,
+  }])
+}
+
 export default function CanvasPage() {
   const [presets, setPresets] = useState([])
   const [tokens, setTokens] = useState([])
@@ -137,11 +162,16 @@ export default function CanvasPage() {
   const [showNewDraft, setShowNewDraft] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [creating, setCreating] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [publishing, setPublishing] = useState(false)
+  const editorRef = useRef(null)
 
   const selected = useMemo(
     () => presets.find(p => p.id === selectedId) || null,
     [presets, selectedId]
   )
+
+  const selectedStatus = selected?.latestVersion?.status || selected?.status || 'draft'
 
   useEffect(() => {
     Promise.all([
@@ -159,6 +189,77 @@ export default function CanvasPage() {
     setSelectedId(presetId)
   }, [])
 
+  // --- Optimistic field update + PUT ---
+  const updatePresetField = useCallback(async (field, value) => {
+    if (!selected) return
+    const prev = selected[field]
+    if (prev === value) return
+
+    // Optimistic local update
+    setPresets(list => list.map(p =>
+      p.id === selected.id ? { ...p, [field]: value } : p
+    ))
+
+    // Optimistic tile update (map field names to tile prop names)
+    const tileField = field === 'defaultReplicate' || field === 'default_replicate'
+      ? 'defaultReplicate' : field
+    if (['name', 'category', 'description', 'defaultReplicate'].includes(tileField)) {
+      syncTileProps(editorRef.current, selected.id, { [tileField]: value })
+    }
+
+    // Persist
+    setSaving(true)
+    try {
+      await api.put(`/canvas/presets/${selected.id}`, { [field]: value })
+    } catch (err) {
+      // Rollback on failure
+      setPresets(list => list.map(p =>
+        p.id === selected.id ? { ...p, [field]: prev } : p
+      ))
+      if (['name', 'category', 'description', 'defaultReplicate'].includes(tileField)) {
+        syncTileProps(editorRef.current, selected.id, { [tileField]: prev })
+      }
+      alert(`Save failed: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }, [selected])
+
+  // --- Publish ---
+  const handlePublish = useCallback(async () => {
+    if (!selected) return
+    setPublishing(true)
+    try {
+      const updated = await api.post(`/canvas/presets/${selected.id}/publish`)
+      setPresets(list => list.map(p => p.id === selected.id ? updated : p))
+      syncTileProps(editorRef.current, selected.id, {
+        status: 'published',
+      })
+    } catch (err) {
+      alert(`Publish failed: ${err.message}`)
+    } finally {
+      setPublishing(false)
+    }
+  }, [selected])
+
+  // --- Delete ---
+  const handleDelete = useCallback(async () => {
+    if (!selected) return
+    if (!confirm(`Delete preset "${selected.name}"? This cannot be undone.`)) return
+    try {
+      await api.delete(`/canvas/presets/${selected.id}`)
+      // Remove tile from canvas
+      const shape = findShapeByPresetId(editorRef.current, selected.id)
+      if (shape) editorRef.current.deleteShapes([shape.id])
+      // Remove from list
+      setPresets(list => list.filter(p => p.id !== selected.id))
+      setSelectedId(null)
+    } catch (err) {
+      alert(`Delete failed: ${err.message}`)
+    }
+  }, [selected])
+
+  // --- Create draft ---
   async function handleCreateDraft(e) {
     e.preventDefault()
     if (!draftName.trim()) return
@@ -176,6 +277,32 @@ export default function CanvasPage() {
       setDraftName('')
       setShowNewDraft(false)
       setSelectedId(created.id)
+
+      // Add tile to canvas
+      const editor = editorRef.current
+      if (editor) {
+        const count = editor.getCurrentPageShapes()
+          .filter(s => s.type === PRESET_TILE_TYPE).length
+        const col = count % TILES_PER_ROW
+        const row = Math.floor(count / TILES_PER_ROW)
+        editor.createShapes([{
+          id: createShapeId(`preset-${created.id}`),
+          type: PRESET_TILE_TYPE,
+          x: col * (TILE_W + TILE_GAP) + 80,
+          y: row * (TILE_H + TILE_GAP) + 80,
+          props: {
+            w: TILE_W,
+            h: TILE_H,
+            presetId: created.id,
+            name: created.name,
+            category: created.category || 'product',
+            description: created.description || '',
+            status: 'draft',
+            defaultReplicate: !!(created.defaultReplicate ?? created.default_replicate),
+            opsCount: 0,
+          },
+        }])
+      }
     } catch (err) {
       alert(err.message)
     } finally {
@@ -260,9 +387,29 @@ export default function CanvasPage() {
             {selected ? selected.name : 'Canvas'}
           </span>
           {selected && (
-            <span className={`canvas-topbar-status ${selected.latestVersion?.status || 'draft'}`}>
-              {selected.latestVersion?.status || 'draft'}
+            <span className={`canvas-topbar-status ${selectedStatus}`}>
+              {selectedStatus}
             </span>
+          )}
+          {selected && (
+            <div className="canvas-topbar-actions">
+              {saving && <span className="canvas-topbar-saving">Saving...</span>}
+              {selectedStatus === 'draft' && (
+                <button
+                  className="canvas-btn-publish"
+                  onClick={handlePublish}
+                  disabled={publishing}
+                >
+                  {publishing ? 'Publishing...' : 'Publish'}
+                </button>
+              )}
+              <button
+                className="canvas-btn-delete"
+                onClick={handleDelete}
+              >
+                Delete
+              </button>
+            </div>
           )}
         </div>
         <div className="canvas-viewport">
@@ -270,13 +417,13 @@ export default function CanvasPage() {
             shapeUtils={SHAPE_UTILS}
             hideUi
             onMount={(editor) => {
-              // Disable all default tools except select/hand
               editor.updateInstanceState({ isReadonly: false })
             }}
           >
             <CanvasInner
               presets={presets}
               onSelectPreset={handleSelectPreset}
+              editorRef={editorRef}
             />
           </Tldraw>
         </div>
@@ -292,23 +439,72 @@ export default function CanvasPage() {
                 <>
                   <div className="canvas-field">
                     <label className="canvas-field-label">Name</label>
-                    <div className="canvas-field-value">{selected.name}</div>
+                    <input
+                      className="canvas-input"
+                      value={selected.name}
+                      onChange={(e) => {
+                        const val = e.target.value.toLowerCase().replace(/\s+/g, '_')
+                        setPresets(list => list.map(p =>
+                          p.id === selected.id ? { ...p, name: val } : p
+                        ))
+                        syncTileProps(editorRef.current, selected.id, { name: val })
+                      }}
+                      onBlur={(e) => {
+                        updatePresetField('name', e.target.value)
+                      }}
+                    />
                   </div>
                   <div className="canvas-field">
                     <label className="canvas-field-label">Category</label>
-                    <div className="canvas-field-value">{selected.category}</div>
+                    <select
+                      className="canvas-select"
+                      value={selected.category}
+                      onChange={(e) => updatePresetField('category', e.target.value)}
+                    >
+                      {CATEGORY_OPTIONS.map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="canvas-field">
                     <label className="canvas-field-label">Entity Type</label>
-                    <div className="canvas-field-value">{selected.entityType || selected.entity_type || 'product'}</div>
+                    <select
+                      className="canvas-select"
+                      value={selected.entityType || selected.entity_type || 'product'}
+                      onChange={(e) => updatePresetField('entityType', e.target.value)}
+                    >
+                      {ENTITY_TYPE_OPTIONS.map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="canvas-field">
                     <label className="canvas-field-label">Description</label>
-                    <div className="canvas-field-value">{selected.description || '(empty)'}</div>
+                    <textarea
+                      className="canvas-textarea"
+                      value={selected.description || ''}
+                      rows={3}
+                      placeholder="Describe this preset..."
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setPresets(list => list.map(p =>
+                          p.id === selected.id ? { ...p, description: val } : p
+                        ))
+                        syncTileProps(editorRef.current, selected.id, { description: val })
+                      }}
+                      onBlur={(e) => updatePresetField('description', e.target.value)}
+                    />
                   </div>
                   <div className="canvas-field">
                     <label className="canvas-field-label">Default Replicate</label>
-                    <div className="canvas-field-value">{selected.defaultReplicate || selected.default_replicate ? 'Yes' : 'No'}</div>
+                    <label className="canvas-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={!!(selected.defaultReplicate ?? selected.default_replicate)}
+                        onChange={(e) => updatePresetField('defaultReplicate', e.target.checked)}
+                      />
+                      <span>Replicate widget for each data item</span>
+                    </label>
                   </div>
                 </>
               ) : (
@@ -319,14 +515,14 @@ export default function CanvasPage() {
           {inspectorTab === 'design' && (
             <div className="canvas-inspector-section">
               <div className="canvas-empty-hint">
-                Design system overview (Phase 6+)
+                Design system overview (Phase 8)
               </div>
             </div>
           )}
           {inspectorTab === 'data' && (
             <div className="canvas-inspector-section">
               <div className="canvas-empty-hint">
-                Data binding inspector (Phase 6+)
+                Data binding inspector (Phase 7+)
               </div>
             </div>
           )}
