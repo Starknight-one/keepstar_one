@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Tldraw, useEditor, createShapeId } from 'tldraw'
+import 'tldraw/tldraw.css'
 import { api } from '../../shared/api/apiClient.js'
 import Spinner from '../../shared/ui/Spinner.jsx'
 import Tabs from '../../shared/ui/Tabs.jsx'
+import { PresetTileShapeUtil, PRESET_TILE_TYPE } from './PresetTileShape.jsx'
 import './canvas.css'
 
 const INSPECTOR_TABS = [
@@ -10,15 +13,135 @@ const INSPECTOR_TABS = [
   { key: 'data', label: 'Data' },
 ]
 
+const SHAPE_UTILS = [PresetTileShapeUtil]
+
+const TILE_GAP = 32
+const TILES_PER_ROW = 4
+const TILE_W = 260
+const TILE_H = 160
+
+// Persist camera position per tenant to localStorage
+const CAMERA_KEY = 'keepstar_canvas_camera'
+function loadCamera() {
+  try { return JSON.parse(localStorage.getItem(CAMERA_KEY)) } catch { return null }
+}
+function saveCamera(camera) {
+  try { localStorage.setItem(CAMERA_KEY, JSON.stringify(camera)) } catch { /* noop */ }
+}
+
+/** Inner component rendered inside <Tldraw> — has access to useEditor() */
+function CanvasInner({ presets, onSelectPreset }) {
+  const editor = useEditor()
+  const mountedRef = useRef(false)
+
+  // On first mount: create preset tile shapes from loaded presets
+  useEffect(() => {
+    if (mountedRef.current || !editor || presets.length === 0) return
+    mountedRef.current = true
+
+    // Avoid duplicating shapes if they already exist (e.g. hot reload)
+    const existingIds = new Set(
+      editor.getCurrentPageShapes()
+        .filter(s => s.type === PRESET_TILE_TYPE)
+        .map(s => s.props.presetId)
+    )
+
+    const newShapes = []
+    let idx = existingIds.size
+    for (const p of presets) {
+      if (existingIds.has(p.id)) continue
+      const col = idx % TILES_PER_ROW
+      const row = Math.floor(idx / TILES_PER_ROW)
+      let opsCount = 0
+      try {
+        const ops = p.latestVersion?.ops_json
+        if (ops) opsCount = JSON.parse(ops).length
+      } catch { /* noop */ }
+
+      newShapes.push({
+        id: createShapeId(`preset-${p.id}`),
+        type: PRESET_TILE_TYPE,
+        x: col * (TILE_W + TILE_GAP) + 80,
+        y: row * (TILE_H + TILE_GAP) + 80,
+        props: {
+          w: TILE_W,
+          h: TILE_H,
+          presetId: p.id,
+          name: p.name,
+          category: p.category || 'product',
+          description: p.description || '',
+          status: p.latestVersion?.status || p.status || 'draft',
+          defaultReplicate: !!(p.defaultReplicate ?? p.default_replicate),
+          opsCount,
+        },
+      })
+      idx++
+    }
+
+    if (newShapes.length > 0) {
+      editor.createShapes(newShapes)
+    }
+
+    // Restore camera
+    const cam = loadCamera()
+    if (cam) {
+      editor.setCamera({ x: cam.x, y: cam.y, z: cam.z })
+    } else if (newShapes.length > 0) {
+      // Zoom to fit all shapes
+      editor.zoomToFit({ animation: { duration: 0 } })
+    }
+  }, [editor, presets])
+
+  // Listen for selection changes → notify parent
+  useEffect(() => {
+    if (!editor) return
+    const handleChange = () => {
+      const shapes = editor.getSelectedShapes()
+      const tile = shapes.find(s => s.type === PRESET_TILE_TYPE)
+      if (tile) {
+        onSelectPreset(tile.props.presetId)
+      } else if (shapes.length === 0) {
+        onSelectPreset(null)
+      }
+    }
+    // Subscribe to the store for selection changes
+    const unsub = editor.store.listen(handleChange, {
+      source: 'user',
+      scope: 'session',
+    })
+    return unsub
+  }, [editor, onSelectPreset])
+
+  // Persist camera on move
+  useEffect(() => {
+    if (!editor) return
+    const unsub = editor.store.listen(
+      () => {
+        const cam = editor.getCamera()
+        saveCamera({ x: cam.x, y: cam.y, z: cam.z })
+      },
+      { source: 'user', scope: 'session' }
+    )
+    return unsub
+  }, [editor])
+
+  return null
+}
+
 export default function CanvasPage() {
   const [presets, setPresets] = useState([])
   const [tokens, setTokens] = useState([])
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState(null)
+  const [selectedId, setSelectedId] = useState(null)
   const [inspectorTab, setInspectorTab] = useState('properties')
   const [showNewDraft, setShowNewDraft] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [creating, setCreating] = useState(false)
+
+  const selected = useMemo(
+    () => presets.find(p => p.id === selectedId) || null,
+    [presets, selectedId]
+  )
 
   useEffect(() => {
     Promise.all([
@@ -30,6 +153,10 @@ export default function CanvasPage() {
         setTokens(Array.isArray(t) ? t : t.tokens || [])
       })
       .finally(() => setLoading(false))
+  }, [])
+
+  const handleSelectPreset = useCallback((presetId) => {
+    setSelectedId(presetId)
   }, [])
 
   async function handleCreateDraft(e) {
@@ -48,7 +175,7 @@ export default function CanvasPage() {
       setPresets((prev) => [...prev, created])
       setDraftName('')
       setShowNewDraft(false)
-      setSelected(created)
+      setSelectedId(created.id)
     } catch (err) {
       alert(err.message)
     } finally {
@@ -101,8 +228,8 @@ export default function CanvasPage() {
           {presets.map((p) => (
             <button
               key={p.id}
-              className={`canvas-preset-item ${selected?.id === p.id ? 'selected' : ''}`}
-              onClick={() => setSelected(p)}
+              className={`canvas-preset-item ${selectedId === p.id ? 'selected' : ''}`}
+              onClick={() => setSelectedId(p.id)}
             >
               <span className="canvas-preset-name">{p.name}</span>
               <span className={`canvas-preset-status ${p.latestVersion?.status || p.status || 'draft'}`}>
@@ -126,7 +253,7 @@ export default function CanvasPage() {
         )}
       </aside>
 
-      {/* ---- Center Panel: Canvas Placeholder ---- */}
+      {/* ---- Center Panel: tldraw Canvas ---- */}
       <div className="canvas-center">
         <div className="canvas-topbar">
           <span className="canvas-topbar-title">
@@ -139,36 +266,19 @@ export default function CanvasPage() {
           )}
         </div>
         <div className="canvas-viewport">
-          {selected ? (
-            <div className="canvas-placeholder-card">
-              <div className="canvas-placeholder-icon">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <path d="M3 9h18M9 21V9" />
-                </svg>
-              </div>
-              <p className="canvas-placeholder-text">
-                Canvas editor will render here (Phase 5: tldraw integration)
-              </p>
-              <p className="canvas-placeholder-sub">
-                Selected: <strong>{selected.name}</strong>
-                {selected.latestVersion?.ops_json && (
-                  <> &middot; {JSON.parse(selected.latestVersion.ops_json || '[]').length} ops</>
-                )}
-              </p>
-            </div>
-          ) : (
-            <div className="canvas-placeholder-card">
-              <div className="canvas-placeholder-icon">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-              </div>
-              <p className="canvas-placeholder-text">
-                Select a preset from the left panel or create a new draft
-              </p>
-            </div>
-          )}
+          <Tldraw
+            shapeUtils={SHAPE_UTILS}
+            hideUi
+            onMount={(editor) => {
+              // Disable all default tools except select/hand
+              editor.updateInstanceState({ isReadonly: false })
+            }}
+          >
+            <CanvasInner
+              presets={presets}
+              onSelectPreset={handleSelectPreset}
+            />
+          </Tldraw>
         </div>
       </div>
 
