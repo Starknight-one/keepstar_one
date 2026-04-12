@@ -364,6 +364,12 @@
   margin-bottom: 0.75rem;
 }
 
+.trace-capture-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+  margin-left: auto;
+}
+
 .trace-tool-name {
   display: flex;
   gap: 0.4rem;

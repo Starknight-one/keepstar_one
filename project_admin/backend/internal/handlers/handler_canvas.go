@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -17,11 +18,12 @@ import (
 // reads/writes the caller's own tenant data.
 type CanvasHandler struct {
 	canvas *usecases.CanvasUseCase
+	traces *postgres.TraceAdapter
 	log    *logger.Logger
 }
 
-func NewCanvasHandler(canvas *usecases.CanvasUseCase, log *logger.Logger) *CanvasHandler {
-	return &CanvasHandler{canvas: canvas, log: log}
+func NewCanvasHandler(canvas *usecases.CanvasUseCase, traces *postgres.TraceAdapter, log *logger.Logger) *CanvasHandler {
+	return &CanvasHandler{canvas: canvas, traces: traces, log: log}
 }
 
 // ---------------- route dispatchers ----------------
@@ -240,6 +242,16 @@ func (h *CanvasHandler) HandleTokenByID(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// HandleCapture creates a draft preset from a pipeline trace's agent2 tool input.
+// POST /admin/api/canvas/capture  body: {"traceId":"uuid"}
+func (h *CanvasHandler) HandleCapture(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	h.handleCapture(w, r)
+}
+
 // ---------------- sub-handlers for /canvas/presets ----------------
 
 func (h *CanvasHandler) listPresets(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +295,115 @@ func (h *CanvasHandler) updatePreset(w http.ResponseWriter, r *http.Request, ten
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
+}
+
+// ---------------- capture from trace ----------------
+
+func (h *CanvasHandler) handleCapture(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	tenantID := TenantID(ctx)
+	userID := UserID(ctx)
+
+	var body struct {
+		TraceID string `json:"traceId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if body.TraceID == "" {
+		writeError(w, http.StatusBadRequest, "traceId is required")
+		return
+	}
+
+	// 1. Load trace
+	trace, err := h.traces.Get(ctx, body.TraceID)
+	if err != nil {
+		h.log.FromContext(ctx).Error("canvas_capture_trace_load_failed", "traceId", body.TraceID, "error", err)
+		writeError(w, http.StatusNotFound, "trace not found")
+		return
+	}
+
+	// 2. Parse traceData → extract agent2.toolInput
+	toolInput, err := extractToolInput(trace.TraceData)
+	if err != nil {
+		h.log.FromContext(ctx).Error("canvas_capture_parse_failed", "traceId", body.TraceID, "error", err)
+		writeError(w, http.StatusUnprocessableEntity, "cannot extract tool input from trace: "+err.Error())
+		return
+	}
+
+	// 3. Build preset create input
+	shortID := body.TraceID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+
+	replicate := true
+	if toolInput.Replicate != nil {
+		replicate = *toolInput.Replicate
+	}
+
+	in := domain.PresetCreateInput{
+		Name:             "from_trace_" + shortID,
+		Category:         "product",
+		EntityType:       "product",
+		Description:      "Captured from trace " + body.TraceID,
+		DefaultReplicate: &replicate,
+		Ops:              toolInput.Ops,
+	}
+
+	// 4. Persist via existing use case
+	p, err := h.canvas.CreatePreset(ctx, tenantID, userID, in)
+	if err != nil {
+		writeCanvasError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+// toolInputPayload mirrors the relevant fields from agent2's visual_assembly
+// tool call as stored in the trace.
+type toolInputPayload struct {
+	Preset    string          `json:"preset"`
+	Ops       json.RawMessage `json:"ops"`
+	Replicate *bool           `json:"replicate"`
+	Layout    string          `json:"layout"`
+	Columns   int             `json:"columns"`
+	Limit     int             `json:"limit"`
+	Size      string          `json:"size"`
+}
+
+// extractToolInput digs into traceData JSON to find agent2's tool input.
+// Expected structure: { "agent2": { "toolInput": { ops, preset, ... } } }
+// or:                 { "steps": [ ..., { "agent": "agent2", "toolInput": {...} } ] }
+func extractToolInput(traceData json.RawMessage) (*toolInputPayload, error) {
+	// Try direct agent2.toolInput path first
+	var direct struct {
+		Agent2 struct {
+			ToolInput toolInputPayload `json:"toolInput"`
+		} `json:"agent2"`
+	}
+	if err := json.Unmarshal(traceData, &direct); err == nil && len(direct.Agent2.ToolInput.Ops) > 0 {
+		return &direct.Agent2.ToolInput, nil
+	}
+
+	// Try steps array variant
+	var stepped struct {
+		Steps []struct {
+			Agent     string           `json:"agent"`
+			ToolInput toolInputPayload `json:"toolInput"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(traceData, &stepped); err == nil {
+		for i := len(stepped.Steps) - 1; i >= 0; i-- {
+			s := stepped.Steps[i]
+			if s.Agent == "agent2" && len(s.ToolInput.Ops) > 0 {
+				return &s.ToolInput, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no agent2 toolInput with ops found in trace data")
 }
 
 // ---------------- helpers ----------------

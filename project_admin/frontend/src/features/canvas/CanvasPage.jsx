@@ -153,8 +153,11 @@ function syncTileProps(editor, presetId, updates) {
   }])
 }
 
+const COMPONENT_CATEGORY_OPTIONS = ['atom', 'molecule', 'organism']
+
 export default function CanvasPage() {
   const [presets, setPresets] = useState([])
+  const [components, setComponents] = useState([])
   const [tokens, setTokens] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState(null)
@@ -164,6 +167,9 @@ export default function CanvasPage() {
   const [creating, setCreating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const [showNewComponent, setShowNewComponent] = useState(false)
+  const [componentName, setComponentName] = useState('')
+  const [creatingComponent, setCreatingComponent] = useState(false)
   const editorRef = useRef(null)
 
   const selected = useMemo(
@@ -177,10 +183,12 @@ export default function CanvasPage() {
     Promise.all([
       api.get('/canvas/presets').catch(() => []),
       api.get('/canvas/tokens').catch(() => []),
+      api.get('/canvas/components').catch(() => []),
     ])
-      .then(([p, t]) => {
+      .then(([p, t, c]) => {
         setPresets(Array.isArray(p) ? p : p.presets || [])
         setTokens(Array.isArray(t) ? t : t.tokens || [])
+        setComponents(Array.isArray(c) ? c : c.components || [])
       })
       .finally(() => setLoading(false))
   }, [])
@@ -258,6 +266,39 @@ export default function CanvasPage() {
       alert(`Delete failed: ${err.message}`)
     }
   }, [selected])
+
+  // --- Create component ---
+  async function handleCreateComponent(e) {
+    e.preventDefault()
+    if (!componentName.trim()) return
+    setCreatingComponent(true)
+    try {
+      const created = await api.post('/canvas/components', {
+        name: componentName.trim().toLowerCase().replace(/\s+/g, '_'),
+        category: 'atom',
+        description: '',
+        ops: [],
+      })
+      setComponents((prev) => [...prev, created])
+      setComponentName('')
+      setShowNewComponent(false)
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setCreatingComponent(false)
+    }
+  }
+
+  // --- Delete component ---
+  async function handleDeleteComponent(comp) {
+    if (!confirm(`Delete component "${comp.name}"?`)) return
+    try {
+      await api.delete(`/canvas/components/${comp.id}`)
+      setComponents(list => list.filter(c => c.id !== comp.id))
+    } catch (err) {
+      alert(`Delete failed: ${err.message}`)
+    }
+  }
 
   // --- Create draft ---
   async function handleCreateDraft(e) {
@@ -369,6 +410,57 @@ export default function CanvasPage() {
               No presets yet. Create your first draft above.
             </div>
           )}
+        </div>
+
+        {/* Components section */}
+        <div className="canvas-components-section">
+          <div className="canvas-left-header">
+            <h3 className="canvas-panel-subtitle" style={{ margin: 0 }}>Components</h3>
+            <button
+              className="canvas-btn-sm"
+              onClick={() => setShowNewComponent(!showNewComponent)}
+            >
+              +
+            </button>
+          </div>
+          {showNewComponent && (
+            <form className="canvas-new-draft" onSubmit={handleCreateComponent}>
+              <input
+                className="canvas-input"
+                placeholder="component_name"
+                value={componentName}
+                onChange={(e) => setComponentName(e.target.value)}
+                autoFocus
+              />
+              <button
+                className="canvas-btn-sm"
+                type="submit"
+                disabled={creatingComponent}
+              >
+                {creatingComponent ? '...' : 'Create'}
+              </button>
+            </form>
+          )}
+          <div className="canvas-component-list">
+            {components.map((c) => (
+              <div key={c.id} className="canvas-component-item">
+                <span className="canvas-component-name">{c.name}</span>
+                <span className="canvas-component-cat">{c.category}</span>
+                <button
+                  className="canvas-component-delete"
+                  onClick={() => handleDeleteComponent(c)}
+                  title="Delete"
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+            {components.length === 0 && !showNewComponent && (
+              <div className="canvas-empty-hint" style={{ padding: '6px 10px' }}>
+                No components yet
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Design Tokens summary */}

@@ -110,7 +110,7 @@ func main() {
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
 	stockHandler := handlers.NewStockHandler(stockUC, log)
 	tracesHandler := handlers.NewTracesHandler(traceAdapter, log)
-	canvasHandler := handlers.NewCanvasHandler(canvasUC, log)
+	canvasHandler := handlers.NewCanvasHandler(canvasUC, traceAdapter, log)
 
 	var enrichmentHandler *handlers.EnrichmentHandler
 	if enrichUC != nil {
@@ -188,6 +188,7 @@ func main() {
 	protected.HandleFunc("/admin/api/canvas/presets/", canvasHandler.HandlePresetByID)
 	protected.HandleFunc("/admin/api/canvas/components", canvasHandler.HandleComponents)
 	protected.HandleFunc("/admin/api/canvas/components/", canvasHandler.HandleComponentByID)
+	protected.HandleFunc("/admin/api/canvas/capture", canvasHandler.HandleCapture)
 	protected.HandleFunc("/admin/api/canvas/tokens", canvasHandler.HandleTokens)
 	protected.HandleFunc("/admin/api/canvas/tokens/", canvasHandler.HandleTokenByID)
 
@@ -217,6 +218,7 @@ func main() {
 	mux.Handle("/admin/api/canvas/presets/", authMW(protected))
 	mux.Handle("/admin/api/canvas/components", authMW(protected))
 	mux.Handle("/admin/api/canvas/components/", authMW(protected))
+	mux.Handle("/admin/api/canvas/capture", authMW(protected))
 	mux.Handle("/admin/api/canvas/tokens", authMW(protected))
 	mux.Handle("/admin/api/canvas/tokens/", authMW(protected))
 	if enrichmentHandler != nil {
