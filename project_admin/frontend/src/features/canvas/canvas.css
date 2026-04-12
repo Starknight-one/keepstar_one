@@ -443,6 +443,122 @@
   cursor: pointer;
 }
 
+/* ---- Design Tokens editor ---- */
+
+.canvas-tokens-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.canvas-token-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: #f9fafb;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+}
+
+.canvas-token-theme-row {
+  display: flex;
+  gap: 6px;
+}
+.canvas-token-theme-row .canvas-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.canvas-theme-axes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.canvas-theme-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.canvas-theme-tag {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.canvas-token-category {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.canvas-token-cat-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 4px 0 2px;
+  border-bottom: 1px solid #f3f4f6;
+  margin-bottom: 2px;
+}
+
+.canvas-token-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.canvas-token-row:hover {
+  background: #f9fafb;
+}
+
+.canvas-token-name {
+  font-weight: 500;
+  color: var(--color-text);
+  min-width: 60px;
+}
+
+.canvas-token-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(0,0,0,0.1);
+  flex-shrink: 0;
+}
+
+.canvas-token-value {
+  flex: 1;
+  color: var(--color-text-secondary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-token-theme {
+  font-size: 10px;
+  color: #6d28d9;
+  background: #ede9fe;
+  padding: 1px 5px;
+  border-radius: 99px;
+  flex-shrink: 0;
+}
+
+.canvas-token-row .canvas-component-delete {
+  opacity: 0;
+}
+.canvas-token-row:hover .canvas-component-delete {
+  opacity: 1;
+}
+
 .canvas-empty-hint {
   font-size: 13px;
   color: var(--color-text-secondary);

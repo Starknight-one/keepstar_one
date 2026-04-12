@@ -170,6 +170,8 @@ export default function CanvasPage() {
   const [showNewComponent, setShowNewComponent] = useState(false)
   const [componentName, setComponentName] = useState('')
   const [creatingComponent, setCreatingComponent] = useState(false)
+  const [showNewToken, setShowNewToken] = useState(false)
+  const [newToken, setNewToken] = useState({ category: 'color', name: '', value: '', themeAxis: '', themeValue: '' })
   const editorRef = useRef(null)
 
   const selected = useMemo(
@@ -266,6 +268,67 @@ export default function CanvasPage() {
       alert(`Delete failed: ${err.message}`)
     }
   }, [selected])
+
+  // --- Token helpers ---
+  const tokensByCategory = useMemo(() => {
+    const map = {}
+    for (const t of tokens) {
+      const cat = t.category || 'other'
+      if (!map[cat]) map[cat] = []
+      map[cat].push(t)
+    }
+    return map
+  }, [tokens])
+
+  const themeAxes = useMemo(() => {
+    const axes = new Set()
+    for (const t of tokens) {
+      if (t.themeAxis) axes.add(t.themeAxis)
+    }
+    return [...axes].sort()
+  }, [tokens])
+
+  async function handleUpsertToken(e) {
+    e.preventDefault()
+    if (!newToken.name.trim() || !newToken.value.trim()) return
+    try {
+      const body = {
+        category: newToken.category,
+        name: newToken.name.trim(),
+        value: newToken.value.trim(),
+      }
+      if (newToken.themeAxis.trim()) body.themeAxis = newToken.themeAxis.trim()
+      if (newToken.themeValue.trim()) body.themeValue = newToken.themeValue.trim()
+      const created = await api.post('/canvas/tokens', body)
+      // Replace if same name+category+theme exists, else append
+      setTokens(prev => {
+        const idx = prev.findIndex(t =>
+          t.category === created.category && t.name === created.name &&
+          (t.themeAxis || '') === (created.themeAxis || '') &&
+          (t.themeValue || '') === (created.themeValue || '')
+        )
+        if (idx >= 0) {
+          const next = [...prev]
+          next[idx] = created
+          return next
+        }
+        return [...prev, created]
+      })
+      setNewToken({ category: 'color', name: '', value: '', themeAxis: '', themeValue: '' })
+      setShowNewToken(false)
+    } catch (err) {
+      alert(`Token save failed: ${err.message}`)
+    }
+  }
+
+  async function handleDeleteToken(token) {
+    try {
+      await api.delete(`/canvas/tokens/${token.id}`)
+      setTokens(prev => prev.filter(t => t.id !== token.id))
+    } catch (err) {
+      alert(`Delete failed: ${err.message}`)
+    }
+  }
 
   // --- Create component ---
   async function handleCreateComponent(e) {
@@ -606,9 +669,106 @@ export default function CanvasPage() {
           )}
           {inspectorTab === 'design' && (
             <div className="canvas-inspector-section">
-              <div className="canvas-empty-hint">
-                Design system overview (Phase 8)
+              <div className="canvas-tokens-header">
+                <span className="canvas-field-label">Design Tokens</span>
+                <button
+                  className="canvas-btn-sm"
+                  onClick={() => setShowNewToken(!showNewToken)}
+                >
+                  +
+                </button>
               </div>
+
+              {showNewToken && (
+                <form className="canvas-token-form" onSubmit={handleUpsertToken}>
+                  <select
+                    className="canvas-select"
+                    value={newToken.category}
+                    onChange={(e) => setNewToken(t => ({ ...t, category: e.target.value }))}
+                  >
+                    <option value="color">color</option>
+                    <option value="radius">radius</option>
+                    <option value="spacing">spacing</option>
+                    <option value="font">font</option>
+                    <option value="shadow">shadow</option>
+                    <option value="other">other</option>
+                  </select>
+                  <input
+                    className="canvas-input"
+                    placeholder="name"
+                    value={newToken.name}
+                    onChange={(e) => setNewToken(t => ({ ...t, name: e.target.value }))}
+                  />
+                  <input
+                    className="canvas-input"
+                    placeholder="value"
+                    value={newToken.value}
+                    onChange={(e) => setNewToken(t => ({ ...t, value: e.target.value }))}
+                  />
+                  <div className="canvas-token-theme-row">
+                    <input
+                      className="canvas-input"
+                      placeholder="theme axis (optional)"
+                      value={newToken.themeAxis}
+                      onChange={(e) => setNewToken(t => ({ ...t, themeAxis: e.target.value }))}
+                    />
+                    <input
+                      className="canvas-input"
+                      placeholder="theme value"
+                      value={newToken.themeValue}
+                      onChange={(e) => setNewToken(t => ({ ...t, themeValue: e.target.value }))}
+                    />
+                  </div>
+                  <button className="canvas-btn-sm" type="submit">Save</button>
+                </form>
+              )}
+
+              {themeAxes.length > 0 && (
+                <div className="canvas-theme-axes">
+                  <span className="canvas-field-label">Theme Axes</span>
+                  <div className="canvas-theme-tags">
+                    {themeAxes.map(axis => (
+                      <span key={axis} className="canvas-theme-tag">{axis}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {Object.keys(tokensByCategory).length === 0 ? (
+                <div className="canvas-empty-hint">
+                  No design tokens yet. Add tokens to define your design system.
+                </div>
+              ) : (
+                Object.entries(tokensByCategory).sort(([a], [b]) => a.localeCompare(b)).map(([cat, catTokens]) => (
+                  <div key={cat} className="canvas-token-category">
+                    <div className="canvas-token-cat-header">{cat}</div>
+                    {catTokens.sort((a, b) => a.name.localeCompare(b.name)).map(tok => (
+                      <div key={tok.id} className="canvas-token-row">
+                        <span className="canvas-token-name">{tok.name}</span>
+                        {tok.category === 'color' && tok.value.startsWith('#') && (
+                          <span
+                            className="canvas-token-swatch"
+                            style={{ background: tok.value }}
+                          />
+                        )}
+                        <span className="canvas-token-value">{tok.value}</span>
+                        {tok.themeAxis && (
+                          <span className="canvas-token-theme">
+                            {tok.themeAxis}:{tok.themeValue}
+                          </span>
+                        )}
+                        <button
+                          className="canvas-component-delete"
+                          onClick={() => handleDeleteToken(tok)}
+                          title="Delete token"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
             </div>
           )}
           {inspectorTab === 'data' && (
