@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Package, Upload, Code, Settings, LogOut, Activity, MessageSquare } from 'lucide-react'
+import { Package, Upload, Code, Settings, LogOut, Activity, MessageSquare, Palette } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider.jsx'
 import './layout.css'
 
@@ -28,6 +28,9 @@ export default function DashboardLayout() {
           </NavLink>
           <NavLink to="/conversations" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <MessageSquare size={18} /> Conversations
+          </NavLink>
+          <NavLink to="/canvas" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+            <Palette size={18} /> Canvas
           </NavLink>
           <NavLink to="/traces" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Activity size={18} /> Traces

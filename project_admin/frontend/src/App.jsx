@@ -7,6 +7,7 @@ import ProductsPage from './features/catalog/ProductsPage.jsx'
 import ProductDetailPage from './features/catalog/ProductDetailPage.jsx'
 import ImportPage from './features/import/ImportPage.jsx'
 import SettingsPage from './features/settings/SettingsPage.jsx'
+import CanvasPage from './features/canvas/CanvasPage.jsx'
 import WidgetPage from './features/widget/WidgetPage.jsx'
 import ConversationsPage from './features/conversations/ConversationsPage.jsx'
 import ConversationDetailPage from './features/conversations/ConversationDetailPage.jsx'
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="traces" element={<TracesPage />} />
         <Route path="traces/session/:sessionId" element={<SessionDetail />} />
         <Route path="traces/:id" element={<TraceDetail />} />
+        <Route path="canvas" element={<CanvasPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>
