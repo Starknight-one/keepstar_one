@@ -22,6 +22,7 @@ import About from './pages/About';
 import FeaturesPage from './pages/FeaturesPage';
 import ChangelogPage from './pages/ChangelogPage';
 import UseCasesPage from './pages/UseCasesPage';
+import UnderConstruction from './pages/UnderConstruction';
 import './App.css';
 
 function Landing({ onDemo }) {
@@ -49,7 +50,8 @@ function App() {
   return (
     <>
       <Routes>
-        <Route path="/" element={<Landing onDemo={() => setShowDemo(true)} />} />
+        <Route path="/" element={<UnderConstruction />} />
+        <Route path="/preview" element={<Landing onDemo={() => setShowDemo(true)} />} />
         <Route path="/blog" element={<BlogList />} />
         <Route path="/blog/:slug" element={<BlogArticle />} />
         <Route path="/terms" element={<TermsOfUse />} />
