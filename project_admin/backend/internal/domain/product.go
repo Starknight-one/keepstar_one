@@ -62,6 +62,12 @@ type MasterProduct struct {
 	Benefits          []string `json:"benefits,omitempty"`
 	HowToUse          string   `json:"howToUse,omitempty"`
 	EnrichmentVersion int      `json:"enrichmentVersion,omitempty"`
+
+	// Source tracking — stable key from the external system that produced this
+	// row (Shopify product.id, CSV filename+row, Sheets row). Enables idempotent
+	// re-import from the same source. Empty for manually-created products.
+	SourceSystem string `json:"sourceSystem,omitempty"`
+	SourceID     string `json:"sourceId,omitempty"`
 }
 
 type AdminProductFilter struct {

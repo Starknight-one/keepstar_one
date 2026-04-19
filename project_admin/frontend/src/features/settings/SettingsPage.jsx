@@ -17,6 +17,11 @@ const COUNTRIES = [
   { code: 'FR', label: 'France' },
 ]
 
+const CURRENCIES = [
+  'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF',
+  'SEK', 'NOK', 'DKK', 'PLN', 'MXN', 'BRL',
+]
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -71,6 +76,22 @@ export default function SettingsPage() {
               onChange={(e) => setSettings({ ...settings, geoRegion: e.target.value })}
               placeholder="e.g. Moscow"
             />
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <h2 className="settings-section-title">Currency</h2>
+          <div className="input-group">
+            <label className="input-label">Default currency for imports</label>
+            <select
+              className="input"
+              value={settings?.currency || 'USD'}
+              onChange={(e) => setSettings({ ...settings, currency: e.target.value })}
+            >
+              {CURRENCIES.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
           </div>
         </div>
 

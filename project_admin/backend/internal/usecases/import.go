@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -11,15 +12,30 @@ import (
 	"keepstar-admin/internal/ports"
 )
 
+// EnrichmentTrigger is a narrow hook the import pipeline calls once a job
+// finishes so freshly-landed products get PIM-enriched in the background.
+// Nil trigger is supported (anthropic-less deployments, tests).
+type EnrichmentTrigger interface {
+	EnrichFromDBIncrementalAsync(tenantID string)
+}
+
 type ImportUseCase struct {
-	catalog   ports.AdminCatalogPort
-	importDB  ports.ImportPort
-	embedding ports.EmbeddingPort
-	log       *logger.Logger
+	catalog    ports.AdminCatalogPort
+	importDB   ports.ImportPort
+	embedding  ports.EmbeddingPort
+	enrichHook EnrichmentTrigger
+	log        *logger.Logger
 }
 
 func NewImportUseCase(catalog ports.AdminCatalogPort, importDB ports.ImportPort, embedding ports.EmbeddingPort, log *logger.Logger) *ImportUseCase {
 	return &ImportUseCase{catalog: catalog, importDB: importDB, embedding: embedding, log: log}
+}
+
+// SetEnrichmentTrigger wires the post-import enrichment hook. Separate from
+// the ctor so main.go can build usecases independently of whether anthropic
+// credentials are present.
+func (uc *ImportUseCase) SetEnrichmentTrigger(t EnrichmentTrigger) {
+	uc.enrichHook = t
 }
 
 type ImportItem struct {
@@ -39,6 +55,8 @@ type ImportItem struct {
 	Duration     string         `json:"duration"`      // service-specific
 	Provider     string         `json:"provider"`      // service-specific
 	Availability string         `json:"availability"`  // service-specific
+	SourceSystem string         `json:"source_system"` // integration tag — "shopify"/"csv"/"google_sheets"/"manual"
+	SourceID     string         `json:"source_id"`     // external stable id
 }
 
 type ImportRequest struct {
@@ -62,10 +80,42 @@ func (uc *ImportUseCase) Upload(ctx context.Context, tenantID string, req Import
 		return nil, fmt.Errorf("create import job: %w", err)
 	}
 
-	// Launch background processing
 	go uc.processImport(job.ID, tenantID, req.Products)
 
 	return job, nil
+}
+
+// UploadWithJobName creates an import job with a caller-supplied file_name
+// (e.g. the uploaded CSV filename or "shopify-initial-sync"). Returns the
+// job so the caller can track progress via the existing polling endpoints.
+func (uc *ImportUseCase) UploadWithJobName(ctx context.Context, tenantID string, fileName string, items []ImportItem) (*domain.ImportJob, error) {
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no products to import")
+	}
+	if fileName == "" {
+		fileName = fmt.Sprintf("import-%d.json", time.Now().Unix())
+	}
+	job := &domain.ImportJob{
+		TenantID:   tenantID,
+		FileName:   fileName,
+		Status:     domain.ImportStatusPending,
+		TotalItems: len(items),
+		Errors:     []string{},
+	}
+	job, err := uc.importDB.CreateImportJob(ctx, job)
+	if err != nil {
+		return nil, fmt.Errorf("create import job: %w", err)
+	}
+	go uc.processImport(job.ID, tenantID, items)
+	return job, nil
+}
+
+// UpsertSingle performs a per-item upsert without creating an ImportJob.
+// Used by Shopify webhooks (products/create, products/update) where a job
+// row would be noise.
+func (uc *ImportUseCase) UpsertSingle(ctx context.Context, tenantID string, item ImportItem) error {
+	currency := uc.resolveCurrency(ctx, tenantID, item.Currency)
+	return uc.processItemWithCurrency(ctx, tenantID, item, currency)
 }
 
 func (uc *ImportUseCase) GetJob(ctx context.Context, tenantID string, jobID string) (*domain.ImportJob, error) {
@@ -83,11 +133,18 @@ func (uc *ImportUseCase) processImport(jobID string, tenantID string, items []Im
 	uc.importDB.UpdateImportJobProgress(ctx, jobID, 0, domain.ImportStatusProcessing)
 	uc.log.Info("import_started", "job_id", jobID, "items", len(items))
 
+	// Resolve tenant currency once per job — beats hitting DB per item.
+	tenantCurrency := uc.resolveCurrency(ctx, tenantID, "")
+
 	processed := 0
 	errorCount := 0
 
 	for i, item := range items {
-		if err := uc.processItem(ctx, tenantID, item); err != nil {
+		currency := tenantCurrency
+		if item.Currency != "" {
+			currency = item.Currency
+		}
+		if err := uc.processItemWithCurrency(ctx, tenantID, item, currency); err != nil {
 			errorCount++
 			errMsg := fmt.Sprintf("item %d (sku=%s): %v", i+1, item.SKU, err)
 			uc.importDB.AppendImportError(ctx, jobID, errMsg)
@@ -95,7 +152,6 @@ func (uc *ImportUseCase) processImport(jobID string, tenantID string, items []Im
 		}
 		processed++
 
-		// Progress update every 10 items
 		if processed%10 == 0 {
 			uc.importDB.UpdateImportJobProgress(ctx, jobID, processed, domain.ImportStatusProcessing)
 		}
@@ -108,11 +164,28 @@ func (uc *ImportUseCase) processImport(jobID string, tenantID string, items []Im
 	uc.importDB.CompleteImportJob(ctx, jobID, status, processed, errorCount)
 	uc.log.Info("import_completed", "job_id", jobID, "processed", processed, "errors", errorCount)
 
-	// Post-import: embeddings + digest
 	go uc.postImport(tenantID)
 }
 
-func (uc *ImportUseCase) processItem(ctx context.Context, tenantID string, item ImportItem) error {
+// resolveCurrency returns the effective currency. Priority: explicit override
+// → tenant setting → "USD" fallback.
+func (uc *ImportUseCase) resolveCurrency(ctx context.Context, tenantID, override string) string {
+	if override != "" {
+		return override
+	}
+	tenant, err := uc.catalog.GetTenantByID(ctx, tenantID)
+	if err == nil && tenant != nil && tenant.Settings != nil {
+		if raw, err := json.Marshal(tenant.Settings); err == nil {
+			var s domain.TenantSettings
+			if err := json.Unmarshal(raw, &s); err == nil && s.Currency != "" {
+				return s.Currency
+			}
+		}
+	}
+	return "USD"
+}
+
+func (uc *ImportUseCase) processItemWithCurrency(ctx context.Context, tenantID string, item ImportItem, currency string) error {
 	if item.SKU == "" || item.Name == "" {
 		return fmt.Errorf("sku and name are required")
 	}
@@ -124,7 +197,6 @@ func (uc *ImportUseCase) processItem(ctx context.Context, tenantID string, item 
 		if err == nil {
 			categoryID = cat.ID
 		} else {
-			// Slug not found — fall through to legacy path
 			uc.log.Error("category_slug_not_found", "slug", item.CategorySlug, "sku", item.SKU)
 		}
 	}
@@ -144,12 +216,16 @@ func (uc *ImportUseCase) processItem(ctx context.Context, tenantID string, item 
 		}
 	}
 
-	currency := item.Currency
 	if currency == "" {
-		currency = "RUB"
+		currency = "USD"
 	}
 
-	// Branch by type
+	// Default source_system for imports where the caller didn't tag a source
+	// (e.g. hand-crafted JSON via the legacy ImportPage).
+	if item.SourceSystem == "" && item.SourceID == "" {
+		item.SourceSystem = "manual"
+	}
+
 	if item.Type == "service" {
 		return uc.processServiceItem(ctx, tenantID, item, categoryID, currency)
 	}
@@ -164,6 +240,8 @@ func (uc *ImportUseCase) processProductItem(ctx context.Context, tenantID string
 		CategoryID:    categoryID,
 		Images:        item.Images,
 		OwnerTenantID: tenantID,
+		SourceSystem:  item.SourceSystem,
+		SourceID:      item.SourceID,
 	}
 	mpID, err := uc.catalog.UpsertMasterProduct(ctx, mp)
 	if err != nil {
@@ -234,18 +312,21 @@ func (uc *ImportUseCase) postImport(tenantID string) {
 	defer cancel()
 
 	if uc.embedding != nil {
-		// Product embeddings
 		uc.embedProducts(ctx, tenantID)
-
-		// Service embeddings
 		uc.embedServices(ctx, tenantID)
 	}
 
-	// Digest
 	if err := uc.catalog.GenerateCatalogDigest(ctx, tenantID); err != nil {
 		uc.log.Error("post_import_digest_failed", "error", err)
 	} else {
 		uc.log.Info("post_import_digest_completed", "tenant_id", tenantID)
+	}
+
+	// Trigger incremental PIM enrichment for newly-landed products. Products
+	// are already searchable via keyword+vector from the embed pass above;
+	// this lights up structured filters asynchronously.
+	if uc.enrichHook != nil {
+		uc.enrichHook.EnrichFromDBIncrementalAsync(tenantID)
 	}
 }
 
@@ -365,11 +446,4 @@ func (uc *ImportUseCase) embedServices(ctx context.Context, tenantID string) {
 		}
 	}
 	uc.log.Info("post_import_service_embedding_completed", "count", len(services))
-}
-
-// slugify reused from auth.go — simple version
-func slugifyImport(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, " ", "-")
-	return s
 }

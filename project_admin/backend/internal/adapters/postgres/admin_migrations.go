@@ -129,6 +129,45 @@ func (c *Client) RunAdminMigrations(ctx context.Context) error {
 			version BIGINT NOT NULL DEFAULT 1,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`,
+
+		// ---------- Onboarding: integrations ----------
+		// Per-tenant source connections (Shopify, CSV upload, Google Sheets).
+		// credentials_encrypted holds a v1.{nonce}.{ct} AES-256-GCM envelope —
+		// see internal/crypto/secretbox. Never NULL for OAuth sources.
+		`CREATE TABLE IF NOT EXISTS admin.tenant_integrations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			kind TEXT NOT NULL CHECK (kind IN ('shopify','csv','google_sheets')),
+			status TEXT NOT NULL CHECK (status IN ('connected','syncing','error','disconnected')),
+			display_name TEXT,
+			external_id TEXT,
+			credentials_encrypted TEXT,
+			config JSONB NOT NULL DEFAULT '{}'::jsonb,
+			last_sync_at TIMESTAMPTZ,
+			last_sync_job_id UUID,
+			last_error TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, kind, external_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_tenant_integrations_tenant
+			ON admin.tenant_integrations(tenant_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_tenant_integrations_kind_status
+			ON admin.tenant_integrations(kind, status) WHERE status = 'connected';`,
+
+		// Short-lived OAuth nonces. state is a HMAC-signed random value issued
+		// on Install start; callback verifies and consumes the row. Expired
+		// rows are swept by a background ticker.
+		`CREATE TABLE IF NOT EXISTS admin.oauth_states (
+			state VARCHAR(128) PRIMARY KEY,
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			kind TEXT NOT NULL,
+			shop_domain TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			expires_at TIMESTAMPTZ NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_oauth_states_expires
+			ON admin.oauth_states(expires_at);`,
 	}
 
 	for i, m := range migrations {

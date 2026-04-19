@@ -61,7 +61,7 @@ func (uc *AuthUseCase) Signup(ctx context.Context, req SignupRequest) (*AuthResp
 		Slug:     slugify(req.CompanyName),
 		Name:     req.CompanyName,
 		Type:     "retailer",
-		Settings: map[string]any{"currency": "RUB"},
+		Settings: map[string]any{"currency": "USD"},
 	}
 	tenant, err = uc.catalog.CreateTenant(ctx, tenant)
 	if err != nil {
