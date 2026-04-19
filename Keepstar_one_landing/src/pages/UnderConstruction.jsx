@@ -34,12 +34,12 @@ function SuccessModal({ onClose }) {
         <div className="uc-modal-icon">
           <CheckCircle2 size={40} strokeWidth={1.5} />
         </div>
-        <h2 className="uc-modal-title">Отлично, заявка отправлена</h2>
+        <h2 className="uc-modal-title">You're on the list</h2>
         <p className="uc-modal-subtitle">
-          Спасибо! Мы свяжемся с вами, как только откроем ранний доступ.
+          Thanks! We'll reach out as soon as early access opens up.
         </p>
         <button className="uc-modal-btn" onClick={onClose}>
-          Закрыть
+          Close
         </button>
       </div>
     </div>
