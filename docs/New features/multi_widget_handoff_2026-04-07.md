@@ -3,7 +3,7 @@
 **Дата**: 2026-04-07
 **Ветка**: `feature/engine-v4`
 **Последний commit**: `58148e6` (feat(v4): explicit mode param rebuild|modify)
-**Статус**: обсуждение закончено, есть решение, осталось закодить
+**Статус**: ⚠️ **ОБНОВЛЕНО 2026-04-07 (вечер)** — после глубокого code review найдено 6 критических граблей которых не было в первоначальном плане. Все 11 решений приняты и зафиксированы. **См. секцию "Обновление 2026-04-07 (вечер)" ниже — она superседирует "Финальное решение" и "Open questions".** Готово к коду в следующей сессии.
 
 ---
 
@@ -102,6 +102,76 @@ Batches: **3 × ~20 ops**. Pencil имеет лимит 25 ops на batch, дл�
 - Actions, navigation, entity handling — те же механизмы
 - V1/V2 legacy в `project/backend/`
 
+## Обновление 2026-04-07 (вечер) — после глубокого code review
+
+После того как handoff был написан, проведена session чтения: `engine.go`, `ops.go`, `binding.go`, `constraints.go`, `tree_ids.go`, `presets_*.go`, `tool_visual_assembly.go`, `prompt_compose_widgets.go`, `FormationRenderer.jsx`, `Formation.css`, `GenericCardV2Template.jsx`, тесты + domain entities. **Найдено 6 критических граблей + 5 нюансов которые в "Финальное решение" выше не отражены**. Старая секция слишком оптимистична — реальный пайплайн в 5-6 местах молча предполагает single-widget. По итогам обсуждения с пользователем зафиксированы следующие решения. **Эта секция = source of truth для имплементации.**
+
+### Стратегический контекст (важно для решений)
+
+Продукт = B2B2C: бизнес загружает каталог → Keepstar нормализует → бизнес встраивает чат-виджет на сайт → юзер получает discovery+sales чат, который генерирует **всё что нужно для принятия решения** ("голограммы из фантастических фильмов"). Multi-widget composition = ядро этой метафоры (без неё движок умеет только "карточка карточка карточка").
+
+Бизнес-ограничения:
+- **Скорость**: 2-4с на пайплайн = конкурентное преимущество, терять нельзя
+- **Стоимость**: ~$0.01 за turn input (Haiku + embeddings + БД), продаётся за ~$0.10 (потолок). Markup ~10×, узкая маржа
+- **Следствие**: переложить логику на LLM нельзя — каждый дополнительный call ломает unit-economics. Multi-widget composition должен быть **детерминированным движком**, LLM только даёт intent
+
+### 11 принятых решений
+
+| # | Грабля | Файл/место | Решение |
+|---|---|---|---|
+| 1 | `BindData` биндит позиционно `widget[i] → data[i]` — сдвиг данных в gallery если в композиции есть literals перед replicate | `engine_v4/binding.go:14-19` | Replicate проход биндит данные **inline** в момент клонирования. Top-level `BindData` пропускает виджеты с уже заполненными values (условие в `bindWidgetAtoms:46` усилить — добавить явный флаг "bound" или гарантировать что после inline bind все values заполнены). |
+| 2 | `replicateWidgets` затирает `formation.Widgets` целиком | `engine_v4/engine.go:104-120` | **Expand-in-place**: проход backwards по widgets, для каждого с replicate флагом → splice клонами на месте оригинала. Остальные виджеты не трогать. |
+| 3 | Cross-widget constraint C1 удалит fields из gallery когда literals > 30% | `engine_v4/constraints.go:84-101` | **Group-aware**: replicated клоны = одна группа (метка через `ReplicateConfig` или `widget.Meta["replicateGroup"]`), literal widgets пропускаются в C1 целиком. Constraints применяются внутри группы. |
+| 4 | `BuildTreeMap` показывает только первый виджет → Agent2 ослепнет к остальным в modify mode | `engine_v4/tree_ids.go:92-97` | Возвращать **массив widget templates** с группировкой: literal widgets индивидуально, replicated bunch = один template + count + ids array. Schema: `{widgets: [{id, kind: "literal", atoms: [...]}, {kind: "replicated", count, ids: [...], template: {...}}, ...]}`. |
+| 5 | Refs namespace глобальный — все 12 пресетов используют одинаковые `w/root/info/meta/tags` → коллизии при per-widget preset | `engine_v4/ops.go:126` | При per-widget preset expansion engine **префиксует** все refs пресета (`<userRef>_w`, `<userRef>_root` итд). Если userRef не задан → auto `p<idx>_*`. Override-ops пользователя ссылаются на префиксованные refs. |
+| 6 | Frontend `formation-single` без `flex-direction: column` → виджеты сваливаются в строку. `formation-list` тоже не подходит (zebra + horizontal cards) | `Formation.css:72-76` + `FormationRenderer.jsx` | Новый mode `"composed"` в `domain/formation_entity.go` enum. Новый CSS класс `.formation-multi` (flex column gap 24px, full width). Новая ветка в `getLayoutClass()` в `FormationRenderer.jsx`. |
+| 7 | EntityRef auto-detect для одиночных entity-bound widgets в композиции | `engine_v4/engine.go` | **Гибрид**: после ApplyOps engine проходит по виджетам, для каждого с ≥1 fieldName атомом и без replicate флага — auto-присваивает EntityRef из `data[0]`. Agent2 может **override** через `{op: insert, props: {type: widget, dataIndex: N}}`. Edge case `dataIndex >= len(data)` → fallback на data[0] + warning. |
+| 8 | top-level `preset` + multi-widget ops — взаимоисключение | `tools/tool_visual_assembly.go` | **Запретить** валидацией: если в `ops` есть >1 `insert widget` (или хоть один widget insert с собственным preset в props) → top-level `preset` параметр = error. Top-level preset остаётся single-widget shortcut. |
+| 9 | Modify mode + multi-widget formation + новый data — конфликт повторного binding | — | **Ничего не делать в коде**. Поведение fail-safe: BindData пропускает уже заполненные атомы, новые data игнорируются. Если Agent2 ошибётся → юзер увидит stale results, переспросит, Agent2 retry'нется с rebuild. Self-validation hook отвергнут как слишком дорогой ($0.005+ за turn ломает unit-economics). |
+| 10 | Где хранить replicate/preset на виджете | `domain/widget_entity.go` | Выделенный тип `*ReplicateConfig` с `json:"-"` — engine-internal, **не утекает на фронтенд** (после expand виджеты уже клонированы, флаг не нужен). Тип-безопасно. |
+| 11 | Промпт на русском — переводить? | `prompts/prompt_compose_widgets.go` | **НЕ переводим**. Промпт остаётся английским (cost + Claude training bias). **Оптимизация** (компрессия, dedup) приветствуется в той же сессии что и добавление COMPOSING секции. |
+
+### План имплементации — 5 фаз, каждая независимо тестируема
+
+**Phase 1 — Engine pipeline foundations** (грабли 1, 2, 3, 7, 10)
+1. Добавить тип `ReplicateConfig` + поле `Widget.ReplicateConfig *ReplicateConfig` (`json:"-"`) в `domain/widget_entity.go`
+2. Переписать `replicateWidgets` → `expandReplicatedWidgets(formation, data, entityType)` — backwards итерация + splice in-place, inline bind + EntityRef + Actions для каждого клона
+3. EntityRef auto-detect: после ApplyOps проход по entity-bound widgets без EntityRef → присвоить из `data[0]`
+4. dataIndex override support: `applyInsert` для widget читает `props.dataIndex`, сохраняет в `ReplicateConfig`, engine использует при auto-bind
+5. `applyCrossWidgetConstraints` group-aware: пометить replicate группы → итерация по группам, literals skip
+6. Тесты: новый `composition_behavior_test.go` — composition с replicate + literals + entity widget с dataIndex; убедиться что existing single-widget tests все ещё проходят
+
+**Phase 2 — Ops layer для per-widget preset** (грабли 5, 6 backend)
+1. `applyInsert` для widget с `props.preset` — берёт `preset.Build()`, префиксует refs, инжектит в текущий ApplyOps batch на месте этого insert (engine "разворачивает" preset как inline ops)
+2. `applyInsert` для widget с `props.replicate` / `props.replicateLimit` — сохраняет в `ReplicateConfig`
+3. Engine emit `mode: "composed"` когда после expand widgets > 1 (либо в `Engine.Execute`, либо в `tool_visual_assembly` post-processing)
+4. Тесты: insert widget с preset раскрывается в scope; два разных preset в одном tool call не пересекаются; per-widget replicate работает
+
+**Phase 3 — Context для Agent2** (грабля 4)
+1. `BuildTreeMap` переписать под multi-widget schema (массив widget templates с группировкой replicated/literal)
+2. Тесты: tree map содержит все виджеты композиции; Agent2 в modify mode видит IDs всех
+
+**Phase 4 — Tool validation + Frontend rendering** (грабли 6 frontend, 8)
+1. `tool_visual_assembly.go` — валидация: top-level `preset` + multi-widget ops = error с понятным сообщением
+2. `domain/formation_entity.go` — добавить `FormationTypeComposed FormationType = "composed"` в enum
+3. `Formation.css` — новый класс `.formation-multi` (`display: flex; flex-direction: column; gap: 24px; width: 100%`)
+4. `FormationRenderer.jsx` — добавить case `'composed'` в `getLayoutClass()` → возвращает `'formation-multi'`. Без zebra, без lazy load (или сохранить lazy load если widgets > 12 — TBD)
+5. `formationModel.js` — `FormationMode.COMPOSED = 'composed'`
+6. E2E: composition через testbench → визуально проверить рендер
+
+**Phase 5 — Prompt** (грабля 11)
+1. Добавить COMPOSING секцию в `prompt_compose_widgets.go` (английский, компактно — 1 пример презентации помады)
+2. Прочитать весь промпт целиком, найти повторы/раздутости, ужать без потерь смысла
+3. **Не переводить** на русский
+4. Прогнать пайплайн на тестовом промпте "сделай презентацию помады" → проверить что Agent2 понимает COMPOSING и не ломает обычные грид-кейсы
+
+### Что готовить заранее к следующей сессии
+
+- Перечитать **актуальные** версии файлов на свежем коммите перед Phase 1 (между сессиями может что-то измениться) — особенно `engine.go`, `binding.go`, `constraints.go`, `ops.go`, `tree_ids.go`, `widget_entity.go`
+- Подготовить behavior test fixture: composition с hero + stats row + gallery (replicate) + cta — пригодится в Phase 1 и Phase 4
+- Иметь под рукой Pencil screenshot из предыдущей сессии (помада презентация) как референс что должно получиться визуально
+- Помнить про cost ceiling $0.10 — если по ходу имплементации возникнет искушение "пусть LLM сделает X" → вспомнить unit-economics и закопать в детерминированный движок
+
 ## Критические файлы для правки
 
 | Файл | Что делать |
@@ -115,7 +185,9 @@ Batches: **3 × ~20 ops**. Pencil имеет лимит 25 ops на batch, дл�
 | `project/frontend/src/entities/formation/FormationRenderer.jsx` | Проверить как `mode: single` с `widgets.length > 1` рендерится. Если плохо — добавить ветку для multi-widget composition режима или использовать класс `.formation-composed` для плоского списка виджетов (без вложенных sections) |
 | `project/frontend/src/entities/formation/Formation.css:72-84` | Посмотреть `.formation-single` — у него `display: flex; justify-content: center;` + `> * { width: 100%; max-width: 400px }`. Для композиции нужно: `flex-direction: column; gap: 24px`. Возможно просто завести класс `formation-multi` аналогичный `formation-composed` но без рекурсии по секциям |
 
-## Open questions для следующей сессии
+## Open questions для следующей сессии — ✅ ВСЕ RESOLVED (см. секцию "Обновление 2026-04-07 (вечер)" выше)
+
+> Старые open questions ниже оставлены как исторический контекст. Все они закрыты в таблице 11 решений выше. Если есть противоречия — верить новой секции.
 
 1. **Где хранить `replicate`/`preset` per-widget?** В `widget.Meta` map[string]interface{}? В выделенных полях `Widget.Replicate bool, Widget.ReplicateLimit int`? Выбор: добавить поля в struct vs использовать meta map. **Рекомендация**: выделенные поля, чище и тип-безопаснее. Добавить в `project_v4/backend/internal/domain/widget.go` или где там сидит Widget V4.
 
