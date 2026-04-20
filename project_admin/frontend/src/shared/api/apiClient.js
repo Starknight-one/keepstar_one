@@ -14,11 +14,12 @@ export function clearToken() {
   localStorage.removeItem('token')
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, options = {}) {
   const start = performance.now()
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
+  if (options.headers) Object.assign(headers, options.headers)
 
   let status = 0
   try {
@@ -31,7 +32,7 @@ async function request(method, path, body) {
 
     if (res.status === 401) {
       clearToken()
-      window.location.href = '/login'
+      window.location.href = '/auth/sign-in'
       throw new Error('Unauthorized')
     }
 
@@ -47,8 +48,8 @@ async function request(method, path, body) {
 }
 
 export const api = {
-  get: (path) => request('GET', path),
-  post: (path, body) => request('POST', path, body),
-  put: (path, body) => request('PUT', path, body),
-  delete: (path) => request('DELETE', path),
+  get: (path, options) => request('GET', path, undefined, options),
+  post: (path, body, options) => request('POST', path, body, options),
+  put: (path, body, options) => request('PUT', path, body, options),
+  delete: (path, options) => request('DELETE', path, undefined, options),
 }

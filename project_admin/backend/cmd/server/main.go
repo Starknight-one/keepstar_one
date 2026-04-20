@@ -13,9 +13,11 @@ import (
 
 	"github.com/joho/godotenv"
 	anthropicAdapter "keepstar-admin/internal/adapters/anthropic"
+	googleAdapter "keepstar-admin/internal/adapters/google"
 	openaiAdapter "keepstar-admin/internal/adapters/openai"
 	"keepstar-admin/internal/adapters/postgres"
 	"keepstar-admin/internal/adapters/shopify"
+	smtpAdapter "keepstar-admin/internal/adapters/smtp"
 	"keepstar-admin/internal/config"
 	"keepstar-admin/internal/crypto/secretbox"
 	"keepstar-admin/internal/handlers"
@@ -110,8 +112,112 @@ func main() {
 		integrationsAdapter = postgres.NewIntegrationsAdapter(dbClient, secretBox)
 	}
 
+	// SMTP mailer — optional. Email-dependent flows (reset, verify, invites,
+	// email-2FA) stay disabled until SMTP_HOST + SMTP_FROM are present.
+	var mailer ports.MailerPort
+	if cfg.HasSMTP() {
+		m, err := smtpAdapter.New(smtpAdapter.Config{
+			Host: cfg.SMTPHost, Port: cfg.SMTPPort,
+			User: cfg.SMTPUser, Password: cfg.SMTPPassword,
+			From: cfg.SMTPFrom, FromName: cfg.SMTPFromName,
+		})
+		if err != nil {
+			log.Error("smtp_init_failed", "error", err)
+		} else {
+			mailer = m
+			log.Info("smtp_initialized", "host", cfg.SMTPHost, "from", cfg.SMTPFrom)
+		}
+	} else {
+		log.Warn("smtp_not_configured — password reset, email verify, invitations disabled")
+	}
+
+	// Challenges repo (email verify / reset / TOTP setup / email 2FA).
+	challengesRepo := postgres.NewChallengesRepo(dbClient)
+
+	// Sessions repo — refresh token store.
+	sessionsRepo := postgres.NewSessionsRepo(dbClient)
+
+	// OAuth login states (Google / Telegram) ride on admin.oauth_states with
+	// NULL tenant_id since the user has no workspace yet at login time.
+	oauthLoginStatesRepo := postgres.NewOAuthLoginStatesRepo(dbClient)
+
+	// Many-to-many membership of users to tenants.
+	userTenantsRepo := postgres.NewUserTenantsRepo(dbClient)
+
 	// Initialize use cases
 	authUC := usecases.NewAuthUseCase(authAdapter, catalogAdapter, cfg.JWTSecret)
+	sessionsUC := usecases.NewSessionsUseCase(
+		sessionsRepo, authAdapter, cfg.JWTSecret,
+		cfg.AuthAccessTTL, cfg.AuthRefreshTTL, log,
+	)
+	authUC.SetSessions(sessionsUC)
+	authUC.SetMemberships(userTenantsRepo)
+
+	// Google OAuth — optional, activates only when env has all three keys.
+	var googleAuthUC *usecases.GoogleAuthUseCase
+	if cfg.HasGoogleOAuth() {
+		gclient := googleAdapter.NewClient(
+			cfg.GoogleOAuthClientID,
+			cfg.GoogleOAuthClientSecret,
+			cfg.GoogleOAuthRedirectURL,
+		)
+		googleAuthUC = usecases.NewGoogleAuthUseCase(
+			gclient, oauthLoginStatesRepo, authAdapter, catalogAdapter, userTenantsRepo, sessionsUC, log,
+		)
+		log.Info("google_oauth_enabled", "redirect", cfg.GoogleOAuthRedirectURL)
+	} else {
+		log.Warn("google_oauth_not_configured — sign-in with google disabled")
+	}
+
+	var telegramAuthUC *usecases.TelegramAuthUseCase
+	if cfg.HasTelegramLogin() {
+		telegramAuthUC = usecases.NewTelegramAuthUseCase(
+			cfg.TelegramBotToken, authAdapter, catalogAdapter, userTenantsRepo, sessionsUC, log,
+		)
+		log.Info("telegram_login_enabled", "bot", cfg.TelegramBotUsername)
+	} else {
+		log.Warn("telegram_login_not_configured — telegram widget disabled")
+	}
+
+	var passwordResetUC *usecases.PasswordResetUseCase
+	var emailVerifyUC *usecases.EmailVerifyUseCase
+	if mailer != nil {
+		passwordResetUC = usecases.NewPasswordResetUseCase(
+			authAdapter, challengesRepo, mailer,
+			cfg.AuthPublicBaseURL, cfg.AuthResetTTL, log,
+		)
+		emailVerifyUC = usecases.NewEmailVerifyUseCase(
+			authAdapter, challengesRepo, mailer,
+			cfg.AuthPublicBaseURL, 24*time.Hour, log,
+		)
+	}
+
+	// 2FA — requires secretBox for TOTP secret encryption. Email-2FA path
+	// additionally requires SMTP (reported via mailer being non-nil).
+	var twoFactorUC *usecases.TwoFactorUseCase
+	if secretBox != nil {
+		twoFactorUC = usecases.NewTwoFactorUseCase(
+			authAdapter, challengesRepo, mailer, sessionsUC, secretBox,
+			cfg.AuthTOTPIssuer, cfg.AuthEmailCodeTTL, log,
+		)
+		authUC.SetTwoFactor(twoFactorUC, cfg.AuthPre2FATTL)
+		log.Info("two_factor_enabled")
+	} else {
+		log.Warn("two_factor_disabled — ADMIN_ENCRYPTION_KEY not set")
+	}
+	tenantsUC := usecases.NewTenantsUseCase(userTenantsRepo, sessionsUC, authAdapter, log)
+
+	// Invitations — requires mailer to actually deliver the link. We still
+	// construct the UC without a mailer so the API shape stays consistent;
+	// the usecase just skips the Send() call and the invite row sits with no
+	// way to reach the invitee. In practice we gate the handler on mailer
+	// presence below.
+	invitationsRepo := postgres.NewInvitationsRepo(dbClient)
+	invitationsUC := usecases.NewInvitationsUseCase(
+		invitationsRepo, authAdapter, userTenantsRepo, catalogAdapter,
+		sessionsUC, mailer, cfg.AuthPublicBaseURL, cfg.AuthInviteTTL, log,
+	)
+
 	productsUC := usecases.NewProductsUseCase(catalogAdapter)
 	canvasUC := usecases.NewCanvasUseCase(canvasAdapter)
 
@@ -144,7 +250,20 @@ func main() {
 	}
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authUC, log)
+	authFlags := handlers.AuthFeatureFlags{
+		Google: cfg.HasGoogleOAuth(),
+		Email:  cfg.HasSMTP(),
+	}
+	authFlags.Telegram.Enabled = cfg.HasTelegramLogin()
+	authFlags.Telegram.BotUsername = cfg.TelegramBotUsername
+	authHandler := handlers.NewAuthHandler(authUC, log, authFlags)
+
+	passwordResetHandler := handlers.NewPasswordResetHandler(passwordResetUC, emailVerifyUC, log)
+	sessionsHandler := handlers.NewSessionsHandler(sessionsUC, log)
+	oauthHandler := handlers.NewOAuthHandler(googleAuthUC, telegramAuthUC, log)
+	twoFactorHandler := handlers.NewTwoFactorHandler(twoFactorUC, authUC, log)
+	tenantsHandler := handlers.NewTenantsHandler(tenantsUC, log)
+	invitationsHandler := handlers.NewInvitationsHandler(invitationsUC, cfg.JWTSecret, log)
 	productsHandler := handlers.NewProductsHandler(productsUC, log)
 	importHandler := handlers.NewImportHandler(importUC, log)
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
@@ -179,12 +298,50 @@ func main() {
 	})
 
 	// Public auth routes
+	mux.HandleFunc("/admin/api/auth/config", authHandler.HandleConfig)
 	mux.HandleFunc("/admin/api/auth/signup", authHandler.HandleSignup)
 	mux.HandleFunc("/admin/api/auth/login", authHandler.HandleLogin)
+	mux.HandleFunc("/admin/api/auth/password/forgot", passwordResetHandler.HandleForgot)
+	mux.HandleFunc("/admin/api/auth/password/reset", passwordResetHandler.HandleReset)
+	mux.HandleFunc("/admin/api/auth/email/verify", passwordResetHandler.HandleVerifyEmail)
+	mux.HandleFunc("/admin/api/auth/email/resend", passwordResetHandler.HandleResendVerify)
+	mux.HandleFunc("/admin/api/auth/sessions/refresh", sessionsHandler.HandleRefresh)
+	mux.HandleFunc("/admin/api/auth/logout", sessionsHandler.HandleLogout)
+	mux.HandleFunc("/admin/api/auth/google/start", oauthHandler.HandleGoogleStart)
+	mux.HandleFunc("/admin/api/auth/google/callback", oauthHandler.HandleGoogleCallback)
+	mux.HandleFunc("/admin/api/auth/telegram/callback", oauthHandler.HandleTelegramCallback)
+
+	// Invitation preview + accept are public (token in URL is the auth). The
+	// create endpoint is protected below.
+	mux.HandleFunc("/admin/api/auth/invitations/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/accept") {
+			invitationsHandler.HandleAccept(w, r)
+			return
+		}
+		invitationsHandler.HandlePreview(w, r)
+	})
+
+	// 2FA pre-session routes — gated by pre-2FA-scoped JWT from /login.
+	pre2faMW := handlers.Pre2FAMiddleware(cfg.JWTSecret)
+	pre2faMux := http.NewServeMux()
+	pre2faMux.HandleFunc("/admin/api/auth/2fa/verify/totp", twoFactorHandler.HandleVerifyTOTP)
+	pre2faMux.HandleFunc("/admin/api/auth/2fa/send/email", twoFactorHandler.HandleSendEmailCode)
+	pre2faMux.HandleFunc("/admin/api/auth/2fa/verify/email", twoFactorHandler.HandleVerifyEmailCode)
+	mux.Handle("/admin/api/auth/2fa/verify/totp", pre2faMW(pre2faMux))
+	mux.Handle("/admin/api/auth/2fa/send/email", pre2faMW(pre2faMux))
+	mux.Handle("/admin/api/auth/2fa/verify/email", pre2faMW(pre2faMux))
 
 	// Protected routes
 	protected := http.NewServeMux()
 	protected.HandleFunc("/admin/api/auth/me", authHandler.HandleMe)
+	protected.HandleFunc("/admin/api/auth/sessions", sessionsHandler.HandleList)
+	protected.HandleFunc("/admin/api/auth/sessions/", sessionsHandler.HandleDelete)
+	protected.HandleFunc("/admin/api/auth/tenants", tenantsHandler.HandleList)
+	protected.HandleFunc("/admin/api/auth/tenants/select", tenantsHandler.HandleSelect)
+	protected.HandleFunc("/admin/api/auth/invitations", invitationsHandler.HandleCreate)
+	protected.HandleFunc("/admin/api/auth/2fa/setup/totp", twoFactorHandler.HandleSetupTOTP)
+	protected.HandleFunc("/admin/api/auth/2fa/confirm/totp", twoFactorHandler.HandleConfirmTOTP)
+	protected.HandleFunc("/admin/api/auth/2fa/disable/totp", twoFactorHandler.HandleDisableTOTP)
 	protected.HandleFunc("/admin/api/tenant", authHandler.HandleGetTenant)
 	protected.HandleFunc("/admin/api/widget-config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -269,6 +426,14 @@ func main() {
 	}
 
 	mux.Handle("/admin/api/auth/me", authMW(protected))
+	mux.Handle("/admin/api/auth/sessions", authMW(protected))
+	mux.Handle("/admin/api/auth/sessions/", authMW(protected))
+	mux.Handle("/admin/api/auth/tenants", authMW(protected))
+	mux.Handle("/admin/api/auth/tenants/select", authMW(protected))
+	mux.Handle("/admin/api/auth/invitations", authMW(protected))
+	mux.Handle("/admin/api/auth/2fa/setup/totp", authMW(protected))
+	mux.Handle("/admin/api/auth/2fa/confirm/totp", authMW(protected))
+	mux.Handle("/admin/api/auth/2fa/disable/totp", authMW(protected))
 	mux.Handle("/admin/api/tenant", authMW(protected))
 	mux.Handle("/admin/api/widget-config", authMW(protected))
 	mux.Handle("/admin/api/products", authMW(protected))

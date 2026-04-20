@@ -18,6 +18,7 @@ const (
 
 func UserID(ctx context.Context) string   { v, _ := ctx.Value(ctxUserID).(string); return v }
 func TenantID(ctx context.Context) string { v, _ := ctx.Value(ctxTenantID).(string); return v }
+func Role(ctx context.Context) string     { v, _ := ctx.Value(ctxRole).(string); return v }
 
 func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

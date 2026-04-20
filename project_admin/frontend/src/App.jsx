@@ -1,7 +1,18 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './features/auth/AuthProvider.jsx'
-import LoginPage from './features/auth/LoginPage.jsx'
-import SignupPage from './features/auth/SignupPage.jsx'
+import SignInPage from './features/auth/pages/SignInPage.jsx'
+import SignUpPage from './features/auth/pages/SignUpPage.jsx'
+import ForgotPasswordPage from './features/auth/pages/ForgotPasswordPage.jsx'
+import CheckEmailPage from './features/auth/pages/CheckEmailPage.jsx'
+import ResetPasswordPage from './features/auth/pages/ResetPasswordPage.jsx'
+import PasswordChangedPage from './features/auth/pages/PasswordChangedPage.jsx'
+import VerifyEmailPage from './features/auth/pages/VerifyEmailPage.jsx'
+import SessionExpiredPage from './features/auth/pages/SessionExpiredPage.jsx'
+import OAuthLoadingPage from './features/auth/pages/OAuthLoadingPage.jsx'
+import AuthErrorPage from './features/auth/pages/AuthErrorPage.jsx'
+import TwoFactorPage from './features/auth/pages/TwoFactorPage.jsx'
+import WorkspacePickerPage from './features/auth/pages/WorkspacePickerPage.jsx'
+import InviteAcceptPage from './features/auth/pages/InviteAcceptPage.jsx'
 import DashboardLayout from './features/layout/DashboardLayout.jsx'
 import ProductsPage from './features/catalog/ProductsPage.jsx'
 import ProductDetailPage from './features/catalog/ProductDetailPage.jsx'
@@ -21,15 +32,31 @@ import SessionDetail from './features/traces/SessionDetail.jsx'
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
   if (loading) return null
-  if (!user) return <Navigate to="/login" replace />
+  if (!user) return <Navigate to="/auth/sign-in" replace />
   return children
 }
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/signup" element={<SignupPage />} />
+      {/* New split-layout auth stack. */}
+      <Route path="/auth/sign-in" element={<SignInPage />} />
+      <Route path="/auth/sign-up" element={<SignUpPage />} />
+      <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/auth/check-email" element={<CheckEmailPage />} />
+      <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/auth/password-changed" element={<PasswordChangedPage />} />
+      <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/auth/session-expired" element={<SessionExpiredPage />} />
+      <Route path="/auth/google/callback" element={<OAuthLoadingPage />} />
+      <Route path="/auth/error" element={<AuthErrorPage />} />
+      <Route path="/auth/2fa" element={<TwoFactorPage />} />
+      <Route path="/auth/pick-workspace" element={<ProtectedRoute><WorkspacePickerPage /></ProtectedRoute>} />
+      <Route path="/auth/accept-invite" element={<InviteAcceptPage />} />
+
+      {/* Legacy → new. Keep for one release to not break bookmarks. */}
+      <Route path="/login" element={<Navigate to="/auth/sign-in" replace />} />
+      <Route path="/signup" element={<Navigate to="/auth/sign-up" replace />} />
       <Route
         path="/"
         element={

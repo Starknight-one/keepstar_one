@@ -175,5 +175,119 @@ func (c *Client) RunAdminMigrations(ctx context.Context) error {
 			return fmt.Errorf("admin migration %d failed: %w", i+1, err)
 		}
 	}
+
+	if err := c.runAdminAuthV2Migrations(ctx); err != nil {
+		return fmt.Errorf("admin auth v2 migrations: %w", err)
+	}
+
+	return nil
+}
+
+// runAdminAuthV2Migrations extends the auth schema with OAuth + 2FA columns
+// on admin_users and adds the four tables that hold the new auth surface:
+// user_tenants (many-to-many membership), sessions (refresh tokens),
+// auth_challenges (email/reset/2FA codes), invitations. Safe to re-run —
+// every statement is IF NOT EXISTS or ADD COLUMN IF NOT EXISTS.
+func (c *Client) runAdminAuthV2Migrations(ctx context.Context) error {
+	migrations := []string{
+		`CREATE EXTENSION IF NOT EXISTS citext;`,
+
+		// admin_users: OAuth + 2FA columns, relax NOT NULL on password/tenant
+		`ALTER TABLE admin.admin_users
+			ADD COLUMN IF NOT EXISTS email_verified_at    TIMESTAMPTZ,
+			ADD COLUMN IF NOT EXISTS google_sub           TEXT,
+			ADD COLUMN IF NOT EXISTS telegram_id          BIGINT,
+			ADD COLUMN IF NOT EXISTS telegram_handle      TEXT,
+			ADD COLUMN IF NOT EXISTS avatar_url           TEXT,
+			ADD COLUMN IF NOT EXISTS last_login_at        TIMESTAMPTZ,
+			ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT,
+			ADD COLUMN IF NOT EXISTS totp_enabled_at      TIMESTAMPTZ;`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_admin_users_google_sub
+			ON admin.admin_users(google_sub) WHERE google_sub IS NOT NULL;`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_admin_users_telegram_id
+			ON admin.admin_users(telegram_id) WHERE telegram_id IS NOT NULL;`,
+		`ALTER TABLE admin.admin_users ALTER COLUMN password_hash DROP NOT NULL;`,
+		`ALTER TABLE admin.admin_users ALTER COLUMN tenant_id     DROP NOT NULL;`,
+
+		// many-to-many workspace membership
+		`CREATE TABLE IF NOT EXISTS admin.user_tenants (
+			user_id     UUID NOT NULL REFERENCES admin.admin_users(id) ON DELETE CASCADE,
+			tenant_id   UUID NOT NULL REFERENCES catalog.tenants(id)   ON DELETE CASCADE,
+			role        TEXT NOT NULL CHECK (role IN ('owner','admin','member','viewer')),
+			invited_by  UUID REFERENCES admin.admin_users(id),
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (user_id, tenant_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_user_tenants_tenant
+			ON admin.user_tenants(tenant_id);`,
+
+		// Backfill: every existing admin_users row gets a membership row.
+		// Role maps 1:1 from the legacy column; unknown roles collapse to
+		// 'member' so the CHECK constraint doesn't reject the insert.
+		`INSERT INTO admin.user_tenants (user_id, tenant_id, role)
+			SELECT u.id, u.tenant_id,
+				CASE WHEN u.role IN ('owner','admin','member','viewer') THEN u.role ELSE 'member' END
+			FROM admin.admin_users u
+			WHERE u.tenant_id IS NOT NULL
+			ON CONFLICT (user_id, tenant_id) DO NOTHING;`,
+
+		// refresh token store — hashes only, never the plaintext token
+		`CREATE TABLE IF NOT EXISTS admin.sessions (
+			id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id             UUID NOT NULL REFERENCES admin.admin_users(id) ON DELETE CASCADE,
+			tenant_id           UUID REFERENCES catalog.tenants(id),
+			refresh_token_hash  TEXT NOT NULL UNIQUE,
+			user_agent          TEXT,
+			ip                  INET,
+			created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			expires_at          TIMESTAMPTZ NOT NULL,
+			revoked_at          TIMESTAMPTZ
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user_active
+			ON admin.sessions(user_id) WHERE revoked_at IS NULL;`,
+
+		// codes / tokens for email_verify, password_reset, totp_setup, email_2fa, magic_link
+		`CREATE TABLE IF NOT EXISTS admin.auth_challenges (
+			id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id      UUID REFERENCES admin.admin_users(id) ON DELETE CASCADE,
+			email        CITEXT,
+			kind         TEXT NOT NULL CHECK (kind IN ('email_verify','password_reset','totp_setup','email_2fa','magic_link')),
+			code_hash    TEXT NOT NULL,
+			expires_at   TIMESTAMPTZ NOT NULL,
+			consumed_at  TIMESTAMPTZ,
+			meta_json    JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_auth_challenges_lookup
+			ON admin.auth_challenges(kind, code_hash) WHERE consumed_at IS NULL;`,
+		`CREATE INDEX IF NOT EXISTS idx_auth_challenges_expires
+			ON admin.auth_challenges(expires_at);`,
+
+		// workspace invitations
+		`CREATE TABLE IF NOT EXISTS admin.invitations (
+			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id   UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			email       CITEXT NOT NULL,
+			role        TEXT NOT NULL CHECK (role IN ('owner','admin','member','viewer')),
+			token_hash  TEXT NOT NULL UNIQUE,
+			inviter_id  UUID REFERENCES admin.admin_users(id),
+			expires_at  TIMESTAMPTZ NOT NULL,
+			accepted_at TIMESTAMPTZ,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_invitations_email
+			ON admin.invitations(email) WHERE accepted_at IS NULL;`,
+		`CREATE INDEX IF NOT EXISTS idx_invitations_tenant
+			ON admin.invitations(tenant_id);`,
+
+		// Google OAuth at login has no tenant context yet; relax the constraint.
+		`ALTER TABLE admin.oauth_states ALTER COLUMN tenant_id DROP NOT NULL;`,
+	}
+
+	for i, m := range migrations {
+		if _, err := c.pool.Exec(ctx, m); err != nil {
+			return fmt.Errorf("auth v2 migration %d failed: %w", i+1, err)
+		}
+	}
 	return nil
 }

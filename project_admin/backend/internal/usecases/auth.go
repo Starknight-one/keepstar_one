@@ -15,13 +15,38 @@ import (
 )
 
 type AuthUseCase struct {
-	auth    ports.AuthPort
-	catalog ports.AdminCatalogPort
-	secret  string
+	auth        ports.AuthPort
+	catalog     ports.AdminCatalogPort
+	memberships ports.UserTenantsPort // optional; when set, Signup adds the creator as 'owner'
+	secret      string
+	sessions    *SessionsUseCase   // optional; if set, Login/Signup returns a real session pair
+	twoFactor   *TwoFactorUseCase  // optional; if set, Login returns pre-2FA token when enabled
+	pre2faTTL   time.Duration
 }
 
 func NewAuthUseCase(auth ports.AuthPort, catalog ports.AdminCatalogPort, jwtSecret string) *AuthUseCase {
-	return &AuthUseCase{auth: auth, catalog: catalog, secret: jwtSecret}
+	return &AuthUseCase{auth: auth, catalog: catalog, secret: jwtSecret, pre2faTTL: 5 * time.Minute}
+}
+
+// SetSessions wires the session usecase in after both have been constructed.
+// When set, Login/Signup will issue a (access, refresh) pair via SessionsUseCase
+// instead of a standalone 24h JWT. Legacy `token` field stays populated with
+// the access token for one release.
+func (uc *AuthUseCase) SetSessions(s *SessionsUseCase) { uc.sessions = s }
+
+// SetMemberships wires the many-to-many membership adapter so Signup can
+// record the creator as 'owner' in admin.user_tenants alongside the legacy
+// admin_users.tenant_id write.
+func (uc *AuthUseCase) SetMemberships(m ports.UserTenantsPort) { uc.memberships = m }
+
+// SetTwoFactor wires the 2FA usecase so Login can branch into the pre-2FA
+// flow when the user has TOTP enabled. When nil, Login always issues a full
+// session pair (backwards-compat path).
+func (uc *AuthUseCase) SetTwoFactor(t *TwoFactorUseCase, pre2faTTL time.Duration) {
+	uc.twoFactor = t
+	if pre2faTTL > 0 {
+		uc.pre2faTTL = pre2faTTL
+	}
 }
 
 type SignupRequest struct {
@@ -36,8 +61,19 @@ type LoginRequest struct {
 }
 
 type AuthResponse struct {
-	Token string           `json:"token"`
-	User  *domain.AdminUser `json:"user"`
+	// Legacy single-token field — kept as alias of AccessToken for one release
+	// so old frontends don't break. New clients read access_token/refresh_token.
+	Token        string            `json:"token"`
+	AccessToken  string            `json:"access_token,omitempty"`
+	RefreshToken string            `json:"refresh_token,omitempty"`
+	ExpiresIn    int64             `json:"expires_in,omitempty"`
+	User         *domain.AdminUser `json:"user"`
+
+	// When the user has 2FA enabled, Login returns these instead of a full
+	// pair. Frontend sends Pre2FAToken to /2fa/verify/* to complete login.
+	Requires2FA  bool   `json:"requires_2fa,omitempty"`
+	Pre2FAToken  string `json:"pre_2fa_token,omitempty"`
+	Has2FAEmail  bool   `json:"has_2fa_email,omitempty"`
 }
 
 func (uc *AuthUseCase) Signup(ctx context.Context, req SignupRequest) (*AuthResponse, error) {
@@ -86,12 +122,13 @@ func (uc *AuthUseCase) Signup(ctx context.Context, req SignupRequest) (*AuthResp
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 
-	token, err := uc.generateToken(user)
-	if err != nil {
-		return nil, err
+	if uc.memberships != nil {
+		if err := uc.memberships.Add(ctx, user.ID, tenant.ID, "owner", ""); err != nil {
+			return nil, fmt.Errorf("grant owner membership: %w", err)
+		}
 	}
 
-	return &AuthResponse{Token: token, User: user}, nil
+	return uc.issueTokens(ctx, user, "", "")
 }
 
 func (uc *AuthUseCase) Login(ctx context.Context, req LoginRequest) (*AuthResponse, error) {
@@ -108,12 +145,77 @@ func (uc *AuthUseCase) Login(ctx context.Context, req LoginRequest) (*AuthRespon
 		return nil, domain.ErrInvalidCredentials
 	}
 
+	return uc.issueTokens(ctx, user, "", "")
+}
+
+// LoginWithMeta is the same as Login but threads user-agent + IP into the new
+// session row so session list shows useful device metadata.
+func (uc *AuthUseCase) LoginWithMeta(ctx context.Context, req LoginRequest, ua, ip string) (*AuthResponse, error) {
+	if req.Email == "" || req.Password == "" {
+		return nil, fmt.Errorf("email and password are required")
+	}
+	user, err := uc.auth.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		return nil, domain.ErrInvalidCredentials
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		return nil, domain.ErrInvalidCredentials
+	}
+	_ = uc.auth.TouchLastLogin(ctx, user.ID)
+	return uc.issueTokens(ctx, user, ua, ip)
+}
+
+func (uc *AuthUseCase) issueTokens(ctx context.Context, user *domain.AdminUser, ua, ip string) (*AuthResponse, error) {
+	// If 2FA is enabled for this user, we stop here and hand back a pre-2FA
+	// token — frontend collects a code and calls /2fa/verify/*.
+	if uc.twoFactor != nil {
+		enabled, err := uc.twoFactor.Enabled(ctx, user.ID)
+		if err == nil && enabled {
+			pre, err := uc.generatePre2FAToken(user)
+			if err != nil {
+				return nil, err
+			}
+			return &AuthResponse{
+				Requires2FA: true,
+				Pre2FAToken: pre,
+				User:        user,
+			}, nil
+		}
+	}
+	if uc.sessions != nil {
+		pair, err := uc.sessions.Issue(ctx, user, ua, ip)
+		if err != nil {
+			return nil, err
+		}
+		return &AuthResponse{
+			Token:        pair.AccessToken,
+			AccessToken:  pair.AccessToken,
+			RefreshToken: pair.RefreshToken,
+			ExpiresIn:    pair.ExpiresIn,
+			User:         user,
+		}, nil
+	}
+	// Fallback path — sessions usecase not wired, issue a 24h self-signed JWT.
 	token, err := uc.generateToken(user)
 	if err != nil {
 		return nil, err
 	}
+	return &AuthResponse{Token: token, AccessToken: token, User: user}, nil
+}
 
-	return &AuthResponse{Token: token, User: user}, nil
+func (uc *AuthUseCase) generatePre2FAToken(user *domain.AdminUser) (string, error) {
+	claims := jwt.MapClaims{
+		"uid":   user.ID,
+		"scope": "pre_2fa",
+		"exp":   time.Now().Add(uc.pre2faTTL).Unix(),
+		"iat":   time.Now().Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(uc.secret))
+	if err != nil {
+		return "", fmt.Errorf("sign pre-2fa token: %w", err)
+	}
+	return signed, nil
 }
 
 func (uc *AuthUseCase) GetMe(ctx context.Context, userID string) (*domain.AdminUser, error) {

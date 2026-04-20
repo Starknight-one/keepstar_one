@@ -11,12 +11,33 @@ import (
 )
 
 type AuthHandler struct {
-	auth *usecases.AuthUseCase
-	log  *logger.Logger
+	auth    *usecases.AuthUseCase
+	log     *logger.Logger
+	flags   AuthFeatureFlags
 }
 
-func NewAuthHandler(auth *usecases.AuthUseCase, log *logger.Logger) *AuthHandler {
-	return &AuthHandler{auth: auth, log: log}
+// AuthFeatureFlags surfaces which optional auth paths are wired at runtime.
+// Frontend reads these from GET /auth/config to conditionally render OAuth
+// buttons and email-only flows (reset, invite, email 2FA).
+type AuthFeatureFlags struct {
+	Google   bool   `json:"google"`
+	Email    bool   `json:"email"`
+	Telegram struct {
+		Enabled     bool   `json:"enabled"`
+		BotUsername string `json:"bot_username"`
+	} `json:"telegram"`
+}
+
+func NewAuthHandler(auth *usecases.AuthUseCase, log *logger.Logger, flags AuthFeatureFlags) *AuthHandler {
+	return &AuthHandler{auth: auth, log: log, flags: flags}
+}
+
+func (h *AuthHandler) HandleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.flags)
 }
 
 func (h *AuthHandler) HandleSignup(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +96,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	reqLog := h.log.FromContext(ctx)
 
-	resp, err := h.auth.Login(ctx, req)
+	resp, err := h.auth.LoginWithMeta(ctx, req, r.Header.Get("User-Agent"), clientIP(r))
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidCredentials) {
 			reqLog.Warn("login_failed", "email", req.Email)
