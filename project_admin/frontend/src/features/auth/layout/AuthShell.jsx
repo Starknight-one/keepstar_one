@@ -1,8 +1,9 @@
 import React from 'react'
 import AuthImagePanel from './AuthImagePanel.jsx'
+import defaultPanel from '../assets/auth-panel.webp'
 import './auth-v2.css'
 
-export default function AuthShell({ imageSrc, children }) {
+export default function AuthShell({ imageSrc = defaultPanel, children }) {
   return (
     <div className="auth-v2">
       <div className="auth-shell">
