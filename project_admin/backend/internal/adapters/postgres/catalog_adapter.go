@@ -367,19 +367,22 @@ func (a *CatalogAdapter) UpsertMasterProduct(ctx context.Context, mp *domain.Mas
 	}
 	imagesJSON, _ := json.Marshal(mp.Images)
 
-	query := `INSERT INTO catalog.master_products (sku, name, description, brand, category_id, images, owner_tenant_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO catalog.master_products
+			(sku, name, description, brand, category_id, images, owner_tenant_id, source_system, source_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8,''), NULLIF($9,''))
 		ON CONFLICT (sku) DO UPDATE SET
 			name = EXCLUDED.name,
 			brand = EXCLUDED.brand,
 			images = EXCLUDED.images,
+			source_system = COALESCE(EXCLUDED.source_system, catalog.master_products.source_system),
+			source_id = COALESCE(EXCLUDED.source_id, catalog.master_products.source_id),
 			updated_at = NOW()
 		RETURNING id`
 
 	var id string
 	err := a.client.pool.QueryRow(ctx, query,
 		mp.SKU, mp.Name, mp.Description, mp.Brand, mp.CategoryID,
-		imagesJSON, mp.OwnerTenantID,
+		imagesJSON, mp.OwnerTenantID, mp.SourceSystem, mp.SourceID,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("upsert master product: %w", err)
@@ -517,6 +520,65 @@ func (a *CatalogAdapter) GetAllMasterProducts(ctx context.Context, tenantID stri
 		products = append(products, mp)
 	}
 	return products, nil
+}
+
+// GetUnenrichedMasterProducts returns only products with enrichment_version = 0
+// — the incremental enrichment path used by the post-import auto-trigger.
+func (a *CatalogAdapter) GetUnenrichedMasterProducts(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
+	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
+		mp.images, mp.owner_tenant_id, c.name
+		FROM catalog.master_products mp
+		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		WHERE mp.owner_tenant_id = $1
+			AND COALESCE(mp.enrichment_version, 0) = 0
+		ORDER BY mp.created_at`
+
+	rows, err := a.client.pool.Query(ctx, query, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("get unenriched master products: %w", err)
+	}
+	defer rows.Close()
+
+	var products []domain.MasterProduct
+	for rows.Next() {
+		var mp domain.MasterProduct
+		var imagesJSON []byte
+		var catName *string
+		if err := rows.Scan(
+			&mp.ID, &mp.SKU, &mp.Name, &mp.Description, &mp.Brand, &mp.CategoryID,
+			&imagesJSON, &mp.OwnerTenantID, &catName,
+		); err != nil {
+			return nil, fmt.Errorf("scan master product: %w", err)
+		}
+		if len(imagesJSON) > 0 {
+			json.Unmarshal(imagesJSON, &mp.Images)
+		}
+		if catName != nil {
+			mp.CategoryName = *catName
+		}
+		products = append(products, mp)
+	}
+	return products, nil
+}
+
+// SoftDeleteProductBySource flips catalog.products.deleted_at for the listing
+// that ties back to the given (source_system, source_id) on master_products.
+// Only the tenant-scoped listing is removed from surface; the master row
+// stays so future re-sync can reanimate it.
+func (a *CatalogAdapter) SoftDeleteProductBySource(ctx context.Context, tenantID, sourceSystem, sourceID string) error {
+	_, err := a.client.pool.Exec(ctx, `
+		UPDATE catalog.products p SET deleted_at = NOW(), updated_at = NOW()
+		FROM catalog.master_products mp
+		WHERE p.tenant_id = $1
+			AND p.master_product_id = mp.id
+			AND mp.source_system = $2
+			AND mp.source_id = $3
+			AND p.deleted_at IS NULL`,
+		tenantID, sourceSystem, sourceID)
+	if err != nil {
+		return fmt.Errorf("soft delete by source: %w", err)
+	}
+	return nil
 }
 
 func (a *CatalogAdapter) UpdateMasterProductPIM(ctx context.Context, productID string, categoryID string, out domain.EnrichmentOutputV2) error {

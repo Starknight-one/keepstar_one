@@ -1,0 +1,130 @@
+.integrations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.integration-source-card {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.15s;
+}
+
+.integration-source-card:hover {
+  border-color: var(--primary, #8b5cf6);
+}
+
+.integration-source-card h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.integration-source-card p {
+  color: var(--text-secondary, #6b7280);
+  font-size: 13px;
+  margin: 0;
+}
+
+.integration-banner {
+  padding: 12px 16px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 8px;
+  color: #065f46;
+  margin-bottom: 16px;
+}
+
+.integration-connected {
+  margin-top: 24px;
+}
+
+.csv-dropzone {
+  border: 2px dashed var(--border, #d1d5db);
+  border-radius: 12px;
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.csv-dropzone:hover {
+  border-color: var(--primary, #8b5cf6);
+  background: #faf5ff;
+}
+
+.csv-dropzone.has-file {
+  border-style: solid;
+  border-color: var(--primary, #8b5cf6);
+}
+
+.mapping-editor {
+  margin-top: 20px;
+}
+
+.mapping-editor-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.mapping-editor-row:last-child {
+  border-bottom: none;
+}
+
+.mapping-header {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.mapping-arrow {
+  color: var(--text-secondary, #9ca3af);
+}
+
+.mapping-select {
+  padding: 6px 10px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.mapping-confidence {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #ede9fe;
+  color: #6d28d9;
+  white-space: nowrap;
+}
+
+.mapping-confidence.low {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.shopify-connect-panel {
+  max-width: 520px;
+  padding: 24px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+}
+
+.shopify-connect-panel input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 8px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}

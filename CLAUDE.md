@@ -97,26 +97,51 @@ scripts/                   — start.sh, stop.sh, start_admin.sh, stop_admin.sh,
 
 3. **Frontend** рендерит Formation JSON через FormationRenderer → WidgetRenderer → AtomRenderer
 
-## Visual Assembly Engine (текущая работа)
+## V4 Engine (актуальный, `feature/engine-v4`)
 
-**Ветка**: `feature/visual-assembly-engine`
+Ops-driven движок — Agent2 строит и модифицирует UI через операции (insert/update/delete/move) на дереве виджетов. Живёт в `project_v4/backend/`, задеплоен на `v4-engine-production.up.railway.app`.
 
-**12 примитивов**: show, hide, display, color, size, shape, order, layer, anchor, direction, place, layout
+**Основной tool — `visual_assembly`**, параметры:
+- `ops` — массив операций (insert/update/delete/move) на formation tree
+- `preset` — именованный пресет (12 штук, см. ниже). Concat'ится с `ops` в один batch → override-ops могут ссылаться на $ref пресета ($w/$root/$info/$meta)
+- `replicate` — явный флаг репликации виджет-шаблона (B3). Пресет несёт `DefaultReplicate`, наследуется если не передан
+- `limit` — cap на кол-во data items для репликации
+- `layout` — grid/list/single/carousel, `columns`, `size`
 
-**Фазы**:
-- Phase 1-3: Базовый движок + 12 примитивов + багфиксы
-- Phase 4: Constraints, presets, validation, testbench
-- Phase 5: Разделение display на format (трансформация значения) + wrapper (визуальный контейнер)
-- **Далее**: Layout Engine (spec в `docs/LAYOUT_ENGINE_SPEC.md`)
+**Пайплайн Execute** (`engine.go`):
+1. Init formation (или загрузка existing)
+2. Формационные настройки (layout, columns, size)
+3. `ApplyOps` — применить ops на дерево (preset + user в одном batch)
+4. Limit slice → Replicate (explicit flag) / single-bind
+5. Inject `DefaultWidgetActions` (like, add_to_cart) для entity-bound виджетов
+6. `BindData` — атомы с FieldName получают значения из data[i]
+7. `ApplyConstraints` — нормализация
+8. `StampTreeIDs` → `BuildTreeMap` (compact context для Agent2 следующего turn'а)
 
-**Ключевые файлы движка** (перечитай перед работой):
-- `project/backend/internal/tools/tool_visual_assembly.go` — главный tool (~700 LOC)
-- `project/backend/internal/tools/defaults_engine.go` — AutoResolve, field ranking
-- `project/backend/internal/tools/constraints.go` — 30+ правил в 4 уровнях
-- `project/backend/internal/tools/tool_render_preset.go` — сборка атомов
-- `project/backend/internal/presets/visual_assembly_presets.go` — пресеты
+**12 пресетов** (`engine_v4/presets_*.go`):
+- product: `product_card`, `product_card_compact`, `product_card_horizontal`, `product_card_list_row`, `product_detail`, `product_detail_horizontal`
+- system: `text_explainer`, `empty_not_found`, `error_generic`
+- nav: `catalog_category_card`, `liked_grid`, `cart_grid`
 
-**Тестбенч**: `POST /api/v1/testbench` (бэкенд) + `/testbench` (админ фронтенд, порт 5174)
+Пресеты пока hardcoded под косметику (fieldName: images/name/price/rating/brand/...). B7 заменит это на роль-based slot resolution через `catalog.field_definitions`.
+
+**Ключевые файлы V4** (перечитай перед работой):
+- `project_v4/backend/internal/engine_v4/engine.go` — главный Execute pipeline
+- `project_v4/backend/internal/engine_v4/presets.go` + `presets_{product,system,nav}.go` — реестр + builders
+- `project_v4/backend/internal/engine_v4/ops.go` — `ApplyOps` + $ref binding
+- `project_v4/backend/internal/engine_v4/binding.go` — data → atom binding
+- `project_v4/backend/internal/engine_v4/constraints.go` — нормализация
+- `project_v4/backend/internal/tools/tool_visual_assembly.go` — tool definition + Execute
+- `project_v4/backend/internal/prompts/prompt_compose_widgets.go` — Agent2 system prompt
+- `project_v4/backend/internal/engine_v4/default_ops.go` — thin wrappers для usecases (`ProductCardGridOps`, `ProductDetailOps`, `DefaultWidgetActions`, `GridColumnsForCount`)
+
+**Трекер задач**: `docs/PRE_LAUNCH_TASKS.md` (волны B2/B3/B4/E1/E2/A2/B7/AD1/UX1/...)
+
+**Дев-логи сессий**: `docs/Updates/feature-engine-v4_<YYYY-MM-DD>_<HH-MM>.md` — каждая сессия оставляет лог с context, changes, tests, commit hash, known gaps.
+
+## Legacy Engine V1/V2 (`project/backend/`, ветка `main`)
+
+Старый движок остался в `project/backend/` как legacy. Основной прод переключен на V4, но V1/V2 код собирается и тесты проходят. Не трогать без явной необходимости.
 
 ## Модель данных (ключевые сущности)
 
@@ -162,13 +187,24 @@ scripts/                   — start.sh, stop.sh, start_admin.sh, stop_admin.sh,
 - **Краулер**: `cmd/crawler/` — scrape JSON-LD с e-commerce сайтов
 - **Данные**: 967 продуктов heybabescosmetics в `project_admin/Crawler_results/crawl_enriched_967.json`
 
+## Plan mode → обязательный update log
+
+Если в сессии использовался plan mode (ExitPlanMode был вызван и план утверждён), то **финальным действием сессии** обязательно должен быть update log в `docs/Updates/`.
+
+Формат имени: `<branch-name>_<YYYY-MM-DD>_<HH-MM>.md` (например `feature-engine-v4_2026-04-07_14-30.md`). Время и дата — момент коммита. Внутри файла обязательно:
+- Шапка: branch, date (UTC), commit sha, parent commit
+- Context: зачем делалось, какой gap/задача закрывается
+- Approach: что поменяли и почему именно так
+- Files changed: таблица
+- Verification: как проверяли локально + что смотреть на проде
+- Known gaps / caveats: что НЕ закрыто, отложенные нюансы
+
+Это правило действует всегда когда был plan mode, независимо от размера задачи. Даже маленькое изменение — всё равно лог. Формат уже устоялся, смотри последние файлы в `docs/Updates/` как образец.
+
 ## Документация
 
-- `docs/ARCHITECTURE.md` — архитектура и API
-- `docs/VISUAL_ASSEMBLY_ENGINE.md` — спецификация движка
-- `docs/LAYOUT_ENGINE_SPEC.md` — спека Layout Engine (следующая фаза)
-- `docs/ENGINE_VISUAL_RULES.md` — правила визуального рендеринга
-- `docs/GLOSSARY.md` — терминология предметной области
-- `docs/SPEC_TWO_AGENT_PIPELINE.md` — спецификация двухагентного пайплайна
+- `docs/Updates/` — дев-логи сессий V4 (актуальное состояние, по дате)
+- `docs/PRE_LAUNCH_TASKS.md` — трекер задач до релиза (волны B2/B3/B4/E1/E2/B7/AD1/...)
+- `docs/archive/` — старые спеки (ARCHITECTURE, VISUAL_ASSEMBLY_ENGINE, LAYOUT_ENGINE_SPEC, GLOSSARY, SPEC_TWO_AGENT_PIPELINE и др.)
 - `AI_docs/Manifesto.md` — продуктовое видение
 - `AI_docs/ARCHITECTURE_RULES.md` — архитектурные принципы

@@ -38,7 +38,11 @@ type AdminCatalogPort interface {
 	// Enrichment
 	GetCategoryBySlug(ctx context.Context, slug string) (*domain.Category, error)
 	GetAllMasterProducts(ctx context.Context, tenantID string) ([]domain.MasterProduct, error)
+	GetUnenrichedMasterProducts(ctx context.Context, tenantID string) ([]domain.MasterProduct, error)
 	UpdateMasterProductPIM(ctx context.Context, productID string, categoryID string, out domain.EnrichmentOutputV2) error
+
+	// Soft-delete (used by Shopify products/delete webhook)
+	SoftDeleteProductBySource(ctx context.Context, tenantID, sourceSystem, sourceID string) error
 
 	// Post-import
 	GetMasterProductsWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterProduct, error)

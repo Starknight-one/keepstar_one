@@ -10,6 +10,8 @@ export default function TraceDetail() {
   const navigate = useNavigate()
   const [trace, setTrace] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [capturing, setCapturing] = useState(false)
+  const [capturedName, setCapturedName] = useState(null)
 
   useEffect(() => {
     api.get(`/traces/${id}`)
@@ -158,6 +160,29 @@ export default function TraceDetail() {
         {agent2?.toolName && (
           <div className="trace-tool-call">
             <Tag color="purple">{agent2.toolName}</Tag>
+            {agent2?.toolInput && (
+              capturedName ? (
+                <Tag color="green">Saved as {capturedName}</Tag>
+              ) : (
+                <button
+                  className="btn btn-secondary trace-capture-btn"
+                  onClick={async () => {
+                    setCapturing(true)
+                    try {
+                      const preset = await api.post('/canvas/capture', { traceId: id })
+                      setCapturedName(preset.name)
+                    } catch (err) {
+                      alert(`Capture failed: ${err.message}`)
+                    } finally {
+                      setCapturing(false)
+                    }
+                  }}
+                  disabled={capturing}
+                >
+                  {capturing ? 'Saving...' : 'Save as preset'}
+                </button>
+              )
+            )}
           </div>
         )}
 

@@ -17,12 +17,17 @@ import './GenericCardV2Template.css';
  *   - entityRef: { type, id }
  *   - states: { hover, active } — CSS variable overrides
  */
-export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', direction, entityRef, states }) {
+export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', direction, entityRef, states, actions = [] }) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const { toggleLike, isLiked, addToCart, getCartQuantity, updateCartQuantity } = useActions();
   const entityId = entityRef?.id;
   const liked = entityId ? isLiked(entityId) : false;
   const cartQty = entityId ? getCartQuantity(entityId) : 0;
+
+  // Actions-driven buttons: use widget.actions from engine, fallback for legacy widgets
+  const effectiveActions = actions.length > 0 ? actions : (entityId ? [{ type: 'like' }, { type: 'add_to_cart' }] : []);
+  const hasLike = effectiveActions.some(a => a.type === 'like');
+  const hasCart = effectiveActions.some(a => a.type === 'add_to_cart');
 
   // Extract hero images from atomsV2 (slot=hero, type=image)
   const heroAtoms = atomsV2.filter(a => a.slot === 'hero' && (a.type === 'image'));
@@ -53,7 +58,7 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
       style={cardStyle}
     >
       {/* Like button overlay when layout tree handles hero rendering */}
-      {layout && entityId && (
+      {layout && hasLike && entityId && (
         <button
           className={`product-card-favorite${liked ? ' liked' : ''}`}
           style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
@@ -74,7 +79,7 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
             currentIndex={currentImageIndex}
             onIndexChange={setCurrentImageIndex}
           />
-          {entityId && (
+          {hasLike && entityId && (
             <button
               className={`product-card-favorite${liked ? ' liked' : ''}`}
               onClick={(e) => { e.stopPropagation(); toggleLike(entityId); }}
@@ -88,7 +93,7 @@ export function GenericCardV2Template({ atomsV2 = [], layout, size = 'medium', d
         </div>
       )}
       {/* Cart button overlay — plus icon / stepper counter */}
-      {entityId && (
+      {hasCart && entityId && (
         <CartOverlayButton
           qty={cartQty}
           onAdd={() => addToCart(entityRef.type, entityId)}

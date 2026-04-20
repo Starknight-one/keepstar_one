@@ -275,15 +275,58 @@ func makeBatches(items []domain.EnrichmentInput, size int) [][]domain.Enrichment
 
 // --- V2: DB-based enrichment ---
 
+// EnrichFromDBIncrementalAsync runs EnrichFromDBIncremental in a goroutine
+// with a fresh 30-minute context, so importers can fire-and-forget. Satisfies
+// the ImportUseCase.EnrichmentTrigger interface.
+func (uc *EnrichmentUseCase) EnrichFromDBIncrementalAsync(tenantID string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if _, err := uc.EnrichFromDBIncremental(ctx, tenantID); err != nil {
+			uc.log.Error("enrichment_incremental_async_failed", "tenant_id", tenantID, "error", err)
+		}
+	}()
+}
+
+// EnrichFromDBIncremental enriches only master products with
+// enrichment_version = 0 — the post-import path. Same engine as EnrichFromDB
+// but restricted to freshly-landed rows, so repeated imports don't repeatedly
+// pay the Haiku bill for already-enriched products.
+func (uc *EnrichmentUseCase) EnrichFromDBIncremental(ctx context.Context, tenantID string) (*domain.EnrichmentJob, error) {
+	return uc.enrichFromDBFiltered(ctx, tenantID, true)
+}
+
 // EnrichFromDB reads all master products from DB, enriches via LLM v2 prompt,
 // and writes PIM fields directly to DB columns.
 func (uc *EnrichmentUseCase) EnrichFromDB(ctx context.Context, tenantID string) (*domain.EnrichmentJob, error) {
-	// 1. Get all master products for tenant
-	products, err := uc.catalog.GetAllMasterProducts(ctx, tenantID)
+	return uc.enrichFromDBFiltered(ctx, tenantID, false)
+}
+
+func (uc *EnrichmentUseCase) enrichFromDBFiltered(ctx context.Context, tenantID string, onlyUnenriched bool) (*domain.EnrichmentJob, error) {
+	// 1. Get master products for tenant — either all or unenriched-only.
+	var (
+		products []domain.MasterProduct
+		err      error
+	)
+	if onlyUnenriched {
+		products, err = uc.catalog.GetUnenrichedMasterProducts(ctx, tenantID)
+	} else {
+		products, err = uc.catalog.GetAllMasterProducts(ctx, tenantID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("get master products: %w", err)
 	}
 	if len(products) == 0 {
+		if onlyUnenriched {
+			// Incremental path: a fresh import with only already-enriched SKUs
+			// is the happy path, not an error.
+			uc.log.Info("enrichment_incremental_noop", "tenant_id", tenantID)
+			return &domain.EnrichmentJob{
+				TenantID:  tenantID,
+				Status:    "completed",
+				StartedAt: time.Now(),
+			}, nil
+		}
 		return nil, fmt.Errorf("no master products found for tenant %s", tenantID)
 	}
 

@@ -203,6 +203,21 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS attributes;`,
 		`ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS inci_text;`,
 		`DROP INDEX IF EXISTS idx_catalog_mp_short_name;`,
+
+		// Onboarding: source tracking for idempotent re-imports from external
+		// systems (Shopify product.id, CSV filename+row, Sheets row). SKU
+		// dedup stays the primary key; this is a secondary idempotency path.
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS source_system VARCHAR(32);`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS source_id VARCHAR(255);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_master_products_source
+			ON catalog.master_products(owner_tenant_id, source_system, source_id)
+			WHERE source_system IS NOT NULL AND source_id IS NOT NULL;`,
+
+		// Onboarding: soft-delete for products. Shopify webhook products/delete
+		// sets deleted_at; the chat backend search must filter WHERE deleted_at IS NULL.
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_products_deleted_at
+			ON catalog.products(deleted_at) WHERE deleted_at IS NOT NULL;`,
 	}
 
 	// pipeline_traces table (idempotent, same as chat backend)

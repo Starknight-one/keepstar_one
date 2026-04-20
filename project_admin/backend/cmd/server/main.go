@@ -15,7 +15,9 @@ import (
 	anthropicAdapter "keepstar-admin/internal/adapters/anthropic"
 	openaiAdapter "keepstar-admin/internal/adapters/openai"
 	"keepstar-admin/internal/adapters/postgres"
+	"keepstar-admin/internal/adapters/shopify"
 	"keepstar-admin/internal/config"
+	"keepstar-admin/internal/crypto/secretbox"
 	"keepstar-admin/internal/handlers"
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
@@ -82,15 +84,36 @@ func main() {
 		log.Info("enrichment_client_initialized", "model", cfg.EnrichmentModel)
 	}
 
+	// Encryption for integration credentials — fail-closed: absent/bad key
+	// crashes startup. Operators get the error loud, not silent corruption.
+	var secretBox *secretbox.Box
+	if cfg.HasEncryption() {
+		box, err := secretbox.NewFromBase64(cfg.EncryptionKey)
+		if err != nil {
+			log.Error("encryption_key_invalid", "error", err)
+			os.Exit(1)
+		}
+		secretBox = box
+		log.Info("encryption_initialized")
+	} else {
+		log.Warn("ADMIN_ENCRYPTION_KEY not set — Shopify/CSV integrations will be unavailable")
+	}
+
 	// Initialize adapters
 	authAdapter := postgres.NewAuthAdapter(dbClient)
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient, log)
 	importAdapter := postgres.NewImportAdapter(dbClient)
 	traceAdapter := postgres.NewTraceAdapter(dbClient)
+	canvasAdapter := postgres.NewCanvasAdapter(dbClient)
+	var integrationsAdapter ports.IntegrationsPort
+	if secretBox != nil {
+		integrationsAdapter = postgres.NewIntegrationsAdapter(dbClient, secretBox)
+	}
 
 	// Initialize use cases
 	authUC := usecases.NewAuthUseCase(authAdapter, catalogAdapter, cfg.JWTSecret)
 	productsUC := usecases.NewProductsUseCase(catalogAdapter)
+	canvasUC := usecases.NewCanvasUseCase(canvasAdapter)
 
 	var enrichUC *usecases.EnrichmentUseCase
 	if enrichmentClient != nil {
@@ -98,8 +121,27 @@ func main() {
 	}
 
 	importUC := usecases.NewImportUseCase(catalogAdapter, importAdapter, embeddingClient, log)
+	if enrichUC != nil {
+		importUC.SetEnrichmentTrigger(enrichUC)
+	}
 	settingsUC := usecases.NewSettingsUseCase(catalogAdapter)
 	stockUC := usecases.NewStockUseCase(catalogAdapter)
+
+	// Onboarding: integrations + CSV + Shopify
+	var integrationsUC *usecases.IntegrationsUseCase
+	var csvMappingUC *usecases.CSVMappingUseCase
+	var shopifyUC *usecases.ShopifyUseCase
+	if integrationsAdapter != nil {
+		integrationsUC = usecases.NewIntegrationsUseCase(integrationsAdapter, log)
+		if cfg.HasEnrichment() {
+			csvMappingUC = usecases.NewCSVMappingUseCase(cfg.AnthropicAPIKey, cfg.EnrichmentModel, log)
+		}
+		if cfg.HasShopify() {
+			shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret)
+			shopifyUC = usecases.NewShopifyUseCase(shopifyClient, integrationsAdapter, importUC, catalogAdapter, cfg.PublicBaseURL, log)
+			log.Info("shopify_integration_enabled")
+		}
+	}
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authUC, log)
@@ -108,10 +150,22 @@ func main() {
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
 	stockHandler := handlers.NewStockHandler(stockUC, log)
 	tracesHandler := handlers.NewTracesHandler(traceAdapter, log)
+	canvasHandler := handlers.NewCanvasHandler(canvasUC, traceAdapter, log)
 
 	var enrichmentHandler *handlers.EnrichmentHandler
 	if enrichUC != nil {
 		enrichmentHandler = handlers.NewEnrichmentHandler(enrichUC, log)
+	}
+
+	var integrationsHandler *handlers.IntegrationsHandler
+	var csvIntegrationsHandler *handlers.CSVIntegrationsHandler
+	var shopifyHandler *handlers.ShopifyHandler
+	if integrationsUC != nil {
+		integrationsHandler = handlers.NewIntegrationsHandler(integrationsUC, log)
+		csvIntegrationsHandler = handlers.NewCSVIntegrationsHandler(csvMappingUC, importUC, integrationsUC, log)
+	}
+	if shopifyUC != nil {
+		shopifyHandler = handlers.NewShopifyHandler(shopifyUC, log)
 	}
 
 	// Setup routes
@@ -179,9 +233,39 @@ func main() {
 	protected.HandleFunc("/admin/api/sessions/kill-all", tracesHandler.HandleKillAllSessions)
 	protected.HandleFunc("/admin/api/sessions/", tracesHandler.HandleSessionDetail)
 	protected.HandleFunc("/admin/api/conversations", tracesHandler.HandleConversations)
+
+	// KeepstarCanvas editor
+	protected.HandleFunc("/admin/api/canvas/presets", canvasHandler.HandlePresets)
+	protected.HandleFunc("/admin/api/canvas/presets/", canvasHandler.HandlePresetByID)
+	protected.HandleFunc("/admin/api/canvas/components", canvasHandler.HandleComponents)
+	protected.HandleFunc("/admin/api/canvas/components/", canvasHandler.HandleComponentByID)
+	protected.HandleFunc("/admin/api/canvas/capture", canvasHandler.HandleCapture)
+	protected.HandleFunc("/admin/api/canvas/tokens", canvasHandler.HandleTokens)
+	protected.HandleFunc("/admin/api/canvas/tokens/", canvasHandler.HandleTokenByID)
+
 	if enrichmentHandler != nil {
 		protected.HandleFunc("/admin/api/catalog/enrich", enrichmentHandler.HandleEnrich)
 		protected.HandleFunc("/admin/api/catalog/enrich-v2", enrichmentHandler.HandleEnrichV2)
+	}
+
+	if integrationsHandler != nil {
+		protected.HandleFunc("/admin/api/integrations", integrationsHandler.HandleList)
+		// Shopify-specific first — more specific path wins in net/http mux.
+		if shopifyHandler != nil {
+			protected.HandleFunc("/admin/api/integrations/shopify/install", shopifyHandler.HandleInstall)
+			protected.HandleFunc("/admin/api/integrations/shopify/", func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/resync") {
+					shopifyHandler.HandleResync(w, r)
+					return
+				}
+				http.NotFound(w, r)
+			})
+		}
+		if csvIntegrationsHandler != nil {
+			protected.HandleFunc("/admin/api/integrations/csv/suggest-mapping", csvIntegrationsHandler.HandleSuggestMapping)
+			protected.HandleFunc("/admin/api/integrations/csv/import", csvIntegrationsHandler.HandleImport)
+		}
+		protected.HandleFunc("/admin/api/integrations/", integrationsHandler.HandleByID)
 	}
 
 	mux.Handle("/admin/api/auth/me", authMW(protected))
@@ -201,9 +285,26 @@ func main() {
 	mux.Handle("/admin/api/sessions/kill-all", authMW(protected))
 	mux.Handle("/admin/api/sessions/", authMW(protected))
 	mux.Handle("/admin/api/conversations", authMW(protected))
+	mux.Handle("/admin/api/canvas/presets", authMW(protected))
+	mux.Handle("/admin/api/canvas/presets/", authMW(protected))
+	mux.Handle("/admin/api/canvas/components", authMW(protected))
+	mux.Handle("/admin/api/canvas/components/", authMW(protected))
+	mux.Handle("/admin/api/canvas/capture", authMW(protected))
+	mux.Handle("/admin/api/canvas/tokens", authMW(protected))
+	mux.Handle("/admin/api/canvas/tokens/", authMW(protected))
 	if enrichmentHandler != nil {
 		mux.Handle("/admin/api/catalog/enrich", authMW(protected))
 		mux.Handle("/admin/api/catalog/enrich-v2", authMW(protected))
+	}
+	if integrationsHandler != nil {
+		mux.Handle("/admin/api/integrations", authMW(protected))
+		mux.Handle("/admin/api/integrations/", authMW(protected))
+	}
+	// Shopify webhook + OAuth callback ride OUTSIDE authMW — HMAC and the
+	// signed state nonce are the auth layer for these routes.
+	if shopifyHandler != nil {
+		mux.HandleFunc("/admin/api/integrations/shopify/callback", shopifyHandler.HandleCallback)
+		mux.HandleFunc("/admin/api/webhooks/shopify", shopifyHandler.HandleWebhook)
 	}
 
 	// SPA file server: serve React frontend from ./static
@@ -236,6 +337,17 @@ func main() {
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  60 * time.Second,
+	}
+
+	// Background sweepers for onboarding — stop fns are discarded because
+	// SIGTERM takes the whole process down anyway.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+	if integrationsUC != nil {
+		_ = integrationsUC.StartOAuthStateSweeper(bgCtx)
+	}
+	if shopifyUC != nil {
+		_ = shopifyUC.StartPeriodicResync(bgCtx)
 	}
 
 	go func() {

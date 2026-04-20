@@ -6,8 +6,8 @@ import './Widget.css';
 export function WidgetRenderer({ widget, onClick }) {
   const mouseDownPos = useRef(null);
 
-  // Template-based rendering (new system)
-  if (widget.template) {
+  // V2/V4 rendering: layout tree or atomsV2 or template present
+  if (widget.template || widget.layout || widget.atomsV2) {
     const content = renderTemplate(widget);
     const placeClass = widget.meta?.place ? `widget-place-${widget.meta.place}` : '';
 
@@ -69,6 +69,7 @@ function renderTemplate(widget) {
         direction={widget.meta?.direction}
         entityRef={entityRef}
         states={widget.states}
+        actions={widget.actions || []}
       />
     );
   }
@@ -82,6 +83,7 @@ function renderTemplate(widget) {
       direction={widget.meta?.direction}
       entityRef={entityRef}
       states={widget.states}
+      actions={widget.actions || []}
     />
   );
 }

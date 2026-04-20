@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../../shared/api/apiClient.js'
+import useJobPolling from '../../shared/hooks/useJobPolling.js'
 import Button from '../../shared/ui/Button.jsx'
 import Badge from '../../shared/ui/Badge.jsx'
 import Table from '../../shared/ui/Table.jsx'
@@ -19,10 +20,9 @@ export default function ImportPage() {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [uploading, setUploading] = useState(false)
-  const [activeJob, setActiveJob] = useState(null)
+  const [jobId, setJobId] = useState(null)
   const [imports, setImports] = useState([])
   const [error, setError] = useState('')
-  const pollRef = useRef(null)
   const fileRef = useRef(null)
 
   const fetchImports = useCallback(async () => {
@@ -32,10 +32,18 @@ export default function ImportPage() {
     } catch { /* ignore */ }
   }, [])
 
+  const { job: activeJob } = useJobPolling(jobId, {
+    onComplete: () => fetchImports(),
+  })
+
   useEffect(() => {
     fetchImports()
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [fetchImports])
+
+  // When a job hits a terminal state, refresh the history list.
+  useEffect(() => {
+    if (activeJob && (activeJob.status === 'failed')) fetchImports()
+  }, [activeJob, fetchImports])
 
   function handleFileChange(e) {
     const f = e.target.files?.[0]
@@ -69,23 +77,10 @@ export default function ImportPage() {
       const text = await file.text()
       const data = JSON.parse(text)
       const result = await api.post('/catalog/import', data)
-      setActiveJob(result)
+      setJobId(result.jobId || result.id)
       setFile(null)
       setPreview(null)
       if (fileRef.current) fileRef.current.value = ''
-
-      // Start polling
-      pollRef.current = setInterval(async () => {
-        try {
-          const job = await api.get(`/catalog/import/${result.jobId}`)
-          setActiveJob(job)
-          if (job.status === 'completed' || job.status === 'failed') {
-            clearInterval(pollRef.current)
-            pollRef.current = null
-            fetchImports()
-          }
-        } catch { /* ignore */ }
-      }, 2000)
     } catch (err) {
       setError(err.message)
     } finally {

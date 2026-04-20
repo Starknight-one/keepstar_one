@@ -8,49 +8,64 @@
  * @returns {Object|null} - Filled FormationWithData ready to render, or null if template invalid
  */
 export function fillFormation(template, entity, entityType) {
-  if (!template?.widgets?.[0]?.atoms || !entity) return null;
+  const sourceAtoms = template?.widgets?.[0]?.atomsV2 || template?.widgets?.[0]?.atoms;
+  if (!sourceAtoms || !entity) return null;
 
   const templateWidget = template.widgets[0];
+  const isV2 = Boolean(templateWidget.atomsV2 || templateWidget.layout);
   const atoms = [];
 
-  for (const atom of templateWidget.atoms) {
-    const value = getField(entity, atom.fieldName, entityType);
-    if (value == null) continue;
+  for (const atom of sourceAtoms) {
+    const value = atom.fieldName ? getField(entity, atom.fieldName, entityType) : atom.value;
 
-    const filled = {
-      type: atom.type,
-      subtype: atom.subtype,
-      display: atom.display,
-      value,
-      slot: atom.slot,
-      fieldName: atom.fieldName,
-    };
-
-    // Resolve currency sentinel
-    if (atom.meta) {
-      const meta = { ...atom.meta };
-      if (meta.currency === '__ENTITY_CURRENCY__') {
-        meta.currency = entity.currency || '$';
+    if (isV2) {
+      // V2: always push (layout tree references atoms by index — skipping breaks indices)
+      const filled = { ...atom };
+      if (value != null) filled.value = value;
+      if (atom.meta) {
+        const meta = { ...atom.meta };
+        if (meta.currency === '__ENTITY_CURRENCY__') meta.currency = entity.currency || '$';
+        filled.meta = meta;
       }
-      filled.meta = meta;
+      atoms.push(filled);
+    } else {
+      // V1: skip atoms with null values (no layout tree dependency)
+      if (value == null) continue;
+      const filled = {
+        type: atom.type, subtype: atom.subtype, display: atom.display,
+        value, slot: atom.slot, fieldName: atom.fieldName,
+      };
+      if (atom.meta) {
+        const meta = { ...atom.meta };
+        if (meta.currency === '__ENTITY_CURRENCY__') meta.currency = entity.currency || '$';
+        filled.meta = meta;
+      }
+      atoms.push(filled);
     }
-
-    atoms.push(filled);
   }
 
   const widgetId = `${entityType}-${entity.id}-${Date.now().toString(36)}`;
 
+  const widget = {
+    id: widgetId,
+    size: templateWidget.size,
+    priority: 0,
+    entityRef: { type: entityType, id: entity.id },
+  };
+
+  if (isV2) {
+    widget.atomsV2 = atoms;
+    if (templateWidget.layout) widget.layout = templateWidget.layout;
+    if (templateWidget.actions) widget.actions = templateWidget.actions;
+  } else {
+    widget.template = templateWidget.template;
+    widget.atoms = atoms;
+  }
+
   return {
     mode: template.mode,
     grid: template.grid || null,
-    widgets: [{
-      id: widgetId,
-      template: templateWidget.template,
-      size: templateWidget.size,
-      priority: 0,
-      atoms,
-      entityRef: { type: entityType, id: entity.id },
-    }],
+    widgets: [widget],
   };
 }
 
