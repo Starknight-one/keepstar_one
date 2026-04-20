@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { ArrowLeft, Eye, Copy, Archive, Trash2 } from 'lucide-react'
 import { api } from '../../shared/api/apiClient.js'
-import Input from '../../shared/ui/Input.jsx'
 import Button from '../../shared/ui/Button.jsx'
 import Spinner from '../../shared/ui/Spinner.jsx'
 import './catalog.css'
+import './productDetail.css'
 
 export default function ProductDetailPage() {
   const { id } = useParams()
@@ -31,15 +32,14 @@ export default function ProductDetailPage() {
       .finally(() => setLoading(false))
   }, [id, navigate])
 
-  async function handleSave(e) {
-    e.preventDefault()
+  async function handleSave() {
     setSaving(true)
     setMessage('')
     try {
       await api.put(`/products/${id}`, form)
       setMessage('Saved successfully')
     } catch (err) {
-      setMessage(err.message)
+      setMessage(err.message || 'Failed to save')
     } finally {
       setSaving(false)
     }
@@ -48,50 +48,118 @@ export default function ProductDetailPage() {
   if (loading) return <div className="center-spinner"><Spinner /></div>
   if (!product) return null
 
-  return (
-    <div>
-      <button className="btn btn-ghost btn-sm" onClick={() => navigate('/catalog')} style={{ marginBottom: 16 }}>
-        &larr; Back to products
-      </button>
-      <h1 className="page-title">{product.name}</h1>
+  const priceDisplay = form.price ? `$${(form.price / 100).toFixed(2)}` : '—'
 
-      <div className="product-detail-layout">
-        <div className="product-detail-images">
-          {product.images?.length > 0 ? (
-            <img src={product.images[0]} alt={product.name} className="product-detail-img" />
-          ) : (
-            <div className="product-detail-img-empty">No image</div>
-          )}
+  return (
+    <div className="pd-page">
+      <div className="pd-header">
+        <div>
+          <button className="pd-back" onClick={() => navigate('/catalog')}>
+            <ArrowLeft size={14} /> Back to catalog
+          </button>
+          <div className="pd-breadcrumb">
+            Catalog / <strong>{product.category || 'Uncategorized'}</strong> / {product.name}
+          </div>
+        </div>
+        <Button variant="primary" pill onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </Button>
+      </div>
+
+      {message && (
+        <div className={`pd-message ${message.includes('success') ? 'success' : 'error'}`}>{message}</div>
+      )}
+
+      <div className="pd-body">
+        <div className="pd-main">
+          <div className="pd-hero">
+            {product.images?.length > 0
+              ? <img src={product.images[0]} alt={product.name} className="pd-hero-img" />
+              : <div className="pd-hero-img-empty">No image</div>}
+            <div className="pd-hero-meta">
+              <div>
+                <div className="pd-hero-name">{form.name || product.name}</div>
+                <div className="pd-hero-tags">
+                  {product.brand && <span className="pd-tag">{product.brand}</span>}
+                  {product.category && <span className="pd-tag">{product.category}</span>}
+                  <span className="pd-tag">SKU {product.masterProductId?.slice(0, 8) || '—'}</span>
+                </div>
+              </div>
+              <div className="pd-hero-price">{priceDisplay}</div>
+              {product.description && <p className="pd-hero-desc">{product.description}</p>}
+            </div>
+          </div>
+
+          <div className="pd-section">
+            <div className="pd-section-title">Product details</div>
+            <div className="pd-grid">
+              <div className="pd-field" style={{ gridColumn: '1 / -1' }}>
+                <label className="pd-field-label">Name</label>
+                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </div>
+              <div className="pd-field" style={{ gridColumn: '1 / -1' }}>
+                <label className="pd-field-label">Description</label>
+                <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Price (kopecks)</label>
+                <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Stock</label>
+                <input type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: Number(e.target.value) })} />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Rating</label>
+                <input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={(e) => setForm({ ...form, rating: Number(e.target.value) })} />
+              </div>
+            </div>
+          </div>
+
+          <div className="pd-section">
+            <div className="pd-section-title">Additional information</div>
+            <div className="pd-grid">
+              <div className="pd-field">
+                <label className="pd-field-label">Social links</label>
+                <input placeholder="https://…" disabled />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Gallery</label>
+                <input placeholder="No images attached" disabled />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Stories</label>
+                <input placeholder="—" disabled />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Reviews</label>
+                <input placeholder="No reviews yet" disabled />
+              </div>
+            </div>
+          </div>
         </div>
 
-        <form className="product-detail-form" onSubmit={handleSave}>
-          <div className="product-detail-meta">
-            <span>Brand: <strong>{product.brand || '—'}</strong></span>
-            <span>Category: <strong>{product.category || '—'}</strong></span>
-            <span>SKU: <strong>{product.masterProductId?.slice(0, 8) || '—'}</strong></span>
+        <aside className="pd-rail">
+          <div className="card">
+            <div className="card-title">Variants</div>
+            <div className="pd-variants-empty">Single variant — multi-variant support coming soon.</div>
           </div>
-
-          <Input label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <div className="input-group">
-            <label className="input-label">Description</label>
-            <textarea
-              className="input"
-              rows={3}
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-            />
+          <div className="card">
+            <div className="card-title">Performance</div>
+            <div className="pd-metric"><span>Views (30d)</span><span>—</span></div>
+            <div className="pd-metric"><span>Add-to-cart</span><span>—</span></div>
+            <div className="pd-metric"><span>Liked</span><span>—</span></div>
           </div>
-          <div className="product-detail-row">
-            <Input label="Price (kopecks)" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} />
-            <Input label="Stock" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: Number(e.target.value) })} />
-            <Input label="Rating" type="number" step="0.1" min="0" max="5" value={form.rating} onChange={(e) => setForm({ ...form, rating: Number(e.target.value) })} />
+          <div className="card">
+            <div className="card-title">Quick actions</div>
+            <div className="pd-quick-actions">
+              <button className="pd-quick-action"><Eye size={14} /> Preview</button>
+              <button className="pd-quick-action"><Copy size={14} /> Duplicate</button>
+              <button className="pd-quick-action"><Archive size={14} /> Archive</button>
+              <button className="pd-quick-action danger"><Trash2 size={14} /> Delete</button>
+            </div>
           </div>
-
-          {message && <div className={message.includes('success') ? 'auth-success' : 'auth-error'}>{message}</div>}
-          <Button type="submit" disabled={saving}>
-            {saving ? 'Saving...' : 'Save changes'}
-          </Button>
-        </form>
+        </aside>
       </div>
     </div>
   )

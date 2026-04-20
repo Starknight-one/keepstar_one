@@ -1,12 +1,9 @@
 import './ui.css'
 
-export default function Button({ children, variant = 'primary', size = 'md', disabled, ...props }) {
+export default function Button({ children, variant = 'primary', size = 'md', pill, className = '', disabled, ...props }) {
+  const cls = ['btn', `btn-${variant}`, `btn-${size}`, pill && 'btn-pill', className].filter(Boolean).join(' ')
   return (
-    <button
-      className={`btn btn-${variant} btn-${size}`}
-      disabled={disabled}
-      {...props}
-    >
+    <button className={cls} disabled={disabled} {...props}>
       {children}
     </button>
   )

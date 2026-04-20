@@ -1,0 +1,196 @@
+.pd-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.pd-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 6px 0;
+}
+.pd-back:hover { color: var(--text); }
+.pd-breadcrumb {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.pd-breadcrumb strong { color: var(--text); font-weight: 500; }
+
+.pd-body {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 20px;
+  align-items: start;
+}
+
+.pd-main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pd-hero {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+}
+.pd-hero-img {
+  width: 220px;
+  height: 220px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  background: var(--surface-alt);
+}
+.pd-hero-img-empty {
+  width: 220px;
+  height: 220px;
+  border-radius: var(--radius-md);
+  background: var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+.pd-hero-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pd-hero-name {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.pd-hero-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pd-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--border-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.pd-hero-price {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 4px;
+}
+.pd-hero-desc {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.pd-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+}
+.pd-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+.pd-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+.pd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pd-field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-subtle);
+}
+.pd-field input,
+.pd-field textarea {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+.pd-field input:focus,
+.pd-field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.pd-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pd-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pd-quick-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  width: 100%;
+}
+.pd-quick-action:hover { background: var(--border-soft); }
+.pd-quick-action.danger { color: var(--danger); }
+.pd-quick-action.danger:hover { background: rgba(229, 57, 53, 0.06); border-color: var(--danger); }
+
+.pd-metric { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; }
+.pd-metric span:first-child { color: var(--text-muted); }
+.pd-metric span:last-child { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.pd-variants-empty {
+  font-size: 12px;
+  color: var(--text-subtle);
+  font-style: italic;
+}
+
+.pd-message {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.pd-message.success { background: rgba(52, 168, 83, 0.1); color: #1E8E3E; }
+.pd-message.error { background: rgba(229, 57, 53, 0.1); color: var(--danger); }
