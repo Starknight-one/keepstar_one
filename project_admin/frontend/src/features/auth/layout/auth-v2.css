@@ -33,8 +33,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-height: 100vh;
-  max-width: 1440px;
-  margin: 0 auto;
+  width: 100%;
 }
 
 .auth-shell__form {
