@@ -126,7 +126,8 @@ func (h *ProductsHandler) HandleCategories(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	cats, err := h.products.GetCategories(ctx)
+	tenantID := TenantID(ctx)
+	cats, err := h.products.GetCategories(ctx, tenantID)
 	if err != nil {
 		h.log.FromContext(ctx).Error("categories_list_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list categories")

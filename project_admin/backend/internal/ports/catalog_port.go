@@ -22,8 +22,8 @@ type AdminCatalogPort interface {
 	GetService(ctx context.Context, tenantID string, serviceID string) (*domain.Service, error)
 	UpdateService(ctx context.Context, tenantID string, serviceID string, update domain.ProductUpdate) error
 
-	// Categories
-	GetCategories(ctx context.Context) ([]domain.Category, error)
+	// Categories (tenant-scoped: only categories with ≥1 product for tenant)
+	GetCategories(ctx context.Context, tenantID string) ([]domain.Category, error)
 
 	// Import operations
 	UpsertMasterProduct(ctx context.Context, mp *domain.MasterProduct) (string, error)

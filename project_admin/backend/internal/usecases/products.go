@@ -27,6 +27,6 @@ func (uc *ProductsUseCase) Update(ctx context.Context, tenantID string, productI
 	return uc.catalog.UpdateProduct(ctx, tenantID, productID, update)
 }
 
-func (uc *ProductsUseCase) GetCategories(ctx context.Context) ([]domain.Category, error) {
-	return uc.catalog.GetCategories(ctx)
+func (uc *ProductsUseCase) GetCategories(ctx context.Context, tenantID string) ([]domain.Category, error) {
+	return uc.catalog.GetCategories(ctx, tenantID)
 }

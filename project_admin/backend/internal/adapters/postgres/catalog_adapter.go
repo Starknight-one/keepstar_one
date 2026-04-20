@@ -103,7 +103,14 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		argIdx++
 	}
 	if filter.CategoryID != "" {
-		where = append(where, fmt.Sprintf("mp.category_id = $%d", argIdx))
+		where = append(where, fmt.Sprintf(`mp.category_id IN (
+			WITH RECURSIVE sub AS (
+				SELECT id FROM catalog.categories WHERE id = $%d
+				UNION ALL
+				SELECT c.id FROM catalog.categories c
+				JOIN sub s ON c.parent_id = s.id
+			) SELECT id FROM sub
+		)`, argIdx))
 		args = append(args, filter.CategoryID)
 		argIdx++
 	}
@@ -316,9 +323,35 @@ func (a *CatalogAdapter) UpdateProduct(ctx context.Context, tenantID string, pro
 
 // --- Categories ---
 
-func (a *CatalogAdapter) GetCategories(ctx context.Context) ([]domain.Category, error) {
-	query := `SELECT id, name, slug, COALESCE(parent_id::text, '') FROM catalog.categories ORDER BY name`
-	rows, err := a.client.pool.Query(ctx, query)
+// GetCategories returns all categories that themselves or via any descendant
+// have ≥1 non-deleted product for the given tenant. Includes a transitive
+// product count so parent nodes show totals across their subtree.
+func (a *CatalogAdapter) GetCategories(ctx context.Context, tenantID string) ([]domain.Category, error) {
+	query := `
+		WITH RECURSIVE descendants AS (
+		    SELECT id, id AS root_id FROM catalog.categories
+		    UNION ALL
+		    SELECT c.id, d.root_id
+		    FROM catalog.categories c
+		    JOIN descendants d ON c.parent_id = d.id
+		),
+		counts AS (
+		    SELECT d.root_id, COUNT(DISTINCT p.id) AS n
+		    FROM descendants d
+		    LEFT JOIN catalog.master_products mp ON mp.category_id = d.id
+		    LEFT JOIN catalog.products p
+		        ON p.master_product_id = mp.id
+		        AND p.tenant_id = $1
+		        AND p.deleted_at IS NULL
+		    GROUP BY d.root_id
+		)
+		SELECT c.id, c.name, c.slug, COALESCE(c.parent_id::text, ''),
+		       COALESCE(counts.n, 0)::int AS product_count
+		FROM catalog.categories c
+		LEFT JOIN counts ON counts.root_id = c.id
+		WHERE COALESCE(counts.n, 0) > 0
+		ORDER BY c.name`
+	rows, err := a.client.pool.Query(ctx, query, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list categories: %w", err)
 	}
@@ -327,7 +360,7 @@ func (a *CatalogAdapter) GetCategories(ctx context.Context) ([]domain.Category, 
 	var cats []domain.Category
 	for rows.Next() {
 		var c domain.Category
-		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.ParentID); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.ParentID, &c.ProductCount); err != nil {
 			return nil, fmt.Errorf("scan category: %w", err)
 		}
 		cats = append(cats, c)

@@ -20,38 +20,38 @@ type category struct {
 
 var categories = []category{
 	// Roots
-	{Slug: "face-care", Name: "Уход за лицом"},
-	{Slug: "makeup", Name: "Декоративная косметика"},
-	{Slug: "body", Name: "Тело"},
-	{Slug: "hair", Name: "Волосы"},
+	{Slug: "face-care", Name: "Face care"},
+	{Slug: "makeup", Name: "Makeup"},
+	{Slug: "body", Name: "Body"},
+	{Slug: "hair", Name: "Hair"},
 
 	// Face care
-	{Slug: "cleansing", Name: "Очищение", ParentSlug: "face-care"},
-	{Slug: "toning", Name: "Тонизирование", ParentSlug: "face-care"},
-	{Slug: "exfoliation", Name: "Эксфолиация", ParentSlug: "face-care"},
-	{Slug: "serums", Name: "Сыворотки и ампулы", ParentSlug: "face-care"},
-	{Slug: "moisturizing", Name: "Увлажнение", ParentSlug: "face-care"},
-	{Slug: "suncare", Name: "Солнцезащита", ParentSlug: "face-care"},
-	{Slug: "masks", Name: "Маски", ParentSlug: "face-care"},
-	{Slug: "spot-treatment", Name: "Точечные средства", ParentSlug: "face-care"},
-	{Slug: "essences", Name: "Эссенции", ParentSlug: "face-care"},
-	{Slug: "lip-care", Name: "Уход за губами", ParentSlug: "face-care"},
+	{Slug: "cleansing", Name: "Cleansing", ParentSlug: "face-care"},
+	{Slug: "toning", Name: "Toning", ParentSlug: "face-care"},
+	{Slug: "exfoliation", Name: "Exfoliation", ParentSlug: "face-care"},
+	{Slug: "serums", Name: "Serums & ampoules", ParentSlug: "face-care"},
+	{Slug: "moisturizing", Name: "Moisturizing", ParentSlug: "face-care"},
+	{Slug: "suncare", Name: "Sun care", ParentSlug: "face-care"},
+	{Slug: "masks", Name: "Masks", ParentSlug: "face-care"},
+	{Slug: "spot-treatment", Name: "Spot treatment", ParentSlug: "face-care"},
+	{Slug: "essences", Name: "Essences", ParentSlug: "face-care"},
+	{Slug: "lip-care", Name: "Lip care", ParentSlug: "face-care"},
 
 	// Makeup
-	{Slug: "makeup-face", Name: "Для лица", ParentSlug: "makeup"},
-	{Slug: "makeup-eyes", Name: "Для глаз", ParentSlug: "makeup"},
-	{Slug: "makeup-lips", Name: "Для губ", ParentSlug: "makeup"},
-	{Slug: "makeup-setting", Name: "Фиксаторы макияжа", ParentSlug: "makeup"},
+	{Slug: "makeup-face", Name: "Face", ParentSlug: "makeup"},
+	{Slug: "makeup-eyes", Name: "Eyes", ParentSlug: "makeup"},
+	{Slug: "makeup-lips", Name: "Lips", ParentSlug: "makeup"},
+	{Slug: "makeup-setting", Name: "Setting sprays", ParentSlug: "makeup"},
 
 	// Body
-	{Slug: "body-cleansing", Name: "Очищение тела", ParentSlug: "body"},
-	{Slug: "body-moisturizing", Name: "Увлажнение тела", ParentSlug: "body"},
-	{Slug: "body-fragrance", Name: "Парфюм", ParentSlug: "body"},
+	{Slug: "body-cleansing", Name: "Body cleansing", ParentSlug: "body"},
+	{Slug: "body-moisturizing", Name: "Body moisturizing", ParentSlug: "body"},
+	{Slug: "body-fragrance", Name: "Fragrance", ParentSlug: "body"},
 
 	// Hair
-	{Slug: "hair-shampoo", Name: "Шампуни", ParentSlug: "hair"},
-	{Slug: "hair-conditioner", Name: "Кондиционеры", ParentSlug: "hair"},
-	{Slug: "hair-treatment", Name: "Уход за волосами", ParentSlug: "hair"},
+	{Slug: "hair-shampoo", Name: "Shampoo", ParentSlug: "hair"},
+	{Slug: "hair-conditioner", Name: "Conditioner", ParentSlug: "hair"},
+	{Slug: "hair-treatment", Name: "Hair treatment", ParentSlug: "hair"},
 }
 
 func main() {

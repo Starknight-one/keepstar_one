@@ -52,7 +52,7 @@ export default function ProductsPage() {
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
   const [search, setSearch] = useState('')
-  const [category, setCategory] = useState('')
+  const [category, setCategory] = useState({ id: '', name: 'All' })
   const [loading, setLoading] = useState(true)
 
   const fetchProducts = useCallback(async () => {
@@ -60,13 +60,9 @@ export default function ProductsPage() {
     try {
       const params = new URLSearchParams({ limit: LIMIT, offset })
       if (search) params.set('search', search)
+      if (category.id) params.set('categoryId', category.id)
       const data = await api.get(`/products?${params}`)
-      let rows = data.products || []
-      if (category) {
-        const c = category.toLowerCase()
-        rows = rows.filter(p => (p.category || '').toLowerCase().includes(c))
-      }
-      setProducts(rows)
+      setProducts(data.products || [])
       setTotal(data.total || 0)
     } catch {
       setProducts([])
@@ -92,7 +88,7 @@ export default function ProductsPage() {
           <div>
             <div className="page-title">Catalog</div>
             <div className="catalog-breadcrumb">
-              Products / <strong>{category ? capitalize(category) : 'All'}</strong> · {total} items
+              Products / <strong>{category.name || 'All'}</strong> · {total} items
             </div>
           </div>
           <form className="page-toolbar" onSubmit={handleSearch}>
@@ -124,5 +120,3 @@ export default function ProductsPage() {
     </div>
   )
 }
-
-function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1) }
