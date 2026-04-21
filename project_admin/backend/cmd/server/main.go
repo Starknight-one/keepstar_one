@@ -220,6 +220,8 @@ func main() {
 
 	productsUC := usecases.NewProductsUseCase(catalogAdapter)
 	canvasUC := usecases.NewCanvasUseCase(canvasAdapter)
+	billingAdapter := postgres.NewBillingAdapter(dbClient)
+	billingUC := usecases.NewBillingUseCase(billingAdapter)
 
 	var enrichUC *usecases.EnrichmentUseCase
 	if enrichmentClient != nil {
@@ -270,6 +272,7 @@ func main() {
 	stockHandler := handlers.NewStockHandler(stockUC, log)
 	tracesHandler := handlers.NewTracesHandler(traceAdapter, log)
 	canvasHandler := handlers.NewCanvasHandler(canvasUC, traceAdapter, log)
+	billingHandler := handlers.NewBillingHandler(billingUC, log)
 
 	var enrichmentHandler *handlers.EnrichmentHandler
 	if enrichUC != nil {
@@ -391,6 +394,11 @@ func main() {
 	protected.HandleFunc("/admin/api/sessions/", tracesHandler.HandleSessionDetail)
 	protected.HandleFunc("/admin/api/conversations", tracesHandler.HandleConversations)
 
+	protected.HandleFunc("/admin/api/billing/overview", billingHandler.HandleOverview)
+	protected.HandleFunc("/admin/api/billing/invoices", billingHandler.HandleInvoices)
+	protected.HandleFunc("/admin/api/billing/plan", billingHandler.HandleUpdatePlan)
+	protected.HandleFunc("/admin/api/billing/preferences", billingHandler.HandleUpdatePreferences)
+
 	// KeepstarCanvas editor
 	protected.HandleFunc("/admin/api/canvas/presets", canvasHandler.HandlePresets)
 	protected.HandleFunc("/admin/api/canvas/presets/", canvasHandler.HandlePresetByID)
@@ -450,6 +458,10 @@ func main() {
 	mux.Handle("/admin/api/sessions/kill-all", authMW(protected))
 	mux.Handle("/admin/api/sessions/", authMW(protected))
 	mux.Handle("/admin/api/conversations", authMW(protected))
+	mux.Handle("/admin/api/billing/overview", authMW(protected))
+	mux.Handle("/admin/api/billing/invoices", authMW(protected))
+	mux.Handle("/admin/api/billing/plan", authMW(protected))
+	mux.Handle("/admin/api/billing/preferences", authMW(protected))
 	mux.Handle("/admin/api/canvas/presets", authMW(protected))
 	mux.Handle("/admin/api/canvas/presets/", authMW(protected))
 	mux.Handle("/admin/api/canvas/components", authMW(protected))

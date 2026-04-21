@@ -28,6 +28,7 @@ import ConversationDetailPage from './features/conversations/ConversationDetailP
 import TracesPage from './features/traces/TracesPage.jsx'
 import TraceDetail from './features/traces/TraceDetail.jsx'
 import SessionDetail from './features/traces/SessionDetail.jsx'
+import BillingPage from './features/billing/BillingPage.jsx'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -80,6 +81,7 @@ export default function App() {
         <Route path="traces/:id" element={<TraceDetail />} />
         <Route path="canvas" element={<CanvasPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="billing" element={<BillingPage />} />
       </Route>
     </Routes>
   )

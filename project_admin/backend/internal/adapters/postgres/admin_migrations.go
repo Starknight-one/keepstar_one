@@ -282,6 +282,44 @@ func (c *Client) runAdminAuthV2Migrations(ctx context.Context) error {
 
 		// Google OAuth at login has no tenant context yet; relax the constraint.
 		`ALTER TABLE admin.oauth_states ALTER COLUMN tenant_id DROP NOT NULL;`,
+
+		// ---------- Billing ----------
+		// One row per tenant. token_multiplier lets us vary how much the
+		// displayed token count is marked up over raw API tokens (default
+		// 5× — we sell chat at ~5× the underlying Anthropic spend). alert /
+		// overdraft columns back the two preference cards on the billing
+		// page. cycle_start / cycle_end gate the current-period aggregation.
+		`CREATE TABLE IF NOT EXISTS admin.billing_subscriptions (
+			tenant_id         UUID PRIMARY KEY REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			plan              TEXT NOT NULL DEFAULT 'growth',
+			status            TEXT NOT NULL DEFAULT 'active',
+			cycle_start       DATE NOT NULL DEFAULT date_trunc('month', now())::date,
+			cycle_end         DATE NOT NULL DEFAULT (date_trunc('month', now()) + interval '1 month')::date,
+			token_multiplier  NUMERIC(5,2) NOT NULL DEFAULT 5.00,
+			alert_threshold   INT  NOT NULL DEFAULT 80,
+			alert_slack       BOOL NOT NULL DEFAULT false,
+			overdraft_enabled BOOL NOT NULL DEFAULT false,
+			overdraft_notify  BOOL NOT NULL DEFAULT true,
+			updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+		);`,
+
+		// tokens_used is the displayed number (already multiplier-adjusted).
+		// amount_usd is nullable because an "upcoming" invoice has no final
+		// total yet. pdf_url is populated once payment succeeds; it's just
+		// a string — the actual PDF generation isn't wired.
+		`CREATE TABLE IF NOT EXISTS admin.billing_invoices (
+			id            TEXT PRIMARY KEY,
+			tenant_id     UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			period_start  DATE NOT NULL,
+			period_end    DATE NOT NULL,
+			tokens_used   BIGINT NOT NULL DEFAULT 0,
+			amount_usd    NUMERIC(10,2),
+			status        TEXT NOT NULL DEFAULT 'upcoming',
+			pdf_url       TEXT,
+			created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_invoices_tenant
+			ON admin.billing_invoices(tenant_id, period_start DESC);`,
 	}
 
 	for i, m := range migrations {

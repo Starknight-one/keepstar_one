@@ -1,0 +1,260 @@
+.billing-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.billing-loading {
+  display: flex;
+  justify-content: center;
+  padding: 80px 0;
+}
+
+.billing-error {
+  padding: 16px;
+  background: rgba(229, 57, 53, 0.08);
+  color: var(--danger);
+  border-radius: var(--radius-md);
+}
+
+/* Current plan card */
+.current-plan { padding: 24px; }
+.cp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.cp-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+  margin-bottom: 6px;
+}
+.cp-plan-name {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.cp-plan-meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.cp-usage {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border-soft);
+}
+.cp-usage-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+.cp-usage-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.cp-usage-value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 160px;
+}
+.cp-usage-current {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+}
+.cp-usage-quota {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.cp-usage-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border-soft);
+  overflow: hidden;
+}
+.cp-usage-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+.cp-details {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border-soft);
+}
+.cp-detail-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.cp-detail-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Plans */
+.plans {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.plans-header { margin-bottom: 4px; }
+.plans-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.plans-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.plans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.plan-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  transition: border-color 0.15s;
+}
+.plan-row:hover { border-color: var(--text-subtle); }
+.plan-row-current { border-color: var(--text); }
+.plan-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.plan-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.plan-row-icon { color: var(--accent); }
+.plan-row-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.plan-row-sep { color: var(--text-subtle); }
+.plan-row-tokens { color: var(--text-muted); }
+.plan-row-details {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Preferences */
+.prefs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.prefs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.prefs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prefs-head h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.prefs-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.prefs-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.prefs-row-label {
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* Invoices */
+.invoices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.invoices-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.invoices-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.invoices-view-all {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.invoices-view-all:hover { color: var(--text); }
+.inv-id {
+  font-family: 'Inter', monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.inv-action {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+}
+.inv-action:hover { text-decoration: underline; }
+.inv-action-muted {
+  color: var(--text-subtle);
+  cursor: default;
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .cp-details,
+  .plan-row-details {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .prefs {
+    grid-template-columns: 1fr;
+  }
+}

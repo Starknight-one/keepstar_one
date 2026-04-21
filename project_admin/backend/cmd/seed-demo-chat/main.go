@@ -119,7 +119,67 @@ func main() {
 	}
 
 	fmt.Printf("Demo chat seeded.\n  session_id = %s\n  tenant     = %s\n  traces     = 2\n  actions    = 1\n", sessionID, tenant)
+
+	// Billing demo — one subscription row and three invoices for the current
+	// demo tenant. Resolves the slug stored on chat_sessions into the UUID
+	// that admin.billing_* tables reference.
+	var tenantUUID string
+	err = pool.QueryRow(ctx, `SELECT id::text FROM catalog.tenants WHERE slug = $1`, tenant).Scan(&tenantUUID)
+	if err != nil {
+		log.Printf("skip billing seed: tenant %q not found in catalog.tenants (%v)", tenant, err)
+		return
+	}
+
+	// Subscription — ON CONFLICT preserves any preference changes made via
+	// the admin UI between seed runs; we only re-anchor plan + cycle.
+	if _, err = pool.Exec(ctx, `
+		INSERT INTO admin.billing_subscriptions
+			(tenant_id, plan, status, cycle_start, cycle_end, token_multiplier)
+		VALUES ($1, 'growth', 'active',
+		        date_trunc('month', now())::date,
+		        (date_trunc('month', now()) + interval '1 month')::date,
+		        5.00)
+		ON CONFLICT (tenant_id) DO UPDATE
+		   SET plan = EXCLUDED.plan,
+		       status = EXCLUDED.status,
+		       cycle_start = EXCLUDED.cycle_start,
+		       cycle_end   = EXCLUDED.cycle_end,
+		       token_multiplier = EXCLUDED.token_multiplier,
+		       updated_at = now()
+	`, tenantUUID); err != nil {
+		log.Fatalf("insert subscription: %v", err)
+	}
+
+	// Three invoices: current month (upcoming), prior two months (paid).
+	// IDs are INV-YYYY-MM so they stay stable across seed runs.
+	now := time.Now().UTC()
+	months := []struct {
+		offset  int  // 0 = this month, -1 = last month, ...
+		status  string
+		tokens  int64
+		amount  *float64
+	}{
+		{0, "upcoming", 34200, nil},
+		{-1, "paid", 41850, ptrF(49.00)},
+		{-2, "paid", 29100, ptrF(49.00)},
+	}
+	for _, m := range months {
+		first := time.Date(now.Year(), now.Month()+time.Month(m.offset), 1, 0, 0, 0, 0, time.UTC)
+		last := first.AddDate(0, 1, -1)
+		id := fmt.Sprintf("INV-%04d-%02d", first.Year(), int(first.Month()))
+		if _, err = pool.Exec(ctx, `
+			INSERT INTO admin.billing_invoices
+				(id, tenant_id, period_start, period_end, tokens_used, amount_usd, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (id) DO NOTHING
+		`, id, tenantUUID, first, last, m.tokens, m.amount, m.status); err != nil {
+			log.Fatalf("insert invoice %s: %v", id, err)
+		}
+	}
+	fmt.Printf("Billing demo seeded for tenant %s.\n", tenantUUID)
 }
+
+func ptrF(f float64) *float64 { return &f }
 
 func buildTraceData(query, formationJSON string) []byte {
 	trace := map[string]any{

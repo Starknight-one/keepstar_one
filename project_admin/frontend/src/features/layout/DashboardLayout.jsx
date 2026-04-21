@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Package, Upload, Code, Settings, LogOut, MessageSquare, Palette, Activity } from 'lucide-react'
+import { Package, Upload, Code, Settings, LogOut, MessageSquare, Palette, Activity, CreditCard } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider.jsx'
 import './layout.css'
 
@@ -37,6 +37,9 @@ export default function DashboardLayout() {
           </NavLink>
           <NavLink to="/settings" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Settings size={18} /> Settings
+          </NavLink>
+          <NavLink to="/billing" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+            <CreditCard size={18} /> Billing
           </NavLink>
         </nav>
         <div className="sidebar-footer">
