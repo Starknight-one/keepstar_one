@@ -1,7 +1,7 @@
 # V1 Engine Removal — Refactoring Spec
 
 Дата: 2026-03-30
-Статус: Planned
+Статус: 🟡 **OPEN (verified 2026-04-26)** — V1/V2 код всё ещё лежит в `project/backend/` (legacy). V4 в проде через `af5c95a Merge feature/engine-v4 into main — Alpha 1.0.0`. Удаление V1 не блокирует запуск, но имеет смысл для гигиены.
 Тип: Рефакторинг
 
 ---

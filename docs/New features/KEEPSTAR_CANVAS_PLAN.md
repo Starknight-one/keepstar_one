@@ -1,6 +1,7 @@
 # KeepstarCanvas — Implementation Plan
 
-> Status: **approved 2026-04-12**, implementation in progress.
+> Status: ✅ **DONE 2026-04-20** — Phases 1-8 all shipped: `4ed581c` (P1 preset CRUD backend), `de81801` (P2 tenant preset loader), `5d561ea` (P3 design context in Agent2 prompt), `281e582` (P4 canvas UI shell), `0b7c314` (P5 tldraw + preset tiles), `4c6ea5c` (P6 inspector editing + publish/delete), `12c7bba` (P7 components library + save-from-trace), `b89bd9c` (P8 design tokens editor + themes).
+> Original status: approved 2026-04-12.
 > Mockup: scratch `.pen` file, frame `KeepstarCanvas` (1440×900, Soft Bento Clinical dark theme).
 > Canonical plan file (for claude sessions): `/Users/starknight/.claude/plans/mutable-launching-fiddle.md` — this project doc is the survivable mirror.
 

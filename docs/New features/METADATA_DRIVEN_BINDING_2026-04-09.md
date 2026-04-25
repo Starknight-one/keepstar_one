@@ -2,7 +2,7 @@
 
 **Дата**: 2026-04-09
 **Ветка**: `feature/engine-v4`
-**Статус**: дизайн утверждён, готов к имплементации через plan mode по шагам
+**Статус**: ✅ **DONE 2026-04-10** — Sessions A/B/C shipped: `7e15cd9` (tree_map + `<fields>` block), `9261327` (fieldName override + FIELD BINDING rule), `5566439` (Product.Extra wiring + test-electronics seed), `2fa746e` (VectorSearch reads p.extra). Verified: `7caeb8f`.
 **Закрывает**: `docs/PRE_LAUNCH_TASKS.md` → 4.3 B7 role-based field resolution
 
 ---

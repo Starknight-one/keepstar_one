@@ -2,14 +2,16 @@
 
 Единый каталог задач до прод-реди. Источники:
 1. Наброски из google sheet (владелец-only, экспорт 2026-04-08)
-2. Known gaps из `docs/Updates/feature-engine-v4_*.md` (2026-04-04 … 2026-04-07)
-3. `docs/New features/LAUNCH_CHECKLIST.md`
+2. Known gaps из `docs/Updates/feature-engine-v4_*.md` (2026-04-04 … 2026-04-13)
+3. ~~`docs/New features/LAUNCH_CHECKLIST.md`~~ — удалён 2026-04-26 как устаревший snapshot, всё актуальное здесь
 
 Формат: **Задача** → Контекст (откуда) → Что сделать → Как проверить → Якоря.
 
 Без приоритетов, без оценок — просто каталог. Фильтрацию/сортировку делаем потом вручную.
 
-Статусы в скобках после заголовка: `(open)` / `(partial)` / `(done)` / `(blocked)`.
+Статусы в скобках после заголовка: `(open)` / `(partial)` / `(done)` / `(blocked)` / `(reverted)`.
+
+**Последняя сверка с git: 2026-04-26.** Закрытые с прошлой сверки задачи отмечены DONE-баннером с датой и коммитами.
 
 ---
 
@@ -199,7 +201,15 @@
 
 ---
 
-## 2.12 Tenant design system + session overrides (open)
+## 2.12 Tenant design system + session overrides (partial)
+
+**Прогресс**: design tokens editor + themes — DONE через KeepstarCanvas Phase 8 (`b89bd9c`). Тенант может задать свои tokens в админке, runtime их применяет.
+
+**Что осталось open**: session-scoped overrides (когда user в чате говорит «поменяй кнопки на красные» — только эта сессия). Связь с 2.7.
+
+---
+
+## 2.12-orig Tenant design system + session overrides — original spec (для контекста)
 
 **Контекст**: sheet row 16. Движок должен использовать дизайн-систему тенанта (tokens: colors, typography, spacing, radii). В админке тенант задаёт свою, в runtime применяется. User session может запросить переопределение — только в рамках сессии.
 
@@ -319,19 +329,18 @@
 
 ---
 
-## 4.3 B7: role-based field resolution (любой каталог) (open, большое)
+## 4.3 B7: role-based field resolution (любой каталог) (done)
 
-**Контекст**: `15-35.md` Known gaps #1. Все product-пресеты прибиты к `images/name/price/rating/brand/description/category/tags`. Для ноутбуков `rating`/`brand` пусты, `cpu`/`ram` не появляются. Это **главный блокер** для LAUNCH_CHECKLIST «любой каталог, не только cosmetics» и sheet row 20.
+**Закрыто 2026-04-10** через 3 сессии metadata-driven binding (вместо изначального плана с `role` enum в field_definitions выбран более элегантный путь — Agent2 видит per-tenant `<fields>` dictionary в системном промпте и в runtime эмитит fieldName-override ops):
+- `7e15cd9` — Session A: conditional tree_map + Agent2 `<fields>` block
+- `9261327` — Session B: fieldName override + FIELD BINDING rule в промпте
+- `5566439` — Session C: `catalog.products.extra` JSONB + test-electronics PoC seed
+- `2fa746e` — VectorSearch reads p.extra
+- `7caeb8f` — verified в проде
 
-**Что сделать**:
-- В `catalog.field_definitions` добавить поле `role` enum: `title | subtitle | price | image_primary | rating | brand | description | spec_primary | spec_secondary | badge | tag`.
-- Tenant impostation/enrichment заполняет роли для каждого поля (автоматически LLM-ом + ручная корректировка в админке).
-- В engine — slot resolver: вместо hardcoded `fieldName: "name"` в пресете использовать `role: "title"` → резолвится в runtime из field_definitions.
-- Перевести все 12 пресетов на slot-based resolution.
+**Дизайн**: `docs/New features/METADATA_DRIVEN_BINDING_2026-04-09.md`. Доки сессий: `2026-04-09_*` + `2026-04-10_01-43.md` (PoC verification).
 
-**Как проверить**: залить каталог ноутбуков, «покажи игровые ноуты» → карточки с правильными полями (название, цена, CPU, RAM) без ручного конфига пресетов.
-
-**Якоря**: `project_v4/backend/internal/engine_v4/presets_product.go` (все пресеты), `catalog.field_definitions` schema, `project_v4/backend/internal/adapters/postgres/catalog_*.go`, `project_admin/backend/internal/usecases/enrichment_*.go`.
+**Якоря**: `project_v4/backend/internal/engine_v4/ops.go` (mergeAtomProps fieldName override), `project_v4/backend/internal/usecases/agent2_execute.go` (loadFieldLabels + buildSystemPromptWithFields), `project_v4/backend/internal/adapters/postgres/field_definition_adapter.go`, `project_v4/backend/internal/prompts/prompt_compose_widgets.go` (FIELD BINDING section).
 
 ---
 
@@ -426,30 +435,9 @@
 
 ---
 
-## 4.11 Streaming Agent2 + прогрессивный рендер фронта (open, demo-критично)
+## 4.11 Streaming Agent2 + прогрессивный рендер фронта (dropped)
 
-**Контекст**: обсуждение 2026-04-09. Anthropic стримит токены tool_use как `input_json_delta` events. Backend парсит частичный JSON, по мере появления полных widget ops применяет partial Execute и пушит результат фронту через SSE. Фронт инкрементально дорисовывает UI. **LLM call ровно один**, тот же промпт, тот же cache, та же стоимость — выигрыш чисто subjective latency.
-
-**Ожидаемый эффект**: hero появляется через ~25-30% времени генерации Agent2 (300-500ms вместо 1.5-2s). Subjective latency -40-50% на composition. На демо — продаваемый wow-эффект.
-
-**Что сделать**:
-- Backend: streaming JSON parser в Anthropic adapter (накопительный буфер + bracket counting).
-- Engine: разрешить partial Execute — per-widget constraints применяются сразу, cross-widget (C1) откладываются на финальный pass.
-- HTTP layer: новый SSE endpoint `/api/v1/pipeline/stream` (или флаг на existing) с events `widget_ready`, `formation_complete`, `error`.
-- Frontend: SSE reader, инкрементальный renderer с **скелетонами** для loading state (плейсхолдер пока виджет ещё не пришёл, smooth fade-in при готовности).
-- Traces: расширить `/debug/traces/` на streaming events (несколько snapshots в одном turn).
-
-**Edge cases**:
-- Agent2 ломается на middle widget → фронт уже отрендерил предыдущие. Решение: показать error inline под отрендеренным куском, не rollback.
-- Constraint C1 (cross-widget coverage) применяется в конце → может удалить уже отрендеренные атомы. Решение: либо отложить рендер до конца C1 pass, либо C1 emits update events.
-- Single-widget кейсы (детали товара) — стримить нечего, ведут себя как сейчас. Не регрессия.
-
-**Как проверить**:
-- E2E на 5 composition сценариях, замер subjective latency через DevTools Performance (TTFB → first widget visible).
-- Regression: «покажи крема», «покажи деталь» — не сломаны.
-- Cost trace: до/после, должно быть идентично.
-
-**Якоря**: `project_v4/backend/internal/adapters/anthropic/` (streaming), `project_v4/backend/internal/handlers/handler_pipeline.go` (SSE endpoint), `project_v4/backend/internal/engine_v4/engine.go` (partial Execute), `project_v4/backend/internal/engine_v4/constraints.go` (C1 deferred), `project_v4/frontend/src/features/chat/` (SSE consumer), `project_v4/frontend/src/entities/widget/WidgetSkeleton.tsx` (новый компонент).
+**Закрыто как dropped 2026-04-26.** Пробовали 2026-04-13 (`54cce02 streaming Agent2 + progressive widget rendering`, `d3a66b1 expose Flusher`, `8b63ab8 preset-aware provisional rendering`), затем откатили: `e4f9a0d`, `0962165`, `23a080d` (всё в один день). Решение Vlad'а: **выкинуть из роадмапа полностью**. Не возвращаемся.
 
 ---
 
@@ -465,34 +453,44 @@
 
 # 5. Admin
 
-## 5.1 Tenant-defined presets (open)
+## 5.1 Tenant-defined presets (done)
 
-**Контекст**: sheet row 13. Дефолтные 12 пресетов у всех, но тенант должен мочь сам создать/изменить свои — они лучше понимают бизнес.
+**Закрыто 2026-04-12 … 2026-04-20** через KeepstarCanvas Phases 1-8:
+- `4ed581c` — P1: preset CRUD backend (`tenant.custom_presets` JSONB schema)
+- `de81801` — P2: tenant preset loader в engine (merge default + tenant в runtime)
+- `5d561ea` — P3: tenant design context в Agent2 prompt
+- `4c6ea5c` — P6: inspector editing + publish/delete
+- `12c7bba` — P7: components library + save-from-trace
 
-**Что сделать**:
-- Схема `tenant.custom_presets` (JSONB с ops).
-- UI в админке: визуальный редактор или raw JSON ops.
-- Runtime: при session init + каждый Execute — merge default + tenant presets в registry.
-- Связано с 2.7 (session overrides) и 2.12 (design tokens).
+Дизайн: `docs/New features/KEEPSTAR_CANVAS_PLAN.md`.
 
-**Якоря**: `project_admin/frontend/src/pages/Presets/` (новое), `project_v4/backend/internal/engine_v4/presets.go` (registry), новая таблица.
+**Якоря**: `project_admin/backend/internal/usecases/preset_*.go`, `project_v4/backend/internal/engine_v4/tenant_preset_loader.go`, `project_admin/frontend/src/features/canvas/`.
 
 ---
 
-## 5.2 Admin import: любой формат + agent builds catalog (open, big)
+## 5.2 Admin import: любой формат + agent builds catalog (partial)
 
-**Контекст**: sheet row 21, LAUNCH_CHECKLIST «доработать админку, в частности загрузку». Админка должна позволять загружать произвольные форматы (JSON, CSV, XML, URL scrape), и агент на стороне админки должен:
-- Если каталога нет — создать field_definitions на основе данных.
-- Если есть — проапгрейдить: добавить новые поля, не ломая старые.
+**Прогресс 2026-04-19** (`b8adcd1 feat(admin): onboarding MVP — CSV + Shopify integrations`):
+- ✅ CSV upload pipeline
+- ✅ Shopify connector (OAuth + product fetch)
+- ✅ Базовая нормализация в `master_products` + `catalog.products`
+- ✅ Per-tenant `field_definitions` сидится при первом импорте
 
-**Что сделать**:
-- Import pipeline: upload → format detect → normalize to JSON records → schema inference (LLM).
-- Schema merge: diff new schema vs existing field_definitions, predict migrations, ask user confirm.
-- Enrichment: запускается после import, заполняет роли полей (связь с 4.3).
+**Что осталось** — это содержание `docs/New features/admin_catalog_design_2026-04-23.md` (final design closed 2026-04-23):
+- Master/Listing split с COALESCE-рендером
+- Match cascade (GTIN → vendor+SKU → fuzzy → embedding → новый master)
+- Mapping artifact (1 LLM-вызов на тенанта, кешируется)
+- Candidates staging + curator promotion
+- Junk variants detection + classification
+- Per-vertical Tier 2 таблицы (Option B)
+- Public API (REST endpoints)
+- Curator service (отдельная папка)
+- Метаdata-first import flow с 4-layer cache при re-import
+- Юнит-парсер (`internal/units/`)
 
-**Как проверить**: загрузить ноутбуки из новой CSV → автоматически появился каталог с ролями → запрос «покажи ноуты» рендерит.
+**Следующий шаг**: имплементация по дизайну (см. `admin_catalog_design_2026-04-23.md` §10 чек-лист).
 
-**Якоря**: `project_admin/backend/internal/usecases/import_*.go`, `project_admin/backend/internal/usecases/enrichment_*.go`, `project_admin/frontend/src/pages/Import/`.
+**Якоря**: `project_admin/backend/internal/usecases/import_*.go`, `project_admin/backend/internal/usecases/enrichment_*.go`, `project_admin/frontend/src/features/import/`, `project_admin/frontend/src/features/catalog/`.
 
 ---
 
@@ -578,15 +576,15 @@
 
 **Что сделать**: `go vet`, `staticcheck`, `deadcode`; на фронте — `ts-prune`, `knip`. Удалить unused. Особое внимание legacy `project/backend/` — возможно целиком снести после merge V4.
 
-## 7.8 Docs cleanup (open, мелкое)
+## 7.8 Docs cleanup (done)
 
-**Контекст**: `2026-04-07_04-11.md` gap #6.
+**Закрыто 2026-04-26**:
+- DONE-баннеры в SPEC-доках: METADATA_DRIVEN_BINDING, KEEPSTAR_CANVAS_PLAN, multi_widget_handoff, admin_onboarding_gaps, V1_ENGINE_REMOVAL.
+- Удалены устаревшие: BACKEND_REFACTORING_SPEC, LAUNCH_CHECKLIST, TEST_RESET_SPEC, PENCIL_VS_V4_COMPARISON.html, Engine_hustle.
+- Удалён мусор: `docs/.DS_Store` (+ .gitignore), `docs/ответы`, `docs/plan10.md`.
+- Этот трекер сверен с git, статусы обновлены.
 
-**Что сделать**:
-- `docs/New features/multi_widget_handoff_2026-04-07.md` — оставить как historical context (не удалять).
-- `docs/New features/PENCIL_VS_V4_COMPARISON.html` — untracked, решить: commit или удалить.
-- `docs/ответы/` — untracked, решить что там и куда.
-- Ссылка на `PRE_LAUNCH_TASKS.md` в CLAUDE.md теперь валидная — проверить.
+**Что оставили живым** в `docs/New features/`: admin_catalog_design (текущий), PITCHLINK_SPEC (KEEP), engine_v5_v9_integration_plan (partial — design phase), marketing_triggers_and_narration_spec (partial), sales_readiness_assessment (snapshot, актуален частично), COMPOSE_SPEC (open), OWNER_DASHBOARD_SPEC (reference), PENCIL_CONVERGENCE_SPEC + PENCIL_ENGINE_V4_HYPOTHESIS + PENCIL_HYBRID_ENGINE (reference), TRACE_VISIBILITY_SPEC (reference), V1_ENGINE_REMOVAL_SPEC (open), METADATA_DRIVEN_BINDING (DONE-banner), KEEPSTAR_CANVAS_PLAN (DONE-banner), multi_widget_handoff (DONE-banner), admin_onboarding_gaps (MOSTLY DONE-banner).
 
 ---
 
@@ -622,6 +620,7 @@
 
 ## Закрытые задачи (done — для памяти и чтобы не возникали повторно)
 
+### Engine V4 core
 - **B3** replicate explicit flag + limit → `2026-04-06_14-51.md`
 - **B2** 12 named presets → `2026-04-06_15-35.md`
 - **#3** multi-widget composition, 6 phases → `2026-04-07_04-11.md`
@@ -632,4 +631,29 @@
 - **Tool validation + COMPOSING prompt** → Phase 5 of #3
 - **Phase 6 E2E verification** → `2026-04-07_04-11.md`
 - **1.2** Agent1 tenant digest в system prompt + prompt cache → `2026-04-09_01-21.md` + `2026-04-09_02-05.md`
-- **ReplicateConfig persistence** (fix: `json:"-"` → `json:"replicate"`, чинит tree_map dedupe и groupIntoSections на modify-turn'ах) → `2026-04-09_02-05.md`
+- **ReplicateConfig persistence** (fix: `json:"-"` → `json:"replicate"`) → `2026-04-09_02-05.md`
+- **B7 (4.3)** metadata-driven binding (любой каталог) → `7e15cd9, 9261327, 5566439, 2fa746e, 7caeb8f` (2026-04-10)
+
+### Admin (auth, onboarding, billing, redesign)
+- **Admin auth stack** — Google OAuth, Telegram Login, SMTP reset, refresh rotation, TOTP/Email 2FA, multi-tenant, invitations → `ef280aa` (2026-04-19/20)
+- **Admin onboarding MVP** — CSV + Shopify integrations → `b8adcd1` (2026-04-19)
+- **Admin redesign Pencil** — black sidebar, redesigned Chats/Catalog/Import → `be78e70` (2026-04-20)
+- **Admin Billing & Usage page** — full UI + real token usage aggregation → `c9893d1` (2026-04-21)
+- **Admin Catalog tree wiring + English names** → `bce6c8c` (2026-04-20)
+
+### KeepstarCanvas (Phases 1-8) → закрывает 5.1, partial 2.12
+- P1 preset CRUD backend → `4ed581c`
+- P2 tenant preset loader → `de81801`
+- P3 design context в Agent2 prompt → `5d561ea`
+- P4 canvas UI shell + routing → `281e582`
+- P5 tldraw integration + preset tiles → `0b7c314`
+- P6 inspector editing + publish/delete → `4c6ea5c`
+- P7 components library + save-from-trace → `12c7bba`
+- P8 design tokens editor + themes → `b89bd9c`
+
+### Прокачка пайплайна (April)
+- **Streaming Agent2** — попробовали и откатили → `54cce02 + reverts e4f9a0d/0962165/23a080d` (2026-04-13). Решение: dropped, см. 4.11.
+- **Prompt cache audit + Agent2 conversation cache** → `403d1fe` (2026-04-09)
+
+### Дизайн закрыт, ждёт имплементации
+- **Admin Catalog** (master/listing, candidates, mapping artifact, curator) → `docs/New features/admin_catalog_design_2026-04-23.md` + commit `c0e776c` (2026-04-23)
