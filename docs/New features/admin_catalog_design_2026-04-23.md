@@ -927,16 +927,35 @@ POST   /api/v1/webhooks                       # subscribe to listing/master even
 - [x] Match cascade (§4.6)
 - [x] UI скелет (§6)
 - [x] Public API endpoints (§7)
-- [ ] Roadmap по дням (отдельный документ — следующий шаг)
-- [ ] Migration order (зависимости между таблицами и FK — производное от §3, нужно расписать step-by-step)
+- [x] **Roadmap по milestone'ам** → `docs/New features/admin_catalog_implementation_plan_2026-04-26.md` (12 milestones M1-M12)
+- [x] **Migration order** — закрыто M1, см. `catalog_migrations.go` + `docs/Updates/main-admin-catalog-m1-m3-plus-shopify-oauth_2026-04-26_10-28.md`
 
 ### Что должно быть проверено в первой неделе имплементации
 
-- [ ] Match cascade на реальных данных heybabes (967 продуктов): какой % уходит в auto, какой в review queue
-- [ ] Embedding A/B test (parent-only vs parent+variant)
-- [ ] Unit parser unit-тесты на 50+ реальных Shopify weight/volume strings
-- [ ] Bulk job перформанс на полном каталоге одного тенанта
-- [ ] COALESCE рендер на 1000 listings — нет ли N+1, нужны ли materialized views
+- [ ] Match cascade на реальных данных heybabes (967 продуктов): какой % уходит в auto, какой в review queue — **закрывается в M5+M7**
+- [ ] Embedding A/B test (parent-only vs parent+variant) — **deferred until после M7**
+- [x] **Unit parser** — 40 subtests pass, English-only (M3, commit `71d5d7c`)
+- [ ] Bulk job перформанс на полном каталоге одного тенанта — **закрывается в M4**
+- [ ] COALESCE рендер на 1000 listings — нет ли N+1, нужны ли materialized views — **закрывается в M6**
+
+### Прогресс по milestone-плану (2026-04-26)
+
+| M | Описание | Status | Commit | Лог |
+|---|---|---|---|---|
+| M1 | Schema migrations (additive) | ✅ done | `ad2386a` | `docs/Updates/main-admin-catalog-m1-m3-plus-shopify-oauth_2026-04-26_10-28.md` |
+| M2 | Domain types + ports + adapters | ✅ done | `8065fcc` | (same) |
+| M3 | Units parser | ✅ done | `71d5d7c` | (same) |
+| M4 | New Shopify metadata-first import | ⏳ next | — | — |
+| M5 | Match cascade + junk detection | pending | — | — |
+| M6 | COALESCE-render admin + V4 engine | pending | — | — |
+| M7 | Heybabes 967 backfill script | pending | — | — |
+| M8 | Categories M:N + tree editor | pending | — | — |
+| M9 | Detected add-ons page (junk triage UI) | pending | — | — |
+| M10 | Public API + api_keys management | pending | — | — |
+| M11 | Curator service (standalone) | pending | — | — |
+| M12 | Audit log + promotion mechanics | pending | — | — |
+
+Бонусом этой сессии (не в M-плане): проdovskoy Shopify OAuth полностью заработал на dev-store `keepstar-neaqpan1.myshopify.com` (коммиты `c99589f` + `d87a676` + Railway env config). 17 продуктов синкнулись в **старую схему** через legacy importer — будут backfill'нуты в M4 или отдельным шагом.
 
 ---
 
@@ -969,6 +988,16 @@ POST   /api/v1/webhooks                       # subscribe to listing/master even
 ---
 
 ## Changelog
+
+- **2026-04-26 — implementation kickoff (M1-M3 done)**
+  - §10 чек-лист обновлён: добавлен прогресс по milestone-плану, отмечены закрытые задачи
+  - Сам план — `docs/New features/admin_catalog_implementation_plan_2026-04-26.md`
+  - Лог сессии — `docs/Updates/main-admin-catalog-m1-m3-plus-shopify-oauth_2026-04-26_10-28.md`
+  - **Решения по 3 развилкам** (через AskUserQuestion при старте плана):
+    - Cosmetics PIM-колонки → **извлекаем в master_cosmetics** (Tier 2 extract)
+    - Heybabes 967 + dev-store 17 → **wipe dev-store + resync, backfill heybabes**
+    - Curator service → **standalone** (отдельная папка curator/, отдельный логин)
+  - В сессии также проdovskoy Shopify OAuth заработал end-to-end (отдельная задача, не из M-плана)
 
 - **2026-04-23 — v1 (final design closed)**
   - Свёрнут весь Q&A раунд (~5 часов работы), все решения зафиксированы
