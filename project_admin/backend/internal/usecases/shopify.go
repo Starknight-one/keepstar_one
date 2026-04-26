@@ -117,7 +117,7 @@ func (uc *ShopifyUseCase) CompleteOAuth(ctx context.Context, shop, code, state s
 		DisplayName: normalized,
 		ExternalID:  normalized,
 		Credentials: token,
-		Config:      map[string]any{"scopes": "read_products,read_product_listings,read_inventory"},
+		Config:      map[string]any{"scopes": uc.client.Scopes()},
 	}
 	integration, err = uc.integrations.Create(ctx, integration)
 	if err != nil {

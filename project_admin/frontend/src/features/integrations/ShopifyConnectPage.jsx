@@ -38,7 +38,7 @@ export default function ShopifyConnectPage() {
           <Button type="submit">Install Keepstar</Button>
         </div>
         <p className="text-secondary" style={{ fontSize: 12, marginTop: 16 }}>
-          We request read-only access to products, listings, and inventory. No write scopes.
+          We request access to products, listings, inventory, locations, metaobjects, and orders. Scopes match the Shopify App configuration on our side.
         </p>
       </form>
     </div>

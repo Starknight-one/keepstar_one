@@ -245,7 +245,7 @@ func main() {
 			csvMappingUC = usecases.NewCSVMappingUseCase(cfg.AnthropicAPIKey, cfg.EnrichmentModel, log)
 		}
 		if cfg.HasShopify() {
-			shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret)
+			shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret, cfg.ShopifyAPIVersion, cfg.ShopifyScopes)
 			shopifyUC = usecases.NewShopifyUseCase(shopifyClient, integrationsAdapter, importUC, catalogAdapter, cfg.PublicBaseURL, log)
 			log.Info("shopify_integration_enabled")
 		}

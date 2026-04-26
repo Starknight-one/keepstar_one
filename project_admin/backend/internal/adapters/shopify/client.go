@@ -21,21 +21,37 @@ import (
 	"time"
 )
 
-const apiVersion = "2024-07"
+const defaultAPIVersion = "2026-04"
+const defaultScopes = "read_products,read_product_listings,read_inventory"
 
 type Client struct {
-	apiKey    string
-	apiSecret string
-	http      *http.Client
+	apiKey     string
+	apiSecret  string
+	apiVersion string
+	scopes     string
+	http       *http.Client
 }
 
-func NewClient(apiKey, apiSecret string) *Client {
+func NewClient(apiKey, apiSecret, apiVersion, scopes string) *Client {
+	if apiVersion == "" {
+		apiVersion = defaultAPIVersion
+	}
+	if scopes == "" {
+		scopes = defaultScopes
+	}
 	return &Client{
-		apiKey:    apiKey,
-		apiSecret: apiSecret,
-		http:      &http.Client{Timeout: 30 * time.Second},
+		apiKey:     apiKey,
+		apiSecret:  apiSecret,
+		apiVersion: apiVersion,
+		scopes:     scopes,
+		http:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
+
+// Scopes returns the configured scope list (comma-separated). Useful for
+// persisting alongside an integration record so we know later what we asked
+// for at install time, even if the env-configured set drifts.
+func (c *Client) Scopes() string { return c.scopes }
 
 // shopDomainRE guards against open-redirect abuse: the `shop` query param
 // must be a *.myshopify.com hostname. Any other shape gets rejected upstream.
@@ -49,11 +65,12 @@ func ValidateShopDomain(shop string) (string, bool) {
 }
 
 // InstallURL builds the redirect to Shopify's OAuth consent screen. Scopes
-// are hardcoded to read-only product data — we never write back to Shopify.
+// come from env (SHOPIFY_SCOPES) and must match what's registered in the
+// Shopify App's "Access" → "Scopes" section, otherwise install will be rejected.
 func (c *Client) InstallURL(shop, redirectURI, state string) string {
 	q := url.Values{}
 	q.Set("client_id", c.apiKey)
-	q.Set("scope", "read_products,read_product_listings,read_inventory")
+	q.Set("scope", c.scopes)
 	q.Set("redirect_uri", redirectURI)
 	q.Set("state", state)
 	return fmt.Sprintf("https://%s/admin/oauth/authorize?%s", shop, q.Encode())
@@ -147,7 +164,7 @@ func (c *Client) RegisterWebhook(ctx context.Context, shop, token, topic, addres
 		},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("https://%s/admin/api/%s/webhooks.json", shop, apiVersion),
+		fmt.Sprintf("https://%s/admin/api/%s/webhooks.json", shop, c.apiVersion),
 		bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -206,7 +223,7 @@ func (c *Client) ListProducts(ctx context.Context, shop, token, pageInfo string,
 	if limit <= 0 || limit > 250 {
 		limit = 250
 	}
-	u := fmt.Sprintf("https://%s/admin/api/%s/products.json?limit=%d", shop, apiVersion, limit)
+	u := fmt.Sprintf("https://%s/admin/api/%s/products.json?limit=%d", shop, c.apiVersion, limit)
 	if pageInfo != "" {
 		u += "&page_info=" + url.QueryEscape(pageInfo)
 	}
@@ -235,7 +252,7 @@ func (c *Client) ListProducts(ctx context.Context, shop, token, pageInfo string,
 // GetProduct fetches one product (used by products/create|update webhook
 // handlers when the payload is trimmed).
 func (c *Client) GetProduct(ctx context.Context, shop, token string, productID int64) (*ShopifyProduct, error) {
-	u := fmt.Sprintf("https://%s/admin/api/%s/products/%d.json", shop, apiVersion, productID)
+	u := fmt.Sprintf("https://%s/admin/api/%s/products/%d.json", shop, c.apiVersion, productID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -263,7 +280,7 @@ func (c *Client) GetProduct(ctx context.Context, shop, token string, productID i
 // on initial sync for catalogs <500; larger catalogs should use GraphQL
 // bulk-query (deferred — falls back to per-product REST for MVP).
 func (c *Client) GetProductMetafields(ctx context.Context, shop, token string, productID int64) ([]Metafield, error) {
-	u := fmt.Sprintf("https://%s/admin/api/%s/products/%d/metafields.json", shop, apiVersion, productID)
+	u := fmt.Sprintf("https://%s/admin/api/%s/products/%d/metafields.json", shop, c.apiVersion, productID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err

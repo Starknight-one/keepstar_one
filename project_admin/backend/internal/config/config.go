@@ -18,9 +18,11 @@ type Config struct {
 	WidgetBaseURL    string
 	ChatAPIURL       string
 	EncryptionKey    string // base64 of 32 random bytes — see internal/crypto/secretbox
-	ShopifyAPIKey    string
-	ShopifyAPISecret string
-	PublicBaseURL    string // canonical admin URL for OAuth redirects and webhook endpoints
+	ShopifyAPIKey     string
+	ShopifyAPISecret  string
+	ShopifyAPIVersion string // e.g. "2026-04"; falls back to client default if empty
+	ShopifyScopes     string // comma-separated; MUST match scopes in Shopify App config
+	PublicBaseURL     string // canonical admin URL for OAuth redirects and webhook endpoints
 
 	// SMTP — transactional email (password reset, email verify, invites, 2FA code)
 	SMTPHost     string
@@ -64,9 +66,11 @@ func Load() *Config {
 		WidgetBaseURL:    getEnv("WIDGET_BASE_URL", ""),
 		ChatAPIURL:       getEnv("CHAT_API_URL", ""),
 		EncryptionKey:    getEnv("ADMIN_ENCRYPTION_KEY", ""),
-		ShopifyAPIKey:    getEnv("SHOPIFY_API_KEY", ""),
-		ShopifyAPISecret: getEnv("SHOPIFY_API_SECRET", ""),
-		PublicBaseURL:    getEnv("PUBLIC_BASE_URL", ""),
+		ShopifyAPIKey:     getEnv("SHOPIFY_API_KEY", ""),
+		ShopifyAPISecret:  getEnv("SHOPIFY_API_SECRET", ""),
+		ShopifyAPIVersion: getEnv("SHOPIFY_API_VERSION", ""),
+		ShopifyScopes:     getEnv("SHOPIFY_SCOPES", ""),
+		PublicBaseURL:     getEnv("PUBLIC_BASE_URL", ""),
 
 		SMTPHost:     getEnv("SMTP_HOST", ""),
 		SMTPPort:     getEnv("SMTP_PORT", "587"),
