@@ -465,9 +465,9 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 
 		// Seed global alias rows (idempotent via ON CONFLICT). Lowercase raw_token
 		// is the lookup key — parser lowercases before lookup.
+		// English-only seed (spec §1.14 — MVP no multi-language).
 		`INSERT INTO catalog.unit_aliases (tenant_id, raw_token, canonical_unit, source) VALUES
 			(NULL, 'ml', 'mL', 'seed'),
-			(NULL, 'мл', 'mL', 'seed'),
 			(NULL, 'milliliter', 'mL', 'seed'),
 			(NULL, 'milliliters', 'mL', 'seed'),
 			(NULL, 'l', 'mL', 'seed'),
@@ -477,7 +477,6 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			(NULL, 'oz', 'mL', 'seed'),
 			(NULL, 'g', 'g', 'seed'),
 			(NULL, 'gr', 'g', 'seed'),
-			(NULL, 'г', 'g', 'seed'),
 			(NULL, 'gram', 'g', 'seed'),
 			(NULL, 'grams', 'g', 'seed'),
 			(NULL, 'kg', 'g', 'seed'),
@@ -486,14 +485,12 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			(NULL, 'lbs', 'g', 'seed'),
 			(NULL, 'mm', 'mm', 'seed'),
 			(NULL, 'cm', 'mm', 'seed'),
-			(NULL, 'м', 'mm', 'seed'),
 			(NULL, 'm', 'mm', 'seed'),
 			(NULL, 'inch', 'mm', 'seed'),
 			(NULL, 'in', 'mm', 'seed'),
 			(NULL, '"', 'mm', 'seed'),
 			(NULL, 'pcs', 'pcs', 'seed'),
-			(NULL, 'pieces', 'pcs', 'seed'),
-			(NULL, 'шт', 'pcs', 'seed')
+			(NULL, 'pieces', 'pcs', 'seed')
 		ON CONFLICT (tenant_id, raw_token) DO NOTHING;`,
 
 		// --- api_keys: public REST API authentication ---
