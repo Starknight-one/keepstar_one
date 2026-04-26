@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"keepstar-admin/internal/domain"
@@ -386,6 +387,53 @@ func (a *MasterVariantsAdapter) FindMasterProductsByEmbedding(ctx context.Contex
 	rows, err := a.client.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("master products embedding search: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ports.MasterProductSummary, 0, limit)
+	for rows.Next() {
+		var s ports.MasterProductSummary
+		if err := rows.Scan(&s.ID, &s.Name, &s.Brand, &s.Vertical, &s.Confidence, &s.OwnerTenantID, &s.Score); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// FindMasterProductsByName runs a pg_trgm fuzzy match over (name + brand).
+// No external dependency, no API costs. Used by the discovery agent's
+// find_similar_masters tool.
+//
+// Concatenated string ("name brand") gets compared against the query so
+// "Hydrating Cleanser Dr.Althea" matches both name and brand at once.
+// Threshold 0.3 is loose — recall matters more than precision here, the
+// agent picks the right one from the top-5.
+func (a *MasterVariantsAdapter) FindMasterProductsByName(ctx context.Context, query, vertical string, limit int) ([]ports.MasterProductSummary, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+	args := []any{q, limit}
+	verticalClause := ""
+	if vertical != "" {
+		verticalClause = "AND mp.vertical = $3"
+		args = append(args, vertical)
+	}
+	sql := `
+		SELECT mp.id, mp.name, COALESCE(mp.brand, ''), mp.vertical, mp.confidence,
+			COALESCE(mp.owner_tenant_id::text, ''),
+			GREATEST(similarity(mp.name, $1), similarity(COALESCE(mp.brand, ''), $1))::float8 AS sim
+		FROM catalog.master_products mp
+		WHERE (mp.name % $1 OR COALESCE(mp.brand, '') % $1)
+		` + verticalClause + `
+		ORDER BY sim DESC
+		LIMIT $2`
+	rows, err := a.client.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("master products name search: %w", err)
 	}
 	defer rows.Close()
 	out := make([]ports.MasterProductSummary, 0, limit)

@@ -36,8 +36,12 @@ import (
 )
 
 const (
-	discoveryMaxTurns        = 30
-	discoveryMaxTokens       = 50_000
+	discoveryMaxTurns = 30
+	// discoveryMaxTokens counts NON-CACHED input + output. Cached reads cost
+	// ~10% and don't burn this budget — the bulk of input on every turn is
+	// the system prompt + tools, both of which we cache. Bumped from 50K
+	// (which a real run hit on turn 6 before caching was wired).
+	discoveryMaxTokens       = 150_000
 	discoveryWallclockBudget = 8 * time.Minute
 )
 
@@ -76,15 +80,24 @@ func NewDiscoveryAgent(
 
 // DiscoveryResult carries everything the caller needs to persist the
 // outcome and surface progress to UI / logs.
+//
+// PartialBuilder is non-nil whenever the loop ran at least one tool call,
+// even if the agent never reached commit_artifact. The orchestrator uses
+// it to persist whatever the agent did manage to propose as a
+// needs_human_review artifact — otherwise we'd lose all the agent's work
+// on a budget overrun.
 type DiscoveryResult struct {
-	Artifact     *domain.MappingArtifact // nil when status != active
-	Status       domain.MappingArtifactStatus
-	StopReason   string
-	TurnsUsed    int
-	InputTokens  int
-	OutputTokens int
-	Duration     time.Duration
-	Transcript   []TranscriptEntry // compact log; suitable for curator UI
+	Artifact          *domain.MappingArtifact // nil when status != active
+	PartialBuilder    *ArtifactBuilder        // non-nil whenever any propose_* fired
+	Status            domain.MappingArtifactStatus
+	StopReason        string
+	TurnsUsed         int
+	InputTokens       int // total (cached + uncached + output is separate)
+	OutputTokens      int
+	CachedReadTokens  int // subset of InputTokens — billed at ~10% of normal
+	CacheWriteTokens  int // one-time cache creation cost
+	Duration          time.Duration
+	Transcript        []TranscriptEntry
 }
 
 // TranscriptEntry is one entry in the human-readable transcript. Tool calls
@@ -128,8 +141,19 @@ func (da *DiscoveryAgent) Discover(ctx context.Context, tenantID string, report 
 		builder:     builder,
 	}
 
-	system := buildDiscoverySystemPrompt(report, tier1)
+	// Cache the system prompt + tool list. Both are static across all turns
+	// of this run — caching makes the per-turn cost ~10× smaller after the
+	// first turn (which writes the cache). The marker on the LAST tool tells
+	// Anthropic to cache everything up to and including it.
+	systemBlocks := []anthropic.SystemBlock{{
+		Type:         "text",
+		Text:         buildDiscoverySystemPrompt(report, tier1),
+		CacheControl: &anthropic.CacheControl{Type: "ephemeral"},
+	}}
 	tools := AgentTools()
+	if len(tools) > 0 {
+		tools[len(tools)-1].CacheControl = &anthropic.CacheControl{Type: "ephemeral"}
+	}
 
 	messages := []anthropic.Message{{
 		Role: "user",
@@ -141,17 +165,24 @@ func (da *DiscoveryAgent) Discover(ctx context.Context, tenantID string, report 
 		}},
 	}}
 
-	res := &DiscoveryResult{Status: domain.MappingArtifactStatusNeedsHumanReview}
+	res := &DiscoveryResult{
+		Status:         domain.MappingArtifactStatusNeedsHumanReview,
+		PartialBuilder: builder, // exposed so caller can persist partial work
+	}
 	start := time.Now()
 	defer func() { res.Duration = time.Since(start) }()
 
 	for turn := 1; turn <= discoveryMaxTurns; turn++ {
 		res.TurnsUsed = turn
 
-		// Budget pre-check — abort before another expensive Anthropic call.
-		if res.InputTokens+res.OutputTokens >= discoveryMaxTokens {
+		// Budget pre-check — count only the un-cached tokens against the
+		// budget. Cached reads are ~10× cheaper and would otherwise inflate
+		// the count without representing real cost.
+		uncached := (res.InputTokens - res.CachedReadTokens) + res.OutputTokens
+		if uncached >= discoveryMaxTokens {
 			res.StopReason = "token_budget_exceeded"
-			da.log.Info("discovery_budget_tokens", "tenant", tenantID, "tokens", res.InputTokens+res.OutputTokens)
+			da.log.Info("discovery_budget_tokens", "tenant", tenantID,
+				"uncached", uncached, "cached_read", res.CachedReadTokens)
 			return res, nil
 		}
 		if loopCtx.Err() != nil {
@@ -160,19 +191,18 @@ func (da *DiscoveryAgent) Discover(ctx context.Context, tenantID string, report 
 		}
 
 		resp, err := da.llm.Send(loopCtx, anthropic.MessagesRequest{
-			System:   system,
-			Tools:    tools,
-			Messages: messages,
+			SystemBlocks: systemBlocks,
+			Tools:        tools,
+			Messages:     messages,
 		})
 		if err != nil {
-			// Anthropic / network failure aborts the loop. Status stays
-			// needs_human_review so the operator sees the failure in the
-			// curator UI and can re-trigger.
 			res.StopReason = "llm_error: " + err.Error()
 			return res, fmt.Errorf("discovery turn %d: %w", turn, err)
 		}
 		res.InputTokens += resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.CacheReadInputTokens
 		res.OutputTokens += resp.Usage.OutputTokens
+		res.CachedReadTokens += resp.Usage.CacheReadInputTokens
+		res.CacheWriteTokens += resp.Usage.CacheCreationInputTokens
 
 		// Append the assistant turn to the transcript verbatim — we'll
 		// need it next turn whether or not there are tool calls.

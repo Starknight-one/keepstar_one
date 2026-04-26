@@ -57,9 +57,28 @@ func (c *AgentClient) Model() string { return c.model }
 // JSON Schema object (`{"type":"object", "properties":{...}, "required":[...]}`).
 // Keep schemas small — the agent re-reads them on every turn.
 type ToolDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	CacheControl *CacheControl   `json:"cache_control,omitempty"`
+}
+
+// CacheControl marks a content block as a cache breakpoint. Anthropic caches
+// everything from the start of the request up to and including the marked
+// block; subsequent calls within the 5-minute TTL read that prefix at ~10%
+// of normal input cost. Type is "ephemeral" (the only public option).
+type CacheControl struct {
+	Type string `json:"type"`
+}
+
+// SystemBlock is the array form of the system prompt. Use this instead of the
+// plain string when you need cache_control on the system content. Set Text
+// + Type="text"; mark with CacheControl to enable caching of the system +
+// tools prefix.
+type SystemBlock struct {
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
 // ContentBlock is one item in a message's content array. Discovery uses
@@ -92,12 +111,41 @@ type Message struct {
 }
 
 // MessagesRequest is the wire shape for POST /v1/messages with tools.
+// Use SystemBlocks (preferred) when caching the system prompt; otherwise
+// the plain System string still works for callers that don't need caching.
 type MessagesRequest struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	System    string    `json:"system,omitempty"`
-	Tools     []ToolDef `json:"tools,omitempty"`
-	Messages  []Message `json:"messages"`
+	Model        string        `json:"model"`
+	MaxTokens    int           `json:"max_tokens"`
+	System       string        `json:"-"` // serialized into SystemBlocks if present, else top-level "system"
+	SystemBlocks []SystemBlock `json:"system,omitempty"`
+	Tools        []ToolDef     `json:"tools,omitempty"`
+	Messages     []Message     `json:"messages"`
+}
+
+// MarshalJSON serializes Send-time: collapse System+SystemBlocks to one
+// "system" output (array form preferred, string fallback). The Anthropic
+// API accepts either, so this lets callers pick by setting the right field.
+func (r MessagesRequest) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		Model        string        `json:"model"`
+		MaxTokens    int           `json:"max_tokens"`
+		System       any           `json:"system,omitempty"`
+		Tools        []ToolDef     `json:"tools,omitempty"`
+		Messages     []Message     `json:"messages"`
+	}
+	a := alias{
+		Model:     r.Model,
+		MaxTokens: r.MaxTokens,
+		Tools:     r.Tools,
+		Messages:  r.Messages,
+	}
+	switch {
+	case len(r.SystemBlocks) > 0:
+		a.System = r.SystemBlocks
+	case r.System != "":
+		a.System = r.System
+	}
+	return json.Marshal(a)
 }
 
 // MessagesResponse — what the API hands back. StopReason values we care

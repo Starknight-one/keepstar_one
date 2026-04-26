@@ -47,10 +47,16 @@ type MasterVariantsPort interface {
 	GetMasterCosmetics(ctx context.Context, masterVariantID string) (*domain.MasterCosmetics, error)
 
 	// FindMasterProductsByEmbedding searches master_products (not variants) by
-	// cosine similarity. Used by the discovery agent's find_similar_masters
-	// tool to suggest existing masters before proposing new ones. Optional
-	// vertical filter narrows the search; empty vertical = search all.
+	// cosine similarity. Used by harvester (M4d) match cascade step 4 — the
+	// expensive long-tail catch-all. Discovery agent uses the cheaper
+	// FindMasterProductsByName instead (no embedding key required).
 	FindMasterProductsByEmbedding(ctx context.Context, embedding []float32, vertical string, limit int) ([]MasterProductSummary, error)
+
+	// FindMasterProductsByName runs a pg_trgm fuzzy match over name + brand.
+	// Used by the discovery agent's find_similar_masters tool — no external
+	// dependency, no API costs. Optional vertical filter narrows scope.
+	// Empty vertical = search all. Score is the trigram similarity [0, 1].
+	FindMasterProductsByName(ctx context.Context, query, vertical string, limit int) ([]MasterProductSummary, error)
 
 	// GetMasterProductSummary returns a compact view of one master_product
 	// + variant summaries for the discovery agent's peek_master tool.

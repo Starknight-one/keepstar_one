@@ -320,17 +320,10 @@ func (d *ToolDispatcher) findSimilarMasters(ctx context.Context, input json.RawM
 	if args.Limit <= 0 || args.Limit > 10 {
 		args.Limit = 5
 	}
-	if d.embedder == nil {
-		return jsonResponse(map[string]string{"error": "embedder unavailable in this session"}), true
-	}
-	vecs, err := d.embedder.Embed(ctx, []string{args.Query})
-	if err != nil {
-		return jsonResponse(map[string]string{"error": "embed failed: " + err.Error()}), true
-	}
-	if len(vecs) == 0 || len(vecs[0]) == 0 {
-		return jsonResponse(map[string]string{"error": "embedder returned empty vector"}), true
-	}
-	hits, err := d.variants.FindMasterProductsByEmbedding(ctx, vecs[0], args.Vertical, args.Limit)
+	// pg_trgm fuzzy match over name + brand. No external dependency, no
+	// API key. The harvester (M4d) layers semantic embedding search on top
+	// for the long-tail cases — discovery doesn't need that depth.
+	hits, err := d.variants.FindMasterProductsByName(ctx, args.Query, args.Vertical, args.Limit)
 	if err != nil {
 		return jsonResponse(map[string]string{"error": err.Error()}), true
 	}

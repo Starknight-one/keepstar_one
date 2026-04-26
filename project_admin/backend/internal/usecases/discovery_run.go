@@ -110,12 +110,27 @@ func (uc *DiscoveryUseCase) Run(ctx context.Context, tenantID string) (*Discover
 	// the curator UI can pick it up. Use the partial builder snapshot if
 	// available, else write an empty-but-statused record.
 	if agentRes.Artifact == nil {
-		marker := &domain.MappingArtifact{
-			Version:      1,
-			Status:       domain.MappingArtifactStatusNeedsHumanReview,
-			AgentNotes:   "agent did not commit; reason: " + agentRes.StopReason,
-			FieldMapping: tier1.FieldMapping,
+		// Salvage everything the agent already proposed via propose_*. A
+		// budget overrun shouldn't throw away 10 propose_field_mappings.
+		var marker *domain.MappingArtifact
+		if agentRes.PartialBuilder != nil {
+			marker = agentRes.PartialBuilder.Build(
+				"PARTIAL — agent stopped before commit (reason: "+agentRes.StopReason+")",
+				[]string{"gtin", "vendor+sku", "vendor+title+axes", "embedding"},
+				"master_with_variants",
+			)
+			marker.Status = domain.MappingArtifactStatusNeedsHumanReview
+		} else {
+			marker = &domain.MappingArtifact{
+				Version:      1,
+				Status:       domain.MappingArtifactStatusNeedsHumanReview,
+				AgentNotes:   "agent did not commit; reason: " + agentRes.StopReason,
+				FieldMapping: tier1.FieldMapping,
+			}
 		}
+		out.FieldMappingSize = len(marker.FieldMapping)
+		out.CategorySize = len(marker.CategoryMapping)
+		out.TemplateCount = len(marker.MasterTemplates)
 		if uc.mappingArtifact != nil {
 			schema := &domain.TenantCatalogSchema{
 				TenantID:        tenantID,

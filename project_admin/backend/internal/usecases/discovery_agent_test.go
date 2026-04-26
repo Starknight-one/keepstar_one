@@ -394,7 +394,7 @@ func TestDiscover_TokenBudgetExceeded(t *testing.T) {
 					},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 60_000, OutputTokens: 100},
+				Usage:      anthropic.Usage{InputTokens: 200_000, OutputTokens: 100},
 			},
 		},
 	}

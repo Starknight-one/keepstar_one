@@ -72,6 +72,9 @@ func (f *fakeVariantsPort) FindByEmbedding(_ context.Context, _ []float32, _ flo
 func (f *fakeVariantsPort) FindMasterProductsByEmbedding(_ context.Context, _ []float32, _ string, _ int) ([]ports.MasterProductSummary, error) {
 	panic("not used in cascade tests")
 }
+func (f *fakeVariantsPort) FindMasterProductsByName(_ context.Context, _, _ string, _ int) ([]ports.MasterProductSummary, error) {
+	panic("not used in cascade tests")
+}
 func (f *fakeVariantsPort) GetMasterProductSummary(_ context.Context, _ string) (*ports.MasterProductSummary, error) {
 	panic("not used in cascade tests")
 }
