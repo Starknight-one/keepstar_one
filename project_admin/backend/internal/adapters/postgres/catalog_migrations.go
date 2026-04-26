@@ -507,6 +507,73 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_api_keys_tenant
 			ON catalog.api_keys(tenant_id) WHERE revoked_at IS NULL;`,
+
+		// =========================================================================
+		// M4a (2026-04-26) — Foundation for metadata-first Shopify import
+		// =========================================================================
+
+		// --- shopify_raw_imports: high-tide staging for bulk pulls ---
+		// JSONL from Shopify GraphQL Bulk Operations lands here as-is, one row
+		// per top-level resource (product / collection / metafield). Discovery
+		// agent reads from here; harvester applies the mapping artifact and
+		// writes to master/listing tables. ON CONFLICT (tenant_id, source_kind,
+		// source_id) refreshes the payload — re-pulls don't duplicate.
+		`CREATE TABLE IF NOT EXISTS catalog.shopify_raw_imports (
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			source_kind TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			payload JSONB NOT NULL,
+			fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (tenant_id, source_kind, source_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_sri_tenant_fetched
+			ON catalog.shopify_raw_imports(tenant_id, fetched_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_sri_kind
+			ON catalog.shopify_raw_imports(tenant_id, source_kind);`,
+
+		// --- master_variants.embedding: per-variant vectors ---
+		// Spec §8 decision: parent + per-variant from launch (no A/B). Variant
+		// embeddings power "473ml ceramide cleanser"-style queries that the
+		// parent text alone can't disambiguate.
+		`DO $$ BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'catalog' AND table_name = 'master_variants' AND column_name = 'embedding'
+			) THEN
+				ALTER TABLE catalog.master_variants ADD COLUMN embedding vector(384);
+			END IF;
+		END $$;`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mv_embedding
+			ON catalog.master_variants USING hnsw (embedding vector_cosine_ops);`,
+
+		// --- tenant_catalog_schema.validation_report: agent artifact validation ---
+		// Records coverage %, parser failures, dry-run match rate from the
+		// validation pass that follows the discovery agent. needs_human_review
+		// status carries this report so curator UI can show specifics.
+		`ALTER TABLE catalog.tenant_catalog_schema ADD COLUMN IF NOT EXISTS validation_report JSONB;`,
+
+		// --- unit_aliases cleanup: drop cyrillic seeds ---
+		// First admin deploy seeded мл/г/м/шт. The in-code rawTokenFactors map
+		// is English-only (spec §1.14 — MVP no multi-language), so these rows
+		// never matched anything. Harmless but messy; remove them.
+		`DELETE FROM catalog.unit_aliases
+			WHERE tenant_id IS NULL AND raw_token IN ('мл', 'г', 'м', 'шт');`,
+
+		// =========================================================================
+		// M4b (2026-04-26) — Match cascade fuzzy step needs pg_trgm
+		// =========================================================================
+
+		// pg_trgm enables similarity() / % operator for trigram-based fuzzy
+		// title matching. Step 3 of the cascade (vendor + similarity(name) > 0.85
+		// + axes) relies on this. Extension is widely available on managed
+		// Postgres including Neon — no licensing concerns.
+		`CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
+
+		// GIN index on master_products.name with trigram ops makes the
+		// similarity scan acceptable even at 100k+ rows. Without it the
+		// match cascade would table-scan on every variant.
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_name_trgm
+			ON catalog.master_products USING gin (name gin_trgm_ops);`,
 	}
 
 	// pipeline_traces table (idempotent, same as chat backend)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"keepstar-admin/internal/domain"
@@ -182,6 +183,129 @@ func (a *MasterVariantsAdapter) FindByVendorAndSKU(ctx context.Context, vendor, 
 	return scanVariants(rows)
 }
 
+// FindByVendorAndFuzzyName runs a trigram similarity scan over master_products
+// for products whose brand matches the vendor (ILIKE), returns variants of
+// matches whose product name's trigram similarity to title is >= threshold.
+// Spec §4.6 step 3.
+//
+// Uses pg_trgm's similarity() function. Index `idx_catalog_mp_name_trgm`
+// keeps this acceptable at scale; without it this would be a full scan.
+func (a *MasterVariantsAdapter) FindByVendorAndFuzzyName(ctx context.Context, vendor, title string, threshold float64, limit int) ([]ports.MasterVariantWithScore, error) {
+	if vendor == "" || title == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if threshold <= 0 {
+		threshold = 0.85
+	}
+	rows, err := a.client.pool.Query(ctx, `
+		SELECT mv.id, mv.master_product_id, mv.sku, mv.gtins, mv.image_url,
+			mv.weight_g, mv.volume_ml, mv.length_mm, mv.width_mm, mv.height_mm,
+			mv.color, mv.size, mv.material, mv.axes, mv.variant_kind,
+			mv.weight_raw, mv.volume_raw, mv.parse_status, mv.created_at, mv.updated_at,
+			similarity(mp.name, $2)::float8 AS sim
+		FROM catalog.master_variants mv
+		JOIN catalog.master_products mp ON mp.id = mv.master_product_id
+		WHERE mp.brand ILIKE $1
+		  AND similarity(mp.name, $2) >= $3
+		ORDER BY sim DESC
+		LIMIT $4`, vendor, title, threshold, limit)
+	if err != nil {
+		return nil, fmt.Errorf("fuzzy match: %w", err)
+	}
+	defer rows.Close()
+	return scanVariantsWithScore(rows)
+}
+
+// FindByEmbedding runs a cosine-distance vector search against
+// master_variants.embedding. Returns variants whose distance is <= (1 -
+// threshold). Caller passes threshold as a "higher is more similar" value
+// (e.g. 0.92), and we convert to distance internally to keep call-sites
+// readable. Spec §4.6 step 4.
+//
+// Returns empty when embedding is nil or empty.
+func (a *MasterVariantsAdapter) FindByEmbedding(ctx context.Context, embedding []float32, threshold float64, limit int) ([]ports.MasterVariantWithScore, error) {
+	if len(embedding) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	if threshold <= 0 {
+		threshold = 0.92
+	}
+	maxDistance := 1 - threshold
+	// Format the vector as a Postgres pgvector literal '[v1,v2,...]'.
+	vecLit := pgvectorLiteral(embedding)
+	rows, err := a.client.pool.Query(ctx, `
+		SELECT mv.id, mv.master_product_id, mv.sku, mv.gtins, mv.image_url,
+			mv.weight_g, mv.volume_ml, mv.length_mm, mv.width_mm, mv.height_mm,
+			mv.color, mv.size, mv.material, mv.axes, mv.variant_kind,
+			mv.weight_raw, mv.volume_raw, mv.parse_status, mv.created_at, mv.updated_at,
+			(1 - (mv.embedding <=> $1::vector))::float8 AS sim
+		FROM catalog.master_variants mv
+		WHERE mv.embedding IS NOT NULL
+		  AND (mv.embedding <=> $1::vector) <= $2
+		ORDER BY mv.embedding <=> $1::vector ASC
+		LIMIT $3`, vecLit, maxDistance, limit)
+	if err != nil {
+		return nil, fmt.Errorf("embedding match: %w", err)
+	}
+	defer rows.Close()
+	return scanVariantsWithScore(rows)
+}
+
+func scanVariantsWithScore(rows pgx.Rows) ([]ports.MasterVariantWithScore, error) {
+	var out []ports.MasterVariantWithScore
+	for rows.Next() {
+		var mv domain.MasterVariant
+		var axes, parseStatus []byte
+		var score float64
+		if err := rows.Scan(
+			&mv.ID, &mv.MasterProductID, &mv.SKU, &mv.GTINs, &mv.ImageURL,
+			&mv.WeightG, &mv.VolumeML, &mv.LengthMM, &mv.WidthMM, &mv.HeightMM,
+			&mv.Color, &mv.Size, &mv.Material, &axes, &mv.VariantKind,
+			&mv.WeightRaw, &mv.VolumeRaw, &parseStatus, &mv.CreatedAt, &mv.UpdatedAt,
+			&score,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(axes, &mv.Axes)
+		_ = json.Unmarshal(parseStatus, &mv.ParseStatus)
+		out = append(out, ports.MasterVariantWithScore{
+			MasterVariant: mv,
+			MatchedScore:  score,
+		})
+	}
+	return out, rows.Err()
+}
+
+// pgvectorLiteral renders a float32 slice as the pgvector textual format
+// '[v1,v2,...]'. Avoids pulling in pgx/v5/pgvector subpackage just for this.
+func pgvectorLiteral(v []float32) string {
+	if len(v) == 0 {
+		return "[]"
+	}
+	var b []byte
+	b = append(b, '[')
+	for i, f := range v {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = appendFloat32(b, f)
+	}
+	b = append(b, ']')
+	return string(b)
+}
+
+func appendFloat32(b []byte, f float32) []byte {
+	// strconv.AppendFloat with -1 precision is the canonical form pgvector
+	// expects; bitSize 32 keeps trailing-digit noise in check.
+	return strconv.AppendFloat(b, float64(f), 'f', -1, 32)
+}
+
 func scanVariants(rows pgx.Rows) ([]domain.MasterVariant, error) {
 	var out []domain.MasterVariant
 	for rows.Next() {
@@ -231,6 +355,91 @@ func (a *MasterVariantsAdapter) UpsertMasterCosmetics(ctx context.Context, mc *d
 		return fmt.Errorf("upsert master_cosmetics: %w", err)
 	}
 	return nil
+}
+
+// FindMasterProductsByEmbedding cosine-searches master_products.embedding.
+// Optional vertical filter narrows scope; empty = search all. Limit is
+// capped at 50 to keep response size bounded for the discovery agent
+// (which sees the result list as a single tool response).
+func (a *MasterVariantsAdapter) FindMasterProductsByEmbedding(ctx context.Context, embedding []float32, vertical string, limit int) ([]ports.MasterProductSummary, error) {
+	if len(embedding) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 5
+	}
+	vecLit := pgvectorLiteral(embedding)
+	args := []any{vecLit, limit}
+	verticalClause := ""
+	if vertical != "" {
+		verticalClause = "AND mp.vertical = $3"
+		args = append(args, vertical)
+	}
+	q := `
+		SELECT mp.id, mp.name, COALESCE(mp.brand, ''), mp.vertical, mp.confidence,
+			COALESCE(mp.owner_tenant_id::text, ''),
+			(1 - (mp.embedding <=> $1::vector))::float8 AS sim
+		FROM catalog.master_products mp
+		WHERE mp.embedding IS NOT NULL ` + verticalClause + `
+		ORDER BY mp.embedding <=> $1::vector ASC
+		LIMIT $2`
+	rows, err := a.client.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("master products embedding search: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ports.MasterProductSummary, 0, limit)
+	for rows.Next() {
+		var s ports.MasterProductSummary
+		if err := rows.Scan(&s.ID, &s.Name, &s.Brand, &s.Vertical, &s.Confidence, &s.OwnerTenantID, &s.Score); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// GetMasterProductSummary returns one master + its variants in the
+// discovery-agent-facing summary shape. Variants are capped at 20 (rare to
+// have more on a single master, and the agent only needs to recognize the
+// shape — not enumerate every SKU).
+func (a *MasterVariantsAdapter) GetMasterProductSummary(ctx context.Context, masterProductID string) (*ports.MasterProductSummary, error) {
+	var s ports.MasterProductSummary
+	err := a.client.pool.QueryRow(ctx, `
+		SELECT mp.id, mp.name, COALESCE(mp.brand, ''), mp.vertical, mp.confidence,
+			COALESCE(mp.owner_tenant_id::text, '')
+		FROM catalog.master_products mp WHERE mp.id = $1`, masterProductID).Scan(
+		&s.ID, &s.Name, &s.Brand, &s.Vertical, &s.Confidence, &s.OwnerTenantID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get master product summary: %w", err)
+	}
+
+	// Variants snippet — minimum the agent needs to recognize variant shape.
+	rows, err := a.client.pool.Query(ctx, `
+		SELECT id, COALESCE(sku, ''), axes,
+			COALESCE(array_length(gtins, 1), 0) > 0 AS has_gtin,
+			variant_kind
+		FROM catalog.master_variants
+		WHERE master_product_id = $1
+		ORDER BY created_at LIMIT 20`, masterProductID)
+	if err != nil {
+		return nil, fmt.Errorf("get variant snippets: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var snip ports.MasterVariantSnippet
+		var axes []byte
+		if err := rows.Scan(&snip.ID, &snip.SKU, &axes, &snip.HasGTIN, &snip.VariantKind); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(axes, &snip.Axes)
+		s.Variants = append(s.Variants, snip)
+	}
+	return &s, rows.Err()
 }
 
 func (a *MasterVariantsAdapter) GetMasterCosmetics(ctx context.Context, masterVariantID string) (*domain.MasterCosmetics, error) {

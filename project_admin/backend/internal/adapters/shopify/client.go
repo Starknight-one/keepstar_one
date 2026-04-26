@@ -1,11 +1,13 @@
-// Package shopify is a thin HTTP client for the merchant-facing Shopify Admin
-// REST API. Scope is minimal on purpose — only what the onboarding flow needs:
-// OAuth token exchange, product pagination, webhook registration, and HMAC
-// verification. GraphQL bulk-query for large catalogs is deferred to the
-// usecase layer, which chooses REST vs bulk per catalog size.
+// Package shopify is an HTTP client for the merchant-facing Shopify Admin API.
+// REST methods cover the pieces that need single-payload responses (OAuth,
+// webhook registration, single-product fetch). GraphQL Bulk Operations cover
+// large-catalog initial sync — see RunBulkProductsQuery + GetBulkOperation +
+// FetchBulkJSONL. Metadata methods (MetafieldDefinitions, NavigationMenu,
+// ShopReferences) sample tenant configuration before the discovery agent runs.
 package shopify
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -24,12 +26,18 @@ import (
 const defaultAPIVersion = "2026-04"
 const defaultScopes = "read_products,read_product_listings,read_inventory"
 
+// bulkOpHTTPTimeout is generous because Shopify bulk-op endpoints can sit on
+// the request for tens of seconds while they queue work. JSONL download uses
+// a separate, longer-lived request without this timeout.
+const bulkOpHTTPTimeout = 90 * time.Second
+
 type Client struct {
 	apiKey     string
 	apiSecret  string
 	apiVersion string
 	scopes     string
 	http       *http.Client
+	bulkHTTP   *http.Client
 }
 
 func NewClient(apiKey, apiSecret, apiVersion, scopes string) *Client {
@@ -45,6 +53,7 @@ func NewClient(apiKey, apiSecret, apiVersion, scopes string) *Client {
 		apiVersion: apiVersion,
 		scopes:     scopes,
 		http:       &http.Client{Timeout: 30 * time.Second},
+		bulkHTTP:   &http.Client{Timeout: bulkOpHTTPTimeout},
 	}
 }
 
@@ -326,4 +335,479 @@ func sortStrings(s []string) {
 			s[j-1], s[j] = s[j], s[j-1]
 		}
 	}
+}
+
+// =============================================================================
+// GraphQL — Bulk Operations + metadata
+// =============================================================================
+
+// graphqlEndpoint returns the Admin GraphQL URL for a shop.
+func (c *Client) graphqlEndpoint(shop string) string {
+	return fmt.Sprintf("https://%s/admin/api/%s/graphql.json", shop, c.apiVersion)
+}
+
+type graphqlError struct {
+	Message string `json:"message"`
+}
+
+type graphqlResponse struct {
+	Data   json.RawMessage `json:"data"`
+	Errors []graphqlError  `json:"errors"`
+}
+
+// graphqlRequest sends a query/mutation and returns the raw `data` block.
+// Top-level GraphQL `errors` are surfaced as a Go error; user-error fields
+// inside specific mutations (e.g. bulkOperationRunQuery.userErrors) must be
+// inspected by the caller because their shape varies per mutation.
+func (c *Client) graphqlRequest(ctx context.Context, shop, token, query string, variables map[string]any) (json.RawMessage, error) {
+	body, _ := json.Marshal(map[string]any{
+		"query":     query,
+		"variables": variables,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlEndpoint(shop), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("X-Shopify-Access-Token", token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("graphql request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("graphql status %d: %s", resp.StatusCode, string(respBody))
+	}
+	var gr graphqlResponse
+	if err := json.Unmarshal(respBody, &gr); err != nil {
+		return nil, fmt.Errorf("parse graphql: %w", err)
+	}
+	if len(gr.Errors) > 0 {
+		return nil, fmt.Errorf("graphql errors: %s", gr.Errors[0].Message)
+	}
+	return gr.Data, nil
+}
+
+// bulkProductsQueryBody is the JSONL-shaped query embedded inside
+// bulkOperationRunQuery. Shopify processes it asynchronously and emits one
+// JSON object per line, with parent-child relationships flattened via
+// `__parentId` (a variant carries `__parentId` = product GID, an image
+// carries `__parentId` = product GID, a metafield carries the GID of its
+// owner). The harvester reassembles the tree on read.
+//
+// Fields are deliberately broad: we fetch everything that might inform the
+// discovery agent's mapping decisions. Trimming this later costs nothing —
+// re-running a bulk op is cheap.
+const bulkProductsQueryBody = `{
+  products {
+    edges {
+      node {
+        id
+        title
+        handle
+        descriptionHtml
+        productType
+        vendor
+        tags
+        status
+        createdAt
+        updatedAt
+        publishedAt
+        featuredImage { url altText }
+        images { edges { node { url altText } } }
+        options { name values position }
+        variants {
+          edges {
+            node {
+              id
+              sku
+              title
+              price
+              compareAtPrice
+              barcode
+              inventoryQuantity
+              weight
+              weightUnit
+              selectedOptions { name value }
+              image { url altText }
+            }
+          }
+        }
+        metafields {
+          edges {
+            node {
+              namespace
+              key
+              type
+              value
+            }
+          }
+        }
+        collections(first: 50) {
+          edges {
+            node { id handle title }
+          }
+        }
+      }
+    }
+  }
+}`
+
+const bulkRunQueryMutation = `mutation runBulk($q: String!) {
+  bulkOperationRunQuery(query: $q) {
+    bulkOperation { id status }
+    userErrors { field message }
+  }
+}`
+
+// BulkOperationStatus mirrors Shopify's enum. We only branch on the
+// terminal values (Completed/Failed/Canceled) elsewhere; intermediate states
+// just keep polling.
+type BulkOperationStatus string
+
+const (
+	BulkOpCreated   BulkOperationStatus = "CREATED"
+	BulkOpRunning   BulkOperationStatus = "RUNNING"
+	BulkOpCompleted BulkOperationStatus = "COMPLETED"
+	BulkOpCanceling BulkOperationStatus = "CANCELING"
+	BulkOpCanceled  BulkOperationStatus = "CANCELED"
+	BulkOpFailed    BulkOperationStatus = "FAILED"
+	BulkOpExpired   BulkOperationStatus = "EXPIRED"
+)
+
+// BulkOperation is the lifecycle record for a single bulk pull. URL is
+// populated only when Status == Completed; ErrorCode is populated on failure.
+// ObjectCount is the rows that were emitted to the JSONL file (useful for
+// progress UI).
+type BulkOperation struct {
+	ID             string              `json:"id"`
+	Status         BulkOperationStatus `json:"status"`
+	ErrorCode      string              `json:"errorCode,omitempty"`
+	CreatedAt      string              `json:"createdAt,omitempty"`
+	CompletedAt    string              `json:"completedAt,omitempty"`
+	ObjectCount    string              `json:"objectCount,omitempty"`
+	FileSize       string              `json:"fileSize,omitempty"`
+	URL            string              `json:"url,omitempty"`
+	PartialDataURL string              `json:"partialDataUrl,omitempty"`
+}
+
+// RunBulkProductsQuery fires bulkOperationRunQuery for the full products
+// graph. Returns the operation GID; caller polls GetBulkOperation until
+// Status == COMPLETED, then streams via FetchBulkJSONL.
+//
+// Shopify only allows ONE active bulk op per shop per access token. If a
+// previous op is still running (status CREATED/RUNNING), the userErrors
+// block returns "A bulk query operation for this app and shop is already
+// in progress." Caller should poll the existing op rather than retry.
+func (c *Client) RunBulkProductsQuery(ctx context.Context, shop, token string) (string, error) {
+	data, err := c.graphqlRequest(ctx, shop, token, bulkRunQueryMutation, map[string]any{
+		"q": bulkProductsQueryBody,
+	})
+	if err != nil {
+		return "", fmt.Errorf("bulk run query: %w", err)
+	}
+	var wrap struct {
+		BulkOperationRunQuery struct {
+			BulkOperation *BulkOperation `json:"bulkOperation"`
+			UserErrors    []struct {
+				Field   []string `json:"field"`
+				Message string   `json:"message"`
+			} `json:"userErrors"`
+		} `json:"bulkOperationRunQuery"`
+	}
+	if err := json.Unmarshal(data, &wrap); err != nil {
+		return "", fmt.Errorf("parse bulk run query: %w", err)
+	}
+	if len(wrap.BulkOperationRunQuery.UserErrors) > 0 {
+		return "", fmt.Errorf("bulk run user error: %s", wrap.BulkOperationRunQuery.UserErrors[0].Message)
+	}
+	if wrap.BulkOperationRunQuery.BulkOperation == nil {
+		return "", fmt.Errorf("bulk run: empty operation in response")
+	}
+	return wrap.BulkOperationRunQuery.BulkOperation.ID, nil
+}
+
+const bulkCurrentOpQuery = `{
+  currentBulkOperation {
+    id status errorCode createdAt completedAt objectCount fileSize url partialDataUrl
+  }
+}`
+
+// GetCurrentBulkOperation returns the most recent bulk op for this app+shop.
+// We poll this rather than tracking ID through Shopify's hop because their
+// docs explicitly recommend it: there's only ever one active op per app/shop,
+// so "current" is unambiguous.
+func (c *Client) GetCurrentBulkOperation(ctx context.Context, shop, token string) (*BulkOperation, error) {
+	data, err := c.graphqlRequest(ctx, shop, token, bulkCurrentOpQuery, nil)
+	if err != nil {
+		return nil, fmt.Errorf("current bulk op: %w", err)
+	}
+	var wrap struct {
+		CurrentBulkOperation *BulkOperation `json:"currentBulkOperation"`
+	}
+	if err := json.Unmarshal(data, &wrap); err != nil {
+		return nil, fmt.Errorf("parse current bulk op: %w", err)
+	}
+	return wrap.CurrentBulkOperation, nil
+}
+
+// FetchBulkJSONL streams the completed bulk-op output. Caller MUST close the
+// returned reader. The URL is a presigned GCS link with a short TTL, so
+// fetch promptly after the op completes.
+//
+// Use bufio.Scanner on the returned reader to iterate one JSONL row per line.
+// Rows are top-level objects of the queried types — no JSON array wrapper.
+func (c *Client) FetchBulkJSONL(ctx context.Context, jsonlURL string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jsonlURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.bulkHTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch jsonl: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("fetch jsonl status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return resp.Body, nil
+}
+
+// ScanBulkJSONL is a small helper that wraps a JSONL stream in a Scanner
+// with a generous buffer. Default Scanner buffer (64KB) overflows on
+// products with long descriptions or huge metafield arrays.
+func ScanBulkJSONL(r io.Reader) *bufio.Scanner {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // up to 16 MB per line
+	return sc
+}
+
+// MetafieldDefinition is the declared shape of a metafield in this shop —
+// what the merchant has formally defined under Settings → Custom Data.
+// Discovery agent reads this to know which fields are intentional vs ad-hoc.
+type MetafieldDefinition struct {
+	ID          string `json:"id"`
+	Namespace   string `json:"namespace"`
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Type        string `json:"type"`
+	OwnerType   string `json:"ownerType"`
+}
+
+const metafieldDefinitionsQuery = `query mfDefs($ownerType: MetafieldOwnerType!, $first: Int!, $after: String) {
+  metafieldDefinitions(ownerType: $ownerType, first: $first, after: $after) {
+    edges {
+      cursor
+      node {
+        id namespace key name description type { name } ownerType
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}`
+
+// MetafieldDefinitions paginates all declared metafield definitions for an
+// owner type ("PRODUCT", "PRODUCTVARIANT", "COLLECTION"). Returns the full
+// list — typically <100 entries per owner, so no streaming needed.
+func (c *Client) MetafieldDefinitions(ctx context.Context, shop, token, ownerType string) ([]MetafieldDefinition, error) {
+	var (
+		out    []MetafieldDefinition
+		cursor string
+	)
+	for {
+		vars := map[string]any{"ownerType": ownerType, "first": 100}
+		if cursor != "" {
+			vars["after"] = cursor
+		}
+		data, err := c.graphqlRequest(ctx, shop, token, metafieldDefinitionsQuery, vars)
+		if err != nil {
+			return nil, fmt.Errorf("metafield definitions %s: %w", ownerType, err)
+		}
+		var wrap struct {
+			MetafieldDefinitions struct {
+				Edges []struct {
+					Cursor string `json:"cursor"`
+					Node   struct {
+						ID          string `json:"id"`
+						Namespace   string `json:"namespace"`
+						Key         string `json:"key"`
+						Name        string `json:"name"`
+						Description string `json:"description"`
+						Type        struct {
+							Name string `json:"name"`
+						} `json:"type"`
+						OwnerType string `json:"ownerType"`
+					} `json:"node"`
+				} `json:"edges"`
+				PageInfo struct {
+					HasNextPage bool   `json:"hasNextPage"`
+					EndCursor   string `json:"endCursor"`
+				} `json:"pageInfo"`
+			} `json:"metafieldDefinitions"`
+		}
+		if err := json.Unmarshal(data, &wrap); err != nil {
+			return nil, fmt.Errorf("parse metafield defs: %w", err)
+		}
+		for _, e := range wrap.MetafieldDefinitions.Edges {
+			out = append(out, MetafieldDefinition{
+				ID:          e.Node.ID,
+				Namespace:   e.Node.Namespace,
+				Key:         e.Node.Key,
+				Name:        e.Node.Name,
+				Description: e.Node.Description,
+				Type:        e.Node.Type.Name,
+				OwnerType:   e.Node.OwnerType,
+			})
+		}
+		if !wrap.MetafieldDefinitions.PageInfo.HasNextPage {
+			break
+		}
+		cursor = wrap.MetafieldDefinitions.PageInfo.EndCursor
+	}
+	return out, nil
+}
+
+// NavigationMenuItem is one node in the published storefront menu. Children
+// is recursive (Shopify nests up to 4 levels deep). ResourceID, when set,
+// usually points to a Collection — we use that to build the tenant's
+// preferred category tree before falling back to handle prefixes.
+type NavigationMenuItem struct {
+	ID         string               `json:"id"`
+	Title      string               `json:"title"`
+	URL        string               `json:"url"`
+	Type       string               `json:"type"`
+	ResourceID string               `json:"resourceId,omitempty"`
+	Items      []NavigationMenuItem `json:"items,omitempty"`
+}
+
+// NavigationMenu is a single named menu (typically "main-menu" — the
+// storefront top nav). Shops sometimes have multiple menus (footer, mobile,
+// etc.); caller picks the one most likely to reflect the tenant's
+// merchandising taxonomy.
+type NavigationMenu struct {
+	ID     string               `json:"id"`
+	Handle string               `json:"handle"`
+	Title  string               `json:"title"`
+	Items  []NavigationMenuItem `json:"items"`
+}
+
+const navigationMenuQuery = `query menu($handle: String!) {
+  menu(handle: $handle) {
+    id handle title
+    items {
+      id title url type resourceId
+      items {
+        id title url type resourceId
+        items {
+          id title url type resourceId
+          items { id title url type resourceId }
+        }
+      }
+    }
+  }
+}`
+
+// NavigationMenu fetches one named menu. Returns nil (no error) if the menu
+// doesn't exist — many shops use only the default "main-menu", and a missing
+// "footer" or whatever is normal, not an error.
+func (c *Client) NavigationMenu(ctx context.Context, shop, token, handle string) (*NavigationMenu, error) {
+	data, err := c.graphqlRequest(ctx, shop, token, navigationMenuQuery, map[string]any{"handle": handle})
+	if err != nil {
+		return nil, fmt.Errorf("menu %s: %w", handle, err)
+	}
+	var wrap struct {
+		Menu *NavigationMenu `json:"menu"`
+	}
+	if err := json.Unmarshal(data, &wrap); err != nil {
+		return nil, fmt.Errorf("parse menu: %w", err)
+	}
+	return wrap.Menu, nil
+}
+
+// ShopReferences is the small reference-data bundle that helps discovery
+// agent see what universe of values exists in this shop without scanning
+// the catalog. ProductVendors is the brand list, ProductTypes is shopify's
+// flat product_type field across all products, ProductTags is every tag.
+//
+// All three are bounded — Shopify caps each at "first 250" in the basic
+// shop query. Larger shops would need separate paginated queries; we accept
+// the cap for now (250 brands/types/tags is plenty for discovery context).
+type ShopReferences struct {
+	ProductVendors []string `json:"productVendors"`
+	ProductTypes   []string `json:"productTypes"`
+	ProductTags    []string `json:"productTags"`
+}
+
+const shopReferencesQuery = `{
+  shop {
+    productVendors(first: 250) { edges { node } }
+    productTypes(first: 250)   { edges { node } }
+    productTags(first: 250)    { edges { node } }
+  }
+}`
+
+// ShopReferences pulls vendors, product_types, and tags in one round trip.
+// All three lists are deduped client-side just in case Shopify ever returns
+// duplicates (their docs say they don't, but the lists are cheap to clean).
+func (c *Client) ShopReferences(ctx context.Context, shop, token string) (*ShopReferences, error) {
+	data, err := c.graphqlRequest(ctx, shop, token, shopReferencesQuery, nil)
+	if err != nil {
+		return nil, fmt.Errorf("shop references: %w", err)
+	}
+	var wrap struct {
+		Shop struct {
+			ProductVendors struct {
+				Edges []struct {
+					Node string `json:"node"`
+				} `json:"edges"`
+			} `json:"productVendors"`
+			ProductTypes struct {
+				Edges []struct {
+					Node string `json:"node"`
+				} `json:"edges"`
+			} `json:"productTypes"`
+			ProductTags struct {
+				Edges []struct {
+					Node string `json:"node"`
+				} `json:"edges"`
+			} `json:"productTags"`
+		} `json:"shop"`
+	}
+	if err := json.Unmarshal(data, &wrap); err != nil {
+		return nil, fmt.Errorf("parse shop references: %w", err)
+	}
+	out := &ShopReferences{}
+	out.ProductVendors = dedupStrings(extractEdgeStrings(wrap.Shop.ProductVendors.Edges))
+	out.ProductTypes = dedupStrings(extractEdgeStrings(wrap.Shop.ProductTypes.Edges))
+	out.ProductTags = dedupStrings(extractEdgeStrings(wrap.Shop.ProductTags.Edges))
+	return out, nil
+}
+
+func extractEdgeStrings(edges []struct {
+	Node string `json:"node"`
+}) []string {
+	out := make([]string, 0, len(edges))
+	for _, e := range edges {
+		s := strings.TrimSpace(e.Node)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func dedupStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
