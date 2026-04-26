@@ -218,6 +218,298 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_products_deleted_at
 			ON catalog.products(deleted_at) WHERE deleted_at IS NOT NULL;`,
+
+		// =========================================================================
+		// Admin Catalog Spec (2026-04-23) — additive new schema
+		// Design: docs/New features/admin_catalog_design_2026-04-23.md
+		// All idempotent. Old tables stay; reads/writes evolve in subsequent code.
+		// =========================================================================
+
+		// --- Master products: additive metadata (vertical, Tier 3 bag, confidence) ---
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS vertical TEXT NOT NULL DEFAULT 'cosmetics';`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS tier3 JSONB NOT NULL DEFAULT '{}'::jsonb;`,
+		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS confidence TEXT NOT NULL DEFAULT 'unverified'
+			CHECK (confidence IN ('unverified', 'reviewed', 'approved'));`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_vertical ON catalog.master_products(vertical);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_confidence ON catalog.master_products(confidence);`,
+
+		// --- master_variants: parent-child variant model (Option C) ---
+		// One row per SKU. GTIN array — same product can have multiple barcodes
+		// (different regions, reissues). axes JSONB stores original axis values
+		// from the source ({size:"236ml", color:"Silver"}).
+		// Dual-store fields: typed (parsed) + _raw (audit), parse_status JSONB
+		// records per-field parser outcome (ok|ambiguous|failed|dual_mismatch).
+		`CREATE TABLE IF NOT EXISTS catalog.master_variants (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			master_product_id UUID NOT NULL REFERENCES catalog.master_products(id) ON DELETE CASCADE,
+			sku TEXT,
+			gtins TEXT[] NOT NULL DEFAULT '{}',
+			image_url TEXT,
+			weight_g INTEGER,
+			volume_ml INTEGER,
+			length_mm INTEGER,
+			width_mm INTEGER,
+			height_mm INTEGER,
+			color TEXT,
+			size TEXT,
+			material TEXT,
+			axes JSONB NOT NULL DEFAULT '{}'::jsonb,
+			variant_kind TEXT NOT NULL DEFAULT 'real'
+				CHECK (variant_kind IN ('real', 'addon', 'bundle')),
+			weight_raw TEXT,
+			volume_raw TEXT,
+			parse_status JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mv_master ON catalog.master_variants(master_product_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mv_gtins ON catalog.master_variants USING gin(gtins);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mv_sku ON catalog.master_variants(sku) WHERE sku IS NOT NULL;`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mv_kind ON catalog.master_variants(variant_kind);`,
+
+		// --- master_cosmetics: per-vertical Tier 2 (Option B) ---
+		// Cosmetics-specific typed columns. Promoted from candidates by curator
+		// via ALTER TABLE ADD COLUMN. Schema starts with the obvious set; new
+		// columns appear over time via promotion workflow.
+		`CREATE TABLE IF NOT EXISTS catalog.master_cosmetics (
+			master_variant_id UUID PRIMARY KEY REFERENCES catalog.master_variants(id) ON DELETE CASCADE,
+			skin_type TEXT[] NOT NULL DEFAULT '{}',
+			concern TEXT[] NOT NULL DEFAULT '{}',
+			ingredients TEXT[] NOT NULL DEFAULT '{}',
+			scent TEXT,
+			spf INTEGER,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mc_skin_type ON catalog.master_cosmetics USING gin(skin_type);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mc_concern ON catalog.master_cosmetics USING gin(concern);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mc_ingredients ON catalog.master_cosmetics USING gin(ingredients);`,
+
+		// --- catalog.products: listing-as-overrides extensions ---
+		// New columns let the listing carry per-tenant deltas while master holds
+		// the shared truth. Render = COALESCE(listing.field, master.field).
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS master_variant_id UUID REFERENCES catalog.master_variants(id);`,
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS original_name TEXT;`,
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS display_name TEXT;`,
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS raw_attributes JSONB NOT NULL DEFAULT '{}'::jsonb;`,
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS media JSONB NOT NULL DEFAULT '[]'::jsonb;`,
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS source_system TEXT;`,
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS source_id TEXT;`,
+		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS payload_hash TEXT;`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_products_master_variant ON catalog.products(master_variant_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_products_tenant_source
+			ON catalog.products(tenant_id, source_system, source_id)
+			WHERE source_system IS NOT NULL AND source_id IS NOT NULL;`,
+
+		// --- master_categories: clean global taxonomy curated by Vlad ---
+		`CREATE TABLE IF NOT EXISTS catalog.master_categories (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			parent_id UUID REFERENCES catalog.master_categories(id),
+			slug TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			vertical TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mc_parent ON catalog.master_categories(parent_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mc_vertical ON catalog.master_categories(vertical);`,
+
+		// --- master_product_categories: M:N (one master can be in many categories) ---
+		`CREATE TABLE IF NOT EXISTS catalog.master_product_categories (
+			master_product_id UUID NOT NULL REFERENCES catalog.master_products(id) ON DELETE CASCADE,
+			master_category_id UUID NOT NULL REFERENCES catalog.master_categories(id) ON DELETE CASCADE,
+			PRIMARY KEY (master_product_id, master_category_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mpc_category ON catalog.master_product_categories(master_category_id);`,
+
+		// --- tenant_categories: copy of tenant's collection tree (their names) ---
+		// kind distinguishes regular categories from showcase ("Best Sellers")
+		// or promo ("On Sale 30%") collections that don't map to master taxonomy.
+		`CREATE TABLE IF NOT EXISTS catalog.tenant_categories (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			parent_id UUID REFERENCES catalog.tenant_categories(id),
+			external_id TEXT,
+			slug TEXT NOT NULL,
+			name TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'category'
+				CHECK (kind IN ('category', 'showcase', 'promo')),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_tc_tenant ON catalog.tenant_categories(tenant_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_tc_parent ON catalog.tenant_categories(parent_id);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_tc_tenant_external
+			ON catalog.tenant_categories(tenant_id, external_id)
+			WHERE external_id IS NOT NULL;`,
+
+		// --- category_mapping: tenant_category -> master_category (N:1, NULLable) ---
+		// NULL = tenant category is showcase/promo, doesn't belong in master tree.
+		`CREATE TABLE IF NOT EXISTS catalog.category_mapping (
+			tenant_category_id UUID PRIMARY KEY REFERENCES catalog.tenant_categories(id) ON DELETE CASCADE,
+			master_category_id UUID REFERENCES catalog.master_categories(id) ON DELETE SET NULL,
+			confidence TEXT NOT NULL DEFAULT 'unverified',
+			mapped_by TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_cmap_master ON catalog.category_mapping(master_category_id);`,
+
+		// --- tenant_listing_categories: M:N listing -> tenant_categories ---
+		`CREATE TABLE IF NOT EXISTS catalog.tenant_listing_categories (
+			listing_id UUID NOT NULL REFERENCES catalog.products(id) ON DELETE CASCADE,
+			tenant_category_id UUID NOT NULL REFERENCES catalog.tenant_categories(id) ON DELETE CASCADE,
+			PRIMARY KEY (listing_id, tenant_category_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_tlc_category ON catalog.tenant_listing_categories(tenant_category_id);`,
+
+		// --- master_attribute_candidates: staging for promotion to typed columns ---
+		// Tenant-imported fields that aren't in any master schema yet land here.
+		// Curator promotes when seen_in_tenants >= 2. Embedding includes candidate
+		// values so search works even before promotion.
+		`CREATE TABLE IF NOT EXISTS catalog.master_attribute_candidates (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			key TEXT NOT NULL,
+			vertical TEXT NOT NULL,
+			seen_in_tenants INTEGER NOT NULL DEFAULT 1,
+			sample_values JSONB NOT NULL DEFAULT '[]'::jsonb,
+			proposed_type TEXT,
+			agent_meta TEXT,
+			embedding vector(384),
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK (status IN ('pending', 'promoted', 'dismissed', 'merged')),
+			merged_into_key TEXT,
+			promoted_to_column TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (key, vertical)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mac_status ON catalog.master_attribute_candidates(status);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mac_vertical ON catalog.master_attribute_candidates(vertical);`,
+
+		// --- master_category_candidates: staging for new master categories ---
+		`CREATE TABLE IF NOT EXISTS catalog.master_category_candidates (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name TEXT NOT NULL,
+			proposed_parent TEXT,
+			seen_in_tenants INTEGER NOT NULL DEFAULT 1,
+			vertical TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK (status IN ('pending', 'promoted', 'dismissed')),
+			promoted_to_id UUID REFERENCES catalog.master_categories(id),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (name, vertical)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mcc_status ON catalog.master_category_candidates(status);`,
+
+		// --- tenant_variant_candidates_junk: gift wrap / engraving / addon detection ---
+		`CREATE TABLE IF NOT EXISTS catalog.tenant_variant_candidates_junk (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			listing_id UUID NOT NULL REFERENCES catalog.products(id) ON DELETE CASCADE,
+			master_variant_id UUID REFERENCES catalog.master_variants(id) ON DELETE SET NULL,
+			detected_reason JSONB NOT NULL DEFAULT '{}'::jsonb,
+			classification TEXT NOT NULL DEFAULT 'pending'
+				CHECK (classification IN ('pending', 'confirmed_addon', 'false_positive')),
+			classified_at TIMESTAMPTZ,
+			classified_by TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_tvcj_tenant_status
+			ON catalog.tenant_variant_candidates_junk(tenant_id, classification);`,
+
+		// --- audit_log: append-only history of who changed what when ---
+		// System bulk ops use one row with aggregate_meta (batch_id, count).
+		// Human actions use detailed field_changes per entity.
+		`CREATE TABLE IF NOT EXISTS catalog.audit_log (
+			id BIGSERIAL PRIMARY KEY,
+			tenant_id UUID,
+			actor_kind TEXT NOT NULL,
+			actor_id TEXT,
+			entity_kind TEXT NOT NULL,
+			entity_id UUID NOT NULL,
+			action TEXT NOT NULL,
+			field_changes JSONB,
+			aggregate_meta JSONB,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_audit_entity
+			ON catalog.audit_log(entity_kind, entity_id, created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_audit_tenant
+			ON catalog.audit_log(tenant_id, created_at DESC) WHERE tenant_id IS NOT NULL;`,
+
+		// --- tenant_catalog_schema: per-tenant mapping artifact (1 LLM call result) ---
+		// Stores the JSON artifact produced by the agent normalizer at first import.
+		// Re-imports apply the artifact via plain code, no LLM. Stale = needs regen.
+		`CREATE TABLE IF NOT EXISTS catalog.tenant_catalog_schema (
+			tenant_id UUID PRIMARY KEY REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			mapping_artifact JSONB NOT NULL,
+			artifact_version INTEGER NOT NULL DEFAULT 1,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK (status IN ('active', 'stale', 'needs_human_review')),
+			discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			validated_at TIMESTAMPTZ,
+			re_discover_after TIMESTAMPTZ
+		);`,
+
+		// --- unit_aliases: tenant-aware alias resolution for unit parser ---
+		// Unit conversions live in code (internal/units/). DB stores aliases
+		// only — "мл" → mL, "MILLILITERS" → mL. tenant_id NULL = global seed.
+		`CREATE TABLE IF NOT EXISTS catalog.unit_aliases (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id UUID REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			raw_token TEXT NOT NULL,
+			canonical_unit TEXT NOT NULL,
+			confidence TEXT NOT NULL DEFAULT 'auto',
+			source TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, raw_token)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_unit_aliases_global
+			ON catalog.unit_aliases(raw_token) WHERE tenant_id IS NULL;`,
+
+		// Seed global alias rows (idempotent via ON CONFLICT). Lowercase raw_token
+		// is the lookup key — parser lowercases before lookup.
+		`INSERT INTO catalog.unit_aliases (tenant_id, raw_token, canonical_unit, source) VALUES
+			(NULL, 'ml', 'mL', 'seed'),
+			(NULL, 'мл', 'mL', 'seed'),
+			(NULL, 'milliliter', 'mL', 'seed'),
+			(NULL, 'milliliters', 'mL', 'seed'),
+			(NULL, 'l', 'mL', 'seed'),
+			(NULL, 'liter', 'mL', 'seed'),
+			(NULL, 'liters', 'mL', 'seed'),
+			(NULL, 'fl oz', 'mL', 'seed'),
+			(NULL, 'oz', 'mL', 'seed'),
+			(NULL, 'g', 'g', 'seed'),
+			(NULL, 'gr', 'g', 'seed'),
+			(NULL, 'г', 'g', 'seed'),
+			(NULL, 'gram', 'g', 'seed'),
+			(NULL, 'grams', 'g', 'seed'),
+			(NULL, 'kg', 'g', 'seed'),
+			(NULL, 'kilogram', 'g', 'seed'),
+			(NULL, 'lb', 'g', 'seed'),
+			(NULL, 'lbs', 'g', 'seed'),
+			(NULL, 'mm', 'mm', 'seed'),
+			(NULL, 'cm', 'mm', 'seed'),
+			(NULL, 'м', 'mm', 'seed'),
+			(NULL, 'm', 'mm', 'seed'),
+			(NULL, 'inch', 'mm', 'seed'),
+			(NULL, 'in', 'mm', 'seed'),
+			(NULL, '"', 'mm', 'seed'),
+			(NULL, 'pcs', 'pcs', 'seed'),
+			(NULL, 'pieces', 'pcs', 'seed'),
+			(NULL, 'шт', 'pcs', 'seed')
+		ON CONFLICT (tenant_id, raw_token) DO NOTHING;`,
+
+		// --- api_keys: public REST API authentication ---
+		// key_hash is bcrypt of plain key; plain shown to user once on creation.
+		// label lets tenants distinguish "production" vs "staging" keys.
+		`CREATE TABLE IF NOT EXISTS catalog.api_keys (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			key_hash TEXT NOT NULL,
+			label TEXT,
+			last_used_at TIMESTAMPTZ,
+			revoked_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_api_keys_tenant
+			ON catalog.api_keys(tenant_id) WHERE revoked_at IS NULL;`,
 	}
 
 	// pipeline_traces table (idempotent, same as chat backend)
