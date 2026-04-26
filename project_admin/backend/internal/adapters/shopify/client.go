@@ -427,8 +427,11 @@ const bulkProductsQueryBody = `{
               compareAtPrice
               barcode
               inventoryQuantity
-              weight
-              weightUnit
+              inventoryItem {
+                measurement {
+                  weight { value unit }
+                }
+              }
               selectedOptions { name value }
               image { url altText }
             }
