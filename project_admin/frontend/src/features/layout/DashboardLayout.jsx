@@ -1,11 +1,27 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Package, Upload, Code, Settings, LogOut, MessageSquare, Palette, Activity, CreditCard, FolderTree } from 'lucide-react'
+import { Package, Upload, Code, Settings, LogOut, MessageSquare, Palette, Activity, CreditCard, FolderTree, AlertCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthProvider.jsx'
+import { api } from '../../shared/api/apiClient.js'
 import './layout.css'
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const [junkCount, setJunkCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchCount = async () => {
+      try {
+        const data = await api.get('/junk/count')
+        if (!cancelled) setJunkCount(data.count || 0)
+      } catch { /* badge silently absent on auth/network failure */ }
+    }
+    fetchCount()
+    const t = setInterval(fetchCount, 60000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [])
 
   function handleLogout() {
     logout()
@@ -25,6 +41,10 @@ export default function DashboardLayout() {
           </NavLink>
           <NavLink to="/catalog/categories" className={({ isActive }) => `sidebar-link sidebar-sub ${isActive ? 'active' : ''}`}>
             <FolderTree size={16} /> Categories
+          </NavLink>
+          <NavLink to="/catalog/detected-addons" className={({ isActive }) => `sidebar-link sidebar-sub ${isActive ? 'active' : ''}`}>
+            <AlertCircle size={16} /> Detected add-ons
+            {junkCount > 0 && <span className="sidebar-badge">{junkCount}</span>}
           </NavLink>
           <NavLink to="/import" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Upload size={18} /> Import

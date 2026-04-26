@@ -17,6 +17,7 @@ import DashboardLayout from './features/layout/DashboardLayout.jsx'
 import ProductsPage from './features/catalog/ProductsPage.jsx'
 import ProductDetailPage from './features/catalog/ProductDetailPage.jsx'
 import CategoryEditor from './features/catalog/CategoryEditor.jsx'
+import DetectedAddonsPage from './features/catalog/DetectedAddonsPage.jsx'
 import ImportPage from './features/import/ImportPage.jsx'
 import IntegrationsPage from './features/integrations/IntegrationsPage.jsx'
 import CSVUploadPage from './features/integrations/CSVUploadPage.jsx'
@@ -70,6 +71,7 @@ export default function App() {
         <Route index element={<Navigate to="/catalog" replace />} />
         <Route path="catalog" element={<ProductsPage />} />
         <Route path="catalog/categories" element={<CategoryEditor />} />
+        <Route path="catalog/detected-addons" element={<DetectedAddonsPage />} />
         <Route path="catalog/:id" element={<ProductDetailPage />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="integrations" element={<IntegrationsPage />} />

@@ -298,6 +298,8 @@ func main() {
 	productsHandler := handlers.NewProductsHandler(productsUC, log)
 	categoriesV2Adapter := postgres.NewCategoriesV2Adapter(dbClient, log)
 	categoriesHandler := handlers.NewCategoriesHandler(categoriesV2Adapter, log)
+	candidatesAdapter := postgres.NewCandidatesAdapter(dbClient, log)
+	junkHandler := handlers.NewJunkHandler(candidatesAdapter, log)
 	importHandler := handlers.NewImportHandler(importUC, log)
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
 	stockHandler := handlers.NewStockHandler(stockUC, log)
@@ -436,6 +438,17 @@ func main() {
 	})
 	protected.HandleFunc("/admin/api/categories/master", categoriesHandler.HandleListMaster)
 	protected.HandleFunc("/admin/api/categories/mapping", categoriesHandler.HandleSetMapping)
+	// Junk variant triage (M9). Empty until harvester (M4d) populates the
+	// queue; UI renders an empty state in the meantime.
+	protected.HandleFunc("/admin/api/junk", junkHandler.HandleList)
+	protected.HandleFunc("/admin/api/junk/count", junkHandler.HandleCount)
+	protected.HandleFunc("/admin/api/junk/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/classify") {
+			junkHandler.HandleClassify(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
 	protected.HandleFunc("/admin/api/catalog/import", importHandler.HandleUpload)
 	protected.HandleFunc("/admin/api/catalog/import/", importHandler.HandleGetJob)
 	protected.HandleFunc("/admin/api/catalog/imports", importHandler.HandleListJobs)
