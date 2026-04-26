@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import Button from '../../shared/ui/Button.jsx'
+import { api } from '../../shared/api/apiClient.js'
 import './integrations.css'
 
 export default function ShopifyConnectPage() {
   const [shop, setShop] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  function handleConnect(e) {
+  async function handleConnect(e) {
     e.preventDefault()
     setError('')
     const normalized = shop.trim().toLowerCase()
@@ -14,9 +16,18 @@ export default function ShopifyConnectPage() {
       setError('Shop must look like your-store.myshopify.com')
       return
     }
-    // Full-page redirect — the install route is authenticated, so the
-    // current session cookie/bearer ships along with the request.
-    window.location.href = `/admin/api/integrations/shopify/install?shop=${encodeURIComponent(normalized)}`
+    setLoading(true)
+    try {
+      // Authed request returns the Shopify consent URL; we then redirect.
+      const res = await api.get(`/integrations/shopify/install?shop=${encodeURIComponent(normalized)}`)
+      if (!res?.install_url) {
+        throw new Error('install_url missing from response')
+      }
+      window.location.href = res.install_url
+    } catch (err) {
+      setError(err?.message || 'Failed to start install')
+      setLoading(false)
+    }
   }
 
   return (
@@ -35,7 +46,7 @@ export default function ShopifyConnectPage() {
         />
         {error && <div className="auth-error" style={{ marginBottom: 16 }}>{error}</div>}
         <div style={{ display: 'flex', gap: 12 }}>
-          <Button type="submit">Install Keepstar</Button>
+          <Button type="submit" disabled={loading}>{loading ? 'Redirecting…' : 'Install Keepstar'}</Button>
         </div>
         <p className="text-secondary" style={{ fontSize: 12, marginTop: 16 }}>
           We request access to products, listings, inventory, locations, metaobjects, and orders. Scopes match the Shopify App configuration on our side.

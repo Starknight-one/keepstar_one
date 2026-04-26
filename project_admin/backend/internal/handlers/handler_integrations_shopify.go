@@ -25,6 +25,15 @@ func NewShopifyHandler(shopify *usecases.ShopifyUseCase, log *logger.Logger) *Sh
 
 // HandleInstall — GET /admin/api/integrations/shopify/install?shop=xxx.myshopify.com
 // Wrapped in authMW — only admins can start an install.
+//
+// Returns JSON {install_url: "https://shop.myshopify.com/admin/oauth/authorize?..."}.
+// The frontend then does window.location.href = install_url, which is a direct
+// navigation to Shopify (no auth header needed for that hop).
+//
+// Why JSON instead of a 302 redirect: the frontend authenticates via Bearer
+// token in localStorage, so a full-page nav to this endpoint wouldn't include
+// the Authorization header → 401 "missing token". Fetch with the bearer + then
+// redirect to the returned URL is the workable pattern.
 func (h *ShopifyHandler) HandleInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
@@ -36,13 +45,13 @@ func (h *ShopifyHandler) HandleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := TenantID(r.Context())
-	redirectURL, err := h.shopify.StartOAuth(r.Context(), tenantID, shop)
+	installURL, err := h.shopify.StartOAuth(r.Context(), tenantID, shop)
 	if err != nil {
 		h.log.FromContext(r.Context()).Error("shopify_install_failed", "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	http.Redirect(w, r, redirectURL, http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]string{"install_url": installURL})
 }
 
 // HandleCallback — GET /admin/api/integrations/shopify/callback
