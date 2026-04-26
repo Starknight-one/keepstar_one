@@ -558,6 +558,22 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		// never matched anything. Harmless but messy; remove them.
 		`DELETE FROM catalog.unit_aliases
 			WHERE tenant_id IS NULL AND raw_token IN ('мл', 'г', 'м', 'шт');`,
+
+		// =========================================================================
+		// M4b (2026-04-26) — Match cascade fuzzy step needs pg_trgm
+		// =========================================================================
+
+		// pg_trgm enables similarity() / % operator for trigram-based fuzzy
+		// title matching. Step 3 of the cascade (vendor + similarity(name) > 0.85
+		// + axes) relies on this. Extension is widely available on managed
+		// Postgres including Neon — no licensing concerns.
+		`CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
+
+		// GIN index on master_products.name with trigram ops makes the
+		// similarity scan acceptable even at 100k+ rows. Without it the
+		// match cascade would table-scan on every variant.
+		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_name_trgm
+			ON catalog.master_products USING gin (name gin_trgm_ops);`,
 	}
 
 	// pipeline_traces table (idempotent, same as chat backend)

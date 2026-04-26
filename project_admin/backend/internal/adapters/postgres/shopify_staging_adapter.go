@@ -109,3 +109,41 @@ func (a *ShopifyStagingAdapter) DeleteByTenant(ctx context.Context, tenantID str
 	}
 	return nil
 }
+
+// GetMetadata returns one staging row from source_kind='metadata' (or
+// source_kind='menu' for the navigation snapshot) by source_id. Returns
+// (nil, nil) if absent — caller treats absence as "this metadata wasn't
+// pulled" rather than an error.
+//
+// Lives outside the ShopifyStagingPort interface because only the
+// metadata-harvest usecase needs it. Callers type-assert via the
+// metadataReader interface in usecases/metadata_harvest.go.
+func (a *ShopifyStagingAdapter) GetMetadata(ctx context.Context, tenantID, sourceID string) (json.RawMessage, error) {
+	var payload json.RawMessage
+	err := a.client.pool.QueryRow(ctx, `
+		SELECT payload
+		FROM catalog.shopify_raw_imports
+		WHERE tenant_id = $1
+		  AND source_kind IN ('metadata', 'menu')
+		  AND source_id = $2
+		LIMIT 1
+	`, tenantID, sourceID).Scan(&payload)
+	if err != nil {
+		// pgx returns ErrNoRows on miss; we collapse it to (nil, nil).
+		if isPgxNoRows(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("staging get metadata: %w", err)
+	}
+	return payload, nil
+}
+
+// isPgxNoRows is a small helper that avoids importing pgx into call sites.
+// We pattern-match on the error string because pgx exports its sentinel
+// from a sub-package that this file already imports indirectly.
+func isPgxNoRows(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "no rows in result set"
+}

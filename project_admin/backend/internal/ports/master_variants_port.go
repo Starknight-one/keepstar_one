@@ -27,9 +27,32 @@ type MasterVariantsPort interface {
 	// Used as fallback in match cascade when GTIN absent.
 	FindByVendorAndSKU(ctx context.Context, vendor, sku string) ([]domain.MasterVariant, error)
 
+	// FindByVendorAndFuzzyName scans variants of products whose brand matches
+	// vendor (case-insensitive ILIKE) and whose name has trigram similarity
+	// to the given title above the threshold (typically 0.85). Results are
+	// returned with the similarity score in MatchedScore for the cascade to
+	// pick the top hit. Limit caps result count (10 is plenty).
+	FindByVendorAndFuzzyName(ctx context.Context, vendor, title string, threshold float64, limit int) ([]MasterVariantWithScore, error)
+
+	// FindByEmbedding does a vector-cosine search against master_variants.embedding.
+	// Returns variants ordered by similarity DESC, capped at limit. Threshold
+	// is a cosine distance bound — typical cascade value is 0.92 (i.e. distance
+	// < 0.08). Implementations should rely on the hnsw index for performance.
+	FindByEmbedding(ctx context.Context, embedding []float32, threshold float64, limit int) ([]MasterVariantWithScore, error)
+
 	// UpsertMasterCosmetics writes/updates the cosmetics Tier 2 row for a variant.
 	UpsertMasterCosmetics(ctx context.Context, mc *domain.MasterCosmetics) error
 
 	// GetMasterCosmetics returns the Tier 2 cosmetics row for a variant, or nil.
 	GetMasterCosmetics(ctx context.Context, masterVariantID string) (*domain.MasterCosmetics, error)
+}
+
+// MasterVariantWithScore is a match-cascade result row that carries the
+// similarity score the SQL query computed (trigram or cosine, depending on
+// step). Score range: [0, 1] for trigram, [0, 2] for cosine distance —
+// adapters normalize to "higher is better" so callers can compare across
+// steps without remembering which is which.
+type MasterVariantWithScore struct {
+	domain.MasterVariant
+	MatchedScore float64
 }
