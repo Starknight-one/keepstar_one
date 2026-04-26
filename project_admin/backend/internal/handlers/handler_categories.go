@@ -19,11 +19,12 @@ import (
 
 type CategoriesHandler struct {
 	categories ports.CategoriesPort
+	audit      ports.AuditPort // optional
 	log        *logger.Logger
 }
 
-func NewCategoriesHandler(categories ports.CategoriesPort, log *logger.Logger) *CategoriesHandler {
-	return &CategoriesHandler{categories: categories, log: log}
+func NewCategoriesHandler(categories ports.CategoriesPort, audit ports.AuditPort, log *logger.Logger) *CategoriesHandler {
+	return &CategoriesHandler{categories: categories, audit: audit, log: log}
 }
 
 // GET /admin/api/categories/tenant — tenant tree with product counts.
@@ -77,6 +78,11 @@ func (h *CategoriesHandler) HandleCreateTenant(w http.ResponseWriter, r *http.Re
 		h.log.FromContext(r.Context()).Error("create_tenant_category_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create category")
 		return
+	}
+	if h.audit != nil {
+		_ = h.audit.LogHuman(r.Context(), TenantID(r.Context()), UserID(r.Context()),
+			domain.EntityKindCategory, id, domain.AuditActionCreate,
+			map[string]domain.FieldChange{"name": {New: p.Name}, "kind": {New: p.Kind}})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
 }
@@ -134,6 +140,10 @@ func (h *CategoriesHandler) HandleDeleteTenant(w http.ResponseWriter, r *http.Re
 		h.log.FromContext(r.Context()).Error("delete_tenant_category_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete category")
 		return
+	}
+	if h.audit != nil {
+		_ = h.audit.LogHuman(r.Context(), TenantID(r.Context()), UserID(r.Context()),
+			domain.EntityKindCategory, id, domain.AuditActionDelete, nil)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

@@ -18,11 +18,12 @@ import (
 
 type JunkHandler struct {
 	candidates ports.CandidatesPort
+	audit      ports.AuditPort // optional
 	log        *logger.Logger
 }
 
-func NewJunkHandler(candidates ports.CandidatesPort, log *logger.Logger) *JunkHandler {
-	return &JunkHandler{candidates: candidates, log: log}
+func NewJunkHandler(candidates ports.CandidatesPort, audit ports.AuditPort, log *logger.Logger) *JunkHandler {
+	return &JunkHandler{candidates: candidates, audit: audit, log: log}
 }
 
 // GET /admin/api/junk?status=pending — list candidates for the current tenant.
@@ -94,6 +95,13 @@ func (h *JunkHandler) HandleClassify(w http.ResponseWriter, r *http.Request) {
 		h.log.FromContext(r.Context()).Error("classify_junk_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to classify")
 		return
+	}
+	if h.audit != nil {
+		_ = h.audit.LogHuman(r.Context(), TenantID(r.Context()), UserID(r.Context()),
+			domain.EntityKindCandidate, id, domain.AuditActionClassify,
+			map[string]domain.FieldChange{
+				"classification": {Old: domain.JunkClassificationPending, New: cls},
+			})
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

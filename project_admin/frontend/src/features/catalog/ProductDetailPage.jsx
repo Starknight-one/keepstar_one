@@ -18,6 +18,7 @@ export default function ProductDetailPage() {
 
   const [allCategories, setAllCategories] = useState([])
   const [linkedCategoryIds, setLinkedCategoryIds] = useState([])
+  const [history, setHistory] = useState([])
 
   useEffect(() => {
     api.get(`/products/${id}`)
@@ -35,6 +36,7 @@ export default function ProductDetailPage() {
       .finally(() => setLoading(false))
     api.get('/categories/tenant').then((d) => setAllCategories(d.categories || [])).catch(() => {})
     api.get(`/products/${id}/categories`).then((d) => setLinkedCategoryIds((d.categories || []).map((c) => c.id))).catch(() => {})
+    api.get(`/audit?entity_kind=listing&entity_id=${id}&limit=10`).then((d) => setHistory(d.entries || [])).catch(() => {})
   }, [id, navigate])
 
   async function handleSave() {
@@ -166,6 +168,33 @@ export default function ProductDetailPage() {
                   </label>
                 ))}
               </div>
+            )}
+          </div>
+
+          <div className="pd-section">
+            <div className="pd-section-title">History</div>
+            <div className="pd-section-hint">Last 10 changes to this listing.</div>
+            {history.length === 0 ? (
+              <div className="pd-cat-empty">No history yet — edits will appear here.</div>
+            ) : (
+              <ul className="pd-history">
+                {history.map((h) => (
+                  <li key={h.id}>
+                    <div className="pd-history-meta">
+                      {new Date(h.createdAt).toLocaleString()} · {h.actorKind} · {h.action}
+                    </div>
+                    {h.fieldChanges && (
+                      <div className="pd-history-diff">
+                        {Object.entries(h.fieldChanges).map(([k, v]) => (
+                          <span key={k} className="pd-history-field">
+                            <strong>{k}:</strong> {v.old !== undefined ? `${JSON.stringify(v.old)} → ` : ''}{JSON.stringify(v.new)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 

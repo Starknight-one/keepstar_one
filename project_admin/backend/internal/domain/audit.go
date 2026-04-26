@@ -22,6 +22,11 @@ const (
 	EntityKindMasterVariant EntityKind = "master_variant"
 	EntityKindCategory      EntityKind = "category"
 	EntityKindCandidate     EntityKind = "candidate"
+	EntityKindAPIKey        EntityKind = "api_key"
+)
+
+const (
+	AuditActionClassify AuditAction = "classify"
 )
 
 // AuditAction is what happened to the entity.

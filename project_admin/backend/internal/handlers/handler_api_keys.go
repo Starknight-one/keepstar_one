@@ -7,17 +7,19 @@ import (
 	"net/http"
 	"strings"
 
+	"keepstar-admin/internal/domain"
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
 )
 
 type APIKeysHandler struct {
-	keys ports.APIKeysPort
-	log  *logger.Logger
+	keys  ports.APIKeysPort
+	audit ports.AuditPort // optional
+	log   *logger.Logger
 }
 
-func NewAPIKeysHandler(keys ports.APIKeysPort, log *logger.Logger) *APIKeysHandler {
-	return &APIKeysHandler{keys: keys, log: log}
+func NewAPIKeysHandler(keys ports.APIKeysPort, audit ports.AuditPort, log *logger.Logger) *APIKeysHandler {
+	return &APIKeysHandler{keys: keys, audit: audit, log: log}
 }
 
 type createAPIKeyPayload struct {
@@ -48,6 +50,11 @@ func (h *APIKeysHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		h.log.FromContext(r.Context()).Error("create_api_key_failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create api key")
 		return
+	}
+	if h.audit != nil {
+		_ = h.audit.LogHuman(r.Context(), TenantID(r.Context()), UserID(r.Context()),
+			domain.EntityKindAPIKey, key.ID, domain.AuditActionCreate,
+			map[string]domain.FieldChange{"label": {New: key.Label}})
 	}
 	writeJSON(w, http.StatusOK, createAPIKeyResponse{
 		ID:        key.ID,
@@ -89,6 +96,10 @@ func (h *APIKeysHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		h.log.FromContext(r.Context()).Error("revoke_api_key_failed", "error", err)
 		writeError(w, http.StatusNotFound, "key not found or already revoked")
 		return
+	}
+	if h.audit != nil {
+		_ = h.audit.LogHuman(r.Context(), TenantID(r.Context()), UserID(r.Context()),
+			domain.EntityKindAPIKey, id, domain.AuditActionDelete, nil)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
