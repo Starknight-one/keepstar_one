@@ -938,22 +938,25 @@ POST   /api/v1/webhooks                       # subscribe to listing/master even
 - [ ] Bulk job перформанс на полном каталоге одного тенанта — **закрывается в M4**
 - [ ] COALESCE рендер на 1000 listings — нет ли N+1, нужны ли materialized views — **закрывается в M6**
 
-### Прогресс по milestone-плану (2026-04-26)
+### Прогресс по milestone-плану (обновлено 2026-04-26 13:13)
 
 | M | Описание | Status | Commit | Лог |
 |---|---|---|---|---|
 | M1 | Schema migrations (additive) | ✅ done | `ad2386a` | `docs/Updates/main-admin-catalog-m1-m3-plus-shopify-oauth_2026-04-26_10-28.md` |
 | M2 | Domain types + ports + adapters | ✅ done | `8065fcc` | (same) |
 | M3 | Units parser | ✅ done | `71d5d7c` | (same) |
-| M4 | New Shopify metadata-first import | ⏳ next | — | — |
-| M5 | Match cascade + junk detection | pending | — | — |
-| M6 | COALESCE-render admin + V4 engine | pending | — | — |
+| M4a | Foundation — staging + GraphQL bulk client | ✅ done | `6067fb7` | `docs/Updates/main-admin-catalog-m4abc-discovery-tested_2026-04-26_13-13.md` |
+| M4b | Deterministic harvest + match cascade + junk detector | ✅ done | `d537518` | (same) |
+| M4c | Discovery agent (Sonnet 4.6, 8 tools) + validation | ✅ done | `8cd0b2f` (+ fixes `10e1145`, `5a795ac`) | (same) |
+| **M4d** | **Harvester orchestrator + cut-over (legacy delete)** | **🔴 deferred to end** | — | (planned during final M4 polish session) |
+| M6 | COALESCE-render admin + V4 engine | ⏳ next | — | — |
 | M7 | Heybabes 967 backfill script | pending | — | — |
 | M8 | Categories M:N + tree editor | pending | — | — |
 | M9 | Detected add-ons page (junk triage UI) | pending | — | — |
 | M10 | Public API + api_keys management | pending | — | — |
-| M11 | Curator service (standalone) | pending | — | — |
-| M12 | Audit log + promotion mechanics | pending | — | — |
+| M11 | Curator service (standalone) + audit + promotion | pending | — | — |
+
+**Plan correction (2026-04-26 13:10 UTC).** Discovery agent работает end-to-end на dev-store (51s / 13 turns / commit_artifact, см. лог). M4d (harvester + cut-over legacy) **отложен в самый конец** — чтобы при финальном слиянии пользователь сел и сосредоточенно прокинул как pipeline должен работать end-to-end. Сейчас идём по M6→M7→M8→M9→M10→M11; M4d полируется последним. Detail rationale + что осталось от M4 — в логе сессии.
 
 Бонусом этой сессии (не в M-плане): проdovskoy Shopify OAuth полностью заработал на dev-store `keepstar-neaqpan1.myshopify.com` (коммиты `c99589f` + `d87a676` + Railway env config). 17 продуктов синкнулись в **старую схему** через legacy importer — будут backfill'нуты в M4 или отдельным шагом.
 
@@ -988,6 +991,13 @@ POST   /api/v1/webhooks                       # subscribe to listing/master even
 ---
 
 ## Changelog
+
+- **2026-04-26 13:13 UTC — M4 a/b/c shipped, discovery agent verified end-to-end, M4d deferred**
+  - 4a foundation (`6067fb7`), 4b deterministic (`d537518`), 4c discovery agent (`8cd0b2f`) merged to main
+  - Two production fixes: `10e1145` (Shopify 2026-04 schema for variant weight) + `5a795ac` (prompt caching, partial salvage, drop OpenAI dep)
+  - **End-to-end test on dev-store passed**: `dump-to-staging` (4.3s, 17 products) + `discover` (51s, 13 turns, status=committed, 13 field mappings + 3 categories + 1 master_template `winter_sports`, ~$0.15 cost). Validation gave 73.7% coverage → `needs_human_review` (false negative caused by system fields like `id`/`createdAt` counted as unmapped — fix is in the deferred polish list).
+  - **Plan correction**: M4d (harvester orchestrator + cut-over legacy) deferred to the very end. Reason: discovery works, but the user needs to sit and walk through the agent's transcript + validation report at the cut-over point. Going M6→M7→M8→M9→M10→M11 first.
+  - Session log: `docs/Updates/main-admin-catalog-m4abc-discovery-tested_2026-04-26_13-13.md`
 
 - **2026-04-26 — implementation kickoff (M1-M3 done)**
   - §10 чек-лист обновлён: добавлен прогресс по milestone-плану, отмечены закрытые задачи

@@ -1,5 +1,7 @@
 # Admin Catalog — Implementation Plan
 
+> **STATUS UPDATE 2026-04-26 13:13 UTC.** M1/M2/M3/M4a/M4b/M4c shipped. **Discovery agent verified end-to-end on the dev-store** (`dump-to-staging` + `discover` both return committed artifacts; logs in `docs/Updates/main-admin-catalog-m4abc-discovery-tested_2026-04-26_13-13.md`). **M4d (harvester orchestrator + cut-over legacy) intentionally deferred to the very end** — see "Order correction" at the bottom of this file. New ordering: **M6 → M7 → M8 → M9 → M10 → M11 → M4d (final polish)**.
+
 ## Context
 
 Дизайн каталога админки закрыт в `docs/New features/admin_catalog_design_2026-04-23.md` (commit `c0e776c`). Сейчас в Neon Postgres лежат:
@@ -126,6 +128,8 @@ Seed глобальных алиасов в M1 миграции (мл, ml, milli
 **Verification**: `go test ./internal/units/...` — все 50+ кейсов pass.
 
 ### M4. New Shopify metadata-first import
+
+> **Status: 4a/b/c ✅ shipped, 4d 🔴 deferred to end.** End-to-end test на dev-store пройден (51 сек / 13 turns / commit_artifact / 13 mappings + 3 categories + 1 master_template `winter_sports` / ~$0.15). Лог: `docs/Updates/main-admin-catalog-m4abc-discovery-tested_2026-04-26_13-13.md`. M4d (harvester orchestrator + cut-over legacy ShopifyUseCase + embedding job + hash-diff webhooks + frontend progress UI + wipe/resync 17 dev-store) делается **последним milestone'ом** — после M6/M7/M8/M9/M10/M11. См. "Order correction" внизу.
 
 Переписать `internal/usecases/shopify.go` + `shopify_mapper.go`:
 1. **Metadata pull** (sync GraphQL) — `metafieldDefinitions(ownerType: PRODUCT|VARIANT|COLLECTION)`, `menu(handle:)`, `shop.{productVendors, productTypes, productTags}`
@@ -319,7 +323,7 @@ Promotion mechanics в curator (M11) usecase `promote_attribute.go`:
 
 ---
 
-## Implementation order rationale
+## Implementation order rationale (original)
 
 - **M1-M3** (миграции, домен, юниты) — фундамент, ничего не меняет в работающей системе
 - **M4** (новый импорт) — первое наблюдаемое изменение, тестируется на dev-store wipe+resync (минимальный риск, 17 товаров)
@@ -330,3 +334,39 @@ Promotion mechanics в curator (M11) usecase `promote_attribute.go`:
 - **M11-M12** — curator + audit (production polish)
 
 После M7 продукт уже может приниматься как "production-ready Shopify integration с master/variants/listing" — M8-M12 это фичи поверх.
+
+---
+
+## Order correction (2026-04-26 13:13 UTC)
+
+**Что поменялось.** M4 был задуман как один FAT-коммит. По ходу его разбили на 4 коммита (4a/b/c/d). 4a/b/c **полностью отшиплены и протестированы end-to-end на dev-store** — discovery agent работает: bulk pull → staging → meta-report → Tier1 auto-map → Sonnet 4.6 loop с 8 tools → mapping artifact → validation. Полный лог: `docs/Updates/main-admin-catalog-m4abc-discovery-tested_2026-04-26_13-13.md`.
+
+**Что осталось от M4 = M4d:**
+- Harvester orchestrator (стримит staging → applies artifact → match cascade → junk detector → пишет master/listing/cosmetics/tier3)
+- Embedding job (parent + per-variant через OpenAI text-embedding-3-small)
+- Hash-diff webhook re-write (заменить legacy `usecases/shopify.go::HandleWebhook`)
+- DI cut-over в `cmd/server/main.go` (удаление `usecases.NewShopifyUseCase` + `usecases/shopify_mapper.go`)
+- Frontend progress UI на `ShopifyConnectPage.jsx` (стадии install)
+- Wipe + resync 17 dev-store products через новый pipeline
+- Полировка из "Known gaps" лога (validation threshold для system fields, conditional field mapping для Color-axis, expansion dev-store через `seed-dev-products` endpoint)
+
+**Почему отложено в самый конец.** Discovery агент работает, но понять что именно агент сделал и почему (transcript / validation report / proposed mappings) требует фокусированной сессии — пользователь должен сесть и пройти end-to-end вместе с тем кто кодит, не параллельно с другой работой. Делать cut-over legacy importer'а параллельно с UX/curator работой = риск регрессии без активного review.
+
+**Новый порядок:**
+
+| Phase | Milestones | Зачем |
+|---|---|---|
+| **Сейчас → следующие сессии** | M6 → M7 → M8 → M9 → M10 → M11 | Продвигаем всё что независимо от harvester'а. Read-path COALESCE, backfill heybabes, categories tree, junk triage UI, public API, curator service + promotion. После M7 чат-движок V4 уже работает на новой модели. |
+| **Финальная сессия M4 polish** | M4d (всё что выше) | В одну сидячую сессию с пользователем у руля: агент → harvester → embedding → cut-over → UI → wipe/resync. Можно параллельно подкрутить validation, conditional mapping, расширить test catalog. |
+
+**Риски нового порядка.**
+
+- M6/M7 могут вскрыть мелкие нужды в artifact format или staging shape, которые хотелось бы прошить через discovery agent. **Принимаем** — фиксим в финальной M4 сессии.
+- **M8-M11 не блокированы** — они работают с уже существующими `master_products`/`products`. M11 (curator) тем более независим — у него собственная схема и собственный сервис.
+- Production-quality install flow (полировка) появляется только в финальной M4 сессии. Дев-store продолжает работать через legacy auto-sync (как и сейчас).
+
+**Что должно быть готово до финальной M4 сессии:**
+
+1. Все M6-M11 закрыты или хотя бы доведены до точки "не блокируют M4d"
+2. Расширенный test catalog в dev-store (`seed-dev-products`) — cosmetics-дубли brand'ов heybabes + furniture + junk + collections + custom metafields. Нужен write_products scope (instructions в логе).
+3. Пользователь свободен на 1-2 часа сидячей работы, не отвлекаясь на параллельные задачи.
