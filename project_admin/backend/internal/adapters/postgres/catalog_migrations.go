@@ -507,6 +507,12 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_api_keys_tenant
 			ON catalog.api_keys(tenant_id) WHERE revoked_at IS NULL;`,
+		// M10: key_prefix lets the API-key middleware narrow by prefix before
+		// bcrypt-comparing the full hash. Without this, every request scans
+		// every active key and runs bcrypt — fine on MVP, painful at scale.
+		`ALTER TABLE catalog.api_keys ADD COLUMN IF NOT EXISTS key_prefix TEXT;`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_api_keys_prefix
+			ON catalog.api_keys(key_prefix) WHERE revoked_at IS NULL;`,
 
 		// =========================================================================
 		// M4a (2026-04-26) — Foundation for metadata-first Shopify import

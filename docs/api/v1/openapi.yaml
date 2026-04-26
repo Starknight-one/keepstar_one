@@ -1,0 +1,199 @@
+openapi: 3.0.3
+info:
+  title: Keepstar Public API
+  version: 1.0.0
+  description: |
+    Public REST API for tenant catalog operations. Authentication uses
+    long-lived tokens passed in the `X-API-Key` header. Tokens are issued
+    in the admin UI under Settings → API access; the plain text is shown
+    only once on creation.
+
+servers:
+  - url: https://admin-production-4ae4.up.railway.app
+    description: Production
+  - url: http://localhost:8081
+    description: Local
+
+security:
+  - APIKeyAuth: []
+
+paths:
+  /api/v1/products:
+    get:
+      summary: List products
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 200 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: categoryId
+          schema: { type: string }
+      responses:
+        '200':
+          description: Page of products
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  products:
+                    type: array
+                    items: { $ref: '#/components/schemas/Product' }
+                  total:  { type: integer }
+                  limit:  { type: integer }
+                  offset: { type: integer }
+    post:
+      summary: Bulk push products (planned, returns 501 today)
+      description: |
+        Bulk push will hit the same harvester pipeline as Shopify imports:
+        match cascade → master/listing creation → candidates accumulation.
+        Wait for M4d before relying on this.
+      responses:
+        '501':
+          description: Not implemented until harvester (M4d) ships
+
+  /api/v1/products/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a single product
+      responses:
+        '200':
+          description: Product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '404': { description: Not found }
+    patch:
+      summary: Update listing-only fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName:   { type: string }
+                description:   { type: string }
+                price:         { type: integer, description: kopecks }
+                stock:         { type: integer }
+                rating:        { type: number }
+                rawAttributes: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
+    delete:
+      summary: Soft-delete a listing (planned)
+      responses:
+        '501': { description: Not yet wired in admin port }
+
+  /api/v1/categories:
+    get:
+      summary: List tenant categories
+      responses:
+        '200':
+          description: List
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categories:
+                    type: array
+                    items: { $ref: '#/components/schemas/Category' }
+    post:
+      summary: Create a tenant category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                name:       { type: string }
+                slug:       { type: string }
+                kind:       { type: string, enum: [category, showcase, promo] }
+                parentId:   { type: string, nullable: true }
+                externalId: { type: string }
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { id: { type: string } }
+
+  /api/v1/categories/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    patch:
+      summary: Update a tenant category
+      responses:
+        '200': { description: OK }
+    delete:
+      summary: Delete (re-parents children to NULL)
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
+
+components:
+  securitySchemes:
+    APIKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    Product:
+      type: object
+      properties:
+        id:               { type: string }
+        tenantId:         { type: string }
+        masterProductId:  { type: string }
+        masterVariantId:  { type: string }
+        name:             { type: string }
+        displayName:      { type: string }
+        originalName:     { type: string }
+        description:      { type: string }
+        price:            { type: integer, description: kopecks }
+        priceFormatted:   { type: string }
+        currency:         { type: string }
+        images:           { type: array, items: { type: string } }
+        rating:           { type: number }
+        stockQuantity:    { type: integer }
+        brand:            { type: string }
+        category:         { type: string }
+        sku:              { type: string }
+        gtins:            { type: array, items: { type: string } }
+        size:             { type: string }
+        color:            { type: string }
+        weightG:          { type: integer }
+        volumeMl:         { type: integer }
+        rawAttributes:    { type: object, additionalProperties: true }
+
+    Category:
+      type: object
+      properties:
+        id:           { type: string }
+        tenantId:     { type: string }
+        parentId:     { type: string, nullable: true }
+        externalId:   { type: string }
+        slug:         { type: string }
+        name:         { type: string }
+        kind:         { type: string, enum: [category, showcase, promo] }
+        productCount: { type: integer }
+        createdAt:    { type: string, format: date-time }

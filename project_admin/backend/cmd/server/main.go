@@ -300,6 +300,10 @@ func main() {
 	categoriesHandler := handlers.NewCategoriesHandler(categoriesV2Adapter, log)
 	candidatesAdapter := postgres.NewCandidatesAdapter(dbClient, log)
 	junkHandler := handlers.NewJunkHandler(candidatesAdapter, log)
+	apiKeysAdapter := postgres.NewAPIKeysAdapter(dbClient, log)
+	apiKeysHandler := handlers.NewAPIKeysHandler(apiKeysAdapter, log)
+	apiV1ProductsHandler := handlers.NewAPIv1ProductsHandler(productsUC, log)
+	apiV1CategoriesHandler := handlers.NewAPIv1CategoriesHandler(categoriesV2Adapter, log)
 	importHandler := handlers.NewImportHandler(importUC, log)
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
 	stockHandler := handlers.NewStockHandler(stockUC, log)
@@ -449,6 +453,18 @@ func main() {
 		}
 		http.NotFound(w, r)
 	})
+	// API keys (M10) — admin-protected CRUD.
+	protected.HandleFunc("/admin/api/api-keys", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			apiKeysHandler.HandleList(w, r)
+		case http.MethodPost:
+			apiKeysHandler.HandleCreate(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	protected.HandleFunc("/admin/api/api-keys/", apiKeysHandler.HandleRevoke)
 	protected.HandleFunc("/admin/api/catalog/import", importHandler.HandleUpload)
 	protected.HandleFunc("/admin/api/catalog/import/", importHandler.HandleGetJob)
 	protected.HandleFunc("/admin/api/catalog/imports", importHandler.HandleListJobs)
@@ -529,6 +545,15 @@ func main() {
 	mux.Handle("/admin/api/products", authMW(protected))
 	mux.Handle("/admin/api/products/", authMW(protected))
 	mux.Handle("/admin/api/categories", authMW(protected))
+	mux.Handle("/admin/api/categories/tenant", authMW(protected))
+	mux.Handle("/admin/api/categories/tenant/", authMW(protected))
+	mux.Handle("/admin/api/categories/master", authMW(protected))
+	mux.Handle("/admin/api/categories/mapping", authMW(protected))
+	mux.Handle("/admin/api/junk", authMW(protected))
+	mux.Handle("/admin/api/junk/count", authMW(protected))
+	mux.Handle("/admin/api/junk/", authMW(protected))
+	mux.Handle("/admin/api/api-keys", authMW(protected))
+	mux.Handle("/admin/api/api-keys/", authMW(protected))
 	mux.Handle("/admin/api/catalog/import", authMW(protected))
 	mux.Handle("/admin/api/catalog/import/", authMW(protected))
 	mux.Handle("/admin/api/catalog/imports", authMW(protected))
@@ -565,6 +590,19 @@ func main() {
 		mux.HandleFunc("/admin/api/integrations/shopify/callback", shopifyHandler.HandleCallback)
 		mux.HandleFunc("/admin/api/webhooks/shopify", shopifyHandler.HandleWebhook)
 	}
+
+	// Public REST API v1 (M10) — X-API-Key auth instead of JWT.
+	// Tenant comes from the resolved key; AuthMiddleware is NOT applied here.
+	apiV1MW := handlers.APIKeyMiddleware(apiKeysAdapter)
+	apiV1 := http.NewServeMux()
+	apiV1.HandleFunc("/api/v1/products", apiV1ProductsHandler.HandleCollection)
+	apiV1.HandleFunc("/api/v1/products/", apiV1ProductsHandler.HandleResource)
+	apiV1.HandleFunc("/api/v1/categories", apiV1CategoriesHandler.HandleCollection)
+	apiV1.HandleFunc("/api/v1/categories/", apiV1CategoriesHandler.HandleResource)
+	mux.Handle("/api/v1/products", apiV1MW(apiV1))
+	mux.Handle("/api/v1/products/", apiV1MW(apiV1))
+	mux.Handle("/api/v1/categories", apiV1MW(apiV1))
+	mux.Handle("/api/v1/categories/", apiV1MW(apiV1))
 
 	// SPA file server: serve React frontend from ./static
 	staticDir := "./static"

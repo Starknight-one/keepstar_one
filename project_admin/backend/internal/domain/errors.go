@@ -12,4 +12,5 @@ var (
 	ErrEmailExists      = errors.New("email already registered")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUnauthorized     = errors.New("unauthorized")
+	ErrAPIKeyInvalid    = errors.New("api key invalid")
 )
