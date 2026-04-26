@@ -108,3 +108,12 @@
   font-size: 11px;
   color: var(--text-muted);
 }
+.product-cell-original {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}

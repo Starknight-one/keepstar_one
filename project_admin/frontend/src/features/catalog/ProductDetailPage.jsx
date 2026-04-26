@@ -21,7 +21,7 @@ export default function ProductDetailPage() {
       .then((p) => {
         setProduct(p)
         setForm({
-          name: p.name || '',
+          displayName: p.displayName || '',
           description: p.description || '',
           price: p.price || 0,
           stock: p.stockQuantity || 0,
@@ -36,7 +36,14 @@ export default function ProductDetailPage() {
     setSaving(true)
     setMessage('')
     try {
-      await api.put(`/products/${id}`, form)
+      const payload = {
+        displayName: form.displayName,
+        description: form.description,
+        price: form.price,
+        stock: form.stock,
+        rating: form.rating,
+      }
+      await api.put(`/products/${id}`, payload)
       setMessage('Saved successfully')
     } catch (err) {
       setMessage(err.message || 'Failed to save')
@@ -78,11 +85,16 @@ export default function ProductDetailPage() {
               : <div className="pd-hero-img-empty">No image</div>}
             <div className="pd-hero-meta">
               <div>
-                <div className="pd-hero-name">{form.name || product.name}</div>
+                <div className="pd-hero-name">{form.displayName || product.name}</div>
+                {product.originalName && product.originalName !== product.name && (
+                  <div className="pd-hero-original">Original: {product.originalName}</div>
+                )}
                 <div className="pd-hero-tags">
                   {product.brand && <span className="pd-tag">{product.brand}</span>}
                   {product.category && <span className="pd-tag">{product.category}</span>}
-                  <span className="pd-tag">SKU {product.masterProductId?.slice(0, 8) || '—'}</span>
+                  {product.sku && <span className="pd-tag">SKU {product.sku}</span>}
+                  {product.size && <span className="pd-tag">{product.size}</span>}
+                  {product.color && <span className="pd-tag">{product.color}</span>}
                 </div>
               </div>
               <div className="pd-hero-price">{priceDisplay}</div>
@@ -91,11 +103,16 @@ export default function ProductDetailPage() {
           </div>
 
           <div className="pd-section">
-            <div className="pd-section-title">Product details</div>
+            <div className="pd-section-title">Listing overrides</div>
+            <div className="pd-section-hint">These fields override the master record only for your tenant.</div>
             <div className="pd-grid">
               <div className="pd-field" style={{ gridColumn: '1 / -1' }}>
-                <label className="pd-field-label">Name</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <label className="pd-field-label">Display name</label>
+                <input
+                  value={form.displayName}
+                  placeholder={product.originalName || product.name || 'Inherits master name'}
+                  onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+                />
               </div>
               <div className="pd-field" style={{ gridColumn: '1 / -1' }}>
                 <label className="pd-field-label">Description</label>
@@ -112,6 +129,40 @@ export default function ProductDetailPage() {
               <div className="pd-field">
                 <label className="pd-field-label">Rating</label>
                 <input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={(e) => setForm({ ...form, rating: Number(e.target.value) })} />
+              </div>
+            </div>
+          </div>
+
+          <div className="pd-section">
+            <div className="pd-section-title">Master fields (read-only)</div>
+            <div className="pd-section-hint">Shared across tenants. Edits go through the curator service.</div>
+            <div className="pd-grid">
+              <div className="pd-field">
+                <label className="pd-field-label">Brand</label>
+                <input value={product.brand || '—'} disabled />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">SKU</label>
+                <input value={product.sku || '—'} disabled />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">GTINs</label>
+                <input value={(product.gtins && product.gtins.join(', ')) || '—'} disabled />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Size / Color</label>
+                <input
+                  value={[product.size, product.color].filter(Boolean).join(' / ') || '—'}
+                  disabled
+                />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Weight (g)</label>
+                <input value={product.weightG ?? '—'} disabled />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Volume (ml)</label>
+                <input value={product.volumeMl ?? '—'} disabled />
               </div>
             </div>
           </div>

@@ -30,6 +30,7 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		migrationCatalogFieldDefinitionsSeed,
 		migrationCatalogProductsExtra,
 		migrationCatalogTestElectronicsSeed,
+		migrationCatalogProductsM4Columns,
 	}
 
 	for i, migration := range migrations {
@@ -534,4 +535,35 @@ SET catalog_digest = jsonb_build_object(
     'top_brands', jsonb_build_array('Apple', 'Lenovo', 'Dell', 'Asus', 'HP', 'Acer', 'Microsoft')
 )
 WHERE slug = 'test-electronics';
+`
+
+// migrationCatalogProductsM4Columns ensures the listing-side columns added by
+// admin M1/M4 exist for V4 standalone deploys (CI / fresh test DB). On the
+// shared Neon database the admin migrations have already run; this is a safety
+// net so V4 SELECTs don't fail with column-missing errors when bootstrapping
+// from scratch. The master_variants table itself is owned by admin migrations
+// — V4 only LEFT JOINs it, so a missing table will simply yield NULL columns;
+// to keep the LEFT JOIN parseable we create a minimal stand-in here too.
+const migrationCatalogProductsM4Columns = `
+ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS master_variant_id UUID;
+ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS original_name TEXT;
+ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS raw_attributes JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS media JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS catalog.master_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_product_id UUID NOT NULL REFERENCES catalog.master_products(id) ON DELETE CASCADE,
+    sku TEXT,
+    gtins TEXT[] DEFAULT '{}',
+    image_url TEXT,
+    weight_g INTEGER,
+    volume_ml INTEGER,
+    color TEXT,
+    size TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_master_variants_product ON catalog.master_variants (master_product_id);
 `

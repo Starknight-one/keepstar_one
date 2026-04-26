@@ -6,7 +6,10 @@ type Product struct {
 	ID              string    `json:"id"`
 	TenantID        string    `json:"tenantId"`
 	MasterProductID string    `json:"masterProductId,omitempty"`
+	MasterVariantID string    `json:"masterVariantId,omitempty"`
 	Name            string    `json:"name"`
+	DisplayName     string    `json:"displayName,omitempty"`
+	OriginalName    string    `json:"originalName,omitempty"`
 	Description     string    `json:"description,omitempty"`
 	Price           int       `json:"price"`
 	PriceFormatted  string    `json:"priceFormatted,omitempty"`
@@ -19,6 +22,18 @@ type Product struct {
 	Tags            []string  `json:"tags,omitempty"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
+
+	// Variant-level fields (from master_variants when master_variant_id is set).
+	SKU      string   `json:"sku,omitempty"`
+	GTINs    []string `json:"gtins,omitempty"`
+	Size     string   `json:"size,omitempty"`
+	Color    string   `json:"color,omitempty"`
+	WeightG  *int     `json:"weightG,omitempty"`
+	VolumeML *int     `json:"volumeMl,omitempty"`
+
+	// Listing-level overrides / extras.
+	RawAttributes map[string]interface{}   `json:"rawAttributes,omitempty"`
+	Media         []map[string]interface{} `json:"media,omitempty"`
 
 	// PIM structured fields (from master_products)
 	ProductForm    string   `json:"productForm,omitempty"`
@@ -78,9 +93,11 @@ type AdminProductFilter struct {
 }
 
 type ProductUpdate struct {
-	Name        *string  `json:"name,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	Price       *int     `json:"price,omitempty"`
-	Stock       *int     `json:"stock,omitempty"`
-	Rating      *float64 `json:"rating,omitempty"`
+	Name          *string                 `json:"name,omitempty"`
+	DisplayName   *string                 `json:"displayName,omitempty"`
+	Description   *string                 `json:"description,omitempty"`
+	Price         *int                    `json:"price,omitempty"`
+	Stock         *int                    `json:"stock,omitempty"`
+	Rating        *float64                `json:"rating,omitempty"`
+	RawAttributes *map[string]interface{} `json:"rawAttributes,omitempty"`
 }

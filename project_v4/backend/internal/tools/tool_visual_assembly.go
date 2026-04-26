@@ -359,6 +359,9 @@ func ProductToMap(p domain.Product) map[string]interface{} {
 	if p.Name != "" {
 		m["name"] = p.Name
 	}
+	if p.OriginalName != "" {
+		m["originalName"] = p.OriginalName
+	}
 	if p.Price > 0 {
 		m["price"] = p.Price
 	}
@@ -382,6 +385,24 @@ func ProductToMap(p domain.Product) map[string]interface{} {
 	}
 	if len(p.Tags) > 0 {
 		m["tags"] = p.Tags
+	}
+	if p.SKU != "" {
+		m["sku"] = p.SKU
+	}
+	if len(p.GTINs) > 0 {
+		m["gtins"] = p.GTINs
+	}
+	if p.Size != "" {
+		m["size"] = p.Size
+	}
+	if p.Color != "" {
+		m["color"] = p.Color
+	}
+	if p.WeightG != nil {
+		m["weightG"] = *p.WeightG
+	}
+	if p.VolumeML != nil {
+		m["volumeMl"] = *p.VolumeML
 	}
 	// Spread tenant-specific extension fields. Typed fields above already
 	// claimed the hey-babes-shape keys, so Extra only fills in what's missing.

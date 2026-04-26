@@ -5,7 +5,10 @@ type Product struct {
 	ID              string   `json:"id"`
 	TenantID        string   `json:"tenantId"`
 	MasterProductID string   `json:"masterProductId,omitempty"`
+	MasterVariantID string   `json:"masterVariantId,omitempty"`
 	Name            string   `json:"name"`
+	DisplayName     string   `json:"displayName,omitempty"`
+	OriginalName    string   `json:"originalName,omitempty"`
 	Description     string   `json:"description,omitempty"`
 	Price           int      `json:"price,omitempty"`
 	PriceFormatted  string   `json:"priceFormatted,omitempty"`
@@ -16,6 +19,14 @@ type Product struct {
 	Brand           string   `json:"brand,omitempty"`
 	Category        string   `json:"category,omitempty"`
 	Tags            []string `json:"tags,omitempty"`
+
+	// Variant-level fields (from master_variants when master_variant_id is set).
+	SKU      string   `json:"sku,omitempty"`
+	GTINs    []string `json:"gtins,omitempty"`
+	Size     string   `json:"size,omitempty"`
+	Color    string   `json:"color,omitempty"`
+	WeightG  *int     `json:"weightG,omitempty"`
+	VolumeML *int     `json:"volumeMl,omitempty"`
 
 	// PIM structured fields (from master_products)
 	ProductForm    string   `json:"productForm,omitempty"`

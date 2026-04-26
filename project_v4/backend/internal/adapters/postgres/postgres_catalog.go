@@ -139,15 +139,33 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		endSpan := sc.Start("db.list_products")
 		defer endSpan()
 	}
+	// Two-path master resolution: legacy products via products.master_product_id;
+	// new metadata-first listings via master_variants. COALESCE picks whichever
+	// path is populated. Heybabes (no master_variant_id yet) keeps working.
+	const joins = `
+		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
+		LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
+		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
+	`
+
 	// Build query with filters
 	baseQuery := `
 		SELECT
-			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
-			COALESCE(p.name, '') as name, COALESCE(p.description, '') as description,
+			p.id, p.tenant_id,
+			COALESCE(p.master_product_id::text, '') as master_product_id,
+			COALESCE(p.master_variant_id::text, '') as master_variant_id,
+			COALESCE(p.name, '') as name,
+			COALESCE(p.display_name, '') as display_name,
+			COALESCE(p.original_name, '') as original_name,
+			COALESCE(p.description, '') as description,
 			p.price, p.currency, COALESCE(s.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
 			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
 			mp.brand, mp.category_id, mp.images as mp_images,
+			mv.sku as mv_sku, mv.gtins as mv_gtins, mv.size as mv_size,
+			mv.color as mv_color, mv.image_url as mv_image_url,
+			mv.weight_g as mv_weight_g, mv.volume_ml as mv_volume_ml,
 			c.name as category_name,
 			COALESCE(mp.product_form, '') as product_form,
 			COALESCE(mp.texture, '') as texture,
@@ -156,19 +174,14 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			COALESCE(mp.marketing_claim, '') as marketing_claim,
 			mp.benefits,
 			COALESCE(p.extra, '{}'::jsonb) as extra
-		FROM catalog.products p
-		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
-		LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
-		WHERE p.tenant_id = $1
+		FROM catalog.products p` + joins + `
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
 	`
 
 	countQuery := `
 		SELECT COUNT(*)
-		FROM catalog.products p
-		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
-		WHERE p.tenant_id = $1
+		FROM catalog.products p` + joins + `
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
 	`
 
 	args := []interface{}{tenantID}
@@ -314,12 +327,17 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
 		var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 		var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
+		var mvSKU, mvSize, mvColor, mvImageURL *string
+		var mvGTINs []string
+		var mvWeightG, mvVolumeML *int
 
 		err := rows.Scan(
-			&p.ID, &p.TenantID, &masterProductID,
-			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
+			&p.ID, &p.TenantID, &masterProductID, &p.MasterVariantID,
+			&p.Name, &p.DisplayName, &p.OriginalName,
+			&p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 			&mpID, &mpSKU, &mpName, &mpDesc,
 			&mpBrand, &mpCategoryID, &mpImagesJSON,
+			&mvSKU, &mvGTINs, &mvSize, &mvColor, &mvImageURL, &mvWeightG, &mvVolumeML,
 			&categoryName,
 			&mpProductForm, &mpTexture, &mpRoutineStep,
 			&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
@@ -355,6 +373,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			Name:            mpName,
 			Description:     mpDesc,
 			Brand:           mpBrand,
+			SKU:             mpSKU,
 			CategoryName:    categoryName,
 			ImagesJSON:      mpImagesJSON,
 			ProductForm:     mpProductForm,
@@ -366,6 +385,13 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			TargetArea:      mpTargetArea,
 			MarketingClaim:  mpMarketingClaim,
 			Benefits:        mpBenefits,
+			VariantSKU:      mvSKU,
+			VariantGTINs:    mvGTINs,
+			VariantSize:     mvSize,
+			VariantColor:    mvColor,
+			VariantImage:    mvImageURL,
+			VariantWeightG:  mvWeightG,
+			VariantVolumeML: mvVolumeML,
 		}); err != nil {
 			return nil, 0, err
 		}
@@ -387,12 +413,20 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 	}
 	query := `
 		SELECT
-			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
-			COALESCE(p.name, '') as name, COALESCE(p.description, '') as description,
+			p.id, p.tenant_id,
+			COALESCE(p.master_product_id::text, '') as master_product_id,
+			COALESCE(p.master_variant_id::text, '') as master_variant_id,
+			COALESCE(p.name, '') as name,
+			COALESCE(p.display_name, '') as display_name,
+			COALESCE(p.original_name, '') as original_name,
+			COALESCE(p.description, '') as description,
 			p.price, p.currency, COALESCE(s.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
 			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
 			mp.brand, mp.category_id, mp.images as mp_images,
+			mv.sku as mv_sku, mv.gtins as mv_gtins, mv.size as mv_size,
+			mv.color as mv_color, mv.image_url as mv_image_url,
+			mv.weight_g as mv_weight_g, mv.volume_ml as mv_volume_ml,
 			c.name as category_name,
 			COALESCE(mp.product_form, '') as product_form,
 			COALESCE(mp.texture, '') as texture,
@@ -402,10 +436,11 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 			mp.benefits,
 			COALESCE(p.extra, '{}'::jsonb) as extra
 		FROM catalog.products p
-		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
+		LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
-		WHERE p.tenant_id = $1 AND p.id = $2
+		WHERE p.tenant_id = $1 AND p.id = $2 AND p.deleted_at IS NULL
 	`
 
 	var p domain.Product
@@ -413,12 +448,17 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 	var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
 	var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 	var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
+	var mvSKU, mvSize, mvColor, mvImageURL *string
+	var mvGTINs []string
+	var mvWeightG, mvVolumeML *int
 
 	err := a.client.pool.QueryRow(ctx, query, tenantID, productID).Scan(
-		&p.ID, &p.TenantID, &masterProductID,
-		&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
+		&p.ID, &p.TenantID, &masterProductID, &p.MasterVariantID,
+		&p.Name, &p.DisplayName, &p.OriginalName,
+		&p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 		&mpID, &mpSKU, &mpName, &mpDesc,
 		&mpBrand, &mpCategoryID, &mpImagesJSON,
+		&mvSKU, &mvGTINs, &mvSize, &mvColor, &mvImageURL, &mvWeightG, &mvVolumeML,
 		&categoryName,
 		&mpProductForm, &mpTexture, &mpRoutineStep,
 		&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
@@ -456,6 +496,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		Name:            mpName,
 		Description:     mpDesc,
 		Brand:           mpBrand,
+		SKU:             mpSKU,
 		CategoryName:    categoryName,
 		ImagesJSON:      mpImagesJSON,
 		ProductForm:     mpProductForm,
@@ -467,6 +508,13 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		TargetArea:      mpTargetArea,
 		MarketingClaim:  mpMarketingClaim,
 		Benefits:        mpBenefits,
+		VariantSKU:      mvSKU,
+		VariantGTINs:    mvGTINs,
+		VariantSize:     mvSize,
+		VariantColor:    mvColor,
+		VariantImage:    mvImageURL,
+		VariantWeightG:  mvWeightG,
+		VariantVolumeML: mvVolumeML,
 	}); err != nil {
 		return nil, err
 	}
@@ -510,6 +558,7 @@ type masterProductRow struct {
 	Name            *string
 	Description     *string
 	Brand           *string
+	SKU             *string
 	CategoryName    *string
 	ImagesJSON      []byte
 	// PIM fields
@@ -522,18 +571,37 @@ type masterProductRow struct {
 	TargetArea     []string
 	MarketingClaim *string
 	Benefits       []string
+	// Variant-level fields (from master_variants).
+	VariantSKU      *string
+	VariantGTINs    []string
+	VariantSize     *string
+	VariantColor    *string
+	VariantImage    *string
+	VariantWeightG  *int
+	VariantVolumeML *int
 }
 
-// mergeProductWithMaster fills product fields from a master-product row.
+// mergeProductWithMaster fills product fields from master_variants and
+// master_products rows. Listing-level overrides (display_name, original_name,
+// listing.name) take priority; variant-level data overrides master where both
+// exist.
 func mergeProductWithMaster(p *domain.Product, mp masterProductRow) error {
-	if mp.MasterProductID == nil || *mp.MasterProductID == "" {
-		return nil
-	}
-	p.MasterProductID = *mp.MasterProductID
-
-	if p.Name == "" && mp.Name != nil {
+	// Resolve canonical display name: listing.display_name → listing.original_name
+	// → listing.name → master.name. p.Name has been populated from listing.name
+	// already; we layer the higher-priority overrides on top.
+	switch {
+	case p.DisplayName != "":
+		p.Name = p.DisplayName
+	case p.OriginalName != "":
+		p.Name = p.OriginalName
+	case p.Name == "" && mp.Name != nil:
 		p.Name = *mp.Name
 	}
+
+	if mp.MasterProductID != nil && *mp.MasterProductID != "" {
+		p.MasterProductID = *mp.MasterProductID
+	}
+
 	if p.Description == "" && mp.Description != nil {
 		p.Description = *mp.Description
 	}
@@ -543,12 +611,41 @@ func mergeProductWithMaster(p *domain.Product, mp masterProductRow) error {
 	if mp.CategoryName != nil {
 		p.Category = *mp.CategoryName
 	}
+
+	// SKU: prefer variant-level, fall back to legacy master.sku.
+	if mp.VariantSKU != nil && *mp.VariantSKU != "" {
+		p.SKU = *mp.VariantSKU
+	} else if mp.SKU != nil {
+		p.SKU = *mp.SKU
+	}
+	if len(mp.VariantGTINs) > 0 {
+		p.GTINs = mp.VariantGTINs
+	}
+	if mp.VariantSize != nil {
+		p.Size = *mp.VariantSize
+	}
+	if mp.VariantColor != nil {
+		p.Color = *mp.VariantColor
+	}
+	if mp.VariantWeightG != nil {
+		p.WeightG = mp.VariantWeightG
+	}
+	if mp.VariantVolumeML != nil {
+		p.VolumeML = mp.VariantVolumeML
+	}
+
+	// Images: listing.images already on p.Images; if empty, try variant image,
+	// then master images JSON array.
+	if len(p.Images) == 0 && mp.VariantImage != nil && *mp.VariantImage != "" {
+		p.Images = []string{*mp.VariantImage}
+	}
 	if len(p.Images) == 0 && len(mp.ImagesJSON) > 0 {
 		if err := json.Unmarshal(mp.ImagesJSON, &p.Images); err != nil {
 			return fmt.Errorf("unmarshal master images: %w", err)
 		}
 	}
-	// PIM fields — name already contains the clean short name from DB
+
+	// PIM fields
 	if mp.ProductForm != nil {
 		p.ProductForm = *mp.ProductForm
 	}
@@ -576,14 +673,25 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 		endSpan := sc.Start("db.vector_search")
 		defer endSpan()
 	}
+	// VectorSearch keeps mp as INNER (semantic search requires an embedded
+	// master), but resolves mp via two paths: legacy products.master_product_id
+	// or, for new metadata-first listings, master_variants.master_product_id.
 	query := `
 		SELECT
-			p.id, p.tenant_id, COALESCE(p.master_product_id::text, '') as master_product_id,
-			COALESCE(p.name, '') as name, COALESCE(p.description, '') as description,
+			p.id, p.tenant_id,
+			COALESCE(p.master_product_id::text, '') as master_product_id,
+			COALESCE(p.master_variant_id::text, '') as master_variant_id,
+			COALESCE(p.name, '') as name,
+			COALESCE(p.display_name, '') as display_name,
+			COALESCE(p.original_name, '') as original_name,
+			COALESCE(p.description, '') as description,
 			p.price, p.currency, COALESCE(st.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
 			COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
 			mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
 			mp.brand, mp.category_id, mp.images as mp_images,
+			mv.sku as mv_sku, mv.gtins as mv_gtins, mv.size as mv_size,
+			mv.color as mv_color, mv.image_url as mv_image_url,
+			mv.weight_g as mv_weight_g, mv.volume_ml as mv_volume_ml,
 			c.name as category_name,
 			COALESCE(mp.product_form, '') as product_form,
 			COALESCE(mp.texture, '') as texture,
@@ -593,10 +701,12 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			mp.benefits,
 			COALESCE(p.extra, '{}'::jsonb) as extra
 		FROM catalog.products p
-		JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
+		JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		LEFT JOIN catalog.stock st ON st.product_id = p.id AND st.tenant_id = p.tenant_id
 		WHERE p.tenant_id = $1
+		  AND p.deleted_at IS NULL
 		  AND mp.embedding IS NOT NULL
 	`
 
@@ -667,12 +777,17 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 		var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
 		var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 		var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
+		var mvSKU, mvSize, mvColor, mvImageURL *string
+		var mvGTINs []string
+		var mvWeightG, mvVolumeML *int
 
 		err := rows.Scan(
-			&p.ID, &p.TenantID, &masterProductID,
-			&p.Name, &p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
+			&p.ID, &p.TenantID, &masterProductID, &p.MasterVariantID,
+			&p.Name, &p.DisplayName, &p.OriginalName,
+			&p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 			&mpID, &mpSKU, &mpName, &mpDesc,
 			&mpBrand, &mpCategoryID, &mpImagesJSON,
+			&mvSKU, &mvGTINs, &mvSize, &mvColor, &mvImageURL, &mvWeightG, &mvVolumeML,
 			&categoryName,
 			&mpProductForm, &mpTexture, &mpRoutineStep,
 			&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
@@ -708,6 +823,7 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			Name:            mpName,
 			Description:     mpDesc,
 			Brand:           mpBrand,
+			SKU:             mpSKU,
 			CategoryName:    categoryName,
 			ImagesJSON:      mpImagesJSON,
 			ProductForm:     mpProductForm,
@@ -719,6 +835,13 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			TargetArea:      mpTargetArea,
 			MarketingClaim:  mpMarketingClaim,
 			Benefits:        mpBenefits,
+			VariantSKU:      mvSKU,
+			VariantGTINs:    mvGTINs,
+			VariantSize:     mvSize,
+			VariantColor:    mvColor,
+			VariantImage:    mvImageURL,
+			VariantWeightG:  mvWeightG,
+			VariantVolumeML: mvVolumeML,
 		}); err != nil {
 			return nil, err
 		}

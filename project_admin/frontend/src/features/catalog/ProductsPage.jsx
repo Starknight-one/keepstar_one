@@ -29,12 +29,20 @@ const columns = [
           : <div className="product-thumb-empty" />}
         <div>
           <div className="product-cell-name">{row.name}</div>
+          {row.originalName && row.originalName !== row.name && (
+            <div className="product-cell-original">{row.originalName}</div>
+          )}
           {row.brand && <div className="product-cell-brand">{row.brand}</div>}
         </div>
       </div>
     ),
   },
-  { key: 'sku', label: 'SKU', width: '120px', render: (r) => r.masterProductId?.slice(0, 8) || '—' },
+  {
+    key: 'sku',
+    label: 'SKU',
+    width: '120px',
+    render: (r) => r.sku || r.masterVariantId?.slice(0, 8) || r.masterProductId?.slice(0, 8) || '—',
+  },
   { key: 'price', label: 'Price', width: '100px', render: (r) => r.priceFormatted || (r.price ? `$${(r.price / 100).toFixed(2)}` : '—') },
   { key: 'stock', label: 'Stock', width: '90px', render: (r) => r.stockQuantity ?? '—' },
   {
