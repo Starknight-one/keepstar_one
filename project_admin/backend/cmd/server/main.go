@@ -240,6 +240,7 @@ func main() {
 	var csvMappingUC *usecases.CSVMappingUseCase
 	var shopifyUC *usecases.ShopifyUseCase
 	var shopifyV2UC *usecases.ShopifyV2UseCase
+	var discoveryUC *usecases.DiscoveryUseCase
 	if integrationsAdapter != nil {
 		integrationsUC = usecases.NewIntegrationsUseCase(integrationsAdapter, log)
 		if cfg.HasEnrichment() {
@@ -254,6 +255,26 @@ func main() {
 			// Cuts over fully in 4d when the legacy UC is removed.
 			shopifyStagingAdapter := postgres.NewShopifyStagingAdapter(dbClient, log)
 			shopifyV2UC = usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, shopifyStagingAdapter, log)
+
+			// M4c: discovery agent (Sonnet 4.6, 8 tools). Reuses staging +
+			// the M2 master_variants adapter for find_similar_masters /
+			// peek_master tools, plus the existing OpenAI embedder.
+			//
+			// Resolver=nil → units.Parse falls back to the in-code English
+			// alias table, which covers all M3-seeded global aliases. Tenant-
+			// specific overrides aren't needed yet; a per-tenant
+			// PostgresAliasResolver can be wired later when AliasQuery has
+			// a real adapter implementation.
+			if cfg.AnthropicAPIKey != "" {
+				agentClient := anthropicAdapter.NewAgentClient(cfg.AnthropicAPIKey, "claude-sonnet-4-6")
+				masterVariantsAdapter := postgres.NewMasterVariantsAdapter(dbClient, log)
+				mappingArtifactAdapter := postgres.NewMappingArtifactAdapter(dbClient, log)
+				agent := usecases.NewDiscoveryAgent(agentClient, shopifyStagingAdapter, masterVariantsAdapter, embeddingClient, log)
+				discoveryUC = usecases.NewDiscoveryUseCase(shopifyStagingAdapter, masterVariantsAdapter, mappingArtifactAdapter, nil, agent, log)
+				log.Info("shopify_v2_discovery_enabled", "model", agentClient.Model())
+			} else {
+				log.Warn("shopify_v2_discovery_disabled — ANTHROPIC_API_KEY not set")
+			}
 
 			log.Info("shopify_integration_enabled")
 		}
@@ -299,7 +320,7 @@ func main() {
 		shopifyHandler = handlers.NewShopifyHandler(shopifyUC, log)
 	}
 	if shopifyV2UC != nil {
-		shopifyV2Handler = handlers.NewShopifyV2Handler(shopifyV2UC, log)
+		shopifyV2Handler = handlers.NewShopifyV2Handler(shopifyV2UC, discoveryUC, log)
 	}
 
 	// Setup routes
@@ -436,6 +457,8 @@ func main() {
 					shopifyHandler.HandleResync(w, r)
 				case shopifyV2Handler != nil && strings.HasSuffix(r.URL.Path, "/dump-to-staging"):
 					shopifyV2Handler.HandleDumpToStaging(w, r)
+				case shopifyV2Handler != nil && strings.HasSuffix(r.URL.Path, "/discover"):
+					shopifyV2Handler.HandleDiscover(w, r)
 				default:
 					http.NotFound(w, r)
 				}

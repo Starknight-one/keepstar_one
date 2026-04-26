@@ -46,6 +46,26 @@ type MappingArtifact struct {
 	MatchStrategy    []string                           `json:"match_strategy"` // e.g. ["gtin","vendor+sku","vendor+title+axes","embedding"]
 	VariantStrategy  string                             `json:"variant_strategy"` // e.g. "master_with_variants"
 	AgentNotes       string                             `json:"agent_notes,omitempty"`
+
+	// MasterTemplates carries vertical-template proposals from the discovery
+	// agent (M4c). For new verticals (e.g. furniture, electronics) the agent
+	// proposes the shape of the master schema — what fields belong on master
+	// vs. variants, what categories to expect. The harvester (4d) creates
+	// masters according to these templates; curator promotes Tier 2 columns
+	// (e.g. master_furniture) in M11.
+	MasterTemplates []MasterTemplateProposal `json:"master_templates,omitempty"`
+}
+
+// MasterTemplateProposal is the discovery agent's design for a new vertical's
+// master schema. Lives inside MappingArtifact.MasterTemplates; not promoted
+// to its own table — the curator turns these into real columns when they
+// promote attribute candidates in M11.
+type MasterTemplateProposal struct {
+	Vertical      string   `json:"vertical"`        // slug, e.g. "furniture"
+	Description   string   `json:"description"`     // why this is a separate vertical
+	MasterFields  []string `json:"master_fields"`   // shared across variants
+	VariantFields []string `json:"variant_fields"`  // vary per SKU
+	CategoryHints []string `json:"category_hints,omitempty"`
 }
 
 // TenantCatalogSchema is the persisted wrapper around MappingArtifact —

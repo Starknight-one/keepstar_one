@@ -357,6 +357,91 @@ func (a *MasterVariantsAdapter) UpsertMasterCosmetics(ctx context.Context, mc *d
 	return nil
 }
 
+// FindMasterProductsByEmbedding cosine-searches master_products.embedding.
+// Optional vertical filter narrows scope; empty = search all. Limit is
+// capped at 50 to keep response size bounded for the discovery agent
+// (which sees the result list as a single tool response).
+func (a *MasterVariantsAdapter) FindMasterProductsByEmbedding(ctx context.Context, embedding []float32, vertical string, limit int) ([]ports.MasterProductSummary, error) {
+	if len(embedding) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 5
+	}
+	vecLit := pgvectorLiteral(embedding)
+	args := []any{vecLit, limit}
+	verticalClause := ""
+	if vertical != "" {
+		verticalClause = "AND mp.vertical = $3"
+		args = append(args, vertical)
+	}
+	q := `
+		SELECT mp.id, mp.name, COALESCE(mp.brand, ''), mp.vertical, mp.confidence,
+			COALESCE(mp.owner_tenant_id::text, ''),
+			(1 - (mp.embedding <=> $1::vector))::float8 AS sim
+		FROM catalog.master_products mp
+		WHERE mp.embedding IS NOT NULL ` + verticalClause + `
+		ORDER BY mp.embedding <=> $1::vector ASC
+		LIMIT $2`
+	rows, err := a.client.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("master products embedding search: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ports.MasterProductSummary, 0, limit)
+	for rows.Next() {
+		var s ports.MasterProductSummary
+		if err := rows.Scan(&s.ID, &s.Name, &s.Brand, &s.Vertical, &s.Confidence, &s.OwnerTenantID, &s.Score); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// GetMasterProductSummary returns one master + its variants in the
+// discovery-agent-facing summary shape. Variants are capped at 20 (rare to
+// have more on a single master, and the agent only needs to recognize the
+// shape — not enumerate every SKU).
+func (a *MasterVariantsAdapter) GetMasterProductSummary(ctx context.Context, masterProductID string) (*ports.MasterProductSummary, error) {
+	var s ports.MasterProductSummary
+	err := a.client.pool.QueryRow(ctx, `
+		SELECT mp.id, mp.name, COALESCE(mp.brand, ''), mp.vertical, mp.confidence,
+			COALESCE(mp.owner_tenant_id::text, '')
+		FROM catalog.master_products mp WHERE mp.id = $1`, masterProductID).Scan(
+		&s.ID, &s.Name, &s.Brand, &s.Vertical, &s.Confidence, &s.OwnerTenantID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get master product summary: %w", err)
+	}
+
+	// Variants snippet — minimum the agent needs to recognize variant shape.
+	rows, err := a.client.pool.Query(ctx, `
+		SELECT id, COALESCE(sku, ''), axes,
+			COALESCE(array_length(gtins, 1), 0) > 0 AS has_gtin,
+			variant_kind
+		FROM catalog.master_variants
+		WHERE master_product_id = $1
+		ORDER BY created_at LIMIT 20`, masterProductID)
+	if err != nil {
+		return nil, fmt.Errorf("get variant snippets: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var snip ports.MasterVariantSnippet
+		var axes []byte
+		if err := rows.Scan(&snip.ID, &snip.SKU, &axes, &snip.HasGTIN, &snip.VariantKind); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(axes, &snip.Axes)
+		s.Variants = append(s.Variants, snip)
+	}
+	return &s, rows.Err()
+}
+
 func (a *MasterVariantsAdapter) GetMasterCosmetics(ctx context.Context, masterVariantID string) (*domain.MasterCosmetics, error) {
 	var mc domain.MasterCosmetics
 	err := a.client.pool.QueryRow(ctx, `

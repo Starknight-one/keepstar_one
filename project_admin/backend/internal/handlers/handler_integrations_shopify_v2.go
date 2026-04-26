@@ -13,15 +13,16 @@ import (
 )
 
 // ShopifyV2Handler holds endpoints exposed by the new pipeline. Right now
-// (4a) only the dump-to-staging route is live; discovery/harvest endpoints
-// land in 4c/4d and will hang off this same struct.
+// (4a + 4c) the dump-to-staging and discover routes are live; harvest
+// endpoint lands in 4d and will hang off this same struct.
 type ShopifyV2Handler struct {
-	v2  *usecases.ShopifyV2UseCase
-	log *logger.Logger
+	v2        *usecases.ShopifyV2UseCase
+	discovery *usecases.DiscoveryUseCase
+	log       *logger.Logger
 }
 
-func NewShopifyV2Handler(v2 *usecases.ShopifyV2UseCase, log *logger.Logger) *ShopifyV2Handler {
-	return &ShopifyV2Handler{v2: v2, log: log}
+func NewShopifyV2Handler(v2 *usecases.ShopifyV2UseCase, discovery *usecases.DiscoveryUseCase, log *logger.Logger) *ShopifyV2Handler {
+	return &ShopifyV2Handler{v2: v2, discovery: discovery, log: log}
 }
 
 // HandleDumpToStaging — POST /admin/api/integrations/shopify/{id}/dump-to-staging
@@ -85,4 +86,43 @@ func extractIntegrationID(path, suffix string) string {
 		return ""
 	}
 	return strings.TrimSuffix(rest, suffix)
+}
+
+// HandleDiscover — POST /admin/api/integrations/shopify/{id}/discover
+//
+// Authenticated. Runs the discovery pipeline (metadata harvest → Tier 1
+// auto-map → Sonnet 4.6 agent loop → validation → persist artifact).
+// Synchronous for the dev-store; production catalogs will move this to
+// async background-job pattern in 4d. Returns the validation report and
+// truncated transcript so the dev can confirm what the agent did.
+func (h *ShopifyV2Handler) HandleDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	if h.discovery == nil {
+		writeError(w, http.StatusServiceUnavailable, "discovery agent not configured (missing ANTHROPIC_API_KEY?)")
+		return
+	}
+	tenantID := TenantID(r.Context())
+	if tenantID == "" {
+		writeError(w, http.StatusUnauthorized, "missing tenant")
+		return
+	}
+	id := extractIntegrationID(r.URL.Path, "/discover")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing integration id")
+		return
+	}
+	res, err := h.discovery.Run(r.Context(), tenantID)
+	if err != nil {
+		h.log.FromContext(r.Context()).Error("shopify_v2_discover_failed",
+			"integration_id", id, "error", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	out, _ := json.Marshal(res)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
 }

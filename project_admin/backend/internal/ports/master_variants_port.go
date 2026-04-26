@@ -45,6 +45,44 @@ type MasterVariantsPort interface {
 
 	// GetMasterCosmetics returns the Tier 2 cosmetics row for a variant, or nil.
 	GetMasterCosmetics(ctx context.Context, masterVariantID string) (*domain.MasterCosmetics, error)
+
+	// FindMasterProductsByEmbedding searches master_products (not variants) by
+	// cosine similarity. Used by the discovery agent's find_similar_masters
+	// tool to suggest existing masters before proposing new ones. Optional
+	// vertical filter narrows the search; empty vertical = search all.
+	FindMasterProductsByEmbedding(ctx context.Context, embedding []float32, vertical string, limit int) ([]MasterProductSummary, error)
+
+	// GetMasterProductSummary returns a compact view of one master_product
+	// + variant summaries for the discovery agent's peek_master tool.
+	// Returns nil if not found. Tier 2 columns aren't included — they're
+	// vertical-specific and the agent reads them via candidate-tools instead.
+	GetMasterProductSummary(ctx context.Context, masterProductID string) (*MasterProductSummary, error)
+}
+
+// MasterProductSummary is the discovery-agent-facing snapshot of a master.
+// Trimmed to what the agent needs to make a linkage call: enough identity
+// (name, brand, vertical) and shape (variant count, axis names, GTIN
+// presence) to decide whether incoming data should link or not.
+type MasterProductSummary struct {
+	ID            string                  `json:"id"`
+	Name          string                  `json:"name"`
+	Brand         string                  `json:"brand"`
+	Vertical      string                  `json:"vertical"`
+	Confidence    string                  `json:"confidence"`
+	OwnerTenantID string                  `json:"ownerTenantId,omitempty"`
+	Score         float64                 `json:"score,omitempty"` // similarity, when from FindMasterProductsByEmbedding
+	Variants      []MasterVariantSnippet  `json:"variants,omitempty"`
+}
+
+// MasterVariantSnippet is a tiny per-variant view embedded in
+// MasterProductSummary. Picks the absolute minimum the agent needs to
+// recognize a variant — sku + axes + presence flags for GTIN/dimensions.
+type MasterVariantSnippet struct {
+	ID          string            `json:"id"`
+	SKU         string            `json:"sku,omitempty"`
+	Axes        map[string]string `json:"axes,omitempty"`
+	HasGTIN     bool              `json:"hasGtin"`
+	VariantKind string            `json:"variantKind"`
 }
 
 // MasterVariantWithScore is a match-cascade result row that carries the
