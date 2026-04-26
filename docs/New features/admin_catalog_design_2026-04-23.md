@@ -228,6 +228,8 @@ CREATE TABLE catalog.master_laptops (
 
 ### 3.2 Categories (M:N)
 
+> **Status:** ✅ Schema — M1. Adapter + handler + UI — M8 (`7887d02`). Лог: `main-admin-catalog-m8-categories_2026-04-26_13-52.md`
+
 ```sql
 -- Master-таксономия (общая, чистая, ведёт куратор)
 CREATE TABLE catalog.master_categories (
@@ -276,6 +278,8 @@ CREATE TABLE catalog.tenant_listing_categories (
 ```
 
 ### 3.3 Tenant Listing (катаются под `catalog.products`)
+
+> **Status:** ✅ Schema — M1. Read-path COALESCE через master_variants + master_products — M6 (`a200f4a`). Heybabes продолжает работать через legacy `master_product_id` (M7 backfill пока отложен). Лог: `main-admin-catalog-m6-coalesce-readpath_2026-04-26_13-46.md`
 
 ```sql
 -- Существующая таблица catalog.products эволюционирует:
@@ -347,6 +351,8 @@ CREATE TABLE catalog.master_category_candidates (
 
 ### 3.6 Junk variants
 
+> **Status:** ✅ Schema + detector — M1/M4b. Triage UI + classify endpoint — M9 (`6aba054`). Очередь будет наполняться когда harvester (M4d) запустится. Лог: `main-admin-catalog-m9-detected-addons_2026-04-26_13-56.md`
+
 ```sql
 CREATE TABLE catalog.tenant_variant_candidates_junk (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -363,6 +369,8 @@ CREATE TABLE catalog.tenant_variant_candidates_junk (
 ```
 
 ### 3.7 Audit log
+
+> **Status:** ✅ Schema + adapter — M1/M2. Wiring (LogHuman вызовы в product/junk/api_keys/categories handlers) + GET endpoint + History UI — M12 (`413f77b`). Лог: `main-admin-catalog-m12-audit-log_2026-04-26_14-15.md`
 
 ```sql
 CREATE TABLE catalog.audit_log (
@@ -386,6 +394,8 @@ CREATE INDEX ON catalog.audit_log (tenant_id, created_at DESC);
 - **Human action** (тенант переименовал товар) → детальная запись per-field с `field_changes={display_name: ["X", "Y"]}`
 
 ### 3.8 Public API
+
+> **Status:** ✅ Schema + tenant CRUD — M10 (`7779fa9`). Bulk POST + DELETE возвращают 501 пока harvester (M4d) не приземлится. Лог: `main-admin-catalog-m10-public-api_2026-04-26_14-03.md`
 
 ```sql
 CREATE TABLE catalog.api_keys (
@@ -565,6 +575,8 @@ CREATE INDEX ON catalog.api_keys (tenant_id);
 ```
 
 ### 4.4 Render (любой каталожный API)
+
+> **Status:** ✅ COALESCE-render через master_variants + master_products в admin (`catalog_adapter.go::ListProducts/GetProduct`) и V4 (`postgres_catalog.go::ListProducts/GetProduct/VectorSearch`). Реализовано в M6 (`a200f4a`). `?view=master` query parameter не реализован — ProductDetailPage отдаёт оба блока (master + listing) одновременно в JSON, что покрывает curator-debug use-case.
 
 ```sql
 -- ?view=tenant (default)
@@ -786,6 +798,8 @@ Bulk actions: bulk edit (price, stock, display_name, archive/restore — listing
 
 ### 6.3 Catalog → Product detail
 
+> **Status:** ✅ Master/Listing разделение + sku/size/color chips в hero — M6 (`a200f4a`). Categories chip-multiselect — M8 (`7887d02`). History секция — M12 (`413f77b`). Tier 3 enrichment block (видео/гифки/stories) и Performance metrics остаются placeholder'ами.
+
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │ Breadcrumb: All products / Cleansing / Hydrating Cleanser      │
@@ -823,6 +837,8 @@ Bulk actions: bulk edit (price, stock, display_name, archive/restore — listing
 
 ### 6.4 Catalog → Categories
 
+> **Status:** ✅ Tree editor с create/move/delete + kind toggle — M8 (`7887d02`). Drag-drop оставлен как TODO (move сейчас через Edit form parent select — план это разрешал).
+
 Tree editor (как в обычном PIM). Тенант редактирует ИХ дерево. Mapping в master-категории — read-only для тенанта (показывает кто куда смаплен).
 
 ### 6.5 Catalog → Imports
@@ -831,9 +847,13 @@ Tree editor (как в обычном PIM). Тенант редактирует 
 
 ### 6.6 Catalog → Detected add-ons
 
+> **Status:** ✅ Page + sidebar count badge — M9 (`6aba054`). Batch classify через LLM — placeholder/TODO до M4d harvester'а.
+
 Список junk candidates с master_variant ref. Кнопки "Mark as add-on" / "Mark as real" / "Send batch to agent for classification".
 
 ### 6.7 Import → Public API
+
+> **Status:** ✅ ApiKeysPage с generate/copy-once/revoke flow в `/settings/api-keys` — M10 (`7779fa9`). OpenAPI 3.0.3 sketch в `docs/api/v1/openapi.yaml`.
 
 В разделе Settings подраздел "API access":
 - Список API ключей (label, last_used, revoke)
@@ -841,6 +861,8 @@ Tree editor (как в обычном PIM). Тенант редактирует 
 - Документация ссылка → `/docs/api`
 
 ### 6.8 Curator service (отдельный сервис)
+
+> **Status:** ✅ Standalone сервис в `curator/{backend,frontend}/` — M11 (`0c70871`). Login + Candidates + Junk + Audit pages работают. Match-reviews и master-cleanup pages — заглушки (требуют таблиц которых нет, и harvester traffic'а). Лог: `main-curator-m11-standalone-service_2026-04-26_14-10.md`
 
 Папка в репо: `curator/backend/`, `curator/frontend/`. Email+password логин (отдельная таблица `curator.users`). Доступ к master tables через service-account, тенантский middleware не применяется.
 
@@ -949,12 +971,13 @@ POST   /api/v1/webhooks                       # subscribe to listing/master even
 | M4b | Deterministic harvest + match cascade + junk detector | ✅ done | `d537518` | (same) |
 | M4c | Discovery agent (Sonnet 4.6, 8 tools) + validation | ✅ done | `8cd0b2f` (+ fixes `10e1145`, `5a795ac`) | (same) |
 | **M4d** | **Harvester orchestrator + cut-over (legacy delete)** | **🔴 deferred to end** | — | (planned during final M4 polish session) |
-| M6 | COALESCE-render admin + V4 engine | ⏳ next | — | — |
-| M7 | Heybabes 967 backfill script | pending | — | — |
-| M8 | Categories M:N + tree editor | pending | — | — |
-| M9 | Detected add-ons page (junk triage UI) | pending | — | — |
-| M10 | Public API + api_keys management | pending | — | — |
-| M11 | Curator service (standalone) + audit + promotion | pending | — | — |
+| M6 | COALESCE-render admin + V4 engine | ✅ done | `a200f4a` | `docs/Updates/main-admin-catalog-m6-coalesce-readpath_2026-04-26_13-46.md` |
+| **M7** | **Heybabes 967 backfill script** | **🔴 deferred to end** | — | (русские названия heybabes — нужен focused review с пользователем) |
+| M8 | Categories M:N + tree editor | ✅ done | `7887d02` | `docs/Updates/main-admin-catalog-m8-categories_2026-04-26_13-52.md` |
+| M9 | Detected add-ons page (junk triage UI) | ✅ done | `6aba054` | `docs/Updates/main-admin-catalog-m9-detected-addons_2026-04-26_13-56.md` |
+| M10 | Public API + api_keys management | ✅ done | `7779fa9` | `docs/Updates/main-admin-catalog-m10-public-api_2026-04-26_14-03.md` |
+| M11 | Curator service (standalone) | ✅ done | `0c70871` | `docs/Updates/main-curator-m11-standalone-service_2026-04-26_14-10.md` |
+| M12 | Audit log integration | ✅ done | `413f77b` | `docs/Updates/main-admin-catalog-m12-audit-log_2026-04-26_14-15.md` |
 
 **Plan correction (2026-04-26 13:10 UTC).** Discovery agent работает end-to-end на dev-store (51s / 13 turns / commit_artifact, см. лог). M4d (harvester + cut-over legacy) **отложен в самый конец** — чтобы при финальном слиянии пользователь сел и сосредоточенно прокинул как pipeline должен работать end-to-end. Сейчас идём по M6→M7→M8→M9→M10→M11; M4d полируется последним. Detail rationale + что осталось от M4 — в логе сессии.
 
@@ -991,6 +1014,16 @@ POST   /api/v1/webhooks                       # subscribe to listing/master even
 ---
 
 ## Changelog
+
+- **2026-04-26 14:21 UTC — M6 → M8 → M9 → M10 → M11 → M12 shipped (six milestones in one session)**
+  - 6 atomic commits: M6 (`a200f4a`) · M8 (`7887d02`) · M9 (`6aba054`) · M10 (`7779fa9`) · M11 (`0c70871`) · M12 (`413f77b`)
+  - **§3.3 Listing schema** — read-path в admin + V4 теперь резолвит мастер двумя путями: `LEFT JOIN master_variants mv ON mv.id = p.master_variant_id`, потом `LEFT JOIN master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)`. Heybabes (master_variant_id NULL) продолжает работать через legacy `master_product_id`. Закрыто в M6 (`a200f4a`). Лог: `main-admin-catalog-m6-coalesce-readpath_2026-04-26_13-46.md`
+  - **§3.2 / §6.4 Categories M:N + tree editor** — categories_v2_adapter включён в DI, добавлен handler_categories.go (CRUD tenant + read master + N:1 mapping + M:N listing↔category), CategoryEditor.jsx с tree + create/move/delete + kind-toggle. Multi-select chips на ProductDetailPage. Закрыто в M8 (`7887d02`). Лог: `main-admin-catalog-m8-categories_2026-04-26_13-52.md`
+  - **§3.6 / §6.6 Detected add-ons (junk triage UI)** — handler_junk.go (list/count/classify) + DetectedAddonsPage с 3 tabs + sidebar count badge. Empty state до тех пор пока harvester не наполнит таблицу. Закрыто в M9 (`6aba054`). Лог: `main-admin-catalog-m9-detected-addons_2026-04-26_13-56.md`
+  - **§7 Public API (REST, MVP) + §3.8 api_keys** — token format `kp_<base64url(32)>`, в БД bcrypt+key_prefix indexed lookup. /admin/api/api-keys (JWT) + /api/v1/products + /api/v1/categories (X-API-Key). Frontend /settings/api-keys с generate/copy-once/revoke. OpenAPI 3.0.3 в `docs/api/v1/openapi.yaml`. Закрыто в M10 (`7779fa9`). Лог: `main-admin-catalog-m10-public-api_2026-04-26_14-03.md`
+  - **§1.7 / §6.8 Curator standalone service** — новый repo root `curator/{backend,frontend}/`. Отдельный Go-модуль, port 8082, opaque sessions, транзакционный promote_attribute с paranoid-валидацией. Vite-frontend на 5175 dev: Login/Candidates/Junk/Audit. Scripts + Dockerfile. Закрыто в M11 (`0c70871`). Лог: `main-curator-m11-standalone-service_2026-04-26_14-10.md`
+  - **§3.7 Audit log policy** — auditAdapter в DI; LogHuman calls в product.update / junk.classify / api_keys CRUD / categories CRUD. Best-effort, snapshot+diff for product update. /admin/api/audit endpoint + History секция на ProductDetailPage. Закрыто в M12 (`413f77b`). Лог: `main-admin-catalog-m12-audit-log_2026-04-26_14-15.md`
+  - **Aggregate session log:** `docs/Updates/main-admin-catalog-m6-m8-m9-m10-m11-m12_2026-04-26_14-21.md` — собирает все 6 в один indexed файл
 
 - **2026-04-26 13:13 UTC — M4 a/b/c shipped, discovery agent verified end-to-end, M4d deferred**
   - 4a foundation (`6067fb7`), 4b deterministic (`d537518`), 4c discovery agent (`8cd0b2f`) merged to main

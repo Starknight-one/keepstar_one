@@ -1,6 +1,8 @@
 # Admin Catalog — Implementation Plan
 
-> **STATUS UPDATE 2026-04-26 13:13 UTC.** M1/M2/M3/M4a/M4b/M4c shipped. **Discovery agent verified end-to-end on the dev-store** (`dump-to-staging` + `discover` both return committed artifacts; logs in `docs/Updates/main-admin-catalog-m4abc-discovery-tested_2026-04-26_13-13.md`). **M4d (harvester orchestrator + cut-over legacy) intentionally deferred to the very end** — see "Order correction" at the bottom of this file. New ordering: **M6 → M7 → M8 → M9 → M10 → M11 → M4d (final polish)**.
+> **STATUS UPDATE 2026-04-26 14:21 UTC.** M1/M2/M3/M4a/M4b/M4c **+ M6/M8/M9/M10/M11/M12** shipped. Все milestones, не зависящие от harvester'а и от heybabes-backfill'а, **закрыты**. Логи сессии M6-M12: `docs/Updates/main-admin-catalog-m6-m8-m9-m10-m11-m12_2026-04-26_14-21.md` (агрегат) + индивидуальные. Что **осталось** — см. секцию **"Что осталось до релиза"** ниже (внизу файла, перед changelog).
+>
+> **Предыдущий статус (2026-04-26 13:13 UTC).** Discovery agent verified end-to-end on the dev-store (`dump-to-staging` + `discover` both return committed artifacts; logs in `docs/Updates/main-admin-catalog-m4abc-discovery-tested_2026-04-26_13-13.md`).
 
 ## Context
 
@@ -165,6 +167,8 @@ Wired в harvester (M4): каждый Shopify variant прогоняется ч�
 
 ### M6. COALESCE-render: admin + V4 engine
 
+> **Status: ✅ shipped 2026-04-26 (`a200f4a`).** Лог: `docs/Updates/main-admin-catalog-m6-coalesce-readpath_2026-04-26_13-46.md`. Двухпутевой JOIN: heybabes (master_variant_id NULL) резолвится через legacy `master_product_id`, новые тенанты — через `master_variants`. domain.Product расширен. ProductsPage/ProductDetailPage обновлены. V4 SQL'и и ProductToMap расширены. `?view=master` query parameter не реализован (см. "Что осталось" внизу плана).
+
 **Admin adapter** (`catalog_adapter.go.ListProducts`):
 ```sql
 SELECT
@@ -191,6 +195,8 @@ WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
 
 ### M7. Heybabes backfill script
 
+> **Status: 🔴 deferred to focused session.** Русские названия heybabes — нужен focused review. См. "Что осталось до релиза → B. M7" внизу плана.
+
 `cmd/backfill-heybabes/main.go` — одноразовый Go-скрипт:
 1. Читает все 967 master_products (heybabes tenant)
 2. Для каждого создаёт 1 default master_variant (sku из mp.sku, без gtin поскольку нет, image_url из mp.images[0], etc.)
@@ -209,6 +215,8 @@ WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
 
 ### M8. Categories M:N + tree editor
 
+> **Status: ✅ shipped 2026-04-26 (`7887d02`).** Лог: `docs/Updates/main-admin-catalog-m8-categories_2026-04-26_13-52.md`. handler_categories.go (7 endpoints) + categories_v2_adapter в DI + CategoryEditor.jsx (tree, create/move/delete, kind toggle) + multi-select chips на ProductDetailPage + sidebar sub-link. Drag-drop tree оставлен как TODO (move через Edit form parent select).
+
 Backend:
 - `categories_adapter.go` методы: дерево с CTE для product counts per category, M:N upsert/delete
 - `handler_categories.go` — расширить (CRUD tenant_categories, GET с count)
@@ -225,6 +233,8 @@ Frontend:
 
 ### M9. Detected add-ons page (junk triage)
 
+> **Status: ✅ shipped 2026-04-26 (`6aba054`).** Лог: `docs/Updates/main-admin-catalog-m9-detected-addons_2026-04-26_13-56.md`. handler_junk.go + DetectedAddonsPage.jsx с 3 tabs + sidebar count badge poll. Empty state до тех пор пока harvester (M4d) не наполнит таблицу. Batch classify через LLM — placeholder/TODO.
+
 Frontend `features/catalog/DetectedAddonsPage.jsx`:
 - Видна в сайдбаре только если есть `pending` записи в `tenant_variant_candidates_junk`
 - Список с product preview, detected_reason badges, кнопки "Mark as add-on" / "Mark as real" / "Send batch to agent"
@@ -235,6 +245,8 @@ Backend handler `handler_junk.go` + usecase `usecases/junk_classify.go`.
 **Verification**: см. M5 — junk record уже создан → страница показывает его → нажимаем Mark as add-on → SQL `classification='confirmed_addon'`.
 
 ### M10. Public API + api_keys management
+
+> **Status: ✅ shipped 2026-04-26 (`7779fa9`).** Лог: `docs/Updates/main-admin-catalog-m10-public-api_2026-04-26_14-03.md`. Token format `kp_<base64url(32)>`, в БД bcrypt+key_prefix indexed. /admin/api/api-keys (JWT) + /api/v1/products + /api/v1/categories (X-API-Key). Frontend /settings/api-keys. OpenAPI yaml. **Bulk POST + DELETE возвращают 501** — требуют harvester и SoftDelete метод (M4 polish). API v1 endpoints не пишут audit (тоже M4 polish).
 
 Backend:
 - `handlers/handler_api_v1_products.go` — REST endpoints (GET list/get/PATCH/DELETE, POST bulk push, GET imports)
@@ -249,6 +261,8 @@ OpenAPI spec в `docs/api/v1/openapi.yaml` (минимальный).
 **Verification**: `curl -H 'X-API-Key: kp_xxx' https://admin-production-4ae4.up.railway.app/api/v1/products?limit=10` → 200 + список товаров. С невалидным ключом → 401.
 
 ### M11. Curator service (standalone)
+
+> **Status: ✅ shipped 2026-04-26 (`0c70871`).** Лог: `docs/Updates/main-curator-m11-standalone-service_2026-04-26_14-10.md`. Standalone сервис в `curator/{backend,frontend}/`. Отдельный Go-модуль `keepstar-curator`, port 8082. Auth через `curator.users + curator.sessions` (opaque sha256 tokens). Транзакционный PromoteAttribute с paranoid validation. Vite-frontend на 5175 с Login/Candidates/Junk/Audit pages. Scripts + Dockerfile. **Match-reviews и master-cleanup pages — заглушки** (требуют таблицы которых нет).
 
 Новые папки `curator/backend/` + `curator/frontend/`:
 
@@ -278,6 +292,8 @@ Frontend (`curator/frontend/`):
 - `curl POST /curator/candidates/{id}/promote` → `ALTER TABLE master_cosmetics ADD COLUMN scent TEXT` происходит → mapping artifacts помечаются stale → следующий import пересобирается с типизированной колонкой
 
 ### M12. Audit log + promotion mechanics
+
+> **Status: ✅ shipped 2026-04-26 (`413f77b`).** Лог: `docs/Updates/main-admin-catalog-m12-audit-log_2026-04-26_14-15.md`. auditAdapter в DI, LogHuman calls в product.update / junk.classify / api_keys.create+revoke / categories.create+delete. Best-effort, snapshot+diff for product update. /admin/api/audit endpoint + History секция на ProductDetailPage. Promotion mechanics (ALTER TABLE) реализованы в curator (M11). **PATCH category, mapping changes, listing M:N category links и API v1 endpoints audit не пишут** — требуют pre-read для diff'а (M4 polish).
 
 `internal/usecases/audit.go`:
 - `LogSystem(batch_id, count, source)` — для bulk-операций (1 запись с aggregate_meta)
@@ -370,3 +386,91 @@ Promotion mechanics в curator (M11) usecase `promote_attribute.go`:
 1. Все M6-M11 закрыты или хотя бы доведены до точки "не блокируют M4d"
 2. Расширенный test catalog в dev-store (`seed-dev-products`) — cosmetics-дубли brand'ов heybabes + furniture + junk + collections + custom metafields. Нужен write_products scope (instructions в логе).
 3. Пользователь свободен на 1-2 часа сидячей работы, не отвлекаясь на параллельные задачи.
+
+---
+
+## Что осталось до релиза (2026-04-26 14:21 UTC update)
+
+После сессии M6-M12 (агрегатный лог: `docs/Updates/main-admin-catalog-m6-m8-m9-m10-m11-m12_2026-04-26_14-21.md`) в плане осталось ровно две группы работы — и обе требуют focused-сессии с пользователем у руля.
+
+### A. M4d — final harvester polish (главное оставшееся)
+
+> **Status: 🔴 deferred to focused session.** Discovery agent (M4c) уже работает end-to-end. Не хватает orchestrator'а который стримит staging → применяет artifact → создаёт master/listing/variants → cut-over от legacy importer'а.
+
+**Code-changes которые надо сделать:**
+
+1. **Harvester orchestrator** (`project_admin/backend/internal/usecases/harvester.go` — новый):
+   - Читает `tenant_catalog_schema.mapping_artifact`
+   - Стримит `shopify_raw_imports` (kind='product') через `ShopifyStagingPort.IterateProducts`
+   - Per product: применяет `field_mapping` artifact'а, строит `MasterProduct` + `MasterVariant[]` + `Listing`
+   - Вызывает `match_cascade.MatchVariant` для каждого variant'а; конфликты → `match_review_queue` (новая таблица — добавить в M1-style миграцию)
+   - Вызывает `junk_detector.DetectJunk` для каждого variant'а; ≥2 сигнала → `tenant_variant_candidates_junk`
+   - Записывает unmapped fields в `listing.raw_attributes` и инкрементит `master_attribute_candidates`
+   - В конце `audit.LogSystem(aggregate_meta={batch_id, count, source})`
+
+2. **Embedding job** (`cmd/embedding-worker/main.go` — новый или расширить существующий `cmd/rebuild-embeddings`):
+   - Для каждого нового master_product без embedding'а — `embed(name + brand + description + key_ingredients + tier3_text + candidates_text)` через OpenAI text-embedding-3-small
+   - Per-variant embedding для variant'ов с GTIN или уникальным image (опционально, после A/B теста)
+   - Pgvector update в `master_products.embedding`
+
+3. **Hash-diff webhook re-write** (`internal/usecases/shopify_v2.go::HandleWebhook` — расширить):
+   - `sha256(payload)` сравнить с `listing.payload_hash`
+   - Совпал → skip
+   - Не совпал → harvester pipeline (см. п.1) применить только к этому одному продукту
+   - Старая `usecases/shopify.go::HandleWebhook` удаляется
+
+4. **DI cut-over** (`cmd/server/main.go`):
+   - Удалить `usecases.NewShopifyUseCase`, `usecases/shopify_mapper.go`, `shopifyHandler` в части webhook'а
+   - Удалить periodic resync `shopifyUC.StartPeriodicResync`
+   - Все Shopify-routes теперь идут через `shopifyV2UC` + новый `harvesterUC`
+
+5. **Frontend progress UI** (`project_admin/frontend/src/features/integrations/ShopifyConnectPage.jsx`):
+   - Стадии: Connecting → Pulling metadata → Bulk export → Discovering schema → Validating → Importing → Done
+   - Streaming via SSE или polling `/admin/api/integrations/shopify/{id}/import-status`
+   - Cancel button (опционально)
+
+6. **Wipe + resync 17 dev-store products через новый pipeline:**
+   - SQL: `DELETE FROM catalog.products WHERE tenant_id=<dev-store>; DELETE FROM catalog.master_products WHERE owner_tenant_id=<dev-store>`
+   - В админке: Disconnect → Reinstall → новый flow → проверить что master_variants заполнен, payload_hash записан, junk-варианты правильно отлавливаются
+   - Re-install (повторный) → hash-diff skip, < 1 сек
+
+7. **Polish из "Known gaps" логов сессий**:
+   - **Validation threshold для system fields** — `validate_artifact.go::ValidateArtifact`: исключить `id`, `createdAt`, `updatedAt`, `publishedAt`, `options.[].position` из coverage denominator
+   - **Conditional field mappings** — расширить `FieldMappingTarget` опциональным `condition` (e.g. `condition: "sibling.name == 'Color'"`); harvester evaluates at apply time
+   - **API v1 audit** — Public API endpoints (M10) сейчас не пишут audit. Нужно прокинуть `actor_kind=api, actor_id=apiKeyID` через middleware и вызывать `LogHuman` в PATCH/DELETE
+   - **Bulk POST `/api/v1/products` + DELETE** — сейчас 501 stubs. После harvester'а можно реализовать: bulk POST идёт через тот же harvester pipeline (match cascade etc.), DELETE → SoftDelete метод на port
+   - **`SoftDelete` метод на `AdminCatalogPort`** — чтобы public API + admin могли мягко удалять листинги
+   - **Cursor-based pagination** на `/api/v1/products` — `(updated_at, id)`-cursor вместо текущего offset
+   - **Listing preview на junk record** — JOIN с `products` в `ListJunkCandidates` чтобы показывать image+name (сейчас только slice id)
+   - **Explicit `UpdateTenantCategory(id, ...)` метод** на `CategoriesPort` — текущий PATCH полагается на upsert
+   - **PATCH category audit** — diff фиксировать (нужен pre-read)
+   - **Listing M:N category links audit** — diff `{category_ids: {old:[...], new:[...]}}`
+   - **`?view=master` query parameter** в admin product handler — для curator-debug режима без необходимости отдельного frontend
+   - **Match-reviews UI в curator** — нужна таблица `match_review_queue`; сейчас curator-страница рендерит пустой список
+   - **CategoryCandidate promote** — UI показывает list, но action не реализован (это INSERT в master_categories, не ALTER TABLE)
+   - **Master-cleanup (merge duplicates)** — отдельный сложный UI, отложен до production traffic'а
+   - **V4 integration test** на heybabes — smoke-test ListProducts + VectorSearch против реальной БД, чтобы M6 changes не требовали ручной проверки
+
+### B. M7 — heybabes 967 backfill (отдельная focused-сессия)
+
+> **Status: 🔴 deferred — русские названия и кривые данные.**
+
+**Что нужно сделать (когда пользователь готов):**
+
+1. Просмотреть выборку из 967 heybabes products — оценить какие названия годны, какие нужно перевести/перезаписать вручную
+2. Решить: переводим всё через LLM batch-job, либо оставляем как есть и помечаем `display_name=null` чтобы COALESCE падал на `original_name` (русский) для чата на русском, на `master.name` (английский, если будет) для английского
+3. Написать `cmd/backfill-heybabes/main.go`:
+   - Для каждого master_product создать 1 default master_variant (sku из mp.sku, без gtin, image_url из mp.images[0])
+   - Cosmetics PIM-колонки (skin_type, concern, ingredients, ...) → `master_cosmetics(master_variant_id, ...)`
+   - Existing `attributes JSONB` → `listing.raw_attributes`
+   - `catalog.products.master_variant_id` UPDATE
+4. Verification: `SELECT count(*) FROM master_variants WHERE master_product_id IN (SELECT id FROM master_products WHERE owner_tenant_id=<heybabes>)` → 967
+5. После verification — отдельный коммит: `ALTER TABLE master_products DROP COLUMN skin_type, concern, ingredients, ...` (cleanup legacy inline columns)
+6. Smoke-test heybabes V4 chat — должен продолжать работать
+
+### Operational steps (когда пользователь скажет "идём")
+
+- **Сначала M4d focused session** (1-2 часа): orchestrator + embedding + cut-over + frontend progress UI + wipe/resync dev-store
+- **Потом M7 focused session** (1 час): просмотр heybabes данных + backfill script
+- **Потом polish из known gaps** (по мере необходимости)
+- **Потом интеграционные тесты + production rollout** (heybabes/test-tenant smoke в течение 1-2 недель)
