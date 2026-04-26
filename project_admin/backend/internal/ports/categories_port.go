@@ -18,6 +18,8 @@ type CategoriesPort interface {
 
 	UpsertTenantCategory(ctx context.Context, tc *domain.TenantCategory) (string, error)
 	ListTenantCategories(ctx context.Context, tenantID string) ([]domain.TenantCategory, error)
+	ListTenantCategoriesWithCounts(ctx context.Context, tenantID string) ([]domain.TenantCategoryWithCount, error)
+	DeleteTenantCategory(ctx context.Context, tenantID, categoryID string) error
 
 	// --- Category mapping (tenant_category -> master_category, N:1, NULLable) ---
 

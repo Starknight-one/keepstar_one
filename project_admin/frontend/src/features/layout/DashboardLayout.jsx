@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Package, Upload, Code, Settings, LogOut, MessageSquare, Palette, Activity, CreditCard } from 'lucide-react'
+import { Package, Upload, Code, Settings, LogOut, MessageSquare, Palette, Activity, CreditCard, FolderTree } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider.jsx'
 import './layout.css'
 
@@ -20,8 +20,11 @@ export default function DashboardLayout() {
           <NavLink to="/conversations" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <MessageSquare size={18} /> Chats
           </NavLink>
-          <NavLink to="/catalog" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+          <NavLink to="/catalog" end className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Package size={18} /> Catalog
+          </NavLink>
+          <NavLink to="/catalog/categories" className={({ isActive }) => `sidebar-link sidebar-sub ${isActive ? 'active' : ''}`}>
+            <FolderTree size={16} /> Categories
           </NavLink>
           <NavLink to="/import" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Upload size={18} /> Import

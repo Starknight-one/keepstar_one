@@ -145,6 +145,66 @@ func (a *CategoriesV2Adapter) ListTenantCategories(ctx context.Context, tenantID
 	return out, rows.Err()
 }
 
+// ListTenantCategoriesWithCounts returns the tenant tree with per-node counts
+// of linked, non-deleted listings. Cheap query — no recursion, just LEFT JOIN
+// on the M:N junction filtered by listing.deleted_at IS NULL.
+func (a *CategoriesV2Adapter) ListTenantCategoriesWithCounts(ctx context.Context, tenantID string) ([]domain.TenantCategoryWithCount, error) {
+	rows, err := a.client.pool.Query(ctx, `
+		SELECT tc.id, tc.tenant_id, COALESCE(tc.parent_id::text, ''),
+			COALESCE(tc.external_id, ''), tc.slug, tc.name, tc.kind, tc.created_at,
+			COALESCE(cnt.n, 0)::int AS product_count
+		FROM catalog.tenant_categories tc
+		LEFT JOIN (
+			SELECT tlc.tenant_category_id, COUNT(DISTINCT tlc.listing_id) AS n
+			FROM catalog.tenant_listing_categories tlc
+			JOIN catalog.products p ON p.id = tlc.listing_id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
+			GROUP BY tlc.tenant_category_id
+		) cnt ON cnt.tenant_category_id = tc.id
+		WHERE tc.tenant_id = $1
+		ORDER BY tc.name`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list tenant_categories_with_counts: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.TenantCategoryWithCount
+	for rows.Next() {
+		var c domain.TenantCategoryWithCount
+		if err := rows.Scan(&c.ID, &c.TenantID, &c.ParentID, &c.ExternalID,
+			&c.Slug, &c.Name, &c.Kind, &c.CreatedAt, &c.ProductCount); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// DeleteTenantCategory removes a tenant category. Children get re-parented to
+// NULL (top-level) — the caller can re-link manually if needed. M:N junction
+// rows are removed via ON DELETE CASCADE on the FK.
+func (a *CategoriesV2Adapter) DeleteTenantCategory(ctx context.Context, tenantID, categoryID string) error {
+	tx, err := a.client.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE catalog.tenant_categories SET parent_id = NULL
+		WHERE parent_id = $1 AND tenant_id = $2`, categoryID, tenantID); err != nil {
+		return fmt.Errorf("reparent children: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+		DELETE FROM catalog.tenant_categories
+		WHERE id = $1 AND tenant_id = $2`, categoryID, tenantID)
+	if err != nil {
+		return fmt.Errorf("delete tenant_category: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("tenant_category not found")
+	}
+	return tx.Commit(ctx)
+}
+
 // --- Mapping ---
 
 func (a *CategoriesV2Adapter) SetCategoryMapping(ctx context.Context, m *domain.CategoryMapping) error {

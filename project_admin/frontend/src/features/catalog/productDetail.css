@@ -127,6 +127,38 @@
   color: var(--text-muted);
   margin-top: 2px;
 }
+.pd-cat-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pd-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.pd-cat-chip:hover {
+  background: var(--border-soft);
+}
+.pd-cat-chip input {
+  margin: 0;
+  cursor: pointer;
+}
+.pd-cat-kind {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.pd-cat-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+}
 .pd-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

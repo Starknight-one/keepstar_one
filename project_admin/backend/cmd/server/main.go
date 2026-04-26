@@ -296,6 +296,8 @@ func main() {
 	tenantsHandler := handlers.NewTenantsHandler(tenantsUC, log)
 	invitationsHandler := handlers.NewInvitationsHandler(invitationsUC, cfg.JWTSecret, log)
 	productsHandler := handlers.NewProductsHandler(productsUC, log)
+	categoriesV2Adapter := postgres.NewCategoriesV2Adapter(dbClient, log)
+	categoriesHandler := handlers.NewCategoriesHandler(categoriesV2Adapter, log)
 	importHandler := handlers.NewImportHandler(importUC, log)
 	settingsHandler := handlers.NewSettingsHandler(settingsUC, log)
 	stockHandler := handlers.NewStockHandler(stockUC, log)
@@ -395,6 +397,11 @@ func main() {
 			productsHandler.HandleList(w, r)
 			return
 		}
+		// Sub-path: /admin/api/products/{id}/categories → categoriesHandler.
+		if strings.HasSuffix(strings.TrimSuffix(path, "/"), "/categories") {
+			categoriesHandler.HandleListingCategories(w, r)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			productsHandler.HandleGet(w, r)
@@ -404,7 +411,31 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+	// Legacy categories endpoint (read-only sidebar tree from catalog.categories).
 	protected.HandleFunc("/admin/api/categories", productsHandler.HandleCategories)
+	// V2 categories — tenant CRUD + master read-only + M:N mapping (M8).
+	protected.HandleFunc("/admin/api/categories/tenant", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			categoriesHandler.HandleListTenant(w, r)
+		case http.MethodPost:
+			categoriesHandler.HandleCreateTenant(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	protected.HandleFunc("/admin/api/categories/tenant/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPatch:
+			categoriesHandler.HandleUpdateTenant(w, r)
+		case http.MethodDelete:
+			categoriesHandler.HandleDeleteTenant(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	protected.HandleFunc("/admin/api/categories/master", categoriesHandler.HandleListMaster)
+	protected.HandleFunc("/admin/api/categories/mapping", categoriesHandler.HandleSetMapping)
 	protected.HandleFunc("/admin/api/catalog/import", importHandler.HandleUpload)
 	protected.HandleFunc("/admin/api/catalog/import/", importHandler.HandleGetJob)
 	protected.HandleFunc("/admin/api/catalog/imports", importHandler.HandleListJobs)

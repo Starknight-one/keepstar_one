@@ -36,6 +36,14 @@ type TenantCategory struct {
 	CreatedAt  time.Time          `json:"createdAt"`
 }
 
+// TenantCategoryWithCount augments TenantCategory with the number of listings
+// linked through tenant_listing_categories. Used by the editor UI for the
+// per-node count badge.
+type TenantCategoryWithCount struct {
+	TenantCategory
+	ProductCount int `json:"productCount"`
+}
+
 // CategoryMapping is the N:1 link from a tenant_category to a master_category.
 // NULL master_category_id is valid — it means the tenant category is showcase
 // or promo and has no master equivalent.

@@ -16,6 +16,9 @@ export default function ProductDetailPage() {
   const [form, setForm] = useState({})
   const [message, setMessage] = useState('')
 
+  const [allCategories, setAllCategories] = useState([])
+  const [linkedCategoryIds, setLinkedCategoryIds] = useState([])
+
   useEffect(() => {
     api.get(`/products/${id}`)
       .then((p) => {
@@ -30,6 +33,8 @@ export default function ProductDetailPage() {
       })
       .catch(() => navigate('/catalog'))
       .finally(() => setLoading(false))
+    api.get('/categories/tenant').then((d) => setAllCategories(d.categories || [])).catch(() => {})
+    api.get(`/products/${id}/categories`).then((d) => setLinkedCategoryIds((d.categories || []).map((c) => c.id))).catch(() => {})
   }, [id, navigate])
 
   async function handleSave() {
@@ -44,12 +49,21 @@ export default function ProductDetailPage() {
         rating: form.rating,
       }
       await api.put(`/products/${id}`, payload)
+      // M:N category links — separate endpoint, only fired when user touched it.
+      // We always sync to keep the source of truth aligned with what the UI shows.
+      await api.put(`/products/${id}/categories`, { categoryIds: linkedCategoryIds })
       setMessage('Saved successfully')
     } catch (err) {
       setMessage(err.message || 'Failed to save')
     } finally {
       setSaving(false)
     }
+  }
+
+  function toggleCategory(catId) {
+    setLinkedCategoryIds((prev) =>
+      prev.includes(catId) ? prev.filter((x) => x !== catId) : [...prev, catId],
+    )
   }
 
   if (loading) return <div className="center-spinner"><Spinner /></div>
@@ -131,6 +145,28 @@ export default function ProductDetailPage() {
                 <input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={(e) => setForm({ ...form, rating: Number(e.target.value) })} />
               </div>
             </div>
+          </div>
+
+          <div className="pd-section">
+            <div className="pd-section-title">Categories</div>
+            <div className="pd-section-hint">Tenant categories this listing belongs to. Multiple allowed.</div>
+            {allCategories.length === 0 ? (
+              <div className="pd-cat-empty">No categories yet — add some on the Categories page.</div>
+            ) : (
+              <div className="pd-cat-list">
+                {allCategories.map((c) => (
+                  <label key={c.id} className="pd-cat-chip">
+                    <input
+                      type="checkbox"
+                      checked={linkedCategoryIds.includes(c.id)}
+                      onChange={() => toggleCategory(c.id)}
+                    />
+                    <span>{c.name}</span>
+                    <span className="pd-cat-kind">{c.kind}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="pd-section">

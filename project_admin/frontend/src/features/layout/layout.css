@@ -45,6 +45,11 @@
 }
 .sidebar-link:hover { background: var(--sidebar-hover); color: var(--sidebar-text-active); text-decoration: none; }
 .sidebar-link.active { background: var(--sidebar-active); color: var(--sidebar-text-active); }
+.sidebar-link.sidebar-sub {
+  padding-left: 32px;
+  font-size: 12.5px;
+  opacity: 0.85;
+}
 
 .sidebar-footer {
   padding: 16px 12px 0;
