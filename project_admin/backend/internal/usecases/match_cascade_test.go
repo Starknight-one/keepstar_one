@@ -78,6 +78,11 @@ func (f *fakeVariantsPort) FindMasterProductsByName(_ context.Context, _, _ stri
 func (f *fakeVariantsPort) GetMasterProductSummary(_ context.Context, _ string) (*ports.MasterProductSummary, error) {
 	panic("not used in cascade tests")
 }
+func (f *fakeVariantsPort) GetMasterOverview(_ context.Context) (*ports.MasterOverview, error) {
+	// Empty overview is a valid input — agent treats it as "master is empty,
+	// every listing creates new masters". Tests don't exercise overview yet.
+	return &ports.MasterOverview{}, nil
+}
 
 // fakeEmbedder always returns one fixed vector unless err is set.
 type fakeEmbedder struct {

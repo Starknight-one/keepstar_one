@@ -505,3 +505,99 @@ func (a *MasterVariantsAdapter) GetMasterCosmetics(ctx context.Context, masterVa
 	}
 	return &mc, nil
 }
+
+// GetMasterOverview computes a catalog-wide summary grouped by vertical, plus
+// the registered Tier-2 fields from master_field_definitions. Used by the
+// discovery agent (catalog completion 2026-04-28) to make merge decisions
+// without poking master via per-listing tool calls.
+//
+// Cost: 3 small SQL queries on indexes (vertical / brand / categories). For a
+// 10k master_products catalog this completes in low double-digit ms.
+func (a *MasterVariantsAdapter) GetMasterOverview(ctx context.Context) (*ports.MasterOverview, error) {
+	out := &ports.MasterOverview{}
+
+	// Per-vertical product count + top brands (top 10 each).
+	verticalRows, err := a.client.pool.Query(ctx, `
+		WITH per_vertical AS (
+			SELECT vertical, COUNT(*) AS n
+			FROM catalog.master_products
+			GROUP BY vertical
+		),
+		brands AS (
+			SELECT vertical, brand, COUNT(*) AS bn,
+				ROW_NUMBER() OVER (PARTITION BY vertical ORDER BY COUNT(*) DESC, brand) AS rn
+			FROM catalog.master_products
+			WHERE brand IS NOT NULL AND brand != ''
+			GROUP BY vertical, brand
+		)
+		SELECT pv.vertical, pv.n,
+			ARRAY(SELECT b.brand FROM brands b WHERE b.vertical = pv.vertical AND b.rn <= 10 ORDER BY b.rn) AS top_brands
+		FROM per_vertical pv
+		ORDER BY pv.n DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("master overview verticals: %w", err)
+	}
+	defer verticalRows.Close()
+	for verticalRows.Next() {
+		var v ports.MasterVerticalSummary
+		if err := verticalRows.Scan(&v.Vertical, &v.ProductCount, &v.TopBrands); err != nil {
+			return nil, fmt.Errorf("scan vertical row: %w", err)
+		}
+		out.Verticals = append(out.Verticals, v)
+		out.TotalProducts += v.ProductCount
+	}
+	if err := verticalRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Master categories per vertical (≤20 names per vertical).
+	catRows, err := a.client.pool.Query(ctx, `
+		WITH ranked AS (
+			SELECT vertical, slug,
+				ROW_NUMBER() OVER (PARTITION BY vertical ORDER BY slug) AS rn
+			FROM catalog.master_categories
+		)
+		SELECT vertical, slug FROM ranked WHERE rn <= 20 ORDER BY vertical, slug
+	`)
+	if err != nil {
+		// Not fatal — master_categories table may be empty for early tenants.
+		a.log.Warn("master_overview_categories_failed", "error", err.Error())
+	} else {
+		defer catRows.Close()
+		byVertical := make(map[string][]string)
+		for catRows.Next() {
+			var vertical, slug string
+			if err := catRows.Scan(&vertical, &slug); err != nil {
+				return nil, fmt.Errorf("scan category row: %w", err)
+			}
+			byVertical[vertical] = append(byVertical[vertical], slug)
+		}
+		for i := range out.Verticals {
+			out.Verticals[i].Categories = byVertical[out.Verticals[i].Vertical]
+		}
+	}
+
+	// Registered tier-2 fields from master_field_definitions. New table from
+	// Phase A3 — may be empty (zero promoted fields yet) which is fine.
+	fdRows, err := a.client.pool.Query(ctx, `
+		SELECT vertical, key, type, COALESCE(enum_values, '{}')
+		FROM catalog.master_field_definitions
+		ORDER BY vertical, key
+	`)
+	if err != nil {
+		// Not fatal — master_field_definitions may not exist yet on a stale schema.
+		a.log.Warn("master_overview_field_defs_failed", "error", err.Error())
+	} else {
+		defer fdRows.Close()
+		for fdRows.Next() {
+			var fd ports.MasterFieldDefSummary
+			if err := fdRows.Scan(&fd.Vertical, &fd.Key, &fd.Type, &fd.EnumValues); err != nil {
+				return nil, fmt.Errorf("scan field def: %w", err)
+			}
+			out.RegisteredFields = append(out.RegisteredFields, fd)
+		}
+	}
+
+	return out, nil
+}

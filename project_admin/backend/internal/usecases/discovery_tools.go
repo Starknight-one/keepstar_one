@@ -146,6 +146,57 @@ func AgentTools() []anthropic.ToolDef {
 			}`),
 		},
 		{
+			Name: "propose_brand_mapping",
+			Description: "Map a tenant vendor (vendor field on Shopify products) to an action. " +
+				"action='link_existing' for vendors that match an existing master_products.brand — set master_brand. " +
+				"action='create_new' for new brands the tenant introduces — first matched listing seeds master. " +
+				"action='skip' for internal/junk vendors (e.g. 'Keepstar Store' selling gift wraps) — set reason. " +
+				"Skip vendors are reviewed by the merge applier alongside JunkRules.",
+			InputSchema: rawSchema(`{
+				"type":"object",
+				"properties":{
+					"vendor":{"type":"string","description":"Vendor string as it appears in Shopify product.vendor (case-insensitive on apply)"},
+					"action":{"type":"string","enum":["link_existing","create_new","skip"]},
+					"master_brand":{"type":"string","description":"Required for action=link_existing: the master_products.brand value to link to"},
+					"reason":{"type":"string","description":"Optional human-readable note (especially useful for action=skip)"}
+				},
+				"required":["vendor","action"]
+			}`),
+		},
+		{
+			Name: "propose_junk_rule",
+			Description: "Add a rule that tells the merge applier to skip listings without trying to match them. " +
+				"rule_type='vendor_blacklist': skip every listing with vendor=value (case-insensitive). " +
+				"rule_type='axis_name_pattern': skip listings whose variant.options key contains value (e.g. 'gift wrap'). " +
+				"rule_type='require_identifier': call once with value='true'/'false' to set whether listings without SKU AND without GTIN are skipped (default true).",
+			InputSchema: rawSchema(`{
+				"type":"object",
+				"properties":{
+					"rule_type":{"type":"string","enum":["vendor_blacklist","axis_name_pattern","require_identifier"]},
+					"value":{"type":"string","description":"Vendor / axis pattern / 'true'|'false' depending on rule_type"}
+				},
+				"required":["rule_type","value"]
+			}`),
+		},
+		{
+			Name: "set_match_strategy",
+			Description: "Set match cascade order + score thresholds. Call ONCE near the end. " +
+				"Defaults are applied if you skip this tool: order=[gtin_exact,vendor_sku_exact,fuzzy_title,embedding], " +
+				"auto_link_threshold=0.90, needs_review_threshold=0.50, skip_below=0.30. " +
+				"List embedding_disabled_for verticals where master coverage is zero (no point in vector search there).",
+			InputSchema: rawSchema(`{
+				"type":"object",
+				"properties":{
+					"order":{"type":"array","items":{"type":"string"},"description":"Strategy names in priority order"},
+					"auto_link_threshold":{"type":"number","description":"Score >= this auto-links (default 0.90)"},
+					"needs_review_threshold":{"type":"number","description":"Score in [needs_review_threshold, auto_link_threshold) goes to needs_review (default 0.50)"},
+					"skip_below":{"type":"number","description":"Score < this is treated as no_match (default 0.30)"},
+					"embedding_disabled_for":{"type":"array","items":{"type":"string"},"description":"Verticals to skip embedding strategy for (e.g. ['furniture','footwear'] when master is empty for them)"}
+				},
+				"required":["order"]
+			}`),
+		},
+		{
 			Name: "commit_artifact",
 			Description: "Finalize the mapping artifact and end the discovery session. " +
 				"Call this ONCE when you've proposed mappings for all the important fields and categories. " +
@@ -206,6 +257,12 @@ func (d *ToolDispatcher) Dispatch(ctx context.Context, name string, input json.R
 		return d.proposeFieldMapping(input)
 	case "propose_category_mapping":
 		return d.proposeCategoryMapping(input)
+	case "propose_brand_mapping":
+		return d.proposeBrandMapping(input)
+	case "propose_junk_rule":
+		return d.proposeJunkRule(input)
+	case "set_match_strategy":
+		return d.setMatchStrategy(input)
 	case "commit_artifact":
 		return d.commitArtifact(input)
 	default:
@@ -455,6 +512,118 @@ func (d *ToolDispatcher) proposeCategoryMapping(input json.RawMessage) (string, 
 		Kind:        args.Kind,
 	})
 	return jsonResponse(map[string]string{"status": "recorded", "collection": args.ShopifyCollectionID}), false
+}
+
+// --- propose_brand_mapping -------------------------------------------------
+
+type proposeBrandMappingArgs struct {
+	Vendor      string `json:"vendor"`
+	Action      string `json:"action"`
+	MasterBrand string `json:"master_brand,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+func (d *ToolDispatcher) proposeBrandMapping(input json.RawMessage) (string, bool) {
+	var args proposeBrandMappingArgs
+	if err := json.Unmarshal(input, &args); err != nil {
+		return jsonResponse(map[string]string{"error": err.Error()}), true
+	}
+	if args.Vendor == "" || args.Action == "" {
+		return jsonResponse(map[string]string{"error": "vendor and action are required"}), true
+	}
+	switch args.Action {
+	case "link_existing":
+		if args.MasterBrand == "" {
+			return jsonResponse(map[string]string{"error": "master_brand is required for action=link_existing"}), true
+		}
+	case "create_new", "skip":
+		// ok
+	default:
+		return jsonResponse(map[string]string{"error": "action must be link_existing|create_new|skip"}), true
+	}
+	d.builder.SetBrandMapping(args.Vendor, domain.BrandMappingTarget{
+		Action:      args.Action,
+		MasterBrand: args.MasterBrand,
+		Reason:      args.Reason,
+	})
+	return jsonResponse(map[string]string{
+		"status": "recorded",
+		"vendor": args.Vendor,
+		"action": args.Action,
+	}), false
+}
+
+// --- propose_junk_rule -----------------------------------------------------
+
+type proposeJunkRuleArgs struct {
+	RuleType string `json:"rule_type"`
+	Value    string `json:"value"`
+}
+
+func (d *ToolDispatcher) proposeJunkRule(input json.RawMessage) (string, bool) {
+	var args proposeJunkRuleArgs
+	if err := json.Unmarshal(input, &args); err != nil {
+		return jsonResponse(map[string]string{"error": err.Error()}), true
+	}
+	if args.RuleType == "" || args.Value == "" {
+		return jsonResponse(map[string]string{"error": "rule_type and value are required"}), true
+	}
+	switch args.RuleType {
+	case "vendor_blacklist":
+		d.builder.AddJunkVendor(args.Value)
+	case "axis_name_pattern":
+		d.builder.AddJunkAxisPattern(args.Value)
+	case "require_identifier":
+		v := strings.ToLower(strings.TrimSpace(args.Value))
+		d.builder.SetRequireIdentifier(v == "true" || v == "yes" || v == "1")
+	default:
+		return jsonResponse(map[string]string{"error": "rule_type must be vendor_blacklist|axis_name_pattern|require_identifier"}), true
+	}
+	return jsonResponse(map[string]string{"status": "recorded", "rule_type": args.RuleType, "value": args.Value}), false
+}
+
+// --- set_match_strategy ----------------------------------------------------
+
+type setMatchStrategyArgs struct {
+	Order                []string `json:"order"`
+	AutoLinkThreshold    float64  `json:"auto_link_threshold"`
+	NeedsReviewThreshold float64  `json:"needs_review_threshold"`
+	SkipBelow            float64  `json:"skip_below"`
+	EmbeddingDisabledFor []string `json:"embedding_disabled_for,omitempty"`
+}
+
+func (d *ToolDispatcher) setMatchStrategy(input json.RawMessage) (string, bool) {
+	var args setMatchStrategyArgs
+	if err := json.Unmarshal(input, &args); err != nil {
+		return jsonResponse(map[string]string{"error": err.Error()}), true
+	}
+	if len(args.Order) == 0 {
+		return jsonResponse(map[string]string{"error": "order is required (non-empty)"}), true
+	}
+	// Defaults if agent omitted any threshold (treat 0 as "use default").
+	if args.AutoLinkThreshold == 0 {
+		args.AutoLinkThreshold = 0.90
+	}
+	if args.NeedsReviewThreshold == 0 {
+		args.NeedsReviewThreshold = 0.50
+	}
+	if args.SkipBelow == 0 {
+		args.SkipBelow = 0.30
+	}
+	if args.NeedsReviewThreshold >= args.AutoLinkThreshold {
+		return jsonResponse(map[string]string{"error": "needs_review_threshold must be < auto_link_threshold"}), true
+	}
+	if args.SkipBelow >= args.NeedsReviewThreshold {
+		return jsonResponse(map[string]string{"error": "skip_below must be < needs_review_threshold"}), true
+	}
+	d.builder.SetMatchStrategyConfig(domain.MatchStrategyConfig{
+		Order:                args.Order,
+		AutoLinkThreshold:    args.AutoLinkThreshold,
+		NeedsReviewThreshold: args.NeedsReviewThreshold,
+		SkipBelow:            args.SkipBelow,
+		EmbeddingDisabledFor: args.EmbeddingDisabledFor,
+	})
+	return jsonResponse(map[string]any{"status": "recorded", "order": args.Order}), false
 }
 
 // --- commit_artifact -------------------------------------------------------

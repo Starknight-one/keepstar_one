@@ -63,6 +63,40 @@ type MasterVariantsPort interface {
 	// Returns nil if not found. Tier 2 columns aren't included — they're
 	// vertical-specific and the agent reads them via candidate-tools instead.
 	GetMasterProductSummary(ctx context.Context, masterProductID string) (*MasterProductSummary, error)
+
+	// GetMasterOverview returns a compact catalog-wide overview of master_products
+	// grouped by vertical. Used to inject ~500 tokens of "what's in master?" into
+	// the discovery agent's system prompt so it can make merge decisions without
+	// per-listing tool calls. Computed on-demand (not cached) — the SQL is small
+	// and runs once per agent session.
+	GetMasterOverview(ctx context.Context) (*MasterOverview, error)
+}
+
+// MasterOverview is the master-side digest fed into the discovery agent's
+// system prompt. Format mirrors V4's CatalogDigest (tenant-side digest) so
+// the agent gets a consistent "soup" view of both sides.
+type MasterOverview struct {
+	TotalProducts   int                       `json:"totalProducts"`
+	Verticals       []MasterVerticalSummary   `json:"verticals"`
+	RegisteredFields []MasterFieldDefSummary  `json:"registeredFields,omitempty"` // from master_field_definitions
+}
+
+// MasterVerticalSummary is one vertical's slice of the master overview.
+type MasterVerticalSummary struct {
+	Vertical    string   `json:"vertical"`
+	ProductCount int     `json:"productCount"`
+	TopBrands   []string `json:"topBrands,omitempty"`   // ≤10
+	Categories  []string `json:"categories,omitempty"`  // master_categories slugs ≤20
+}
+
+// MasterFieldDefSummary is a tier-2 field already promoted in master_field_definitions.
+// The agent uses this to know which keys it should map TO existing typed fields
+// vs. propose as new candidates.
+type MasterFieldDefSummary struct {
+	Vertical string   `json:"vertical"`
+	Key      string   `json:"key"`
+	Type     string   `json:"type"`
+	EnumValues []string `json:"enumValues,omitempty"`
 }
 
 // MasterProductSummary is the discovery-agent-facing snapshot of a master.

@@ -141,13 +141,28 @@ func (da *DiscoveryAgent) Discover(ctx context.Context, tenantID string, report 
 		builder:     builder,
 	}
 
+	// Master overview is fetched once at session start and inlined into the
+	// system prompt. Catalog completion 2026-04-28: gives the agent a "soup"
+	// view of master_products / master_categories / master_field_definitions
+	// before it starts proposing brand_mapping / category_mapping. Failure to
+	// fetch is non-fatal — agent falls back to find_similar_masters tool calls.
+	var overview *ports.MasterOverview
+	if da.variants != nil {
+		o, err := da.variants.GetMasterOverview(ctx)
+		if err != nil {
+			da.log.Warn("discovery_master_overview_failed", "tenant_id", tenantID, "error", err.Error())
+		} else {
+			overview = o
+		}
+	}
+
 	// Cache the system prompt + tool list. Both are static across all turns
 	// of this run — caching makes the per-turn cost ~10× smaller after the
 	// first turn (which writes the cache). The marker on the LAST tool tells
 	// Anthropic to cache everything up to and including it.
 	systemBlocks := []anthropic.SystemBlock{{
 		Type:         "text",
-		Text:         buildDiscoverySystemPrompt(report, tier1),
+		Text:         buildDiscoverySystemPrompt(report, tier1, overview),
 		CacheControl: &anthropic.CacheControl{Type: "ephemeral"},
 	}}
 	tools := AgentTools()
@@ -293,12 +308,19 @@ type ArtifactBuilder struct {
 	fieldMapping    map[string]domain.FieldMappingTarget
 	categoryMapping map[string]domain.CategoryMappingTarget
 	templates       []domain.MasterTemplateProposal
+
+	// Merge-side accumulators (catalog completion 2026-04-28). Lowercase-keyed
+	// brand map so the applier matches case-insensitively against vendor.
+	brandMapping        map[string]domain.BrandMappingTarget
+	junkRules           *domain.JunkRules
+	matchStrategyConfig *domain.MatchStrategyConfig
 }
 
 func NewArtifactBuilder(tier1 AutoMapTier1Result) *ArtifactBuilder {
 	b := &ArtifactBuilder{
 		fieldMapping:    make(map[string]domain.FieldMappingTarget),
 		categoryMapping: make(map[string]domain.CategoryMappingTarget),
+		brandMapping:    make(map[string]domain.BrandMappingTarget),
 	}
 	// Pre-populate with Tier 1 auto-mapping so the agent's proposals only
 	// need to fill in what's not obvious.
@@ -329,6 +351,65 @@ func (b *ArtifactBuilder) AddTemplate(t domain.MasterTemplateProposal) {
 	b.templates = append(b.templates, t)
 }
 
+// SetBrandMapping records how a tenant vendor maps. Vendor key is normalized
+// to lowercase + trimmed so the applier can match case-insensitively.
+func (b *ArtifactBuilder) SetBrandMapping(vendor string, target domain.BrandMappingTarget) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.brandMapping[strings.ToLower(strings.TrimSpace(vendor))] = target
+}
+
+// AddJunkVendor / AddJunkAxisPattern / SetRequireIdentifier are convenience
+// setters used by the propose_junk_rule tool. The first call lazily initializes
+// the JunkRules struct.
+func (b *ArtifactBuilder) AddJunkVendor(vendor string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.junkRules == nil {
+		b.junkRules = &domain.JunkRules{RequireIdentifier: true}
+	}
+	v := strings.ToLower(strings.TrimSpace(vendor))
+	for _, existing := range b.junkRules.VendorBlacklist {
+		if existing == v {
+			return
+		}
+	}
+	b.junkRules.VendorBlacklist = append(b.junkRules.VendorBlacklist, v)
+}
+
+func (b *ArtifactBuilder) AddJunkAxisPattern(pattern string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.junkRules == nil {
+		b.junkRules = &domain.JunkRules{RequireIdentifier: true}
+	}
+	p := strings.ToLower(strings.TrimSpace(pattern))
+	for _, existing := range b.junkRules.AxisNamePatterns {
+		if existing == p {
+			return
+		}
+	}
+	b.junkRules.AxisNamePatterns = append(b.junkRules.AxisNamePatterns, p)
+}
+
+func (b *ArtifactBuilder) SetRequireIdentifier(v bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.junkRules == nil {
+		b.junkRules = &domain.JunkRules{}
+	}
+	b.junkRules.RequireIdentifier = v
+}
+
+// SetMatchStrategyConfig replaces the current strategy config. Called by the
+// set_match_strategy tool. If never called, Build() falls back to defaults.
+func (b *ArtifactBuilder) SetMatchStrategyConfig(cfg domain.MatchStrategyConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	c := cfg
+	b.matchStrategyConfig = &c
+}
+
 // Build snapshots the current state into a MappingArtifact. ValidatedAt /
 // Status are set by the caller (DiscoveryAgent or the validation step).
 func (b *ArtifactBuilder) Build(notes string, matchStrategy []string, variantStrategy string) *domain.MappingArtifact {
@@ -345,14 +426,49 @@ func (b *ArtifactBuilder) Build(notes string, matchStrategy []string, variantStr
 	}
 	tpls := make([]domain.MasterTemplateProposal, len(b.templates))
 	copy(tpls, b.templates)
+
+	var bm map[string]domain.BrandMappingTarget
+	if len(b.brandMapping) > 0 {
+		bm = make(map[string]domain.BrandMappingTarget, len(b.brandMapping))
+		for k, v := range b.brandMapping {
+			bm[k] = v
+		}
+	}
+	var jr *domain.JunkRules
+	if b.junkRules != nil {
+		j := *b.junkRules
+		// Defensive copies of slices.
+		if len(j.VendorBlacklist) > 0 {
+			j.VendorBlacklist = append([]string(nil), j.VendorBlacklist...)
+		}
+		if len(j.AxisNamePatterns) > 0 {
+			j.AxisNamePatterns = append([]string(nil), j.AxisNamePatterns...)
+		}
+		jr = &j
+	}
+	var msc *domain.MatchStrategyConfig
+	if b.matchStrategyConfig != nil {
+		c := *b.matchStrategyConfig
+		if len(c.Order) > 0 {
+			c.Order = append([]string(nil), c.Order...)
+		}
+		if len(c.EmbeddingDisabledFor) > 0 {
+			c.EmbeddingDisabledFor = append([]string(nil), c.EmbeddingDisabledFor...)
+		}
+		msc = &c
+	}
+
 	return &domain.MappingArtifact{
-		Version:         1,
-		FieldMapping:    fm,
-		CategoryMapping: cm,
-		MasterTemplates: tpls,
-		MatchStrategy:   matchStrategy,
-		VariantStrategy: variantStrategy,
-		AgentNotes:      notes,
+		Version:             1,
+		FieldMapping:        fm,
+		CategoryMapping:     cm,
+		MasterTemplates:     tpls,
+		MatchStrategy:       matchStrategy,
+		VariantStrategy:     variantStrategy,
+		AgentNotes:          notes,
+		BrandMapping:        bm,
+		JunkRules:           jr,
+		MatchStrategyConfig: msc,
 	}
 }
 
@@ -360,11 +476,14 @@ func (b *ArtifactBuilder) Build(notes string, matchStrategy []string, variantStr
 // System prompt construction
 // =============================================================================
 
-func buildDiscoverySystemPrompt(report *domain.MetaReport, tier1 AutoMapTier1Result) string {
+func buildDiscoverySystemPrompt(report *domain.MetaReport, tier1 AutoMapTier1Result, overview *ports.MasterOverview) string {
 	var sb strings.Builder
-	sb.WriteString(`You are the Catalog Discovery Agent for the Keepstar admin platform.
-Your job: produce a MAPPING ARTIFACT that tells the harvester how to convert
-this tenant's Shopify catalog into our master/listing schema.
+	sb.WriteString(`You are the Catalog Discovery & Merge Agent for the Keepstar admin platform.
+Your single job is to produce a MAPPING ARTIFACT that fully describes how this
+tenant's Shopify catalog converts into our master/listing schema AND how each
+listing should be merged with master products. The artifact you commit drives a
+deterministic Go applier — there is no per-listing LLM call after this run, so
+your rules need to be complete enough to handle every listing in the tenant.
 
 You have 30 tool-call turns and an 8-minute wallclock budget. Use them well —
 Sonnet costs real money, but a wrong artifact costs more.
@@ -404,6 +523,29 @@ Transforms supported in propose_field_mapping(transform=...):
   shorten:N                 — truncate to N characters
   lowercase / split:comma   — basic normalization
 
+Merge-side outputs (these are NEW, the artifact's other half):
+
+  propose_brand_mapping(vendor, action, master_brand?, reason?):
+    For each distinct vendor in the tenant's catalog, decide:
+      action="link_existing" + master_brand="X" — vendor matches a brand already in master.
+                                                  Look at the master overview below for what's there.
+      action="create_new"                       — vendor introduces a new brand. The applier
+                                                  seeds master.brand on the first matched listing.
+      action="skip" + reason                    — internal/junk vendor (e.g. "Keepstar Store"
+                                                  if it only sells gift wraps). Skipped at apply.
+
+  propose_junk_rule(rule_type, value):
+    rule_type="vendor_blacklist" + value="vendor name" — skip every listing under that vendor.
+    rule_type="axis_name_pattern" + value="gift wrap" — skip listings whose variant.options
+                                                         have a key matching this substring.
+    rule_type="require_identifier" + value="true"|"false" — controls whether listings without
+                                                            both SKU and GTIN are skipped (default true).
+
+  set_match_strategy(order, auto_link_threshold, needs_review_threshold, skip_below, embedding_disabled_for):
+    Tune the match-cascade for this tenant. Defaults are sensible — only override if the
+    tenant's catalog has a specific quirk (e.g. furniture vertical with no master coverage
+    at all → put "furniture" in embedding_disabled_for).
+
 # Recommended order
 
 1. Skim the meta-report fields below.
@@ -416,7 +558,13 @@ Transforms supported in propose_field_mapping(transform=...):
    that should land in raw_attributes).
 7. propose_category_mapping for collections you can confidently classify
    (showcase / promo) or link to master categories.
-8. commit_artifact when done.
+8. propose_brand_mapping for every distinct vendor that appears in the
+   meta-report (most tenants have 5-30 vendors — this is cheap and lets the
+   applier handle every listing without falling back to "needs_review").
+9. propose_junk_rule for vendors / axis patterns the meta-report shows are
+   junk (gift wraps, services, warranty add-ons).
+10. set_match_strategy ONCE if you want non-default thresholds — otherwise skip.
+11. commit_artifact when done.
 
 # Hard rules
 
@@ -426,6 +574,45 @@ Transforms supported in propose_field_mapping(transform=...):
   not by re-running the same query with bigger limits.
 - Errors come back as {"error": "..."} JSON. Read them and adjust — don't loop.
 
+# Master overview (what's already in master across ALL tenants)
+
+`)
+	if overview != nil && overview.TotalProducts > 0 {
+		sb.WriteString(fmt.Sprintf("Total master_products: %d\n\n", overview.TotalProducts))
+		for _, v := range overview.Verticals {
+			sb.WriteString(fmt.Sprintf("vertical=%s (%d products)\n", v.Vertical, v.ProductCount))
+			if len(v.TopBrands) > 0 {
+				sb.WriteString("  top_brands: ")
+				sb.WriteString(strings.Join(v.TopBrands, ", "))
+				sb.WriteString("\n")
+			}
+			if len(v.Categories) > 0 {
+				sb.WriteString("  master_categories: ")
+				sb.WriteString(strings.Join(v.Categories, ", "))
+				sb.WriteString("\n")
+			}
+		}
+		if len(overview.RegisteredFields) > 0 {
+			sb.WriteString("\nregistered_tier2_fields (use these as master.tier2.<key> in field_mapping):\n")
+			byVert := make(map[string][]string)
+			for _, fd := range overview.RegisteredFields {
+				entry := fd.Key + ":" + fd.Type
+				if len(fd.EnumValues) > 0 {
+					entry += "(" + strings.Join(fd.EnumValues, "|") + ")"
+				}
+				byVert[fd.Vertical] = append(byVert[fd.Vertical], entry)
+			}
+			for v, fields := range byVert {
+				sb.WriteString(fmt.Sprintf("  %s: %s\n", v, strings.Join(fields, ", ")))
+			}
+		} else {
+			sb.WriteString("\nregistered_tier2_fields: (none yet — propose candidate:<key> with vertical for new ones)\n")
+		}
+	} else {
+		sb.WriteString("(master is empty — every tenant listing this run will create new masters)\n")
+	}
+
+	sb.WriteString(`
 # Meta-report (current tenant)
 
 `)
