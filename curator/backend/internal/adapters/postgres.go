@@ -518,7 +518,11 @@ func (c *Client) ListTenantProducts(ctx context.Context, tenantID, search string
 			COALESCE(p.price, 0),
 			COALESCE(p.currency, ''),
 			COALESCE(p.stock_quantity, 0),
-			COALESCE(p.media->0->>'url', mp.images->0->>'url', p.images->0->>'url', ''),
+			COALESCE(
+				p.media->0->>'url',
+				CASE WHEN jsonb_typeof(mp.images->0) = 'string' THEN mp.images->>0 ELSE mp.images->0->>'url' END,
+				CASE WHEN jsonb_typeof(p.images->0) = 'string' THEN p.images->>0 ELSE p.images->0->>'url' END,
+				''),
 			(p.master_variant_id IS NOT NULL OR p.master_product_id IS NOT NULL),
 			COALESCE(p.master_variant_id::text, p.master_product_id::text, ''),
 			COALESCE(p.source_system, '')
@@ -632,7 +636,7 @@ func (c *Client) ListMasterProducts(ctx context.Context, vertical, search string
 			(mp.embedding IS NOT NULL),
 			(mp.skin_type IS NOT NULL OR mp.concern IS NOT NULL OR mp.key_ingredients IS NOT NULL),
 			(mp.description IS NOT NULL AND mp.description <> ''),
-			COALESCE(mp.images->0->>'url', ''),
+			COALESCE(CASE WHEN jsonb_typeof(mp.images->0) = 'string' THEN mp.images->>0 ELSE mp.images->0->>'url' END, ''),
 			COALESCE(t.slug, ''),
 			mp.created_at,
 			COALESCE(lc.cnt, 0)
@@ -695,7 +699,7 @@ func (c *Client) GetMasterProduct(ctx context.Context, id string) (domain.Master
 			(mp.skin_type IS NOT NULL OR mp.concern IS NOT NULL OR mp.key_ingredients IS NOT NULL),
 			(mp.description IS NOT NULL AND mp.description <> ''),
 			COALESCE(mp.description, ''),
-			COALESCE(mp.images->0->>'url', ''),
+			COALESCE(CASE WHEN jsonb_typeof(mp.images->0) = 'string' THEN mp.images->>0 ELSE mp.images->0->>'url' END, ''),
 			COALESCE(t.slug, ''),
 			mp.created_at,
 			COALESCE(mp.skin_type, '{}'::text[]),
@@ -767,7 +771,7 @@ func (c *Client) GetMasterProduct(ctx context.Context, id string) (domain.Master
 			COALESCE(p.price, 0),
 			COALESCE(p.currency, ''),
 			COALESCE(p.stock_quantity, 0),
-			COALESCE(p.media->0->>'url', p.images->0->>'url', ''),
+			COALESCE(p.media->0->>'url', CASE WHEN jsonb_typeof(p.images->0) = 'string' THEN p.images->>0 ELSE p.images->0->>'url' END, ''),
 			TRUE,
 			COALESCE(p.master_variant_id::text, p.master_product_id::text, ''),
 			COALESCE(p.source_system, '')
