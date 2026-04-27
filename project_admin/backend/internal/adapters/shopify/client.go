@@ -802,6 +802,336 @@ func extractEdgeStrings(edges []struct {
 	return out
 }
 
+// =============================================================================
+// Write methods — used by cmd/seed-devstore for populating test data in
+// dev-store (curator pivot 2026-04-27 Этап 3). Not used by harvester-lite or
+// merge-agent — those are read-only on Shopify side. Mutations require
+// `write_products` + `write_inventory` + `write_publications` scopes.
+// =============================================================================
+
+// ProductCreateInput is the Go-side shape we pass to ProductCreate. We translate
+// it into Shopify's productSet mutation input. Currency is shop default; price
+// is a decimal string (Shopify Money scalar).
+type ProductCreateInput struct {
+	Title           string
+	DescriptionHTML string
+	Vendor          string
+	ProductType     string
+	Tags            []string
+	Status          string // ACTIVE | DRAFT | ARCHIVED. Default ACTIVE.
+	OptionNames     []string // e.g. ["Size", "Color"]; up to 3
+	Variants        []VariantInput
+	Metafields      []MetafieldInput
+	ImageURLs       []string // Shopify will fetch and host these URLs.
+	CollectionGIDs  []string // gid://shopify/Collection/... — assigns at create time.
+}
+
+type VariantInput struct {
+	SKU             string
+	Barcode         string
+	PriceDecimal    string // e.g. "12.99"
+	CompareDecimal  string // optional
+	InventoryQty    int
+	OptionValues    []string // values aligned with parent OptionNames; e.g. ["50ml","Vanilla"]
+	WeightGrams     float64  // 0 = unset
+}
+
+type MetafieldInput struct {
+	Namespace string
+	Key       string
+	Type      string // single_line_text_field | number_decimal | json | etc.
+	Value     string
+}
+
+// ProductCreate creates a product with variants, metafields, images, and
+// collection assignments in a single GraphQL mutation. Returns the product GID.
+//
+// Uses productSet (synchronous) — supports full nested input incl. options +
+// variants + metafields + media + collection links. Synchronous mode is fine
+// for ≤25 variants per product (our seed scenarios have ≤6).
+func (c *Client) ProductCreate(ctx context.Context, shop, token string, in ProductCreateInput) (string, error) {
+	const mutation = `
+mutation seedProductSet($input: ProductSetInput!) {
+  productSet(synchronous: true, input: $input) {
+    product { id title }
+    userErrors { field message }
+  }
+}`
+
+	// Build productOptions[].name + productOptions[].values[] from variant option values.
+	productOptions := make([]map[string]any, 0, len(in.OptionNames))
+	if len(in.OptionNames) > 0 {
+		// Collect unique values per option index.
+		valuesPerOpt := make([][]string, len(in.OptionNames))
+		seen := make([]map[string]struct{}, len(in.OptionNames))
+		for i := range seen {
+			seen[i] = map[string]struct{}{}
+		}
+		for _, v := range in.Variants {
+			for i, val := range v.OptionValues {
+				if i >= len(in.OptionNames) || val == "" {
+					continue
+				}
+				if _, dup := seen[i][val]; dup {
+					continue
+				}
+				seen[i][val] = struct{}{}
+				valuesPerOpt[i] = append(valuesPerOpt[i], val)
+			}
+		}
+		for i, name := range in.OptionNames {
+			vals := make([]map[string]any, 0, len(valuesPerOpt[i]))
+			for _, v := range valuesPerOpt[i] {
+				vals = append(vals, map[string]any{"name": v})
+			}
+			productOptions = append(productOptions, map[string]any{
+				"name":   name,
+				"values": vals,
+			})
+		}
+	}
+
+	variants := make([]map[string]any, 0, len(in.Variants))
+	for _, v := range in.Variants {
+		mv := map[string]any{
+			"sku":          v.SKU,
+			"barcode":      v.Barcode,
+			"price":        v.PriceDecimal,
+			"inventoryQuantities": []map[string]any{},
+		}
+		if v.CompareDecimal != "" {
+			mv["compareAtPrice"] = v.CompareDecimal
+		}
+		if len(v.OptionValues) > 0 {
+			optVals := make([]map[string]any, 0, len(v.OptionValues))
+			for i, ov := range v.OptionValues {
+				if i >= len(in.OptionNames) || ov == "" {
+					continue
+				}
+				optVals = append(optVals, map[string]any{
+					"optionName": in.OptionNames[i],
+					"name":       ov,
+				})
+			}
+			mv["optionValues"] = optVals
+		}
+		variants = append(variants, mv)
+	}
+
+	media := make([]map[string]any, 0, len(in.ImageURLs))
+	for _, u := range in.ImageURLs {
+		if u == "" {
+			continue
+		}
+		media = append(media, map[string]any{
+			"originalSource":   u,
+			"mediaContentType": "IMAGE",
+		})
+	}
+
+	mfs := make([]map[string]any, 0, len(in.Metafields))
+	for _, m := range in.Metafields {
+		mfs = append(mfs, map[string]any{
+			"namespace": m.Namespace,
+			"key":       m.Key,
+			"type":      m.Type,
+			"value":     m.Value,
+		})
+	}
+
+	input := map[string]any{
+		"title":           in.Title,
+		"descriptionHtml": in.DescriptionHTML,
+		"vendor":          in.Vendor,
+		"productType":     in.ProductType,
+		"tags":            in.Tags,
+		"productOptions":  productOptions,
+		"variants":        variants,
+		"metafields":      mfs,
+	}
+	if in.Status != "" {
+		input["status"] = in.Status
+	} else {
+		input["status"] = "ACTIVE"
+	}
+	if len(in.CollectionGIDs) > 0 {
+		input["collectionsToJoin"] = in.CollectionGIDs
+	}
+	if len(media) > 0 {
+		input["files"] = media
+	}
+
+	data, err := c.graphqlRequest(ctx, shop, token, mutation, map[string]any{"input": input})
+	if err != nil {
+		return "", fmt.Errorf("productCreate: %w", err)
+	}
+	var resp struct {
+		ProductSet struct {
+			Product *struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"product"`
+			UserErrors []struct {
+				Field   []string `json:"field"`
+				Message string   `json:"message"`
+			} `json:"userErrors"`
+		} `json:"productSet"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", fmt.Errorf("parse productSet: %w", err)
+	}
+	if len(resp.ProductSet.UserErrors) > 0 {
+		errs := make([]string, 0, len(resp.ProductSet.UserErrors))
+		for _, e := range resp.ProductSet.UserErrors {
+			errs = append(errs, fmt.Sprintf("%v: %s", e.Field, e.Message))
+		}
+		return "", fmt.Errorf("productSet user-errors: %s", strings.Join(errs, "; "))
+	}
+	if resp.ProductSet.Product == nil {
+		return "", fmt.Errorf("productSet returned nil product")
+	}
+	return resp.ProductSet.Product.ID, nil
+}
+
+// CollectionCreate makes a custom (manual) collection. Returns the collection
+// GID. Products are assigned via ProductCreate's CollectionGIDs field, so
+// no separate "add products" call is needed for the seed flow.
+func (c *Client) CollectionCreate(ctx context.Context, shop, token, title, handle, descriptionHTML string) (string, error) {
+	const mutation = `
+mutation seedCollectionCreate($input: CollectionInput!) {
+  collectionCreate(input: $input) {
+    collection { id title }
+    userErrors { field message }
+  }
+}`
+	input := map[string]any{
+		"title":           title,
+		"descriptionHtml": descriptionHTML,
+	}
+	if handle != "" {
+		input["handle"] = handle
+	}
+	data, err := c.graphqlRequest(ctx, shop, token, mutation, map[string]any{"input": input})
+	if err != nil {
+		return "", fmt.Errorf("collectionCreate: %w", err)
+	}
+	var resp struct {
+		CollectionCreate struct {
+			Collection *struct {
+				ID string `json:"id"`
+			} `json:"collection"`
+			UserErrors []struct {
+				Field   []string `json:"field"`
+				Message string   `json:"message"`
+			} `json:"userErrors"`
+		} `json:"collectionCreate"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", fmt.Errorf("parse collectionCreate: %w", err)
+	}
+	if len(resp.CollectionCreate.UserErrors) > 0 {
+		errs := make([]string, 0, len(resp.CollectionCreate.UserErrors))
+		for _, e := range resp.CollectionCreate.UserErrors {
+			errs = append(errs, fmt.Sprintf("%v: %s", e.Field, e.Message))
+		}
+		return "", fmt.Errorf("collectionCreate user-errors: %s", strings.Join(errs, "; "))
+	}
+	if resp.CollectionCreate.Collection == nil {
+		return "", fmt.Errorf("collectionCreate returned nil")
+	}
+	return resp.CollectionCreate.Collection.ID, nil
+}
+
+// ProductsDeleteAll wipes every product in the store. Used by seed-devstore --reset
+// to start clean. Returns the count deleted. Refuses to run on shops not
+// matching `*.myshopify.com` to prevent any accidental prod-store usage.
+func (c *Client) ProductsDeleteAll(ctx context.Context, shop, token string) (int, error) {
+	if _, ok := ValidateShopDomain(shop); !ok {
+		return 0, fmt.Errorf("ProductsDeleteAll refuses non-myshopify shop %q", shop)
+	}
+	deleted := 0
+	for {
+		// Fetch up to 50 product IDs, delete one by one (Shopify has no bulk-delete mutation).
+		const listQuery = `query { products(first: 50) { edges { node { id } } } }`
+		data, err := c.graphqlRequest(ctx, shop, token, listQuery, nil)
+		if err != nil {
+			return deleted, fmt.Errorf("list ids: %w", err)
+		}
+		var listResp struct {
+			Products struct {
+				Edges []struct {
+					Node struct {
+						ID string `json:"id"`
+					} `json:"node"`
+				} `json:"edges"`
+			} `json:"products"`
+		}
+		if err := json.Unmarshal(data, &listResp); err != nil {
+			return deleted, fmt.Errorf("parse list: %w", err)
+		}
+		if len(listResp.Products.Edges) == 0 {
+			return deleted, nil
+		}
+		for _, e := range listResp.Products.Edges {
+			const delMutation = `
+mutation seedProductDelete($id: ID!) {
+  productDelete(input: {id: $id}) {
+    deletedProductId
+    userErrors { field message }
+  }
+}`
+			if _, err := c.graphqlRequest(ctx, shop, token, delMutation, map[string]any{"id": e.Node.ID}); err != nil {
+				return deleted, fmt.Errorf("delete %s: %w", e.Node.ID, err)
+			}
+			deleted++
+		}
+	}
+}
+
+// CollectionsDeleteAll removes all custom collections. Companion to
+// ProductsDeleteAll for clean re-seed runs.
+func (c *Client) CollectionsDeleteAll(ctx context.Context, shop, token string) (int, error) {
+	if _, ok := ValidateShopDomain(shop); !ok {
+		return 0, fmt.Errorf("CollectionsDeleteAll refuses non-myshopify shop %q", shop)
+	}
+	deleted := 0
+	for {
+		const listQuery = `query { collections(first: 50, query: "collection_type:custom") { edges { node { id } } } }`
+		data, err := c.graphqlRequest(ctx, shop, token, listQuery, nil)
+		if err != nil {
+			return deleted, fmt.Errorf("list collections: %w", err)
+		}
+		var listResp struct {
+			Collections struct {
+				Edges []struct {
+					Node struct {
+						ID string `json:"id"`
+					} `json:"node"`
+				} `json:"edges"`
+			} `json:"collections"`
+		}
+		if err := json.Unmarshal(data, &listResp); err != nil {
+			return deleted, fmt.Errorf("parse list: %w", err)
+		}
+		if len(listResp.Collections.Edges) == 0 {
+			return deleted, nil
+		}
+		for _, e := range listResp.Collections.Edges {
+			const delMutation = `
+mutation seedCollectionDelete($id: ID!) {
+  collectionDelete(input: {id: $id}) {
+    deletedCollectionId
+    userErrors { field message }
+  }
+}`
+			if _, err := c.graphqlRequest(ctx, shop, token, delMutation, map[string]any{"id": e.Node.ID}); err != nil {
+				return deleted, fmt.Errorf("delete %s: %w", e.Node.ID, err)
+			}
+			deleted++
+		}
+	}
+}
+
 func dedupStrings(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
