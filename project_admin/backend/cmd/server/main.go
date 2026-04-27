@@ -257,6 +257,12 @@ func main() {
 			shopifyStagingAdapter := postgres.NewShopifyStagingAdapter(dbClient, log)
 			shopifyV2UC = usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, shopifyStagingAdapter, cfg.PublicBaseURL, log)
 
+			// Harvester-lite: Tier-1 deterministic mapping from staging →
+			// catalog.products (no master_*). Wired late so the V2 UC can
+			// own the OAuth lifecycle without import-cycling on the harvester.
+			harvesterLite := usecases.NewHarvesterLite(shopifyStagingAdapter, catalogAdapter, log)
+			shopifyV2UC.SetHarvester(harvesterLite)
+
 			// M4c: discovery agent (Sonnet 4.6, 8 tools). Reuses staging +
 			// the M2 master_variants adapter for find_similar_masters /
 			// peek_master tools, plus the existing OpenAI embedder.

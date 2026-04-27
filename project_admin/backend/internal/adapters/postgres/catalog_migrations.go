@@ -582,6 +582,17 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			ON catalog.master_products USING gin (name gin_trgm_ops);`,
 	}
 
+	// Curator-driven pivot 2026-04-27, Этап 2.2 — harvester-lite needs
+	// upsert-by-source for catalog.products. Existing idx_catalog_products_tenant_source
+	// is non-unique; add a unique partial index that matches the harvester's
+	// ON CONFLICT target (tenant + source_system + source_id, skipping rows
+	// without source — those are manual / CSV imports keyed differently).
+	migrations = append(migrations,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_products_tenant_source_unique
+			ON catalog.products (tenant_id, source_system, source_id)
+			WHERE source_system IS NOT NULL AND source_id IS NOT NULL;`,
+	)
+
 	// pipeline_traces table (idempotent, same as chat backend)
 	migrations = append(migrations,
 		`CREATE TABLE IF NOT EXISTS pipeline_traces (

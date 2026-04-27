@@ -92,6 +92,26 @@ type AdminProductFilter struct {
 	Offset     int    `json:"offset"`
 }
 
+// ListingFromSource — payload shape for the harvester-lite upsert (curator
+// pivot 2026-04-27 Этап 2.2). Carries everything we extract from Shopify
+// (bulk JSONL or webhook REST) into catalog.products without ever touching
+// master_*. PriceCents/StockQuantity are aggregated across variants.
+type ListingFromSource struct {
+	TenantID      string
+	SourceSystem  string // 'shopify', 'csv', etc.
+	SourceID      string // numeric Shopify product id (string)
+	Name          string // primary display: usually Shopify title
+	OriginalName  string // pre-translation / original locale (same as Name for English shops)
+	Description   string // plain text — strip HTML before passing in
+	PriceCents    int    // cents/kopecks; minimum across variants
+	Currency      string
+	StockQuantity int                      // sum across variants
+	Images        []string                 // legacy column — flat URL list
+	Media         []map[string]interface{} // jsonb media: [{url, alt}, ...]
+	RawAttributes map[string]interface{}   // jsonb: vendor, product_type, tags, handle, variants[], metafields[], collections[]
+	PayloadHash   string                   // sha256 of canonical payload (used in webhook hash-diff)
+}
+
 type ProductUpdate struct {
 	Name          *string                 `json:"name,omitempty"`
 	DisplayName   *string                 `json:"displayName,omitempty"`

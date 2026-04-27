@@ -44,6 +44,12 @@ type AdminCatalogPort interface {
 	// Soft-delete (used by Shopify products/delete webhook)
 	SoftDeleteProductBySource(ctx context.Context, tenantID, sourceSystem, sourceID string) error
 
+	// UpsertListingFromSource is the harvester-lite write path (curator pivot
+	// 2026-04-27 Этап 2.2). Idempotent upsert by (tenant_id, source_system,
+	// source_id) via the unique partial index. Writes ONLY to catalog.products
+	// (no master_*). Returns the listing id.
+	UpsertListingFromSource(ctx context.Context, p *domain.ListingFromSource) (string, error)
+
 	// Post-import
 	GetMasterProductsWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterProduct, error)
 	GetMasterServicesWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterService, error)

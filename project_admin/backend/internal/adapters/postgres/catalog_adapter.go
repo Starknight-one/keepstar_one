@@ -688,6 +688,58 @@ func (a *CatalogAdapter) GetUnenrichedMasterProducts(ctx context.Context, tenant
 	return products, nil
 }
 
+// UpsertListingFromSource — harvester-lite write path (curator pivot 2026-04-27).
+// Idempotent upsert keyed by (tenant_id, source_system, source_id) via the
+// unique partial index added in catalog_migrations.go. NEVER writes to master_*.
+// On re-import (re-running harvester) UPDATE keeps existing master_*_id linkage —
+// curator's merge step is the only writer of those columns.
+func (a *CatalogAdapter) UpsertListingFromSource(ctx context.Context, p *domain.ListingFromSource) (string, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		endSpan := sc.Start("db.admin.upsert_listing_from_source")
+		defer endSpan()
+	}
+	if p.TenantID == "" || p.SourceSystem == "" || p.SourceID == "" {
+		return "", fmt.Errorf("upsert listing: tenant_id/source_system/source_id required")
+	}
+	imagesJSON, _ := json.Marshal(p.Images)
+	mediaJSON, _ := json.Marshal(p.Media)
+	rawAttrsJSON, _ := json.Marshal(p.RawAttributes)
+
+	const q = `
+		INSERT INTO catalog.products (
+			tenant_id, name, original_name, description,
+			price, currency, stock_quantity, images, media, raw_attributes,
+			source_system, source_id, payload_hash, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+		ON CONFLICT (tenant_id, source_system, source_id)
+			WHERE source_system IS NOT NULL AND source_id IS NOT NULL
+		DO UPDATE SET
+			name           = EXCLUDED.name,
+			original_name  = EXCLUDED.original_name,
+			description    = EXCLUDED.description,
+			price          = EXCLUDED.price,
+			currency       = EXCLUDED.currency,
+			stock_quantity = EXCLUDED.stock_quantity,
+			images         = EXCLUDED.images,
+			media          = EXCLUDED.media,
+			raw_attributes = EXCLUDED.raw_attributes,
+			payload_hash   = EXCLUDED.payload_hash,
+			deleted_at     = NULL,
+			updated_at     = NOW()
+		RETURNING id`
+	var id string
+	err := a.client.pool.QueryRow(ctx, q,
+		p.TenantID, p.Name, p.OriginalName, p.Description,
+		p.PriceCents, p.Currency, p.StockQuantity,
+		imagesJSON, mediaJSON, rawAttrsJSON,
+		p.SourceSystem, p.SourceID, p.PayloadHash,
+	).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("upsert listing from source: %w", err)
+	}
+	return id, nil
+}
+
 // SoftDeleteProductBySource flips catalog.products.deleted_at for the listing
 // that ties back to the given (source_system, source_id) on master_products.
 // Only the tenant-scoped listing is removed from surface; the master row
