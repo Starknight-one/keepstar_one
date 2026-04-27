@@ -1,5 +1,18 @@
 # Admin Catalog — Implementation Plan
 
+> **🔴 STATUS 2026-04-27 — SUPERSEDED for remaining work.** План отменён в части M4d (auto-harvester) и M7 (heybabes Russian backfill). Текущий active plan: [admin_catalog_curator_pivot_2026-04-27.md](./admin_catalog_curator_pivot_2026-04-27.md).
+>
+> **Что отменено:**
+> - M4d (harvester orchestrator + cut-over legacy + frontend progress UI + wipe/resync) — заменено на ручной merge-flow из curator'а с report-first подходом
+> - M7 (heybabes 967 backfill русских названий) — DB-проверка показала что 100% English (978/979 master_products), переходит в seed cosmetics master-каталога
+>
+> **Что остаётся актуальным:**
+> - Все shipped milestones (M1-M3 / M4a/b/c / M6 / M8-M12) и их логи в `docs/Updates/`
+> - Описание схемы и пресет-конфигов из старого design'а (`admin_catalog_design_2026-04-23.md`)
+> - Polish-список (M10 bulk endpoints, cursor pagination, API v1 audit, listing preview на junk и др.) — переходит в backlog после pivot-этапов
+>
+> ---
+>
 > **STATUS UPDATE 2026-04-26 14:21 UTC.** M1/M2/M3/M4a/M4b/M4c **+ M6/M8/M9/M10/M11/M12** shipped. Все milestones, не зависящие от harvester'а и от heybabes-backfill'а, **закрыты**. Логи сессии M6-M12: `docs/Updates/main-admin-catalog-m6-m8-m9-m10-m11-m12_2026-04-26_14-21.md` (агрегат) + индивидуальные. Что **осталось** — см. секцию **"Что осталось до релиза"** ниже (внизу файла, перед changelog).
 >
 > **Предыдущий статус (2026-04-26 13:13 UTC).** Discovery agent verified end-to-end on the dev-store (`dump-to-staging` + `discover` both return committed artifacts; logs in `docs/Updates/main-admin-catalog-m4abc-discovery-tested_2026-04-26_13-13.md`).

@@ -1,9 +1,15 @@
 # Admin Catalog — Final Design
 
 **Date:** 2026-04-23
-**Status:** ✅ Design closed, ready for implementation planning
+**Status:** ⚠️ Partially superseded by [Curator-Driven Pivot 2026-04-27](./admin_catalog_curator_pivot_2026-04-27.md)
 **Owner:** Vlad
 **Source session:** chat 2026-04-23 (Vlad + Claude), полный Q&A — см. §10 changelog
+
+> **2026-04-27 PIVOT BANNER.** Дизайн схемы (master/listing/variants/candidates), обоснование, mental model и UI-описание секций ProductsPage / ProductDetailPage / Categories / Detected add-ons — **остаются актуальными** и были реализованы в M1-M3 / M6 / M8-M12.
+>
+> **Отменены:** автоматический M4d harvester orchestrator и M7 (heybabes Russian backfill — оказалось что данные 100% English, переходят в seed master-каталога).
+>
+> **Заменены:** curator-driven manual merge flow — после Shopify Connect клиент попадает только в `catalog.products`, мерджинг в `master_*` делается вручную через curator с per-product agent report и approval. Подробности — в [admin_catalog_curator_pivot_2026-04-27.md](./admin_catalog_curator_pivot_2026-04-27.md).
 
 > Этот документ — единый источник правды по дизайну каталога админки. Если читаешь через месяц — начни с §1 (Mental model), оттуда уже разойдёшься. §3 — DDL и схема БД. §4 — flows. §6 — UI. §9 — что НЕ делаем сейчас и почему.
 >
