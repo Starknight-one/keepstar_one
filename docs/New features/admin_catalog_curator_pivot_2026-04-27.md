@@ -5,7 +5,11 @@
 **Owner:** Vlad
 **Source session:** chat 2026-04-27 (Vlad + Claude)
 
-> **STATUS SNAPSHOT 2026-04-27 19:15 UTC** — Этапы **0/1/2.1/2.2/2.3/3 закрыты и задеплоены на прод**. Финальный wrap-up лог: [main-admin-catalog-curator-pivot-stages0-3-deployed_2026-04-27_19-15.md](../Updates/main-admin-catalog-curator-pivot-stages0-3-deployed_2026-04-27_19-15.md). Live state: 37 листингов под heybabes в `catalog.products` (20 seed + 17 lingering), все без master-link. `master_products` за сегодня не получил ни одной записи — legacy выпилен. Осталось: **Этапы 4-7** (merge agent design + impl + e2e + heybabes cleanup).
+> **STATUS SNAPSHOT 2026-04-27 19:23 UTC** — Этапы **0/1/2.1/2.2/2.3/3 закрыты и задеплоены на прод** (deploy log: [stages0-3-deployed](../Updates/main-admin-catalog-curator-pivot-stages0-3-deployed_2026-04-27_19-15.md)).
+>
+> 🔴 **Post-deploy smoke выявил critical bug** ([postdeploy-issues](../Updates/main-admin-catalog-curator-pivot-postdeploy-issues_2026-04-27_19-23.md)) — Bulk JSONL от Shopify Admin API 2026-04 не возвращает nested children (variants/metafields/images/collections) в форме которую ожидает наш scanner. 0/37 staging-продуктов имеют `_v2_variants`. Без этого harvester-lite пишет пустые `raw_attributes`, ломая весь pipeline. **Этап 4 (merge agent) блокирован — сначала нужно разобраться с #1 в новой сессии.**
+>
+> Также корректировка: heybabes `catalog.products` (listings) **на русском** (962/1016 cyrillic в `name`), хотя `master_products` английские. Это не блокер — listings heybabes per pivot не трогаем. Осталось: **#1 fix + Этапы 4-7** (merge agent design + impl + e2e + heybabes cleanup).
 
 > **Эта страница — единый источник правды для оставшейся работы по каталогу/PIM.**
 >
