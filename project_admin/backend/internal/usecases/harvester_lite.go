@@ -33,10 +33,19 @@ import (
 )
 
 // HarvesterLiteUseCase implements usecases.HarvesterLite.
+//
+// candidates and categories are optional dependencies. When present (production
+// wiring, see cmd/server/main.go), every imported product feeds the candidates
+// staging tables (master_attribute_candidates, master_category_candidates) and
+// upserts tenant_categories rows from the product's collection links. When nil
+// (e.g. tests, small CLI tools that only need basic listing upsert), those side
+// effects are silently skipped.
 type HarvesterLiteUseCase struct {
-	staging ports.ShopifyStagingPort
-	catalog ports.AdminCatalogPort
-	log     *logger.Logger
+	staging    ports.ShopifyStagingPort
+	catalog    ports.AdminCatalogPort
+	candidates ports.CandidatesPort
+	categories ports.CategoriesPort
+	log        *logger.Logger
 }
 
 func NewHarvesterLite(
@@ -45,6 +54,14 @@ func NewHarvesterLite(
 	log *logger.Logger,
 ) *HarvesterLiteUseCase {
 	return &HarvesterLiteUseCase{staging: staging, catalog: catalog, log: log}
+}
+
+// SetSignals wires the optional candidates + categories dependencies. Called
+// from main.go after construction so the existing two-arg NewHarvesterLite
+// signature stays backwards-compatible with tests / CLI tools that don't care.
+func (uc *HarvesterLiteUseCase) SetSignals(candidates ports.CandidatesPort, categories ports.CategoriesPort) {
+	uc.candidates = candidates
+	uc.categories = categories
 }
 
 // RunForTenant streams every staged product row and upserts a listing per row.
@@ -56,6 +73,7 @@ func (uc *HarvesterLiteUseCase) RunForTenant(ctx context.Context, tenantID strin
 	count := 0
 	failures := 0
 
+	signals := newSignalCounters()
 	err := uc.staging.IterateProducts(ctx, tenantID, func(sourceID string, payload json.RawMessage, fetchedAt time.Time) error {
 		view, err := parseBulkProduct(payload)
 		if err != nil {
@@ -69,6 +87,7 @@ func (uc *HarvesterLiteUseCase) RunForTenant(ctx context.Context, tenantID strin
 			failures++
 			return nil
 		}
+		uc.recordSignals(ctx, tenantID, view, signals)
 		count++
 		return nil
 	})
@@ -76,7 +95,12 @@ func (uc *HarvesterLiteUseCase) RunForTenant(ctx context.Context, tenantID strin
 		return count, fmt.Errorf("iterate staging: %w", err)
 	}
 	uc.log.Info("harvester_lite_run_completed",
-		"tenant_id", tenantID, "products_written", count, "failures", failures,
+		"tenant_id", tenantID,
+		"products_written", count,
+		"failures", failures,
+		"attribute_candidates_upserted", signals.attrUpserts,
+		"category_candidates_upserted", signals.catUpserts,
+		"tenant_categories_upserted", signals.tenantCats,
 		"duration_ms", time.Since(start).Milliseconds())
 	return count, nil
 }
@@ -93,7 +117,149 @@ func (uc *HarvesterLiteUseCase) UpsertOne(ctx context.Context, tenantID string, 
 	if _, err := uc.catalog.UpsertListingFromSource(ctx, listing); err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}
+	uc.recordSignals(ctx, tenantID, view, newSignalCounters())
 	return nil
+}
+
+// --- Signals (candidates + tenant_categories) wiring ---
+
+// signalCounters is the per-run aggregate the harvester logs at the end so
+// operators can see how much candidate signal one import generated.
+type signalCounters struct {
+	attrUpserts int
+	catUpserts  int
+	tenantCats  int
+}
+
+func newSignalCounters() *signalCounters { return &signalCounters{} }
+
+// tier1Reserved is the set of metafield-style keys that the Tier-1 deterministic
+// mapping already handles. We don't want them re-staged as attribute candidates.
+var tier1Reserved = map[string]struct{}{
+	"vendor": {}, "product_type": {}, "tags": {}, "handle": {},
+	"title": {}, "name": {}, "description": {}, "body_html": {},
+	"sku": {}, "barcode": {}, "price": {}, "compare_at_price": {},
+	"images": {}, "image": {}, "id": {},
+}
+
+// recordSignals stamps candidate / tenant_category rows from one parsed product
+// view. Best-effort — failures log a warning but don't abort the parent run
+// (signal collection is bookkeeping, not primary data flow).
+//
+// What it does:
+//
+//   1. Classifies the product's vertical from productType/vendor/tags.
+//   2. For every metafield not in Tier-1 reserved keys, upserts an
+//      attribute candidate keyed by (key, vertical).
+//   3. For every collection, upserts a category candidate (master-side
+//      staging) AND a tenant_category row (per-tenant copy) with kind
+//      classified by ClassifyKind. The merge agent later maps tenant_category
+//      to master_category.
+func (uc *HarvesterLiteUseCase) recordSignals(ctx context.Context, tenantID string, view *shopifyListingView, counters *signalCounters) {
+	if view == nil {
+		return
+	}
+	vertical := ClassifyVertical(view.productType, view.vendor, view.tags)
+
+	// Attribute candidates — every metafield key, deduped by (key, vertical)
+	// at the adapter level via ON CONFLICT.
+	if uc.candidates != nil {
+		for _, mf := range view.metafields {
+			key, _ := mf["key"].(string)
+			if key == "" {
+				continue
+			}
+			if _, reserved := tier1Reserved[strings.ToLower(key)]; reserved {
+				continue
+			}
+			value, _ := mf["value"].(string)
+			ns, _ := mf["namespace"].(string)
+			agentMeta := ""
+			if ns != "" {
+				agentMeta = "namespace=" + ns
+			}
+			if err := uc.candidates.UpsertAttributeCandidate(ctx, key, vertical, value, agentMeta); err != nil {
+				uc.log.Warn("harvester_lite_attr_candidate_failed",
+					"tenant_id", tenantID, "key", key, "error", err.Error())
+				continue
+			}
+			counters.attrUpserts++
+		}
+
+		// Category candidates — every collection title, deduped by (name, vertical).
+		for _, c := range view.collections {
+			title, _ := c["title"].(string)
+			if title == "" {
+				continue
+			}
+			if err := uc.candidates.UpsertCategoryCandidate(ctx, title, "", vertical); err != nil {
+				uc.log.Warn("harvester_lite_cat_candidate_failed",
+					"tenant_id", tenantID, "name", title, "error", err.Error())
+				continue
+			}
+			counters.catUpserts++
+		}
+	}
+
+	// Tenant categories — one row per (tenant, collection). Reuses categories
+	// adapter's UNIQUE(tenant_id, external_id) idempotency. Kind comes from
+	// the deterministic classifier (Phase A5).
+	if uc.categories != nil {
+		for _, c := range view.collections {
+			title, _ := c["title"].(string)
+			handle, _ := c["handle"].(string)
+			extID, _ := c["id"].(string)
+			if title == "" {
+				continue
+			}
+			if extID != "" {
+				// Adapter expects full GID for cross-tenant uniqueness. Re-add
+				// prefix if classifyChild stripped it (we keep numeric id in
+				// raw_attributes for human readability).
+				if !strings.HasPrefix(extID, "gid://") {
+					extID = "gid://shopify/Collection/" + extID
+				}
+			}
+			tc := &domain.TenantCategory{
+				TenantID:   tenantID,
+				ExternalID: extID,
+				Slug:       slugifyOrFallback(handle, title),
+				Name:       title,
+				Kind:       ClassifyKind(title),
+			}
+			if _, err := uc.categories.UpsertTenantCategory(ctx, tc); err != nil {
+				uc.log.Warn("harvester_lite_tenant_cat_failed",
+					"tenant_id", tenantID, "name", title, "error", err.Error())
+				continue
+			}
+			counters.tenantCats++
+		}
+	}
+}
+
+// slugifyOrFallback prefers Shopify's handle (already lowercase + hyphenated);
+// when missing falls back to a defensive slug derived from the title. We don't
+// over-engineer this — collisions inside one tenant are acceptable since the
+// adapter dedupes by (tenant_id, external_id) which always exists for Shopify.
+func slugifyOrFallback(handle, title string) string {
+	if handle != "" {
+		return handle
+	}
+	s := strings.ToLower(title)
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r == ' ', r == '-', r == '_':
+			return '-'
+		default:
+			return -1
+		}
+	}, s)
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	return strings.Trim(s, "-")
 }
 
 // SoftDeleteOne marks a listing deleted by source id (products/delete webhook).

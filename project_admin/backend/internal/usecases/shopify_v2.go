@@ -477,12 +477,27 @@ type productAccum struct {
 }
 
 // streamJSONLToStaging parses the bulk-op JSONL and writes one staging row per
-// top-level product. Variant/image/metafield rows arrive as separate JSONL
-// entries with __parentId pointing back at their product — we group them into
-// a single "product" payload by reading sequentially and flushing on parent
-// change. (The bulk-op spec guarantees each parent's children appear together
-// in the file — children for product A, then product A itself, then product B
-// children, then product B, and so on. Order: children FIRST, then parent.)
+// top-level product, with all children (variants/images/metafields/collections)
+// merged in under canonical "_v2_*" keys.
+//
+// Algorithm: two-pass over the JSONL.
+//   Pass 1 — bucket every line: top-level Product rows go into a map keyed by
+//            product GID (with insertion order preserved); child rows go into
+//            another map keyed by their __parentId (the product GID).
+//   Pass 2 — for each collected product, merge its children and upsert into
+//            staging.
+//
+// Why two-pass: Shopify's Bulk Operations spec promises that a product and its
+// children appear contiguously, but does NOT guarantee whether children precede
+// or follow their parent. Empirically (Admin API 2026-04, dev-store seed) the
+// order is parent-first; the original implementation assumed children-first
+// and silently dropped all children. Two-pass is robust to either order.
+//
+// Memory note: the entire JSONL is held in RAM during pass 1. Bulk operations
+// are capped server-side around 1M-5M lines; for a 100k-product catalog with
+// ~3 children each, this is roughly 300MB of raw bytes. Acceptable for our
+// deployment (Railway gives at least 1GB on the smallest tier). If we ever
+// need to support truly massive catalogs we'll switch to a temp-file two-pass.
 func (uc *ShopifyV2UseCase) streamJSONLToStaging(ctx context.Context, tenantID, jsonlURL string) (int, error) {
 	body, err := uc.client.FetchBulkJSONL(ctx, jsonlURL)
 	if err != nil {
@@ -492,8 +507,9 @@ func (uc *ShopifyV2UseCase) streamJSONLToStaging(ctx context.Context, tenantID, 
 
 	scanner := shopify.ScanBulkJSONL(body)
 
-	pending := make(map[string]*productAccum)
-	count := 0
+	products := make(map[string]json.RawMessage)
+	productOrder := make([]string, 0, 256) // preserve order for deterministic upserts
+	children := make(map[string][]childRow)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -509,56 +525,109 @@ func (uc *ShopifyV2UseCase) streamJSONLToStaging(ctx context.Context, tenantID, 
 			continue
 		}
 
-		// Make a copy — scanner.Bytes() is reused on next Scan.
+		// Copy — scanner.Bytes() is reused on next Scan.
 		row := make(json.RawMessage, len(line))
 		copy(row, line)
 
 		if head.ParentID == "" {
-			// Top-level node. We assume it's a Product (the bulk query only
-			// has products at top level). Flush accumulated children into
-			// this product, write to staging.
-			a := pending[head.ID]
-			if a == nil {
-				a = &productAccum{}
+			if _, exists := products[head.ID]; !exists {
+				productOrder = append(productOrder, head.ID)
 			}
-			a.productPayload = row
-			merged, err := mergeChildrenIntoProduct(a)
-			if err != nil {
-				return count, fmt.Errorf("merge children for %s: %w", head.ID, err)
-			}
-			if err := uc.staging.UpsertRaw(ctx, tenantID, "product", head.ID, merged); err != nil {
-				return count, fmt.Errorf("staging upsert %s: %w", head.ID, err)
-			}
-			delete(pending, head.ID)
-			count++
+			products[head.ID] = row
 			continue
 		}
 
-		// Child row — bucket by parent id and a type discriminator we infer
-		// from the GID prefix.
-		a := pending[head.ParentID]
-		if a == nil {
-			a = &productAccum{}
-			pending[head.ParentID] = a
-		}
-		switch {
-		case strings.Contains(head.ID, "/ProductVariant/"):
-			a.variants = append(a.variants, row)
-		case strings.Contains(head.ID, "/MediaImage/"), strings.Contains(head.ID, "/ProductImage/"):
-			a.images = append(a.images, row)
-		case strings.Contains(head.ID, "/Metafield/"):
-			a.metafields = append(a.metafields, row)
-		case strings.Contains(head.ID, "/Collection/"):
-			a.collections = append(a.collections, row)
-		default:
-			// Unknown child type — keep as a generic "extras" so we don't drop data.
-			a.metafields = append(a.metafields, row)
-		}
+		// Child. Classify by GID prefix. Metafields requested without `id`
+		// land here with empty head.ID — we still know it's a metafield by
+		// elimination (it's a child of a Product GID and has no GID of its
+		// own). The `Metafield` case below still wins when Shopify decides
+		// to populate id in future API versions.
+		kind := classifyChild(head.ID)
+		children[head.ParentID] = append(children[head.ParentID], childRow{kind: kind, row: row})
 	}
 	if err := scanner.Err(); err != nil {
-		return count, fmt.Errorf("scanner: %w", err)
+		return 0, fmt.Errorf("scanner: %w", err)
 	}
+
+	count := 0
+	orphans := 0
+	for _, pid := range productOrder {
+		a := &productAccum{productPayload: products[pid]}
+		for _, c := range children[pid] {
+			switch c.kind {
+			case childKindVariant:
+				a.variants = append(a.variants, c.row)
+			case childKindImage:
+				a.images = append(a.images, c.row)
+			case childKindMetafield:
+				a.metafields = append(a.metafields, c.row)
+			case childKindCollection:
+				a.collections = append(a.collections, c.row)
+			default:
+				// Unknown child types we still keep — bucket into metafields
+				// as a permissive default so we never drop data.
+				a.metafields = append(a.metafields, c.row)
+			}
+		}
+		merged, err := mergeChildrenIntoProduct(a)
+		if err != nil {
+			return count, fmt.Errorf("merge children for %s: %w", pid, err)
+		}
+		if err := uc.staging.UpsertRaw(ctx, tenantID, "product", pid, merged); err != nil {
+			return count, fmt.Errorf("staging upsert %s: %w", pid, err)
+		}
+		delete(children, pid)
+		count++
+	}
+	// Anything left in `children` is referencing a parent we never saw —
+	// orphans. Log so we notice if the bulk op is truncated or misordered.
+	for parentID, rows := range children {
+		orphans += len(rows)
+		uc.log.Info("shopify_v2_jsonl_orphan_children",
+			"parent_id", parentID,
+			"count", len(rows),
+		)
+	}
+	uc.log.Info("shopify_v2_jsonl_summary",
+		"products", count,
+		"orphans", orphans,
+	)
 	return count, nil
+}
+
+// childRow tags a buffered child JSONL line with its inferred kind so pass 2
+// doesn't have to re-classify by GID prefix.
+type childRow struct {
+	kind childKind
+	row  json.RawMessage
+}
+
+type childKind int
+
+const (
+	childKindUnknown childKind = iota
+	childKindVariant
+	childKindImage
+	childKindMetafield
+	childKindCollection
+)
+
+// classifyChild infers the type of a JSONL child row from its GID. Metafields
+// can arrive with empty ID (we don't request `id` in the metafield selection);
+// callers handle that case via the parent-context fallback.
+func classifyChild(gid string) childKind {
+	switch {
+	case strings.Contains(gid, "/ProductVariant/"):
+		return childKindVariant
+	case strings.Contains(gid, "/MediaImage/"), strings.Contains(gid, "/ProductImage/"):
+		return childKindImage
+	case strings.Contains(gid, "/Metafield/"):
+		return childKindMetafield
+	case strings.Contains(gid, "/Collection/"):
+		return childKindCollection
+	default:
+		return childKindUnknown
+	}
 }
 
 // mergeChildrenIntoProduct splices accumulated child rows into the product

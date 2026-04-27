@@ -95,12 +95,17 @@ func (a *CategoriesV2Adapter) UpsertTenantCategory(ctx context.Context, tc *doma
 	}
 
 	// If external_id given, treat that as the upsert key. Otherwise insert new.
+	// The unique index is partial (idx_tenant_categories_tenant_external,
+	// WHERE external_id IS NOT NULL); Postgres requires the same predicate in
+	// the ON CONFLICT clause for the partial index to be used as the conflict
+	// target. Without `WHERE external_id IS NOT NULL` here, Postgres errors
+	// with SQLSTATE 42P10 "no unique or exclusion constraint matching".
 	if tc.ExternalID != "" {
 		var id string
 		err := a.client.pool.QueryRow(ctx, `
 			INSERT INTO catalog.tenant_categories (tenant_id, parent_id, external_id, slug, name, kind)
 			VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (tenant_id, external_id) DO UPDATE SET
+			ON CONFLICT (tenant_id, external_id) WHERE external_id IS NOT NULL DO UPDATE SET
 				parent_id = EXCLUDED.parent_id,
 				slug = EXCLUDED.slug,
 				name = EXCLUDED.name,

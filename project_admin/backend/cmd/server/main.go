@@ -235,6 +235,12 @@ func main() {
 	settingsUC := usecases.NewSettingsUseCase(catalogAdapter)
 	stockUC := usecases.NewStockUseCase(catalogAdapter)
 
+	// Catalog completion 2026-04-28 (Phase A4): candidates + categories adapters
+	// are constructed up-front so harvester-lite can wire them via SetSignals.
+	// Both are stateless thin DB wrappers — building them early has no cost.
+	candidatesAdapter := postgres.NewCandidatesAdapter(dbClient, log)
+	categoriesV2Adapter := postgres.NewCategoriesV2Adapter(dbClient, log)
+
 	// Onboarding: integrations + CSV + Shopify
 	var integrationsUC *usecases.IntegrationsUseCase
 	var csvMappingUC *usecases.CSVMappingUseCase
@@ -261,6 +267,11 @@ func main() {
 			// catalog.products (no master_*). Wired late so the V2 UC can
 			// own the OAuth lifecycle without import-cycling on the harvester.
 			harvesterLite := usecases.NewHarvesterLite(shopifyStagingAdapter, catalogAdapter, log)
+			// Phase A4: wire candidates + tenant_categories side effects so each
+			// imported product feeds master_attribute_candidates / master_category_candidates
+			// and upserts a tenant_categories row per Shopify collection (with
+			// category_classifier deciding kind = category|showcase|promo).
+			harvesterLite.SetSignals(candidatesAdapter, categoriesV2Adapter)
 			shopifyV2UC.SetHarvester(harvesterLite)
 
 			// M4c: discovery agent (Sonnet 4.6, 8 tools). Reuses staging +
@@ -305,9 +316,10 @@ func main() {
 	auditAdapter := postgres.NewAuditAdapter(dbClient, log)
 	auditHandler := handlers.NewAuditHandler(auditAdapter, log)
 	productsHandler := handlers.NewProductsHandler(productsUC, auditAdapter, log)
-	categoriesV2Adapter := postgres.NewCategoriesV2Adapter(dbClient, log)
+	// candidatesAdapter + categoriesV2Adapter were constructed earlier (above the
+	// integrations block) so harvester-lite can wire them; reuse the same instances
+	// here for the HTTP handlers.
 	categoriesHandler := handlers.NewCategoriesHandler(categoriesV2Adapter, auditAdapter, log)
-	candidatesAdapter := postgres.NewCandidatesAdapter(dbClient, log)
 	junkHandler := handlers.NewJunkHandler(candidatesAdapter, auditAdapter, log)
 	apiKeysAdapter := postgres.NewAPIKeysAdapter(dbClient, log)
 	apiKeysHandler := handlers.NewAPIKeysHandler(apiKeysAdapter, auditAdapter, log)

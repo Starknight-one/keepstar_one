@@ -60,9 +60,19 @@ func main() {
 	}
 	defer dbClient.Close()
 
+	// Apply migrations on entry — same set the prod admin server runs at boot.
+	// Idempotent (CREATE ... IF NOT EXISTS, ALTER ... IF NOT EXISTS), so running
+	// it from a CLI is safe and ensures the harvester always sees an up-to-date
+	// schema when developing against a freshly-migrated branch.
+	if err := dbClient.RunCatalogMigrations(ctx); err != nil {
+		log.Fatalf("catalog migrations: %v", err)
+	}
+
 	integrationsAdapter := postgres.NewIntegrationsAdapter(dbClient, box)
 	stagingAdapter := postgres.NewShopifyStagingAdapter(dbClient, lg)
 	catalogAdapter := postgres.NewCatalogAdapter(dbClient, lg)
+	candidatesAdapter := postgres.NewCandidatesAdapter(dbClient, lg)
+	categoriesAdapter := postgres.NewCategoriesV2Adapter(dbClient, lg)
 
 	integration, err := integrationsAdapter.GetByShopDomain(ctx, *shop)
 	if err != nil {
@@ -73,6 +83,7 @@ func main() {
 	shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret, cfg.ShopifyAPIVersion, cfg.ShopifyScopes)
 	v2 := usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, stagingAdapter, cfg.PublicBaseURL, lg)
 	harvester := usecases.NewHarvesterLite(stagingAdapter, catalogAdapter, lg)
+	harvester.SetSignals(candidatesAdapter, categoriesAdapter)
 	v2.SetHarvester(harvester)
 
 	log.Printf("=== DumpToStaging start ===")

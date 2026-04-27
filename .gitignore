@@ -25,6 +25,12 @@ project/backend/bin/
 project/backend/bootstrap
 project_admin/backend/server
 project_admin/backend/crawler
+project_admin/backend/dump-bulk-jsonl
+project_admin/backend/sync-tenant-now
+project_admin/backend/decrypt-shopify-token
+project_admin/backend/seed-devstore
+project_admin/backend/bulk-dump-*.jsonl
+curator/backend/server
 project_admin/Crawler_results/
 project_v4/backend/bin/
 project_v4/backend/data/

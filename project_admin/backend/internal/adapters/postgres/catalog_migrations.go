@@ -593,6 +593,69 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			WHERE source_system IS NOT NULL AND source_id IS NOT NULL;`,
 	)
 
+	// Catalog completion 2026-04-28, Phase A4 — UNIQUE(tenant_id, external_id) on
+	// tenant_categories. The original M8 schema declared the constraint in the
+	// design doc but the actual CREATE TABLE shipped without it; the
+	// CategoriesV2Adapter.UpsertTenantCategory uses
+	// ON CONFLICT (tenant_id, external_id) which requires this index. Partial
+	// index because external_id is NULL for manually-created categories.
+	migrations = append(migrations,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_categories_tenant_external
+			ON catalog.tenant_categories (tenant_id, external_id)
+			WHERE external_id IS NOT NULL;`,
+	)
+
+	// Catalog completion 2026-04-28, Phase A3 — replace ALTER TABLE per-vertical
+	// promotion with declarative master_field_definitions + tier2 JSONB.
+	//
+	// Why: in production, runtime DDL via ALTER TABLE under chat-widget read load
+	// risks AccessExclusiveLock contention; per-vertical typed tables also push the
+	// schema out of code into the DB-mutation log, making the system harder to
+	// reason about for new engineers.
+	//
+	// Approach: curator "promotes" a candidate by INSERTing into
+	// master_field_definitions (vertical, key, label, type, enum_values). Values
+	// flow into master_products.tier2 JSONB. Application code reads
+	// master_field_definitions to render typed UI / serialize chat fields.
+	// Backfill on promote rewrites tier2 from listings.raw_attributes.
+	//
+	// Naming note: the table is `master_field_definitions`, not `field_definitions`,
+	// to avoid collision with V4's per-tenant rendering schema (project_v4 owns
+	// `catalog.field_definitions` for chat-engine atom/slot metadata, see
+	// project_v4/.../catalog_migrations.go::migrationCatalogFieldDefinitions).
+	// Different concept (master-side typed registry vs per-tenant render schema),
+	// different shape, different writer; co-existing in the same schema requires
+	// distinct names. The two tables are intentionally NOT joined or unified.
+	//
+	// Backwards-compat: existing master_cosmetics / master_laptops typed tables stay
+	// in place — read paths continue using them. New promotions go through tier2.
+	// Migration of legacy typed columns into tier2 is a separate, deferred task.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS catalog.master_field_definitions (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			vertical TEXT NOT NULL,
+			key TEXT NOT NULL,
+			label TEXT NOT NULL,
+			type TEXT NOT NULL CHECK (type IN ('text','number','enum','array','boolean')),
+			enum_values TEXT[],
+			source TEXT NOT NULL DEFAULT 'curator'
+				CHECK (source IN ('seed','curator','migration')),
+			promoted_from_candidate UUID REFERENCES catalog.master_attribute_candidates(id),
+			promoted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			promoted_by TEXT NOT NULL,
+			UNIQUE(vertical, key)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_master_field_definitions_vertical
+			ON catalog.master_field_definitions(vertical);`,
+		`ALTER TABLE catalog.master_products
+			ADD COLUMN IF NOT EXISTS tier2 JSONB NOT NULL DEFAULT '{}'::jsonb;`,
+		// Generic GIN over the whole tier2 — useful as long as we don't have
+		// thousands of fields per vertical. Per-key functional indexes are added
+		// at promotion time inside the curator transaction (see promote_attribute).
+		`CREATE INDEX IF NOT EXISTS idx_master_products_tier2_gin
+			ON catalog.master_products USING gin (tier2);`,
+	)
+
 	// pipeline_traces table (idempotent, same as chat backend)
 	migrations = append(migrations,
 		`CREATE TABLE IF NOT EXISTS pipeline_traces (
