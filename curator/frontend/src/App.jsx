@@ -5,6 +5,10 @@ import LoginPage from './pages/LoginPage.jsx'
 import CandidatesPage from './pages/CandidatesPage.jsx'
 import JunkPage from './pages/JunkPage.jsx'
 import AuditPage from './pages/AuditPage.jsx'
+import TenantsPage from './pages/TenantsPage.jsx'
+import TenantDetailPage from './pages/TenantDetailPage.jsx'
+import MasterCatalogPage from './pages/MasterCatalogPage.jsx'
+import MasterDetailPage from './pages/MasterDetailPage.jsx'
 
 function Layout({ user, onLogout, children }) {
   return (
@@ -12,8 +16,15 @@ function Layout({ user, onLogout, children }) {
       <aside className="sidebar">
         <div className="brand">Curator</div>
         <nav>
+          <div className="nav-section">Operations</div>
+          <NavLink to="/tenants" className={({ isActive }) => isActive ? 'active' : ''}>Tenants</NavLink>
+          <NavLink to="/master" className={({ isActive }) => isActive ? 'active' : ''}>Master Catalog</NavLink>
+
+          <div className="nav-section">Curation queues</div>
           <NavLink to="/candidates" className={({ isActive }) => isActive ? 'active' : ''}>Candidates</NavLink>
           <NavLink to="/junk" className={({ isActive }) => isActive ? 'active' : ''}>Junk</NavLink>
+
+          <div className="nav-section">Activity</div>
           <NavLink to="/audit" className={({ isActive }) => isActive ? 'active' : ''}>Audit</NavLink>
         </nav>
         <div className="footer">
@@ -50,7 +61,7 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/login" element={<LoginPage onLogin={(u) => { setUser(u); navigate('/candidates') }} />} />
+        <Route path="/login" element={<LoginPage onLogin={(u) => { setUser(u); navigate('/tenants') }} />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     )
@@ -59,12 +70,16 @@ export default function App() {
   return (
     <Layout user={user} onLogout={handleLogout}>
       <Routes>
-        <Route index element={<Navigate to="/candidates" replace />} />
+        <Route index element={<Navigate to="/tenants" replace />} />
+        <Route path="/tenants" element={<TenantsPage />} />
+        <Route path="/tenants/:id" element={<TenantDetailPage />} />
+        <Route path="/master" element={<MasterCatalogPage />} />
+        <Route path="/master/:id" element={<MasterDetailPage />} />
         <Route path="/candidates" element={<CandidatesPage />} />
         <Route path="/junk" element={<JunkPage />} />
         <Route path="/audit" element={<AuditPage />} />
-        <Route path="/login" element={<Navigate to="/candidates" replace />} />
-        <Route path="*" element={<Navigate to="/candidates" replace />} />
+        <Route path="/login" element={<Navigate to="/tenants" replace />} />
+        <Route path="*" element={<Navigate to="/tenants" replace />} />
       </Routes>
     </Layout>
   )

@@ -68,6 +68,28 @@ func main() {
 		http.NotFound(w, r)
 	})
 	protected.HandleFunc("/curator/audit", h.ListAudit)
+
+	// Tenants — operations dashboard (Этап 1, 2026-04-27 pivot).
+	protected.HandleFunc("/curator/tenants", h.ListTenants)
+	protected.HandleFunc("/curator/tenants/", func(w http.ResponseWriter, r *http.Request) {
+		// /curator/tenants/{id}              → GetTenant
+		// /curator/tenants/{id}/products     → ListTenantProducts
+		// /curator/tenants/{id}/schema       → GetTenantSchema
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/products"):
+			h.ListTenantProducts(w, r)
+		case strings.HasSuffix(path, "/schema"):
+			h.GetTenantSchema(w, r)
+		default:
+			h.GetTenant(w, r)
+		}
+	})
+
+	// Master catalog browse.
+	protected.HandleFunc("/curator/master/products", h.ListMasterProducts)
+	protected.HandleFunc("/curator/master/products/", h.GetMasterProduct)
+
 	mux.Handle("/curator/me", auth(protected))
 	mux.Handle("/curator/candidates/", auth(protected))
 	mux.Handle("/curator/candidates/attributes", auth(protected))
@@ -75,6 +97,10 @@ func main() {
 	mux.Handle("/curator/junk", auth(protected))
 	mux.Handle("/curator/junk/", auth(protected))
 	mux.Handle("/curator/audit", auth(protected))
+	mux.Handle("/curator/tenants", auth(protected))
+	mux.Handle("/curator/tenants/", auth(protected))
+	mux.Handle("/curator/master/products", auth(protected))
+	mux.Handle("/curator/master/products/", auth(protected))
 
 	// SPA fallback for the curator frontend (./static).
 	staticDir := firstNonEmpty(os.Getenv("CURATOR_STATIC_DIR"), "./static")

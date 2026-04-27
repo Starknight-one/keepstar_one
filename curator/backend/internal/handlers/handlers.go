@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"keepstar-curator/internal/adapters"
+	"keepstar-curator/internal/domain"
 	"keepstar-curator/internal/session"
 )
 
@@ -163,6 +164,111 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+// --- Tenants ---
+
+func (h *Handler) ListTenants(w http.ResponseWriter, r *http.Request) {
+	tenants, err := h.Client.ListTenants(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list tenants")
+		return
+	}
+	if tenants == nil {
+		tenants = []domain.TenantSummary{} // ensure JSON [] not null
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenants": tenants})
+}
+
+func (h *Handler) GetTenant(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/curator/tenants/")
+	if i := strings.Index(id, "/"); i >= 0 {
+		id = id[:i]
+	}
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "tenant id required")
+		return
+	}
+	t, err := h.Client.GetTenant(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+func (h *Handler) ListTenantProducts(w http.ResponseWriter, r *http.Request) {
+	// /curator/tenants/{id}/products
+	rest := strings.TrimPrefix(r.URL.Path, "/curator/tenants/")
+	parts := strings.Split(rest, "/")
+	if len(parts) < 2 || parts[0] == "" {
+		writeErr(w, http.StatusBadRequest, "tenant id required")
+		return
+	}
+	id := parts[0]
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	products, total, err := h.Client.ListTenantProducts(r.Context(), id, q.Get("search"), limit, offset)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list products")
+		return
+	}
+	if products == nil {
+		products = []domain.TenantProductRow{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"products": products, "total": total})
+}
+
+func (h *Handler) GetTenantSchema(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/curator/tenants/")
+	parts := strings.Split(rest, "/")
+	if len(parts) < 2 || parts[0] == "" {
+		writeErr(w, http.StatusBadRequest, "tenant id required")
+		return
+	}
+	id := parts[0]
+	s, err := h.Client.GetTenantSchema(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to read schema")
+		return
+	}
+	writeJSON(w, http.StatusOK, s)
+}
+
+// --- Master catalog ---
+
+func (h *Handler) ListMasterProducts(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	products, total, err := h.Client.ListMasterProducts(r.Context(),
+		q.Get("vertical"), q.Get("search"), limit, offset)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list master products")
+		return
+	}
+	if products == nil {
+		products = []domain.MasterProductSummary{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"products": products, "total": total})
+}
+
+func (h *Handler) GetMasterProduct(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/curator/master/products/")
+	if i := strings.Index(id, "/"); i >= 0 {
+		id = id[:i]
+	}
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "master product id required")
+		return
+	}
+	d, err := h.Client.GetMasterProduct(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
 }
 
 // --- helpers ---
