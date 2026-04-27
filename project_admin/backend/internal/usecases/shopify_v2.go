@@ -18,15 +18,30 @@ package usecases
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"keepstar-admin/internal/adapters/shopify"
+	"keepstar-admin/internal/domain"
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
 )
+
+// webhookTopics — Shopify events we subscribe to at OAuth completion. After
+// the curator-driven pivot (2026-04-27) products/* webhooks rewrite the
+// listing in catalog.products via harvester-lite (Этап 2.2); inventory_levels
+// is logged-only; app/uninstalled flips integration status to disconnected.
+var webhookTopics = []string{
+	"products/create",
+	"products/update",
+	"products/delete",
+	"inventory_levels/update",
+	"app/uninstalled",
+}
 
 // bulkPollInterval is how often we ask Shopify for current bulk-op status.
 // Shopify recommends 1-5s; faster is wasted work, slower delays UI updates.
@@ -37,13 +52,33 @@ const bulkPollInterval = 3 * time.Second
 // Shopify's side (rare) or we sent a query they can't bulk-process (caller bug).
 const bulkOpMaxWait = 90 * time.Minute
 
-// ShopifyV2UseCase coordinates the new metadata-first import. In 4a it only
-// runs DumpToStaging — the deterministic harvest, discovery agent, and final
-// harvester land in subsequent commits and will hang off this same struct.
+// HarvesterLite is the per-product write path that replaces legacy
+// runInitialSync. It writes to catalog.products only (no master_*) — implemented
+// in Этап 2.2. This interface lets the V2 UC own webhook routing without
+// importing the harvester package.
+type HarvesterLite interface {
+	// RunForTenant streams shopify_raw_imports for the tenant and upserts
+	// listings into catalog.products. Called after CompleteOAuth + DumpToStaging.
+	RunForTenant(ctx context.Context, tenantID string) (productCount int, err error)
+
+	// UpsertOne applies the same Tier-1 mapping for a single Shopify-product
+	// payload (used by webhook). The payload is the raw Shopify webhook body.
+	UpsertOne(ctx context.Context, tenantID string, body []byte) error
+
+	// SoftDeleteOne marks a listing deleted by source id (products/delete webhook).
+	SoftDeleteOne(ctx context.Context, tenantID, sourceID string) error
+}
+
+// ShopifyV2UseCase owns the full Shopify lifecycle after the curator-driven
+// pivot (2026-04-27): OAuth, webhook subscription, dump-to-staging, discovery
+// agent, and webhook handling via harvester-lite. The legacy ShopifyUseCase
+// (REST initial-sync writing directly to master_products) was removed.
 type ShopifyV2UseCase struct {
 	client       *shopify.Client
 	integrations ports.IntegrationsPort
 	staging      ports.ShopifyStagingPort
+	harvester    HarvesterLite // wired from Этап 2.2; nil-safe (webhook upsert no-op'd)
+	publicURL    string
 	log          *logger.Logger
 }
 
@@ -51,14 +86,192 @@ func NewShopifyV2UseCase(
 	client *shopify.Client,
 	integrations ports.IntegrationsPort,
 	staging ports.ShopifyStagingPort,
+	publicURL string,
 	log *logger.Logger,
 ) *ShopifyV2UseCase {
 	return &ShopifyV2UseCase{
 		client:       client,
 		integrations: integrations,
 		staging:      staging,
+		publicURL:    publicURL,
 		log:          log,
 	}
+}
+
+// SetHarvester wires the harvester-lite implementation. Called from main.go
+// after both the V2 UC and harvester are constructed (avoids import cycles
+// while keeping main.go DI flat).
+func (uc *ShopifyV2UseCase) SetHarvester(h HarvesterLite) { uc.harvester = h }
+
+// Client exposes the underlying HTTP client so handlers can call VerifyWebhookHMAC.
+func (uc *ShopifyV2UseCase) Client() *shopify.Client { return uc.client }
+
+// StartOAuth — mints state nonce, returns redirect URL for Shopify consent.
+func (uc *ShopifyV2UseCase) StartOAuth(ctx context.Context, tenantID, shop string) (string, error) {
+	normalized, ok := shopify.ValidateShopDomain(shop)
+	if !ok {
+		return "", fmt.Errorf("invalid shop domain: must be *.myshopify.com")
+	}
+	state, err := randomState()
+	if err != nil {
+		return "", fmt.Errorf("mint state: %w", err)
+	}
+	now := time.Now().UTC()
+	if err := uc.integrations.CreateOAuthState(ctx, &domain.OAuthState{
+		State:      state,
+		TenantID:   tenantID,
+		Kind:       string(domain.IntegrationKindShopify),
+		ShopDomain: normalized,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(10 * time.Minute),
+	}); err != nil {
+		return "", fmt.Errorf("persist state: %w", err)
+	}
+	redirectURI := uc.publicURL + "/admin/api/integrations/shopify/callback"
+	return uc.client.InstallURL(normalized, redirectURI, state), nil
+}
+
+// CompleteOAuth — verify HMAC, consume state, exchange code → token, persist
+// integration, register webhooks, kick off background dump-to-staging +
+// harvester-lite (writes only catalog.products, no master_*).
+func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state string, query map[string][]string) (*domain.Integration, error) {
+	normalized, ok := shopify.ValidateShopDomain(shop)
+	if !ok {
+		return nil, fmt.Errorf("invalid shop domain")
+	}
+	if !uc.client.VerifyInstallHMAC(query) {
+		return nil, fmt.Errorf("hmac verification failed")
+	}
+	record, err := uc.integrations.ConsumeOAuthState(ctx, state)
+	if err != nil {
+		return nil, fmt.Errorf("consume state: %w", err)
+	}
+	if record.ShopDomain != normalized {
+		return nil, fmt.Errorf("state/shop mismatch")
+	}
+	if time.Now().UTC().After(record.ExpiresAt) {
+		return nil, fmt.Errorf("state expired")
+	}
+
+	token, err := uc.client.ExchangeCodeForToken(ctx, normalized, code)
+	if err != nil {
+		return nil, fmt.Errorf("exchange code: %w", err)
+	}
+
+	integration := &domain.Integration{
+		TenantID:    record.TenantID,
+		Kind:        domain.IntegrationKindShopify,
+		Status:      domain.IntegrationStatusSyncing,
+		DisplayName: normalized,
+		ExternalID:  normalized,
+		Credentials: token,
+		Config:      map[string]any{"scopes": uc.client.Scopes()},
+	}
+	integration, err = uc.integrations.Create(ctx, integration)
+	if err != nil {
+		return nil, fmt.Errorf("persist integration: %w", err)
+	}
+
+	webhookAddress := uc.publicURL + "/admin/api/webhooks/shopify"
+	for _, topic := range webhookTopics {
+		if err := uc.client.RegisterWebhook(ctx, normalized, token, topic, webhookAddress); err != nil {
+			uc.log.Error("shopify_webhook_register_failed",
+				"shop", normalized, "topic", topic, "error", err)
+			// Not fatal — periodic resync (curator-triggered) covers gaps.
+		}
+	}
+
+	go uc.runInitialIngest(integration.ID, record.TenantID)
+	return integration, nil
+}
+
+// runInitialIngest — background after Connect: dump-to-staging then run
+// harvester-lite. No master_* writes — harvester-lite only fills catalog.products.
+// Status flips to 'connected' on success, 'error' on failure.
+func (uc *ShopifyV2UseCase) runInitialIngest(integrationID, tenantID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
+	defer cancel()
+
+	uc.log.Info("shopify_v2_initial_ingest_started", "integration_id", integrationID)
+	dump, err := uc.DumpToStaging(ctx, tenantID, integrationID)
+	if err != nil {
+		uc.log.Error("shopify_v2_initial_dump_failed", "integration_id", integrationID, "error", err)
+		_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusError, err.Error())
+		return
+	}
+
+	if uc.harvester == nil {
+		// Harvester not wired yet (Этап 2.2 in progress) — staging is populated
+		// but listings stay empty. Mark connected anyway so the UI doesn't sit
+		// on 'syncing' forever; curator-driven re-run will fill listings later.
+		uc.log.Info("shopify_v2_harvester_not_wired_skipping_apply",
+			"integration_id", integrationID, "products_in_staging", dump.ProductCount)
+		_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusConnected, "")
+		return
+	}
+
+	count, err := uc.harvester.RunForTenant(ctx, tenantID)
+	if err != nil {
+		uc.log.Error("shopify_v2_harvester_failed", "integration_id", integrationID, "error", err)
+		_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusError, err.Error())
+		return
+	}
+	uc.log.Info("shopify_v2_initial_ingest_completed",
+		"integration_id", integrationID, "products_written", count)
+	_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusConnected, "")
+}
+
+// HandleWebhook dispatches verified Shopify webhook deliveries. Caller has
+// validated HMAC; body is the raw bytes.
+func (uc *ShopifyV2UseCase) HandleWebhook(ctx context.Context, topic, shopDomain string, body []byte) error {
+	integration, err := uc.integrations.GetByShopDomain(ctx, shopDomain)
+	if err != nil {
+		return fmt.Errorf("lookup integration: %w", err)
+	}
+	switch topic {
+	case "products/create", "products/update":
+		if uc.harvester == nil {
+			uc.log.Info("shopify_v2_webhook_upsert_skipped_no_harvester",
+				"shop", shopDomain, "topic", topic)
+			return nil
+		}
+		return uc.harvester.UpsertOne(ctx, integration.TenantID, body)
+	case "products/delete":
+		if uc.harvester == nil {
+			return nil
+		}
+		var payload struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return fmt.Errorf("parse delete payload: %w", err)
+		}
+		if payload.ID == 0 {
+			return fmt.Errorf("delete payload missing id")
+		}
+		return uc.harvester.SoftDeleteOne(ctx, integration.TenantID,
+			fmt.Sprintf("%d", payload.ID))
+	case "inventory_levels/update":
+		// Shopify's payload doesn't carry product_id; mapping it back requires
+		// inventory_item lookup. Curator-triggered re-dump covers stock drift.
+		uc.log.Info("shopify_v2_inventory_event_ignored", "shop", shopDomain)
+		return nil
+	case "app/uninstalled":
+		return uc.integrations.UpdateStatus(ctx, integration.ID,
+			domain.IntegrationStatusDisconnected, "app uninstalled")
+	default:
+		uc.log.Info("shopify_v2_webhook_unhandled_topic", "topic", topic)
+		return nil
+	}
+}
+
+// randomState returns a URL-safe base64-encoded 32-byte nonce.
+func randomState() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // DumpToStagingResult carries the outcome of a single bulk-pull. ProductCount

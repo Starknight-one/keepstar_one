@@ -1,39 +1,36 @@
+// handler_integrations_shopify.go — install / OAuth callback / webhook routes
+// for the Shopify integration. After the curator-driven pivot (2026-04-27)
+// these routes go through ShopifyV2UseCase; the legacy ShopifyUseCase was
+// removed (it wrote directly to master_products which polluted the master
+// catalog with mis-classified vertical='cosmetics' entries).
 package handlers
 
 import (
 	"io"
 	"net/http"
-	"strings"
 
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/usecases"
 )
 
-// ShopifyHandler serves the four Shopify-related HTTP routes:
-//   - install redirect (authenticated — admin starts the flow)
-//   - OAuth callback  (unauthenticated — signed state proves identity)
-//   - webhook         (unauthenticated — HMAC proves identity)
-//   - manual resync   (authenticated)
+// ShopifyHandler serves the install / callback / webhook routes against the
+// V2 use case. The dump-to-staging + discover endpoints live on ShopifyV2Handler
+// (handler_integrations_shopify_v2.go).
 type ShopifyHandler struct {
-	shopify *usecases.ShopifyUseCase
-	log     *logger.Logger
+	v2  *usecases.ShopifyV2UseCase
+	log *logger.Logger
 }
 
-func NewShopifyHandler(shopify *usecases.ShopifyUseCase, log *logger.Logger) *ShopifyHandler {
-	return &ShopifyHandler{shopify: shopify, log: log}
+func NewShopifyHandler(v2 *usecases.ShopifyV2UseCase, log *logger.Logger) *ShopifyHandler {
+	return &ShopifyHandler{v2: v2, log: log}
 }
 
 // HandleInstall — GET /admin/api/integrations/shopify/install?shop=xxx.myshopify.com
-// Wrapped in authMW — only admins can start an install.
+// Wrapped in authMW. Returns JSON {install_url} for the frontend to redirect to.
 //
-// Returns JSON {install_url: "https://shop.myshopify.com/admin/oauth/authorize?..."}.
-// The frontend then does window.location.href = install_url, which is a direct
-// navigation to Shopify (no auth header needed for that hop).
-//
-// Why JSON instead of a 302 redirect: the frontend authenticates via Bearer
-// token in localStorage, so a full-page nav to this endpoint wouldn't include
-// the Authorization header → 401 "missing token". Fetch with the bearer + then
-// redirect to the returned URL is the workable pattern.
+// Why JSON instead of a 302: the frontend authenticates via Bearer token in
+// localStorage, so a full-page nav to this endpoint wouldn't include the
+// Authorization header. Fetch + window.location.href is the workable pattern.
 func (h *ShopifyHandler) HandleInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
@@ -45,7 +42,7 @@ func (h *ShopifyHandler) HandleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := TenantID(r.Context())
-	installURL, err := h.shopify.StartOAuth(r.Context(), tenantID, shop)
+	installURL, err := h.v2.StartOAuth(r.Context(), tenantID, shop)
 	if err != nil {
 		h.log.FromContext(r.Context()).Error("shopify_install_failed", "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -55,8 +52,7 @@ func (h *ShopifyHandler) HandleInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleCallback — GET /admin/api/integrations/shopify/callback
-// No authMW: the `state` param is the unforgeable credential — it was stamped
-// at install time with the tenant it belongs to.
+// Unauthenticated: signed `state` is the credential.
 func (h *ShopifyHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "GET only")
@@ -70,20 +66,18 @@ func (h *ShopifyHandler) HandleCallback(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "missing shop, code, or state")
 		return
 	}
-	integration, err := h.shopify.CompleteOAuth(r.Context(), shop, code, state, q)
+	integration, err := h.v2.CompleteOAuth(r.Context(), shop, code, state, q)
 	if err != nil {
 		h.log.FromContext(r.Context()).Error("shopify_callback_failed", "shop", shop, "error", err)
 		writeError(w, http.StatusBadRequest, "oauth callback failed")
 		return
 	}
-	// Land the merchant back on the integrations page.
 	target := "/integrations?connected=shopify&id=" + integration.ID
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // HandleWebhook — POST /admin/api/webhooks/shopify
-// Unauthenticated route: HMAC verification is the auth layer. The body is
-// read raw (no re-marshaling) per Shopify docs.
+// Unauthenticated: HMAC verification is the auth layer. Raw body, no re-marshal.
 func (h *ShopifyHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "POST only")
@@ -101,41 +95,17 @@ func (h *ShopifyHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "read body")
 		return
 	}
-	if !h.shopify.Client().VerifyWebhookHMAC(body, sig) {
+	if !h.v2.Client().VerifyWebhookHMAC(body, sig) {
 		h.log.Warn("shopify_webhook_bad_hmac", "shop", shop, "topic", topic)
 		writeError(w, http.StatusUnauthorized, "bad hmac")
 		return
 	}
-
 	// Ack fast (<5s per Shopify SLA); process in background.
 	go func() {
-		ctx := r.Context()
-		if err := h.shopify.HandleWebhook(ctx, topic, shop, body); err != nil {
-			h.log.FromContext(ctx).Error("shopify_webhook_handle_failed",
+		if err := h.v2.HandleWebhook(r.Context(), topic, shop, body); err != nil {
+			h.log.FromContext(r.Context()).Error("shopify_webhook_handle_failed",
 				"shop", shop, "topic", topic, "error", err)
 		}
 	}()
 	w.WriteHeader(http.StatusOK)
-}
-
-// HandleResync — POST /admin/api/integrations/shopify/{id}/resync
-// Authenticated.
-func (h *ShopifyHandler) HandleResync(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST only")
-		return
-	}
-	tenantID := TenantID(r.Context())
-	path := strings.TrimPrefix(r.URL.Path, "/admin/api/integrations/shopify/")
-	id := strings.TrimSuffix(path, "/resync")
-	if id == "" || id == path {
-		writeError(w, http.StatusBadRequest, "missing integration id")
-		return
-	}
-	if err := h.shopify.FullResync(r.Context(), tenantID, id); err != nil {
-		h.log.FromContext(r.Context()).Error("shopify_resync_failed", "error", err)
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "resync started"})
 }

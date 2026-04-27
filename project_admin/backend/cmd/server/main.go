@@ -238,7 +238,6 @@ func main() {
 	// Onboarding: integrations + CSV + Shopify
 	var integrationsUC *usecases.IntegrationsUseCase
 	var csvMappingUC *usecases.CSVMappingUseCase
-	var shopifyUC *usecases.ShopifyUseCase
 	var shopifyV2UC *usecases.ShopifyV2UseCase
 	var discoveryUC *usecases.DiscoveryUseCase
 	if integrationsAdapter != nil {
@@ -248,13 +247,15 @@ func main() {
 		}
 		if cfg.HasShopify() {
 			shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret, cfg.ShopifyAPIVersion, cfg.ShopifyScopes)
-			shopifyUC = usecases.NewShopifyUseCase(shopifyClient, integrationsAdapter, importUC, catalogAdapter, cfg.PublicBaseURL, log)
 
-			// M4a: V2 pipeline (metadata-first import). Shares the Shopify
-			// client with the legacy UC; gets a dedicated staging adapter.
-			// Cuts over fully in 4d when the legacy UC is removed.
+			// V2 pipeline owns the full Shopify lifecycle (curator-driven pivot
+			// 2026-04-27): OAuth, webhook subscription, dump-to-staging,
+			// discovery agent, harvester-lite (wired below in Этап 2.2).
+			// Legacy ShopifyUseCase was removed — it wrote directly to
+			// master_products, which polluted the master catalog with
+			// mis-classified vertical='cosmetics' rows.
 			shopifyStagingAdapter := postgres.NewShopifyStagingAdapter(dbClient, log)
-			shopifyV2UC = usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, shopifyStagingAdapter, log)
+			shopifyV2UC = usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, shopifyStagingAdapter, cfg.PublicBaseURL, log)
 
 			// M4c: discovery agent (Sonnet 4.6, 8 tools). Reuses staging +
 			// the M2 master_variants adapter for find_similar_masters /
@@ -326,10 +327,8 @@ func main() {
 		integrationsHandler = handlers.NewIntegrationsHandler(integrationsUC, log)
 		csvIntegrationsHandler = handlers.NewCSVIntegrationsHandler(csvMappingUC, importUC, integrationsUC, log)
 	}
-	if shopifyUC != nil {
-		shopifyHandler = handlers.NewShopifyHandler(shopifyUC, log)
-	}
 	if shopifyV2UC != nil {
+		shopifyHandler = handlers.NewShopifyHandler(shopifyV2UC, log)
 		shopifyV2Handler = handlers.NewShopifyV2Handler(shopifyV2UC, discoveryUC, log)
 	}
 
@@ -516,9 +515,10 @@ func main() {
 		if shopifyHandler != nil {
 			protected.HandleFunc("/admin/api/integrations/shopify/install", shopifyHandler.HandleInstall)
 			protected.HandleFunc("/admin/api/integrations/shopify/", func(w http.ResponseWriter, r *http.Request) {
+				// /resync removed with legacy cut-over (curator-driven pivot
+				// 2026-04-27). Re-running ingest is now curator-triggered:
+				// dump-to-staging → discover → run merge-agent.
 				switch {
-				case strings.HasSuffix(r.URL.Path, "/resync"):
-					shopifyHandler.HandleResync(w, r)
 				case shopifyV2Handler != nil && strings.HasSuffix(r.URL.Path, "/dump-to-staging"):
 					shopifyV2Handler.HandleDumpToStaging(w, r)
 				case shopifyV2Handler != nil && strings.HasSuffix(r.URL.Path, "/discover"):
@@ -648,9 +648,8 @@ func main() {
 	if integrationsUC != nil {
 		_ = integrationsUC.StartOAuthStateSweeper(bgCtx)
 	}
-	if shopifyUC != nil {
-		_ = shopifyUC.StartPeriodicResync(bgCtx)
-	}
+	// Periodic resync removed with legacy cut-over (curator-driven pivot
+	// 2026-04-27). Webhook + curator-triggered re-run cover sync gaps.
 
 	go func() {
 		log.Info("admin_server_starting", "addr", addr)
