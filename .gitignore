@@ -32,6 +32,7 @@ project_admin/backend/seed-devstore
 project_admin/backend/cleanup-tenant-stale
 project_admin/backend/run-discovery
 project_admin/backend/discovery-*.json
+project_admin/backend/run-merge-apply
 project_admin/backend/bulk-dump-*.jsonl
 curator/backend/server
 project_admin/Crawler_results/

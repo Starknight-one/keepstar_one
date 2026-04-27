@@ -656,6 +656,48 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			ON catalog.master_products USING gin (tier2);`,
 	)
 
+	// Catalog completion 2026-04-28, Phase D2 — merge_reports table.
+	//
+	// One row per applier run for a tenant. Proposals are an array stored as
+	// JSONB rather than a normalized child table because they're always read
+	// together (per-tenant flow), the applier writes them once, and curator
+	// mutations are typically bulk approve/reject — joins would buy nothing.
+	//
+	// agent_meta_summary captures provenance (the agent notes + cost from the
+	// MappingArtifact this report was generated against) so the curator UI
+	// can show context without re-fetching the schema.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS catalog.merge_reports (
+			id BIGSERIAL PRIMARY KEY,
+			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			schema_version INTEGER NOT NULL DEFAULT 1,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK (status IN ('pending','reviewed','applied','partial','reverted','superseded')),
+			agent_meta_summary TEXT,
+			total_listings INTEGER NOT NULL DEFAULT 0,
+			auto_link_count INTEGER NOT NULL DEFAULT 0,
+			new_master_count INTEGER NOT NULL DEFAULT 0,
+			needs_review_count INTEGER NOT NULL DEFAULT 0,
+			skip_count INTEGER NOT NULL DEFAULT 0,
+			already_linked_count INTEGER NOT NULL DEFAULT 0,
+			proposals JSONB NOT NULL DEFAULT '[]'::jsonb,
+			applied_at TIMESTAMPTZ,
+			applied_by TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_merge_reports_tenant_generated
+			ON catalog.merge_reports(tenant_id, generated_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_merge_reports_status
+			ON catalog.merge_reports(status) WHERE status IN ('pending','reviewed');`,
+		// Already_linked column added after first iteration (the applier was
+		// missing the early-return for already-merged listings, which produced a
+		// 998-row "create new master" garbage report against heybabes — see
+		// docs/Updates/main-catalog-completion-phaseD2_*.md). IF NOT EXISTS keeps
+		// the migration idempotent on fresh + existing schemas.
+		`ALTER TABLE catalog.merge_reports
+			ADD COLUMN IF NOT EXISTS already_linked_count INTEGER NOT NULL DEFAULT 0;`,
+	)
+
 	// pipeline_traces table (idempotent, same as chat backend)
 	migrations = append(migrations,
 		`CREATE TABLE IF NOT EXISTS pipeline_traces (
