@@ -14,10 +14,10 @@ import (
 
 func main() {
 	email := flag.String("email", "", "curator email")
-	password := flag.String("password", "", "curator password (min 12 chars)")
+	password := flag.String("password", "", "curator password (min 6 chars)")
 	flag.Parse()
-	if *email == "" || len(*password) < 12 {
-		log.Fatal("usage: seed-curator -email X -password Y (password >= 12 chars)")
+	if *email == "" || len(*password) < 6 {
+		log.Fatal("usage: seed-curator -email X -password Y (password >= 6 chars)")
 	}
 	dsn := firstNonEmpty(os.Getenv("CURATOR_DATABASE_URL"), os.Getenv("DATABASE_URL"))
 	if dsn == "" {

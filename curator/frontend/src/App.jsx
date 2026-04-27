@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
+import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom'
 import { api } from './api.js'
 import LoginPage from './pages/LoginPage.jsx'
 import CandidatesPage from './pages/CandidatesPage.jsx'
@@ -41,14 +41,15 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [loaded, setLoaded] = useState(false)
   const navigate = useNavigate()
-  const location = useLocation()
 
+  // One-shot auth check on mount. The /curator/me 401 case is handled by
+  // setUser(null) → render LoginPage; api.js no longer does a hard redirect.
   useEffect(() => {
     api.get('/curator/me')
       .then(setUser)
       .catch(() => setUser(null))
       .finally(() => setLoaded(true))
-  }, [location.pathname])
+  }, [])
 
   async function handleLogout() {
     try { await api.post('/curator/auth/logout') } catch {}
