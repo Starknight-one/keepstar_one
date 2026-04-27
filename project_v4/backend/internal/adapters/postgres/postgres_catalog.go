@@ -213,16 +213,31 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	}
 
 	if filter.Search != "" {
-		// Split search into words and match ANY word in any field (OR between words)
+		// Two-mode search (curator-driven pivot 2026-04-27 Этап 2.3):
+		// match listing-level fields (p.name/display_name/original_name/raw_attributes)
+		// in addition to master_products fields. For tenants without master coverage,
+		// raw_attributes::text picks up vendor/tags/variants[].sku/barcode written by
+		// harvester-lite. For tenants WITH coverage (e.g. heybabes), mp.name/brand
+		// keep contributing as before.
+		//
+		// raw_attributes::text serializes the JSONB which is brittle as a search
+		// surface (matches against JSON keys too) but on a small per-product blob
+		// the false-positive cost is acceptable; the alternative would be exposing
+		// dedicated keyword indexes per nested field.
+		const searchPredicate = `(
+			p.name ILIKE %[1]s OR p.display_name ILIKE %[1]s OR p.original_name ILIKE %[1]s OR
+			mp.name ILIKE %[1]s OR mp.brand ILIKE %[1]s OR
+			p.raw_attributes::text ILIKE %[1]s
+		)`
 		words := strings.Fields(filter.Search)
 		if len(words) == 1 {
-			conditions = append(conditions, fmt.Sprintf("(p.name ILIKE $%d OR mp.name ILIKE $%d OR mp.brand ILIKE $%d)", argNum, argNum, argNum))
+			conditions = append(conditions, fmt.Sprintf(searchPredicate, fmt.Sprintf("$%d", argNum)))
 			args = append(args, "%"+words[0]+"%")
 			argNum++
 		} else if len(words) > 1 {
 			var wordConds []string
 			for _, word := range words {
-				wordConds = append(wordConds, fmt.Sprintf("(p.name ILIKE $%d OR mp.name ILIKE $%d OR mp.brand ILIKE $%d)", argNum, argNum, argNum))
+				wordConds = append(wordConds, fmt.Sprintf(searchPredicate, fmt.Sprintf("$%d", argNum)))
 				args = append(args, "%"+word+"%")
 				argNum++
 			}
