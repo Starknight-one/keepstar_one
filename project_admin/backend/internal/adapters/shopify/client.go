@@ -858,9 +858,24 @@ mutation seedProductSet($input: ProductSetInput!) {
   }
 }`
 
+	// Shopify products always have at least one option ("Title"/"Default Title"
+	// is auto-created by the storefront). productSet enforces this — pass-through
+	// here so option-less products don't fail validation.
+	optionNames := in.OptionNames
+	usingDefaultTitle := false
+	if len(optionNames) == 0 {
+		optionNames = []string{"Title"}
+		usingDefaultTitle = true
+	}
+
 	// Build productOptions[].name + productOptions[].values[] from variant option values.
-	productOptions := make([]map[string]any, 0, len(in.OptionNames))
-	if len(in.OptionNames) > 0 {
+	productOptions := make([]map[string]any, 0, len(optionNames))
+	if usingDefaultTitle {
+		productOptions = append(productOptions, map[string]any{
+			"name":   "Title",
+			"values": []map[string]any{{"name": "Default Title"}},
+		})
+	} else {
 		// Collect unique values per option index.
 		valuesPerOpt := make([][]string, len(in.OptionNames))
 		seen := make([]map[string]struct{}, len(in.OptionNames))
@@ -893,17 +908,15 @@ mutation seedProductSet($input: ProductSetInput!) {
 
 	variants := make([]map[string]any, 0, len(in.Variants))
 	for _, v := range in.Variants {
-		mv := map[string]any{
-			"sku":          v.SKU,
-			"barcode":      v.Barcode,
-			"price":        v.PriceDecimal,
-			"inventoryQuantities": []map[string]any{},
-		}
-		if v.CompareDecimal != "" {
-			mv["compareAtPrice"] = v.CompareDecimal
-		}
-		if len(v.OptionValues) > 0 {
-			optVals := make([]map[string]any, 0, len(v.OptionValues))
+		// 2026-04 ProductSetInput requires optionValues as a present array — null
+		// is rejected. For products with no real options we fall back to the
+		// auto-injected "Title" option above; each variant must reference it.
+		optVals := []map[string]any{}
+		if usingDefaultTitle {
+			optVals = []map[string]any{{
+				"optionName": "Title", "name": "Default Title",
+			}}
+		} else {
 			for i, ov := range v.OptionValues {
 				if i >= len(in.OptionNames) || ov == "" {
 					continue
@@ -913,24 +926,26 @@ mutation seedProductSet($input: ProductSetInput!) {
 					"name":       ov,
 				})
 			}
-			mv["optionValues"] = optVals
+		}
+		mv := map[string]any{
+			"sku":          v.SKU,
+			"barcode":      v.Barcode,
+			"price":        v.PriceDecimal,
+			"optionValues": optVals,
+		}
+		if v.CompareDecimal != "" {
+			mv["compareAtPrice"] = v.CompareDecimal
 		}
 		variants = append(variants, mv)
 	}
 
-	media := make([]map[string]any, 0, len(in.ImageURLs))
-	for _, u := range in.ImageURLs {
-		if u == "" {
-			continue
-		}
-		media = append(media, map[string]any{
-			"originalSource":   u,
-			"mediaContentType": "IMAGE",
-		})
-	}
-
 	mfs := make([]map[string]any, 0, len(in.Metafields))
 	for _, m := range in.Metafields {
+		if m.Value == "" {
+			// Shopify rejects empty metafield values. Skip silently — we use
+			// these in seed scenarios to simulate sparse-data sources.
+			continue
+		}
 		mfs = append(mfs, map[string]any{
 			"namespace": m.Namespace,
 			"key":       m.Key,
@@ -939,6 +954,12 @@ mutation seedProductSet($input: ProductSetInput!) {
 		})
 	}
 
+	// productSet input — schema based on Admin API 2026-04. Notes on what we DON'T
+	// send: `collectionsToJoin` and `files` are not on ProductSetInput in this
+	// version; collections are attached via collectionAddProductsV2 after create,
+	// images via productCreateMedia. For seed-devstore that's fine — we don't
+	// need images to test merge-agent matching. Collections are wired below via
+	// AssignProductsToCollection.
 	input := map[string]any{
 		"title":           in.Title,
 		"descriptionHtml": in.DescriptionHTML,
@@ -953,12 +974,6 @@ mutation seedProductSet($input: ProductSetInput!) {
 		input["status"] = in.Status
 	} else {
 		input["status"] = "ACTIVE"
-	}
-	if len(in.CollectionGIDs) > 0 {
-		input["collectionsToJoin"] = in.CollectionGIDs
-	}
-	if len(media) > 0 {
-		input["files"] = media
 	}
 
 	data, err := c.graphqlRequest(ctx, shop, token, mutation, map[string]any{"input": input})
@@ -991,6 +1006,50 @@ mutation seedProductSet($input: ProductSetInput!) {
 		return "", fmt.Errorf("productSet returned nil product")
 	}
 	return resp.ProductSet.Product.ID, nil
+}
+
+// CollectionAddProducts attaches products to a custom collection. Used by
+// seed-devstore after ProductCreate to wire scenario 3.4 (fuzzy category
+// match — products live in "Skincare Solutions" not the canonical "Face Care").
+// Uses collectionAddProductsV2 (async job — returns immediately, but for ≤50
+// products the job completes before the next API call we'd make anyway).
+func (c *Client) CollectionAddProducts(ctx context.Context, shop, token, collectionGID string, productGIDs []string) error {
+	if len(productGIDs) == 0 {
+		return nil
+	}
+	const mutation = `
+mutation seedCollAddProducts($id: ID!, $productIds: [ID!]!) {
+  collectionAddProductsV2(id: $id, productIds: $productIds) {
+    job { id done }
+    userErrors { field message }
+  }
+}`
+	data, err := c.graphqlRequest(ctx, shop, token, mutation, map[string]any{
+		"id":         collectionGID,
+		"productIds": productGIDs,
+	})
+	if err != nil {
+		return fmt.Errorf("collectionAddProductsV2: %w", err)
+	}
+	var resp struct {
+		CollectionAddProductsV2 struct {
+			UserErrors []struct {
+				Field   []string `json:"field"`
+				Message string   `json:"message"`
+			} `json:"userErrors"`
+		} `json:"collectionAddProductsV2"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("parse collectionAddProductsV2: %w", err)
+	}
+	if len(resp.CollectionAddProductsV2.UserErrors) > 0 {
+		errs := make([]string, 0, len(resp.CollectionAddProductsV2.UserErrors))
+		for _, e := range resp.CollectionAddProductsV2.UserErrors {
+			errs = append(errs, fmt.Sprintf("%v: %s", e.Field, e.Message))
+		}
+		return fmt.Errorf("collectionAddProductsV2 user-errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 // CollectionCreate makes a custom (manual) collection. Returns the collection

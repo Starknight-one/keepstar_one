@@ -88,6 +88,9 @@ func main() {
 
 	log.Printf("=== creating %d products across 8 scenarios ===", len(scenarios))
 	created := 0
+	// Collect product IDs per collection — single batched CollectionAddProducts
+	// call at end is faster than per-product attachment + avoids async-job races.
+	collProducts := map[string][]string{}
 	for _, s := range scenarios {
 		gid, err := client.ProductCreate(ctx, shop, token, s.input)
 		if err != nil {
@@ -96,7 +99,22 @@ func main() {
 		}
 		created++
 		log.Printf("  [%s] + %s (%s)", s.scenarioID, s.input.Title, gid)
+		for _, cgid := range s.input.CollectionGIDs {
+			collProducts[cgid] = append(collProducts[cgid], gid)
+		}
 	}
+
+	if len(collProducts) > 0 {
+		log.Printf("=== attaching products to collections ===")
+		for cgid, pids := range collProducts {
+			if err := client.CollectionAddProducts(ctx, shop, token, cgid, pids); err != nil {
+				log.Printf("FAIL attach %d products to %s: %v", len(pids), cgid, err)
+				continue
+			}
+			log.Printf("  + %d products → %s", len(pids), cgid)
+		}
+	}
+
 	log.Printf("=== done: %d/%d products created ===", created, len(scenarios))
 }
 
