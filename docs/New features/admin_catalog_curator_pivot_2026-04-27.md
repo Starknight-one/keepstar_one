@@ -1,9 +1,11 @@
 # Admin Catalog — Curator-Driven Pivot
 
 **Date:** 2026-04-27
-**Status:** 🟢 Active plan (replaces M4d harvester + M7 heybabes backfill from previous plans)
+**Status:** 🟢 Active plan — Этапы 0-3 shipped & deployed (см. секцию "Status snapshot" ниже)
 **Owner:** Vlad
 **Source session:** chat 2026-04-27 (Vlad + Claude)
+
+> **STATUS SNAPSHOT 2026-04-27 19:15 UTC** — Этапы **0/1/2.1/2.2/2.3/3 закрыты и задеплоены на прод**. Финальный wrap-up лог: [main-admin-catalog-curator-pivot-stages0-3-deployed_2026-04-27_19-15.md](../Updates/main-admin-catalog-curator-pivot-stages0-3-deployed_2026-04-27_19-15.md). Live state: 37 листингов под heybabes в `catalog.products` (20 seed + 17 lingering), все без master-link. `master_products` за сегодня не получил ни одной записи — legacy выпилен. Осталось: **Этапы 4-7** (merge agent design + impl + e2e + heybabes cleanup).
 
 > **Эта страница — единый источник правды для оставшейся работы по каталогу/PIM.**
 >
@@ -58,12 +60,16 @@
 
 ## 3. Этапы
 
-### Этап 0 — Документация (этот файл + banner на старые)
+### Этап 0 — Документация (этот файл + banner на старые) ✅ shipped
 - Создать этот документ
 - На `admin_catalog_design_2026-04-23.md` — banner "Pivot 2026-04-27" со ссылкой
 - На `admin_catalog_implementation_plan_2026-04-26.md` — banner + краткое summary что отменяется (M4d, M7)
 
-### Этап 1 — Curator UI (operations dashboard)
+> **Лог:** [main-admin-catalog-curator-pivot-stage0_2026-04-27_17-09.md](../Updates/main-admin-catalog-curator-pivot-stage0_2026-04-27_17-09.md) · commit `823cd13`
+
+### Этап 1 — Curator UI (operations dashboard) ✅ shipped
+
+> **Лог:** [main-admin-catalog-curator-pivot-stage1_2026-04-27_17-21.md](../Updates/main-admin-catalog-curator-pivot-stage1_2026-04-27_17-21.md) · commit `db02674`
 
 **Backend** (`curator/backend/`):
 - `internal/adapters/postgres.go` — добавить:
@@ -96,7 +102,9 @@
 - Master Catalog → vertical=cosmetics → 979 master_products, 10 брендов
 - Drill into master_product → variants empty (heybabes ещё без master_variants), но PIM-поля + связанный листинг показаны
 
-### Этап 2 — Cut legacy + harvester-lite + two-mode search
+### Этап 2 — Cut legacy + harvester-lite + two-mode search ✅ shipped
+
+> **Логи:** [2.1 (cut legacy)](../Updates/main-admin-catalog-curator-pivot-stage2-1_2026-04-27_17-28.md) commit `554feb1` · [2.2 (harvester-lite)](../Updates/main-admin-catalog-curator-pivot-stage2-2_2026-04-27_17-35.md) commit `73f8916` · [2.3 (two-mode search)](../Updates/main-admin-catalog-curator-pivot-stage2-3_2026-04-27_17-39.md) commit `918ff15`
 
 **2.1 Cut legacy**:
 - Удалить `project_admin/backend/internal/usecases/shopify.go`
@@ -122,7 +130,9 @@
 - V4 чат на dev-store → listing-only mode (coverage=0)
 - V4 чат на heybabes → master mode (coverage 100%)
 
-### Этап 3 — Новый dev-store с тестовыми данными
+### Этап 3 — Новый dev-store с тестовыми данными ✅ shipped
+
+> **Лог:** [main-admin-catalog-curator-pivot-stage3-code_2026-04-27_18-18.md](../Updates/main-admin-catalog-curator-pivot-stage3-code_2026-04-27_18-18.md) · commits `d81ed48` (write methods + seed) + `d3c7ac2` (productSet schema 2026-04 fixes). Live: 20 продуктов в Shopify dev-store, 4 collections, 17 lingering snowboard listings от вчерашнего M4 теста (cleanup в Этапе 7). После деплоя на прод запущен `cmd/sync-tenant-now` который через DumpToStaging + harvester-lite заполнил `catalog.products` (37 листингов, все без master-link).
 
 **Зависит от пользователя.** Нужно: релизнуть Shopify-приложение в Partners с scopes `write_products + write_inventory + write_publications + write_collections` → переустановить в `keepstar-neaqpan1.myshopify.com`.
 
