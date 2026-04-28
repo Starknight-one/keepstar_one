@@ -9,6 +9,7 @@ import TenantsPage from './pages/TenantsPage.jsx'
 import TenantDetailPage from './pages/TenantDetailPage.jsx'
 import MasterCatalogPage from './pages/MasterCatalogPage.jsx'
 import MasterDetailPage from './pages/MasterDetailPage.jsx'
+import MergeReportPage from './pages/MergeReportPage.jsx'
 
 function Layout({ user, onLogout, children }) {
   return (
@@ -74,6 +75,7 @@ export default function App() {
         <Route index element={<Navigate to="/tenants" replace />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/tenants/:id" element={<TenantDetailPage />} />
+        <Route path="/tenants/:tenantId/merge-reports/:reportId" element={<MergeReportPage />} />
         <Route path="/master" element={<MasterCatalogPage />} />
         <Route path="/master/:id" element={<MasterDetailPage />} />
         <Route path="/candidates" element={<CandidatesPage />} />

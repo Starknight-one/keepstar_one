@@ -27,3 +27,13 @@ export const api = {
   post: (p, b) => request('POST', p, b),
   delete: (p) => request('DELETE', p),
 }
+
+// Merge agent (Phase D3 backend, Phase 4 UI). All endpoints proxy through
+// curator-backend → admin-backend internal API.
+export const mergeApi = {
+  run: (tenantId) => api.post(`/curator/tenants/${tenantId}/merge/run`),
+  list: (tenantId, limit = 20) => api.get(`/curator/tenants/${tenantId}/merge-reports?limit=${limit}`),
+  get: (reportId) => api.get(`/curator/merge-reports/${reportId}`),
+  apply: (reportId, body) => api.post(`/curator/merge-reports/${reportId}/apply`, body),
+  revert: (reportId, body) => api.post(`/curator/merge-reports/${reportId}/revert`, body || {}),
+}

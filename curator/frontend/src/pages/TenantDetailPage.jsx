@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { api } from '../api.js'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { api, mergeApi } from '../api.js'
 
 export default function TenantDetailPage() {
   const { id } = useParams()
@@ -39,7 +39,7 @@ export default function TenantDetailPage() {
 
       {tab === 'catalog' && <CatalogTab tenantId={id} />}
       {tab === 'schema' && <SchemaTab tenantId={id} />}
-      {tab === 'reports' && <ReportsTab />}
+      {tab === 'reports' && <ReportsTab tenantId={id} />}
       {tab === 'audit' && <AuditTab />}
     </div>
   )
@@ -145,10 +145,80 @@ function SchemaTab({ tenantId }) {
   )
 }
 
-function ReportsTab() {
+function ReportsTab({ tenantId }) {
+  const [reports, setReports] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState(null)
+  const navigate = useNavigate()
+
+  useEffect(() => { load() }, [tenantId])
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await mergeApi.list(tenantId, 20)
+      setReports(res.reports || [])
+      setError(null)
+    } catch (e) { setError(e.message) }
+    finally { setLoading(false) }
+  }
+
+  async function runAgent() {
+    if (!confirm('Run merge agent for this tenant? Walks every listing and writes a fresh report (read-only — no master changes).')) return
+    setRunning(true)
+    try {
+      const res = await mergeApi.run(tenantId)
+      navigate(`/tenants/${tenantId}/merge-reports/${res.reportId}`)
+    } catch (e) {
+      alert(`Run failed: ${e.message}`)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  if (loading) return <div className="loading">loading…</div>
+
   return (
-    <div className="empty">
-      Merge reports coming in Этап 5. The agent will produce per-product proposals here for review and approval.
+    <div>
+      <div className="toolbar">
+        <button className="btn-primary" onClick={runAgent} disabled={running}>
+          {running ? 'Running agent…' : '+ Run merge agent'}
+        </button>
+        <span className="muted">writes a new report; previous pending reports get superseded</span>
+      </div>
+      {error && <div className="error">{error}</div>}
+      {reports.length === 0 ? (
+        <div className="empty">No reports yet — run the merge agent to produce the first one.</div>
+      ) : (
+        <table className="products">
+          <thead>
+            <tr>
+              <th>ID</th><th>Generated</th><th>Status</th>
+              <th>Total</th><th>New master</th><th>Auto-link</th>
+              <th>Needs review</th><th>Skip</th><th>Already linked</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {reports.map(r => (
+              <tr key={r.id}>
+                <td className="mono">#{r.id}</td>
+                <td>{new Date(r.generatedAt).toLocaleString()}</td>
+                <td><span className={`status-badge status-${r.status}`}>{r.status}</span></td>
+                <td className="num">{r.totalListings}</td>
+                <td className="num">{r.newMasterCount}</td>
+                <td className="num">{r.autoLinkCount}</td>
+                <td className="num">{r.needsReviewCount}</td>
+                <td className="num">{r.skipCount}</td>
+                <td className="num">{r.alreadyLinkedCount}</td>
+                <td>
+                  <Link to={`/tenants/${tenantId}/merge-reports/${r.id}`} className="link-master">Open</Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }
