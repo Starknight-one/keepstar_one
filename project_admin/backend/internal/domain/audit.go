@@ -33,12 +33,13 @@ const (
 type AuditAction string
 
 const (
-	AuditActionCreate  AuditAction = "create"
-	AuditActionUpdate  AuditAction = "update"
-	AuditActionDelete  AuditAction = "delete"
-	AuditActionRename  AuditAction = "rename"
-	AuditActionPromote AuditAction = "promote"
-	AuditActionMerge   AuditAction = "merge"
+	AuditActionCreate       AuditAction = "create"
+	AuditActionUpdate       AuditAction = "update"
+	AuditActionDelete       AuditAction = "delete"
+	AuditActionRename       AuditAction = "rename"
+	AuditActionPromote      AuditAction = "promote"
+	AuditActionMerge        AuditAction = "merge"
+	AuditActionMergeRevert  AuditAction = "merge_revert"
 )
 
 // FieldChange records a single field's old → new transition. Used in

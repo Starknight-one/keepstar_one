@@ -17,6 +17,12 @@ type AuditPort interface {
 	// fieldChanges is allowed (e.g. for create/delete actions).
 	LogHuman(ctx context.Context, tenantID string, actorID string, entityKind domain.EntityKind, entityID string, action domain.AuditAction, fieldChanges map[string]domain.FieldChange) error
 
+	// LogCurator writes one row for a curator action (catalog merge apply / revert).
+	// Same shape as LogHuman but stamps actor_kind='curator' so the audit log can
+	// distinguish operator (curator) edits from tenant-user edits when the same
+	// person plays both roles.
+	LogCurator(ctx context.Context, tenantID string, curatorID string, entityKind domain.EntityKind, entityID string, action domain.AuditAction, fieldChanges map[string]domain.FieldChange, aggregateMeta map[string]interface{}) error
+
 	// ListAuditEntries returns recent audit entries for an entity. Limit
 	// defaults to 100. Pagination via offset.
 	ListAuditEntries(ctx context.Context, entityKind domain.EntityKind, entityID string, limit, offset int) ([]domain.AuditEntry, error)

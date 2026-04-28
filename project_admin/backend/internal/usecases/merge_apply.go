@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"keepstar-admin/internal/domain"
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
@@ -32,6 +33,8 @@ type MergeApplyUseCase struct {
 	schema  ports.MappingArtifactPort
 	reports ports.MergeReportsPort
 	cascade *MatchCascade
+	tx      ports.MergeApplyTxPort // optional — set via WithApplyTx; required for ApplyProposals/Revert
+	audit   ports.AuditPort        // optional — set via WithAudit; if nil, applier skips audit writes
 	log     *logger.Logger
 }
 
@@ -49,6 +52,21 @@ func NewMergeApplyUseCase(
 		cascade: cascade,
 		log:     log,
 	}
+}
+
+// WithApplyTx wires the destructive write port for Phase D3. Without it,
+// ApplyProposals/Revert will refuse to run (they're nil-safe by check).
+func (uc *MergeApplyUseCase) WithApplyTx(tx ports.MergeApplyTxPort) *MergeApplyUseCase {
+	uc.tx = tx
+	return uc
+}
+
+// WithAudit wires the audit port for ApplyProposals/Revert. Optional —
+// missing audit makes the operations work but un-traceable, which is fine
+// for tests but should never be the case in production.
+func (uc *MergeApplyUseCase) WithAudit(a ports.AuditPort) *MergeApplyUseCase {
+	uc.audit = a
+	return uc
 }
 
 // GenerateReportResult is the wire shape returned to handlers / CLI.
@@ -185,6 +203,10 @@ func (uc *MergeApplyUseCase) GenerateReport(ctx context.Context, tenantID string
 //   4. Score → action (auto link / needs_review / new master)
 func (uc *MergeApplyUseCase) buildProposal(ctx context.Context, artifact *domain.MappingArtifact, listing *domain.Product) domain.MergeProposal {
 	p := domain.MergeProposal{
+		// Surrogate id stamped at generation so curator UI can address each
+		// proposal in apply/reject calls. Listing id alone would work but
+		// would couple the API to listing primary keys.
+		ID:            uuid.NewString(),
 		ListingID:     listing.ID,
 		ListingName:   firstNonEmpty(listing.OriginalName, listing.Name),
 		ListingVendor: vendorFromListing(listing),

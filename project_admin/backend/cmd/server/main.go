@@ -241,6 +241,15 @@ func main() {
 	candidatesAdapter := postgres.NewCandidatesAdapter(dbClient, log)
 	categoriesV2Adapter := postgres.NewCategoriesV2Adapter(dbClient, log)
 
+	// Phase D1/D2/D3 — merge agent + applier shared adapters. Declared here
+	// so the discovery agent (inside the Shopify block below) can reuse the
+	// MasterVariants adapter, and the curator merge handlers can wire the
+	// applier without re-constructing the same DB-layer types.
+	masterVariantsAdapter := postgres.NewMasterVariantsAdapter(dbClient, log)
+	mappingArtifactAdapter := postgres.NewMappingArtifactAdapter(dbClient, log)
+	mergeReportsAdapter := postgres.NewMergeReportsAdapter(dbClient, log)
+	mergeApplyTxAdapter := postgres.NewMergeApplyTxAdapter(dbClient, log)
+
 	// Onboarding: integrations + CSV + Shopify
 	var integrationsUC *usecases.IntegrationsUseCase
 	var csvMappingUC *usecases.CSVMappingUseCase
@@ -285,8 +294,6 @@ func main() {
 			// a real adapter implementation.
 			if cfg.AnthropicAPIKey != "" {
 				agentClient := anthropicAdapter.NewAgentClient(cfg.AnthropicAPIKey, "claude-sonnet-4-6")
-				masterVariantsAdapter := postgres.NewMasterVariantsAdapter(dbClient, log)
-				mappingArtifactAdapter := postgres.NewMappingArtifactAdapter(dbClient, log)
 				agent := usecases.NewDiscoveryAgent(agentClient, shopifyStagingAdapter, masterVariantsAdapter, embeddingClient, log)
 				discoveryUC = usecases.NewDiscoveryUseCase(shopifyStagingAdapter, masterVariantsAdapter, mappingArtifactAdapter, nil, agent, log)
 				log.Info("shopify_v2_discovery_enabled", "model", agentClient.Model())
@@ -316,6 +323,16 @@ func main() {
 	auditAdapter := postgres.NewAuditAdapter(dbClient, log)
 	auditHandler := handlers.NewAuditHandler(auditAdapter, log)
 	productsHandler := handlers.NewProductsHandler(productsUC, auditAdapter, log)
+
+	// Phase D3 — merge applier wired with cascade + tx + audit. Cascade
+	// uses the existing MasterVariants adapter (no embedder for the applier
+	// path; the cascade only re-runs against pre-existing strategies the
+	// agent already chose during discovery).
+	mergeCascade := usecases.NewMatchCascade(masterVariantsAdapter, embeddingClient, log)
+	mergeApplyUC := usecases.NewMergeApplyUseCase(catalogAdapter, mappingArtifactAdapter, mergeReportsAdapter, mergeCascade, log).
+		WithApplyTx(mergeApplyTxAdapter).
+		WithAudit(auditAdapter)
+	curatorMergeHandler := handlers.NewCuratorMergeHandler(mergeApplyUC, mergeReportsAdapter, log)
 	// candidatesAdapter + categoriesV2Adapter were constructed earlier (above the
 	// integrations block) so harvester-lite can wire them; reuse the same instances
 	// here for the HTTP handlers.
@@ -613,6 +630,38 @@ func main() {
 		mux.HandleFunc("/admin/api/integrations/shopify/callback", shopifyHandler.HandleCallback)
 		mux.HandleFunc("/admin/api/webhooks/shopify", shopifyHandler.HandleWebhook)
 	}
+
+	// Internal curator endpoints (Phase D3, 2026-04-28). Behind X-Internal-Key
+	// header — only the curator-backend should hit these. Empty env var
+	// returns 503 from the middleware, so a forgotten config never silently
+	// exposes the routes.
+	internalKey := os.Getenv("CURATOR_INTERNAL_KEY")
+	internalMW := handlers.InternalKeyMiddleware(internalKey)
+	internalMux := http.NewServeMux()
+	internalMux.HandleFunc("/admin/api/internal/curator/tenants/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/merge/run"):
+			curatorMergeHandler.HandleRun(w, r)
+		case strings.HasSuffix(path, "/merge-reports"):
+			curatorMergeHandler.HandleListForTenant(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	internalMux.HandleFunc("/admin/api/internal/curator/merge-reports/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/apply"):
+			curatorMergeHandler.HandleApply(w, r)
+		case strings.HasSuffix(path, "/revert"):
+			curatorMergeHandler.HandleRevert(w, r)
+		default:
+			curatorMergeHandler.HandleGet(w, r)
+		}
+	})
+	mux.Handle("/admin/api/internal/curator/tenants/", internalMW(internalMux))
+	mux.Handle("/admin/api/internal/curator/merge-reports/", internalMW(internalMux))
 
 	// Public REST API v1 (M10) — X-API-Key auth instead of JWT.
 	// Tenant comes from the resolved key; AuthMiddleware is NOT applied here.

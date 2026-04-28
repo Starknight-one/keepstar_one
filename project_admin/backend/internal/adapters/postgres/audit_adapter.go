@@ -66,6 +66,32 @@ func (a *AuditAdapter) LogHuman(ctx context.Context, tenantID, actorID string, e
 	return nil
 }
 
+// LogCurator writes one row stamped actor_kind='curator'. Used by the catalog
+// merge-apply / revert flow so the audit log preserves the operator role even
+// when the curator user id overlaps with a tenant-side user id.
+func (a *AuditAdapter) LogCurator(ctx context.Context, tenantID, curatorID string, entityKind domain.EntityKind, entityID string, action domain.AuditAction, fieldChanges map[string]domain.FieldChange, aggregateMeta map[string]interface{}) error {
+	var changesJSON, metaJSON []byte
+	if len(fieldChanges) > 0 {
+		changesJSON, _ = json.Marshal(fieldChanges)
+	}
+	if len(aggregateMeta) > 0 {
+		metaJSON, _ = json.Marshal(aggregateMeta)
+	}
+	var tenantArg interface{}
+	if tenantID != "" {
+		tenantArg = tenantID
+	}
+	_, err := a.client.pool.Exec(ctx, `
+		INSERT INTO catalog.audit_log
+			(tenant_id, actor_kind, actor_id, entity_kind, entity_id, action, field_changes, aggregate_meta)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		tenantArg, domain.ActorKindCurator, curatorID, entityKind, entityID, action, changesJSON, metaJSON)
+	if err != nil {
+		return fmt.Errorf("audit log_curator: %w", err)
+	}
+	return nil
+}
+
 func (a *AuditAdapter) ListAuditEntries(ctx context.Context, entityKind domain.EntityKind, entityID string, limit, offset int) ([]domain.AuditEntry, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100

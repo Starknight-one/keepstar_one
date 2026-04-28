@@ -33,6 +33,7 @@ func main() {
 	}
 
 	h := handlers.New(client, secure)
+	mergeProxy := handlers.NewMergeProxy()
 	auth := session.Middleware(client)
 
 	mux := http.NewServeMux()
@@ -75,16 +76,25 @@ func main() {
 		// /curator/tenants/{id}              → GetTenant
 		// /curator/tenants/{id}/products     → ListTenantProducts
 		// /curator/tenants/{id}/schema       → GetTenantSchema
+		// /curator/tenants/{id}/merge/run    → mergeProxy.HandleRun
+		// /curator/tenants/{id}/merge-reports → mergeProxy.HandleListReports
 		path := r.URL.Path
 		switch {
 		case strings.HasSuffix(path, "/products"):
 			h.ListTenantProducts(w, r)
 		case strings.HasSuffix(path, "/schema"):
 			h.GetTenantSchema(w, r)
+		case strings.HasSuffix(path, "/merge/run"):
+			mergeProxy.HandleRun(w, r)
+		case strings.HasSuffix(path, "/merge-reports"):
+			mergeProxy.HandleListReports(w, r)
 		default:
 			h.GetTenant(w, r)
 		}
 	})
+
+	// Merge reports (Phase D3, 2026-04-28). All proxied to admin-backend.
+	protected.HandleFunc("/curator/merge-reports/", mergeProxy.HandleReport)
 
 	// Master catalog browse.
 	protected.HandleFunc("/curator/master/products", h.ListMasterProducts)
@@ -101,6 +111,7 @@ func main() {
 	mux.Handle("/curator/tenants/", auth(protected))
 	mux.Handle("/curator/master/products", auth(protected))
 	mux.Handle("/curator/master/products/", auth(protected))
+	mux.Handle("/curator/merge-reports/", auth(protected))
 
 	// SPA fallback for the curator frontend (./static).
 	staticDir := firstNonEmpty(os.Getenv("CURATOR_STATIC_DIR"), "./static")
