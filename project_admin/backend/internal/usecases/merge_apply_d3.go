@@ -301,6 +301,9 @@ func (uc *MergeApplyUseCase) Revert(ctx context.Context, reportID int64, actorID
 		return errors.New("merge_apply: report was never applied")
 	}
 
+	revertedCount := 0
+	failedCount := 0
+	stillAppliedCount := 0
 	for i := range report.Proposals {
 		p := &report.Proposals[i]
 		if p.Status != domain.MergeProposalStatusApplied {
@@ -320,6 +323,8 @@ func (uc *MergeApplyUseCase) Revert(ctx context.Context, reportID int64, actorID
 				"listing_id", p.ListingID, "error", err.Error())
 			// Don't bail — keep going so the rest reverts. The proposal
 			// stays "applied" so a subsequent revert can retry.
+			failedCount++
+			stillAppliedCount++
 			continue
 		}
 		// Clear the link target on the proposal so the report state truly
@@ -339,17 +344,36 @@ func (uc *MergeApplyUseCase) Revert(ctx context.Context, reportID int64, actorID
 		uc.logAuditCuratorRevert(ctx, report.TenantID, actorID, p.ListingID, fc, p.RollbackData)
 
 		p.Status = domain.MergeProposalStatusPending
+		revertedCount++
 	}
 
 	counters := countersFromProposals(report.Proposals)
 	if err := uc.reports.UpdateProposals(ctx, report.ID, report.Proposals, counters); err != nil {
 		return fmt.Errorf("persist reverted proposals: %w", err)
 	}
-	if err := uc.reports.MarkApplied(ctx, report.ID, actorID, domain.MergeReportStatusReverted); err != nil {
+
+	// Pick the report status that matches what actually happened:
+	//   - all targets restored cleanly → reverted (the simple case)
+	//   - some restored, some failed → partial (curator must re-try the
+	//     failed ones; the report is half-rolled-back)
+	//   - none reverted (every Restore* errored) → keep applied so the
+	//     curator UI doesn't lie about "report cleaned up" when the FKs
+	//     are still pointing at created masters.
+	finalStatus := domain.MergeReportStatusReverted
+	if revertedCount == 0 && failedCount > 0 {
+		finalStatus = domain.MergeReportStatusApplied
+	} else if stillAppliedCount > 0 {
+		finalStatus = domain.MergeReportStatusPartial
+	}
+	if err := uc.reports.MarkApplied(ctx, report.ID, actorID, finalStatus); err != nil {
 		return fmt.Errorf("mark reverted: %w", err)
 	}
 	uc.log.Info("merge_apply_reverted",
-		"report_id", report.ID, "tenant_id", report.TenantID, "actor_id", actorID)
+		"report_id", report.ID, "tenant_id", report.TenantID, "actor_id", actorID,
+		"reverted", revertedCount, "failed", failedCount, "final_status", string(finalStatus))
+	if failedCount > 0 {
+		return fmt.Errorf("revert: %d proposal(s) failed to restore (see logs); report status=%s", failedCount, finalStatus)
+	}
 	return nil
 }
 

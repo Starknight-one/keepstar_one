@@ -161,8 +161,8 @@ func (a *MergeApplyTxAdapter) ApplyLinkExisting(ctx context.Context, listingID, 
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE catalog.products
-		SET master_product_id = $1, master_variant_id = NULLIF($2,''), updated_at = NOW()
-		WHERE id = $3`,
+		SET master_product_id = $1::uuid, master_variant_id = NULLIF($2,'')::uuid, updated_at = NOW()
+		WHERE id = $3::uuid`,
 		masterProductID, masterVariantID, listingID); err != nil {
 		return fmt.Errorf("link listing: %w", err)
 	}
@@ -261,16 +261,20 @@ func (a *MergeApplyTxAdapter) ApplyVariantOfExisting(ctx context.Context, listin
 
 // RestoreListingLink resets the listing's master_*_id to a previous state.
 // Empty strings clear the FK columns. Single-statement, no tx wrap needed.
+//
+// SQL cast trickery: NULLIF($N,'')::uuid is required because pgx binds
+// text-typed Go strings, but master_*_id is uuid. NULLIF + ::uuid lets
+// us pass "" → NULL or a valid uuid string → uuid in the same parameter.
 func (a *MergeApplyTxAdapter) RestoreListingLink(ctx context.Context, listingID, prevMasterProductID, prevMasterVariantID string) error {
 	if listingID == "" {
 		return errors.New("merge_apply: listing_id required")
 	}
 	_, err := a.client.pool.Exec(ctx, `
 		UPDATE catalog.products
-		SET master_product_id = NULLIF($1,''),
-		    master_variant_id = NULLIF($2,''),
+		SET master_product_id = NULLIF($1,'')::uuid,
+		    master_variant_id = NULLIF($2,'')::uuid,
 		    updated_at = NOW()
-		WHERE id = $3`,
+		WHERE id = $3::uuid`,
 		prevMasterProductID, prevMasterVariantID, listingID)
 	if err != nil {
 		return fmt.Errorf("restore listing link: %w", err)
