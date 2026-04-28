@@ -11,11 +11,38 @@ import (
 
 type IntegrationsHandler struct {
 	integrations *usecases.IntegrationsUseCase
+	wipe         *usecases.IntegrationsWipeUseCase
 	log          *logger.Logger
 }
 
-func NewIntegrationsHandler(integrations *usecases.IntegrationsUseCase, log *logger.Logger) *IntegrationsHandler {
-	return &IntegrationsHandler{integrations: integrations, log: log}
+func NewIntegrationsHandler(integrations *usecases.IntegrationsUseCase, wipe *usecases.IntegrationsWipeUseCase, log *logger.Logger) *IntegrationsHandler {
+	return &IntegrationsHandler{integrations: integrations, wipe: wipe, log: log}
+}
+
+// HandleWipe — POST /admin/api/integrations/{id}/wipe
+// Destructive: drops all tenant-scoped catalog rows for this integration
+// (listings, raw imports, merge reports, categories, schema artifact) plus
+// the OAuth row itself. master_products are intentionally preserved —
+// orphan-safe (other tenants may link to them; cleanup separately).
+func (h *IntegrationsHandler) HandleWipe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	tenantID := TenantID(r.Context())
+	path := strings.TrimPrefix(r.URL.Path, "/admin/api/integrations/")
+	id := strings.TrimSuffix(path, "/wipe")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusBadRequest, "invalid integration id")
+		return
+	}
+	res, err := h.wipe.WipeAndDisconnect(r.Context(), tenantID, id)
+	if err != nil {
+		h.log.FromContext(r.Context()).Error("integrations_wipe_failed", "error", err, "id", id)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // HandleList — GET /admin/api/integrations

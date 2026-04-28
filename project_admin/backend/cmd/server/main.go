@@ -359,7 +359,8 @@ func main() {
 	var shopifyHandler *handlers.ShopifyHandler
 	var shopifyV2Handler *handlers.ShopifyV2Handler
 	if integrationsUC != nil {
-		integrationsHandler = handlers.NewIntegrationsHandler(integrationsUC, log)
+		integrationsWipeUC := usecases.NewIntegrationsWipeUseCase(dbClient.Pool(), integrationsAdapter, log)
+		integrationsHandler = handlers.NewIntegrationsHandler(integrationsUC, integrationsWipeUC, log)
 		csvIntegrationsHandler = handlers.NewCSVIntegrationsHandler(csvMappingUC, importUC, integrationsUC, log)
 	}
 	if shopifyV2UC != nil {
@@ -567,7 +568,13 @@ func main() {
 			protected.HandleFunc("/admin/api/integrations/csv/suggest-mapping", csvIntegrationsHandler.HandleSuggestMapping)
 			protected.HandleFunc("/admin/api/integrations/csv/import", csvIntegrationsHandler.HandleImport)
 		}
-		protected.HandleFunc("/admin/api/integrations/", integrationsHandler.HandleByID)
+		protected.HandleFunc("/admin/api/integrations/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/wipe") {
+				integrationsHandler.HandleWipe(w, r)
+				return
+			}
+			integrationsHandler.HandleByID(w, r)
+		})
 	}
 
 	mux.Handle("/admin/api/auth/me", authMW(protected))

@@ -71,6 +71,33 @@ export default function IntegrationsPage() {
     }
   }
 
+  async function handleWipe(id, kind) {
+    const first = confirm(
+      `WIPE everything synced from this ${kind} integration?\n\n` +
+      'This deletes ALL synced listings, raw imports, merge reports, ' +
+      'tenant categories, and the discovered schema for this tenant. ' +
+      'Master products are preserved (they may be linked to other tenants).\n\n' +
+      'You\'ll need to re-install / re-connect to bring data back. NOT REVERSIBLE.'
+    )
+    if (!first) return
+    const typed = prompt('Type WIPE to confirm:')
+    if (typed !== 'WIPE') return
+    try {
+      const res = await api.post(`/integrations/${id}/wipe`)
+      setItems((prev) => prev.filter((it) => it.id !== id))
+      alert(
+        `Wiped:\n` +
+        `· ${res.listings} listings\n` +
+        `· ${res.rawImports} raw imports\n` +
+        `· ${res.mergeReports} merge reports\n` +
+        `· ${res.categories} categories\n` +
+        `· schema artifact: ${res.schemaArtifact ? 'removed' : 'none'}`
+      )
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   return (
     <div>
       <h1 className="page-title">Integrations</h1>
@@ -116,10 +143,18 @@ export default function IntegrationsPage() {
                 key: '_actions',
                 label: '',
                 render: (row) => (
-                  <button
-                    onClick={() => handleDisconnect(row.id)}
-                    style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: 13 }}
-                  >Disconnect</button>
+                  <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={() => handleDisconnect(row.id)}
+                      style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13 }}
+                      title="Drop the OAuth row only — synced data stays."
+                    >Disconnect</button>
+                    <button
+                      onClick={() => handleWipe(row.id, row.kind)}
+                      style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                      title="Drop OAuth row AND all synced data. Not reversible."
+                    >Wipe & disconnect</button>
+                  </div>
                 ),
               },
             ]}
