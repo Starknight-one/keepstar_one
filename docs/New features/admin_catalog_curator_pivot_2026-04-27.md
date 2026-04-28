@@ -5,7 +5,13 @@
 **Owner:** Vlad
 **Source session:** chat 2026-04-27 (Vlad + Claude)
 
-> **STATUS SNAPSHOT 2026-04-27 19:23 UTC** — Этапы **0/1/2.1/2.2/2.3/3 закрыты и задеплоены на прод** (deploy log: [stages0-3-deployed](../Updates/main-admin-catalog-curator-pivot-stages0-3-deployed_2026-04-27_19-15.md)).
+> **STATUS SNAPSHOT 2026-04-29 02:30 UTC — Etap 4-5-6 shipped end-to-end на dev-store через прод UI**.
+> Phase D1 (discovery agent extended), D2 (merge applier read-only), D3 (destructive applier + revert + curator endpoints), Phase 4 (curator UI MVP) — все имплементированы и shipped. Live smoke: wipe → reinstall → discovery ($0.40, 432k tokens) → merge (deterministic, ~20 сек) → apply 1 proposal → revert. Каталог формально работает.
+>
+> 🔴 **Известные пробелы перед первым клиентом** — собраны в [`docs/CATALOG_GAPS.md`](../CATALOG_GAPS.md). Критичные (E1 auto-discovery, G1 V4 chat читает tier2, I3 verify V4 search) **обязательны** перед onboarding'ом. Bug live-smoke'а #15-17 (vertical='unknown', tier2 пустой, gtins) — high-priority но не блокеры apply.
+>
+> Старый snapshot:
+> Этапы **0/1/2.1/2.2/2.3/3 закрыты и задеплоены на прод** (deploy log: [stages0-3-deployed](../Updates/main-admin-catalog-curator-pivot-stages0-3-deployed_2026-04-27_19-15.md)).
 >
 > 🔴 **Post-deploy smoke выявил critical bug** ([postdeploy-issues](../Updates/main-admin-catalog-curator-pivot-postdeploy-issues_2026-04-27_19-23.md)) — Bulk JSONL от Shopify Admin API 2026-04 не возвращает nested children (variants/metafields/images/collections) в форме которую ожидает наш scanner. 0/37 staging-продуктов имеют `_v2_variants`. Без этого harvester-lite пишет пустые `raw_attributes`, ломая весь pipeline. **Этап 4 (merge agent) блокирован — сначала нужно разобраться с #1 в новой сессии.**
 >
