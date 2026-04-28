@@ -95,6 +95,8 @@ func main() {
 			mergeProxy.HandleRun(w, r)
 		case strings.HasSuffix(path, "/merge-reports"):
 			mergeProxy.HandleListReports(w, r)
+		case strings.HasSuffix(path, "/discover"):
+			mergeProxy.HandleDiscover(w, r)
 		default:
 			h.GetTenant(w, r)
 		}

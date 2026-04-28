@@ -113,13 +113,53 @@ function CatalogTab({ tenantId }) {
 function SchemaTab({ tenantId }) {
   const [schema, setSchema] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [running, setRunning] = useState(false)
 
-  useEffect(() => {
+  function load() {
+    setLoading(true)
     api.get(`/curator/tenants/${tenantId}/schema`).then(setSchema).finally(() => setLoading(false))
-  }, [tenantId])
+  }
+  useEffect(() => { load() }, [tenantId])
+
+  async function runDiscovery() {
+    if (!confirm(
+      'Run discovery agent for this tenant?\n\n' +
+      'Sonnet 4.6 reads ~30 sample products + categories + metafields, then writes a MappingArtifact (rules for the merge step). ' +
+      'Cost: ~$0.40 in LLM. Time: ~2 minutes. Re-running supersedes the prior artifact.'
+    )) return
+    setRunning(true)
+    try {
+      const res = await mergeApi.discover(tenantId)
+      alert(
+        `Discovery done:\n` +
+        `· status: ${res.status || 'committed'}\n` +
+        `· turns: ${res.turns ?? '—'}\n` +
+        `· input tokens: ${res.inputTokens ?? '—'}\n` +
+        `· output tokens: ${res.outputTokens ?? '—'}\n` +
+        `· duration: ${Math.round((res.durationMs || 0) / 1000)}s`
+      )
+      load()
+    } catch (e) {
+      alert(`Discovery failed: ${e.message}`)
+    } finally {
+      setRunning(false)
+    }
+  }
 
   if (loading) return <div className="loading">loading…</div>
-  if (!schema || !schema.status) return <div className="empty">no mapping artifact yet — discovery hasn't been run for this tenant</div>
+
+  if (!schema || !schema.status) {
+    return (
+      <div>
+        <div className="empty">No mapping artifact yet — discovery hasn't been run for this tenant.</div>
+        <div style={{ marginTop: 16 }}>
+          <button className="btn-primary" onClick={runDiscovery} disabled={running}>
+            {running ? 'Running discovery (~2 min)…' : '+ Run discovery agent (~$0.40)'}
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="schema-view">
@@ -128,6 +168,11 @@ function SchemaTab({ tenantId }) {
         <Pill label="version" value={String(schema.artifactVersion)} />
         {schema.discoveredAt && <Pill label="discovered" value={new Date(schema.discoveredAt).toLocaleString()} />}
         {schema.validatedAt && <Pill label="validated" value={new Date(schema.validatedAt).toLocaleString()} />}
+      </div>
+      <div style={{ margin: '12px 0' }}>
+        <button className="btn-secondary" onClick={runDiscovery} disabled={running}>
+          {running ? 'Running discovery…' : 'Re-run discovery (~$0.40)'}
+        </button>
       </div>
       {schema.validationReport && (
         <details open className="schema-section">

@@ -56,6 +56,18 @@ func (p *MergeProxy) HandleRun(w http.ResponseWriter, r *http.Request) {
 	p.proxy(w, r, http.MethodPost, target)
 }
 
+// HandleDiscover POST /curator/tenants/{id}/discover — triggers the M4c
+// discovery agent (~$0.40 LLM, ~2 min). Produces or refreshes MappingArtifact.
+func (p *MergeProxy) HandleDiscover(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "tenant id missing")
+		return
+	}
+	target := p.adminBase + "/admin/api/internal/curator/tenants/" + url.PathEscape(tenantID) + "/discover"
+	p.proxy(w, r, http.MethodPost, target)
+}
+
 // HandleListReports GET /curator/tenants/{id}/merge-reports
 func (p *MergeProxy) HandleListReports(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)

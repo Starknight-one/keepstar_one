@@ -332,7 +332,7 @@ func main() {
 	mergeApplyUC := usecases.NewMergeApplyUseCase(catalogAdapter, mappingArtifactAdapter, mergeReportsAdapter, mergeCascade, log).
 		WithApplyTx(mergeApplyTxAdapter).
 		WithAudit(auditAdapter)
-	curatorMergeHandler := handlers.NewCuratorMergeHandler(mergeApplyUC, mergeReportsAdapter, log)
+	curatorMergeHandler := handlers.NewCuratorMergeHandler(mergeApplyUC, discoveryUC, mergeReportsAdapter, log)
 	// candidatesAdapter + categoriesV2Adapter were constructed earlier (above the
 	// integrations block) so harvester-lite can wire them; reuse the same instances
 	// here for the HTTP handlers.
@@ -652,6 +652,8 @@ func main() {
 			curatorMergeHandler.HandleRun(w, r)
 		case strings.HasSuffix(path, "/merge-reports"):
 			curatorMergeHandler.HandleListForTenant(w, r)
+		case strings.HasSuffix(path, "/discover"):
+			curatorMergeHandler.HandleDiscover(w, r)
 		default:
 			http.NotFound(w, r)
 		}

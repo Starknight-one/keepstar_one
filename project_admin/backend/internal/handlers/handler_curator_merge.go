@@ -20,13 +20,41 @@ import (
 )
 
 type CuratorMergeHandler struct {
-	uc      *usecases.MergeApplyUseCase
-	reports ports.MergeReportsPort
-	log     *logger.Logger
+	uc        *usecases.MergeApplyUseCase
+	discovery *usecases.DiscoveryUseCase
+	reports   ports.MergeReportsPort
+	log       *logger.Logger
 }
 
-func NewCuratorMergeHandler(uc *usecases.MergeApplyUseCase, reports ports.MergeReportsPort, log *logger.Logger) *CuratorMergeHandler {
-	return &CuratorMergeHandler{uc: uc, reports: reports, log: log}
+func NewCuratorMergeHandler(uc *usecases.MergeApplyUseCase, discovery *usecases.DiscoveryUseCase, reports ports.MergeReportsPort, log *logger.Logger) *CuratorMergeHandler {
+	return &CuratorMergeHandler{uc: uc, discovery: discovery, reports: reports, log: log}
+}
+
+// POST /admin/api/internal/curator/tenants/{tenantId}/discover
+// Triggers the M4c discovery agent for the tenant — produces / refreshes the
+// MappingArtifact that the merge agent (run / apply) reads. ~$0.40 in LLM cost
+// per call. Idempotent: re-running supersedes the prior artifact.
+func (h *CuratorMergeHandler) HandleDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	tenantID := tenantIDFromMergePath(r.URL.Path)
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "tenant_id missing in path")
+		return
+	}
+	if h.discovery == nil {
+		writeError(w, http.StatusServiceUnavailable, "discovery agent not configured (missing ANTHROPIC_API_KEY?)")
+		return
+	}
+	res, err := h.discovery.Run(r.Context(), tenantID)
+	if err != nil {
+		h.log.FromContext(r.Context()).Error("discovery_run_failed", "error", err, "tenant_id", tenantID)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // POST /admin/api/internal/curator/tenants/{tenantId}/merge/run

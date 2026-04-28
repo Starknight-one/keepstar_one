@@ -36,4 +36,5 @@ export const mergeApi = {
   get: (reportId) => api.get(`/curator/merge-reports/${reportId}`),
   apply: (reportId, body) => api.post(`/curator/merge-reports/${reportId}/apply`, body),
   revert: (reportId, body) => api.post(`/curator/merge-reports/${reportId}/revert`, body || {}),
+  discover: (tenantId) => api.post(`/curator/tenants/${tenantId}/discover`),
 }
