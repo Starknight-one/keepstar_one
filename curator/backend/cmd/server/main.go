@@ -19,7 +19,14 @@ func main() {
 	if dsn == "" {
 		log.Fatal("CURATOR_DATABASE_URL or DATABASE_URL required")
 	}
-	bind := firstNonEmpty(os.Getenv("CURATOR_BIND"), ":8082")
+	// Railway injects PORT for the listening service. Allow CURATOR_BIND to
+	// override (rare, e.g. local dev wants ":8082"); fall back to PORT;
+	// final fallback is ":8082" for plain local runs without env.
+	bind := firstNonEmpty(
+		os.Getenv("CURATOR_BIND"),
+		portToBind(os.Getenv("PORT")),
+		":8082",
+	)
 	secure := strings.EqualFold(os.Getenv("CURATOR_COOKIE_SECURE"), "true")
 
 	ctx := context.Background()
@@ -140,6 +147,19 @@ func firstNonEmpty(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// portToBind converts a bare PORT env value (e.g. "8080") into a listen
+// address (":8080"). Empty input returns empty so the firstNonEmpty
+// chain keeps falling through.
+func portToBind(p string) string {
+	if p == "" {
+		return ""
+	}
+	if p[0] == ':' {
+		return p
+	}
+	return ":" + p
 }
 
 // withCORS lets the dev frontend (Vite on :5175) talk to :8082 in development.
