@@ -1,0 +1,185 @@
+# Engine V4 Expertise
+# Ops-driven UI assembly engine — Agent2 modifies a formation tree by emitting ops.
+
+overview:
+  layer: "engine"
+  path: "project_v4/backend/internal/engine_v4/"
+  go_module: "keepstar_v4"
+  imports: "keepstar_v4/internal/domain (only)"
+  purpose: |
+    Apply a sequence of declarative tree operations (insert/update/delete/move/replace)
+    onto a Formation tree. Compose widgets either from scratch or by modifying an
+    existing formation. Bind atom fields to entity data. Emit a compact TreeMap
+    that Agent2 uses as context for its next turn.
+
+entry_point:
+  file: "engine.go"
+  type: "Engine struct{}"
+  ctor: "NewEngine() *Engine"
+  method: "Execute(input ExecuteInput) ExecuteOutput"
+  pipeline:
+    - "1. Init formation (or load Input.Formation)"
+    - "2. Apply formation-level settings: Layout, Columns, Size"
+    - "3. ApplyOps — execute preset+user ops on the tree (preset ops concatenated before user ops in tool layer)"
+    - "4. Limit slice → Replicate (explicit Input.Replicate flag) or single-bind"
+    - "5. Inject DefaultWidgetActions (like, add_to_cart) for entity-bound widgets"
+    - "6. BindData — atoms with FieldName receive values from Data[i]"
+    - "7. ApplyConstraints — normalize/validate"
+    - "8. StampTreeIDs → BuildTreeMap (compact ref structure for Agent2 next turn)"
+
+types:
+  file: "types.go"
+  op_type:
+    values: ["insert", "update", "delete", "move", "replace"]
+  op_struct:
+    fields: ["Type", "Target", "Ref", "Parent", "After", "Props"]
+    target: "atom/node ID or field-name wildcard"
+    ref: "binding name for chaining ($ref) — exposes this node to subsequent ops"
+    parent: "parent ID or $ref for insert/move"
+    after: "position after sibling"
+    props: "arbitrary key/value bag (label, value, fieldName, size, src, action, etc.)"
+  execute_input:
+    fields: ["Ops", "Data", "EntityType", "Formation", "Layout", "Columns", "Size", "Replicate", "Limit", "PresetResolver"]
+    entity_type: "product | service"
+    layout: "grid | list | single | carousel"
+    size: "tiny | small | medium | large"
+    replicate: "explicit B3 flag — engine never auto-replicates"
+    limit: "0 = all data items"
+    preset_resolver: "PresetResolver closure (tenant-aware override). nil → global registry only"
+  execute_output:
+    fields: ["Formation *domain.FormationWithData", "TreeMap map[string]interface{}", "Warnings []string"]
+  preset_resolver_type: "func(name string) (*Preset, bool)"
+
+ops:
+  file: "ops.go"
+  responsibility: "ApplyOps walks ops in order, mutating the formation tree."
+  ref_binding: "Ops with non-empty Ref expose the affected node in a ref-table; later ops can target $refName as Parent or Target."
+  expand_inline_presets:
+    file: "expand.go"
+    purpose: "When an op references an inline preset (e.g. inside a multi-widget composition), resolve it via PresetResolver (or global GetPreset)."
+
+binding:
+  file: "binding.go"
+  rule: "Atoms whose Props.fieldName matches a key in Data[i] get Value populated."
+  scope: "Single-bind (Replicate=false): atoms read from Data[0]. Replicate=true: each cloned widget binds to its own Data[i]."
+
+constraints:
+  file: "constraints.go"
+  responsibility: "Normalize widget sizes, validate parent-child types, drop invalid props."
+  applied: "After data binding, before TreeMap construction."
+
+tree_ids:
+  file: "tree_ids.go"
+  purpose: "Stamp deterministic IDs on every node post-mutation (used for Op.Target lookup and TreeMap keys)."
+
+sections:
+  file: "sections.go"
+  purpose: "Section hierarchy inside widgets (content blocks). Used by detail presets."
+
+default_ops:
+  file: "default_ops.go"
+  purpose: "Thin wrappers used by usecases when constructing programmatic compositions (not via Agent2)."
+  funcs:
+    - "ProductCardGridOps() []Op — canonical grid of product cards"
+    - "ProductDetailOps() []Op — single product detail formation"
+    - "DefaultWidgetActions() []domain.ActionDef — default like/cart actions injected for entity-bound widgets"
+    - "GridColumnsForCount(count int) int — heuristic columns picker (used when caller doesn't set Columns)"
+
+presets:
+  registry_file: "presets.go"
+  contract:
+    struct: "Preset { Name, Description, Category, Refs []string, DefaultLayout, DefaultColumns, DefaultSize, DefaultReplicate, Build func(...) []Op }"
+    register: "RegisterPreset(*Preset) called from package-level init() in each presets_*.go file"
+    lookup: "GetPreset(name) (*Preset, bool) — global registry"
+  exposed_refs: "$w (widget root), $root (container/layout), $info (info column where present), $meta (meta row where present)"
+  default_replicate_inheritance: "If user does not pass Replicate, the preset's DefaultReplicate is used."
+  count: 12
+
+  product:
+    file: "presets_product.go"
+    presets:
+      - name: "product_card"
+        purpose: "Standard product card for grids of 2–4 items (medium size)."
+      - name: "product_card_compact"
+        purpose: "Compact card for dense grids (5+). Fewer atoms, small size."
+      - name: "product_card_horizontal"
+        purpose: "Horizontal — image left, info right. Good for carousels."
+      - name: "product_card_list_row"
+        purpose: 'Wide list row (narrow image + stretched info column). Use with Layout="list".'
+      - name: "product_detail"
+        purpose: "Full product detail (vertical, 16:9 hero, price row, description, tags)."
+      - name: "product_detail_horizontal"
+        purpose: "Detail with image on the left and info column on the right."
+    bound_fields: ["images", "name", "price", "rating", "brand", "description", "category", "tags"]
+    binding_note: "fieldName values are HARDCODED for cosmetics catalog. B7 will replace this with role-based slot resolution via catalog.field_definitions."
+
+  nav:
+    file: "presets_nav.go"
+    presets:
+      - name: "catalog_category_card"
+        purpose: "Category/group card: image + title + item count. Binds name/images/count."
+      - name: "liked_grid"
+        purpose: "Grid of liked products. Alias on product_card with a nav-specific name."
+      - name: "cart_grid"
+        purpose: "Grid of cart items. Alias on product_card_horizontal. Cart totals widget pending B4 (multi-widget)."
+
+  system:
+    file: "presets_system.go"
+    presets:
+      - name: "text_explainer"
+        purpose: "Title + body paragraph. For LLM explanations — override `title`/`body` via update ops."
+      - name: "empty_not_found"
+        purpose: "Empty state — nothing found. Override `headline`/`subtext` for custom copy."
+      - name: "error_generic"
+        purpose: "Generic error state (alert icon + headline + subtext). Override copy via update ops."
+    note: "System presets do NOT bind to entity data — they are literal-text widgets."
+
+tenant_preset_loader:
+  file: "tenant_preset_loader.go"
+  purpose: |
+    Reads published canvas presets from the database (admin-created UI overrides
+    via KeepstarCanvas) and produces a PresetResolver closure that the visual
+    assembly tool threads into ExecuteInput. Falls back to the global registry
+    when DB is unavailable or no override exists.
+  used_by: "project_v4/backend/internal/tools/tool_visual_assembly.go (sets ExecuteInput.PresetResolver = ResolverFor(tenantID))"
+
+tests:
+  - "ops_test.go — unit tests for ApplyOps mutations"
+  - "presets_behavior_test.go — preset shape + ref exposure"
+  - "composition_behavior_test.go — multi-widget composition + override ops"
+  - "replicate_behavior_test.go — explicit Replicate flag, Limit, single-bind vs replicated"
+  - "tenant_preset_loader_test.go — tenant override resolution + fallback"
+
+caller_relationships:
+  - "internal/tools/tool_visual_assembly.go → calls Engine.Execute as the main render tool"
+  - "internal/usecases/agent2_execute.go → wraps the visual_assembly tool call in the Agent2 turn"
+  - "internal/usecases/pipeline_execute.go → runs Agent1 (data) then Agent2 (UI ops)"
+
+agent2_contract:
+  prompt_file: "internal/prompts/prompt_compose_widgets.go"
+  shape: |
+    Agent2 receives StateMeta (count, fields, entity type) and either no formation
+    (build from scratch) or an existing TreeMap (modify). It calls visual_assembly
+    with: ops, optional preset name, optional layout/columns/size, explicit replicate.
+    Preset ops are concatenated BEFORE user ops in a single ApplyOps batch — so user
+    override-ops can reference $refs exposed by the preset.
+
+gotchas:
+  - "Engine never auto-replicates — Replicate is an explicit input flag, optionally inherited from preset.DefaultReplicate."
+  - "Atoms bind by Props.fieldName — if a preset hardcodes 'price' but data has 'priceFormatted', binding silently produces empty value."
+  - "PresetResolver=nil falls back to global GetPreset; tenant overrides are opt-in via ResolverFor()."
+  - "Ops apply in array order — order matters: an update op cannot target a $ref defined by a later insert op."
+  - "Tree IDs are restamped after every Execute — do not persist Agent2-emitted IDs across turns; use refs/fieldNames instead."
+  - "Cart totals are a known gap (B4 — multi-widget composition not finalized)."
+  - "Preset fieldName binding is hardcoded for cosmetics; B7 will switch to role-based slot resolution from catalog.field_definitions."
+  - "DefaultWidgetActions are auto-injected for entity-bound widgets only (those whose data binding succeeded). System presets get no actions."
+
+related_experts:
+  - "backend-pipeline — Agent1/Agent2 system prompts and tools (visual_assembly, catalog_search, state_filter, history_lookup)"
+  - "backend-domain — FormationWithData, Widget, Atom, ActionDef shapes consumed by the engine"
+  - "admin-backend — KeepstarCanvas presets/components (source of tenant overrides)"
+
+active_workstreams:
+  tracker: "docs/PRE_LAUNCH_TASKS.md"
+  waves_touching_engine_v4: ["B2", "B3", "B4", "B7"]
+  session_logs: "docs/Updates/feature-engine-v4_<YYYY-MM-DD>_<HH-MM>.md"
