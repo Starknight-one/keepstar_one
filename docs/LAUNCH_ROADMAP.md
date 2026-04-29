@@ -1,6 +1,6 @@
 # LAUNCH ROADMAP — путь до запуска проекта
 
-> **Last updated**: 2026-04-29
+> **Last updated**: 2026-04-29 (вторая сессия дня — после live-теста install)
 > **Owner**: Vlad (PM, не разработчик)
 > **Партнёр по разработке**: Claude (Opus 4.7)
 >
@@ -81,7 +81,7 @@
 
 | Источник | Размер | Влияние на работу |
 |---|---|---|
-| ~~Legacy `project/backend/`~~ | ~~~17K строк~~ | **Снесён 2026-04-29** (ветка `phase2-cleanup`, 22K deletions, 131 файл). Push отложен до окна Railway. |
+| ~~Legacy `project/backend/`~~ | ~~~17K строк~~ | **Снесён 2026-04-29** и смёрджен в main (`5d30f64`, `3e8cc3b`, `066c959`). Чат на проде использует V4. |
 | **6% тестового покрытия** | 3 356 строк тестов на 54K Go | Нет страховочной сетки. Каждое изменение = риск регресса, узнаём вручную в браузере |
 | **Hot files** | postgres_catalog.go (1607), ops.go (1361), catalog_adapter.go (1230), tool_visual_assembly.go (901) | В этих файлах живёт настоящая работа, и в них Claude чаще всего «плавает» |
 | **Документационный долг** | 38K строк, ~48% от LOC | Часть устарела. Claude иногда берёт «правду» из доков, попадает мимо |
@@ -144,8 +144,8 @@
 
 | Фаза | Что | Цель фазы | Статус |
 |---|---|---|---|
-| **1. Catalog finalize** | Чек-лист всех вариаций флоу + UX-полировка + закрыть 🔴 (E1, G1) + 🟠 которые мешают клиенту + тесты на каталог-флоу | Гейт «безупречный onboarding» открыт | **в работе с 2026-04-29** |
-| **2. Foundational cleanup** | ~~Снести `project/backend/` legacy~~ ✅ (2026-04-29, ветка `phase2-cleanup`, не запушено), переструктурировать экспертов в 6 вертикальных доменов, прогнать `self-improve` до стабильности, перенести устаревшие спеки из `docs/` в `archive/`, тонкий слой integration-тестов на pipeline | Чистый контекст и живая ментальная карта | partial |
+| **1. Catalog finalize** | Чек-лист всех вариаций флоу + UX-полировка + закрыть 🔴 (E1, G1) + 🟠 которые мешают клиенту + тесты на каталог-флоу | Гейт «безупречный onboarding» открыт | **partial** — E1 закрыт live-тестом 2026-04-29, G1 + A4 закоммичены но не подтверждены живьём |
+| **2. Foundational cleanup** | ~~Снести `project/backend/` legacy~~ ✅ (смёрджен в main 2026-04-29), переструктурировать экспертов в 6 вертикальных доменов **(в работе в параллельной сессии)**, прогнать `self-improve` до стабильности, перенести устаревшие спеки из `docs/` в `archive/`, тонкий слой integration-тестов на pipeline | Чистый контекст и живая ментальная карта | **partial** — legacy снесён, эксперты в работе |
 | **3. v9 deep dive** | Полное чтение v9 (apps/web/src/agent, packages/domain, packages/renderer, layout, scripts), написать спеку интеграции: что заимствуем, как стыкуем, что v9 НЕ покрывает (раскладка данных), какие риски | Вход в самый большой кусок работы с открытыми глазами | open |
 | **4. v9 integration** | Поэтапно: канвас в админке → ops-модель в V4 → решение по AI-агенту. Каждый этап с фиксацией результата перед следующим | Главная архитектурная работа | open |
 | **5. Post-v9 stabilization** | Скорость, стоимость, качество рендера, качество реакции на запросы. Пока не выйдем на уровень текущего V4 (или лучше) — не двигаемся дальше | Возврат на «работает быстро/дёшево/качественно» | open |
@@ -161,32 +161,55 @@
 
 ---
 
-## 6. Где мы сейчас — фаза 1 в работе
+## 6. Где мы сейчас — две сессии в параллель, обе живые
 
-Стартует **2026-04-29** в активной сессии.
+### 6.1. Сессия A (catalog finalize, фаза 1) — live-test пройден
 
-### 6.1. Подход к фазе 1
+**State on 2026-04-29 (вторая часть дня, до компакта).**
 
-Не идти от gap-doc'а — идти **от пользовательского опыта**. Vlad открывает dev-store, проходит флоу руками, я наблюдаю и фиксирую. Параллельно:
+Что было сделано в этой сессии:
+1. Shopify install flow с нуля: `HandleAppEntry` (HMAC + dup-check + tenant auto-provision) + `OAuthState.FlowKind` + post-OAuth completion hook
+2. Magic-link usecase: `Issue/Consume/ProvisionShopOwner` + race-fix (newly-created user без membership = блок email)
+3. Email-шаблон + frontend page `/auth/magic` (POST → adopt session)
+4. **Resend HTTP adapter** (SMTP `net/smtp.SendMail` молча зависает на Railway-egress)
+5. **Webhook context fix** (горутина наследовала `r.Context()` который отменялся → `app/uninstalled` падал, integration залипала)
+6. **Install UX page** `/auth/install-complete` — заменяет редирект на `/auth/sign-in` с ненужными Google/Telegram кнопками. Honest "we emailed you a link"
+7. G1 (V4-чат читает `master_products.tier2`): SQL SELECT + scan + ProductToMap precedence, 5 unit-тестов
+8. A4 (extractTier2 honour `Transform`): 13 unit-тестов на units/lowercase/shorten/split
+9. Magic-link unit-тесты (15) + ProductToMap precedence (5) — итого **33 теста** в этой сессии
 
-1. **Собрать чек-лист сценариев** (вместе с Vlad'ом, на основе того что он реально делает в curator/admin)
-2. **Прогнать каждый сценарий** — happy path + edge cases
-3. **Зафиксировать**: что работает / что работает плохо (UX) / что не работает совсем
-4. **Раскидать findings** по существующему `CATALOG_GAPS.md` или новому списку
-5. **Закрывать по приоритету**: сначала «не работает совсем», потом «UX плохой», потом 🟠 из гэп-дока
-6. **Тесты на каждый исправленный сценарий** (тонкий integration-слой)
+**Live-тест на test2-mhjhejbs.myshopify.com прошёл end-to-end:**
+- Install из Shopify → app entry → OAuth → callback → tenant + integration created
+- Resend HTTP отправил магик-линк на `starknight@keepstar.one`
+- Клик → `/auth/magic` → session → `/catalog` (17 продуктов от harvester'а)
 
-### 6.2. Что есть для работы
+🔴 **E1 закрыт live**.
 
-- **Прод dev-store** — Vlad может тестировать живьём
-- **Свежее Shopify-приложение** — Vlad может создать новое, получить чистые тестовые обогащённые данные
-- **`docs/CATALOG_GAPS.md`** — стартовая точка известных пробелов
-- **Последний дев-лог `main-catalog-finalize-flow_2026-04-29_05-30.md`** — что делалось накануне
+### 6.2. Сессия B (phase2-cleanup, фаза 2) — частично закрыта, эксперты в работе
 
-### 6.3. Что НЕ делать в фазе 1
+Параллельная сессия в другом терминале сделала:
+- Снос `project/backend/` (~17K строк, 131 файл, мердж в main: `5d30f64`, `3e8cc3b`, `066c959`)
+- Лог сессии: `docs/Updates/phase2-cleanup_2026-04-29_21-44.md`
 
-- Не лезть в legacy `project/backend/` (это фаза 2)
-- Не лезть в v9 (это фаза 3+)
+**В работе сейчас**: переструктура экспертов в 6 вертикальных доменов (см. секцию 4.3 + таблицу). Self-improve прогон, перенос устаревших доков в archive — следующие шаги в той же сессии.
+
+### 6.3. Что НЕ протестировано живьём (для следующей сессии)
+
+После компакта первой сессии и продолжения работы — обязательно прогнать:
+
+1. **G1 verify**: открыть Curator → запустить discovery на test2 → apply → проверить `catalog.master_products.tier2` JSONB не пустой → открыть V4-чат на этом тенанте → виджет отдаёт tier2 поля
+2. **A4 verify**: в том же discovery → агент должен эмитить `units.weight` / `units.volume` для размеров → `master_products.tier2.weight_g` / `volume_ml` это **числа** (int), не строки `"2.5 kg"`
+3. **Webhook regression**: uninstall test2 в Shopify → должен дёрнуть наш `app/uninstalled` без `context canceled` → integration → status=disconnected. Reinstall → проходит как «reinstall» path, не залипает на «already_connected»
+4. **Edge cases install**: bad HMAC (404 mock), reuse magic-link (1st OK, 2nd → expired), magic-link expired (24h+)
+
+### 6.4. Открытые гэпы каталога (не блокеры запуска, отложены)
+
+Полный список — `docs/CATALOG_GAPS.md`. Phase 1 закроет их **после** Phase 2 cleanup и live-проверки 6.3 выше. До запуска нужны:
+- 🟠 E2 (webhook product_update verify), E3 (stale cleanup periodic), E10 (seed-devstore regression)
+- 🟡 C1-C5 (curator UI redesign — запиленный Pencil-mockup, не имплементирован)
+- 🟡 H5-H7 (admin product detail blocks, per-tenant integration view)
+
+🟢 Severity gaps можно оставить и после запуска.
 - Не делать общий рефакторинг hot files (это фаза 2 и 4)
 - Не переделывать экспертов (это фаза 2)
 - Закрывать каталог только до уровня «гейт для клиентов открыт» — не пытаться сделать «идеально», 🟢 пункты можно оставить
@@ -207,3 +230,4 @@
 | Дата | Кто | Что |
 |---|---|---|
 | 2026-04-29 | Claude (Opus 4.7) + Vlad | Первая версия. Создана после стратегической сессии где переосмысливался порядок работ, переоценивался размер v9-интеграции, исправлялась структура экспертов. Фаза 1 (catalog finalize) запущена в той же сессии. |
+| 2026-04-29 (вечер) | Claude (Opus 4.7) + Vlad | Live-тест install flow прошёл end-to-end на test2 dev-store. 🔴 E1 закрыт. Выявлены и пофикшены два бага: SMTP зависание (→ Resend HTTP adapter) и webhook context cancel (→ background context). Добавлена страница `/auth/install-complete`. Параллельная сессия снесла legacy `project/backend/` и стартовала переструктуру экспертов. Перед компактом первой сессии. |
