@@ -1,0 +1,241 @@
+# Curator Expertise
+# Standalone Go binary + React SPA for catalog curation. Read-side dashboard
+# over the same Neon DB as admin + V4. Mutating ops on candidates/junk/audit
+# are local; merge operations are proxied to admin-backend.
+
+overview:
+  layer: "standalone-service"
+  go_module: "keepstar-curator"
+  imports: "keepstar-curator/internal/{adapters, domain, handlers, session} (no cross-module imports)"
+  path: "curator/"
+  purpose: |
+    Operator dashboard for catalog curation. Surfaces (a) candidates queue
+    (attribute candidates from discovery, category candidates), (b) junk
+    classification, (c) audit log, (d) tenant operations (browse listings,
+    schema status, run discovery, run merge, view merge reports), (e) master
+    catalog browse + detail.
+  database: "Same Neon Postgres as admin/v4. CURATOR_DATABASE_URL or DATABASE_URL fallback."
+  deployment: "Single binary multi-stage Dockerfile (mirrors project_admin pattern). One Railway service: Curator → curator-production-46d7.up.railway.app, branch main, rootDir /curator, port 8082."
+
+architecture:
+  pattern: "Hexagonal lite — single adapter package, single handlers package, thin domain types"
+  backend_structure:
+    cmd_server: "curator/backend/cmd/server/main.go (185 LOC) — DI bootstrap, route mux, CORS, SPA fallback"
+    cmd_seed: "curator/backend/cmd/seed-curator/main.go (49 LOC) — bootstrap default curator user"
+    domain: "curator/backend/internal/domain/types.go (147 LOC) — read-shape types only, mirrors admin canonical types"
+    adapters: "curator/backend/internal/adapters/postgres.go (876 LOC) — SINGLE Client struct, ~25 methods spanning auth + curation queues + tenants + master catalog"
+    handlers: "curator/backend/internal/handlers/handlers.go (284 LOC) — auth + queues + tenants + master catalog HTTP handlers"
+    handler_merge: "curator/backend/internal/handlers/handler_merge.go (204 LOC) — MergeProxy: thin reverse-proxy to admin-backend for merge run/discover/reports"
+    session: "curator/backend/internal/session/middleware.go (94 LOC) — Bearer or HttpOnly Cookie auth, opaque tokens"
+  frontend_structure:
+    framework: "React 19 + Vite 7 + React Router 7"
+    entry: "curator/frontend/src/main.jsx, App.jsx (89 LOC)"
+    pages:
+      - "LoginPage — POST /curator/auth/login, sets cookie + receives token"
+      - "TenantsPage — GET /curator/tenants (operator dashboard)"
+      - "TenantDetailPage — GET /curator/tenants/{id} (346 LOC, biggest page)"
+      - "MasterCatalogPage / MasterDetailPage — master catalog browse"
+      - "CandidatesPage — attribute + category candidates"
+      - "JunkPage — junk classification queue"
+      - "AuditPage — audit log read-only"
+      - "MergeReportPage — merge report viewer (424 LOC, biggest)"
+    api_client: "curator/frontend/src/api.js (40 LOC) — fetch wrapper, no hard redirect on 401 (App.jsx handles via setUser(null))"
+    styling: "curator/frontend/src/app.css (264 LOC) + styles/{tokens, merge}.css; design tokens via CSS variables"
+
+domain_types:
+  file: "curator/backend/internal/domain/types.go"
+  philosophy: "Read-shape only. Curator does NOT own canonical catalog domain — admin owns it. Keep types here narrow, JSON-exact for the operator UI."
+  types:
+    - "CuratorUser {ID, Email, Role, CreatedAt}"
+    - "AttributeCandidate {ID, Key, Vertical, SeenInTenants, SampleValues, ProposedType, AgentMeta, Status, PromotedToColumn, CreatedAt}"
+    - "CategoryCandidate {ID, Name, ProposedParent, SeenInTenants, Vertical, Status, CreatedAt}"
+    - "JunkCandidate {ID, TenantID, ListingID, DetectedReason, Classification, ClassifiedBy, CreatedAt}"
+    - "AuditEntry {ID, TenantID, ActorKind, ActorID, EntityKind, EntityID, Action, FieldChanges, AggregateMeta, CreatedAt}"
+    - "IntegrationSummary {Kind, Status, DisplayName, ExternalID, LastSyncAt}"
+    - "TenantSummary {ID, Slug, Name, Type, ProductsCount, MasterLinkedCount, MasterLinkCoverage, Integrations, SchemaStatus, SchemaVersion, CreatedAt}"
+    - "TenantProductRow {ID, Name (COALESCE display_name/original_name/name), OriginalName, SKU, Brand, PriceCents, Currency, Stock, ImageURL, HasMasterLink, MasterID, SourceSystem}"
+    - "MasterProductSummary {ID, Name, Brand, Vertical, HasEmbedding, HasPIM, HasDescription, ListingCount, OwnerTenantSlug, ImageURL, CreatedAt}"
+    - "MasterVariantSummary {ID, SKU, GTINs, Color, Size, Material, WeightG, VolumeML, ImageURL}"
+    - "MasterProductDetail (embeds MasterProductSummary) {Description, PIMFields, Variants, LinkedListings}"
+    - "TenantSchemaSummary {TenantID, Status, ArtifactVersion, DiscoveredAt, ValidatedAt, MappingArtifact, ValidationReport}"
+
+http_routes:
+  public:
+    - "GET  /health → 'ok'"
+    - "POST /curator/auth/login → {token, user} + sets curator_session cookie"
+    - "POST /curator/auth/logout → clears cookie + invalidates token"
+  protected:
+    description: "All wrapped in session.Middleware(client). Reject 401 if no Bearer header AND no curator_session cookie."
+    me: "GET /curator/me → {id, email, role}"
+    candidates:
+      - "GET  /curator/candidates/attributes?status=... → AttributeCandidate[]"
+      - "POST /curator/candidates/attributes/{id}/promote → PromoteAttribute (transactional ALTER TABLE on master_products)"
+      - "POST /curator/candidates/attributes/{id}/dismiss → DismissAttribute"
+      - "GET  /curator/candidates/categories?status=... → CategoryCandidate[]"
+    junk:
+      - "GET  /curator/junk?status=... → JunkCandidate[]"
+      - "POST /curator/junk/{id}/classify → ClassifyJunk"
+    audit:
+      - "GET /curator/audit?limit=N → AuditEntry[]"
+    tenants:
+      - "GET  /curator/tenants → TenantSummary[]"
+      - "GET  /curator/tenants/{id} → TenantSummary"
+      - "GET  /curator/tenants/{id}/products?search=...&limit=...&offset=... → {rows: TenantProductRow[], total: int}"
+      - "GET  /curator/tenants/{id}/schema → TenantSchemaSummary"
+      - "POST /curator/tenants/{id}/merge/run → proxy to admin-backend (MergeProxy.HandleRun)"
+      - "POST /curator/tenants/{id}/discover → proxy to admin-backend, fire-and-forget 202 (MergeProxy.HandleDiscover)"
+      - "GET  /curator/tenants/{id}/merge-reports → proxy (MergeProxy.HandleListReports)"
+    merge_reports:
+      - "GET /curator/merge-reports/{id} → proxy (MergeProxy.HandleReport)"
+    master_catalog:
+      - "GET /curator/master/products?vertical=...&search=...&limit=...&offset=... → {rows: MasterProductSummary[], total: int}"
+      - "GET /curator/master/products/{id} → MasterProductDetail"
+  spa_fallback:
+    pattern: "Any path that doesn't resolve to a static file under CURATOR_STATIC_DIR (default ./static) → serve index.html"
+    rationale: "Standard SPA deep-link support so /tenants/abc/merge-reports/xyz works after page refresh"
+
+session_auth:
+  scheme: "Opaque random tokens. Plaintext sent to client (cookie + JSON), SHA-256 hashed at rest in DB."
+  token_storage:
+    where: "DB (curator_sessions table — owned by adapters.postgres)"
+    cookie:
+      name: "curator_session"
+      path: "/"
+      http_only: true
+      secure: "controlled by CURATOR_COOKIE_SECURE env (true for prod)"
+      same_site: "Lax"
+      max_age: "7 * 24 * 3600  (7 days)"
+    bearer: "Authorization: Bearer <token> — supported for API/non-browser clients"
+  middleware: "session.Middleware(client) — wraps all protected routes. Sets ctx values (uid, email, role) via context.WithValue."
+  context_helpers: "session.UserID(ctx), session.Email(ctx), session.Role(ctx)"
+  resolve_session: "adapters.Client.ResolveSession(ctx, plain) → CuratorUser; ErrInvalidCredentials if not found"
+  logout: "Both cookie and Bearer paths: client.Logout(token) deletes server-side row, then ClearCookie sets MaxAge=-1"
+
+merge_proxy:
+  file: "curator/backend/internal/handlers/handler_merge.go"
+  pattern: "Reverse-proxy. Curator does NOT duplicate merge logic — admin-backend owns MergeApplyUseCase (it has the catalog domain types and adapters)."
+  why: "Different Go modules — keepstar-curator vs keepstar-admin — duplicating would cause drift. Proxy is one HTTP hop."
+  flow:
+    - "1. Curator-frontend → curator-backend with curator_session cookie"
+    - "2. session middleware authenticates → sets ctx.UserID"
+    - "3. MergeProxy strips client auth, attaches X-Internal-Key + X-Curator-User: <uid>"
+    - "4. POST/GET to admin-backend internal endpoint"
+    - "5. admin-backend's InternalKeyMiddleware accepts the header → executes use case → returns response"
+    - "6. MergeProxy pipes response back to curator-frontend"
+  config_env:
+    - "ADMIN_BASE_URL — admin-backend base (default http://127.0.0.1:8081 for local dev)"
+    - "CURATOR_INTERNAL_KEY — must match admin's CURATOR_INTERNAL_KEY env var"
+  timeouts:
+    client_timeout: "10 minutes — covers worst-case discovery (8 min budget) + slow merge-apply on large reports"
+    rationale: "Discovery agent on admin side has 8-min wallclock budget. Curator UI must not bail before — would burn LLM tokens with no result surfaced."
+  fire_and_forget:
+    where: "HandleDiscover only"
+    behavior: "Returns 202 to client immediately, then runs admin-side request in background goroutine with context.Background(). Closing curator UI tab does NOT cancel the run."
+    polling: "Frontend polls /curator/tenants/{id}/schema to detect when discovered_at advances → run finished"
+
+adapter_methods:
+  file: "curator/backend/internal/adapters/postgres.go"
+  size_loc: 876
+  groups:
+    auth:
+      - "CreateUser(ctx, email, password) — bcrypt hashed; returns user ID"
+      - "Login(ctx, email, password) → (token, user, err) — verifies bcrypt, generates session, persists hashed token"
+      - "Logout(ctx, plain) — deletes session by hashed token"
+      - "ResolveSession(ctx, plain) → CuratorUser — middleware entry point"
+    candidates:
+      - "ListAttributeCandidates(ctx, status) — filter by status (proposed | promoted | dismissed)"
+      - "ListCategoryCandidates(ctx, status)"
+      - "PromoteAttribute(ctx, candidateID, key, vertical, columnType, actorID) — TRANSACTIONAL: ALTER TABLE master_products ADD COLUMN; UPDATE candidate.status='promoted'; INSERT audit"
+      - "DismissAttribute(ctx, candidateID, actorID)"
+    junk:
+      - "ListJunkCandidates(ctx, status)"
+      - "ClassifyJunk(ctx, id, classification, classifiedBy)"
+    audit:
+      - "ListAudit(ctx, limit)"
+      - "WriteAudit(ctx, e) — emitted by promote/classify"
+    tenants:
+      - "ListTenants(ctx) — TenantSummary[] (joins tenants + products counts + master link coverage + integrations + schema status)"
+      - "GetTenant(ctx, id)"
+      - "ListTenantProducts(ctx, tenantID, search, limit, offset) → ([]row, total)"
+      - "GetTenantSchema(ctx, tenantID)"
+      - "listIntegrationsForTenants(ctx, tenantIDs) — internal helper, batched lookup"
+    master_catalog:
+      - "ListMasterProducts(ctx, vertical, search, limit, offset) → ([]row, total)"
+      - "GetMasterProduct(ctx, id) → MasterProductDetail (with variants + linked listings)"
+  utility:
+    - "verticalKeys() — list of allowed verticals (whitelist for filters)"
+    - "validIdent(s) — SQL identifier safety check (used by PromoteAttribute for column name)"
+    - "generateSessionToken() — crypto/rand 32-byte token"
+    - "hashToken(plain) — SHA-256 hex"
+
+frontend:
+  router_v7: "react-router-dom 7"
+  layout: "App.jsx Layout component — sidebar (Operations, Curation queues, Activity sections) + main route outlet"
+  auth_flow:
+    - "On mount: GET /curator/me. 401 → setUser(null) → render LoginPage. Success → render Layout."
+    - "LoginPage onLogin sets user, navigates to /tenants"
+    - "Logout: POST /curator/auth/logout, setUser(null), navigate('/login')"
+  redirects:
+    - "Logged-out: /* → Navigate('/login')"
+    - "Logged-in /login → Navigate('/tenants')"
+    - "Logged-in / → Navigate('/tenants')"
+    - "Logged-in /* (unknown) → Navigate('/tenants')"
+  api_client:
+    file: "src/api.js (40 LOC)"
+    methods: "api.get(path), api.post(path, body), etc."
+    base_url: "VITE_CURATOR_API env or relative"
+    cookie_handling: "credentials: 'include' on every fetch (required for cross-origin dev with curator_session cookie)"
+
+env_vars:
+  required:
+    - "CURATOR_DATABASE_URL (or fallback DATABASE_URL) — Postgres DSN"
+  optional:
+    - "PORT — Railway-injected listening port; CURATOR_BIND overrides; default :8082"
+    - "CURATOR_COOKIE_SECURE=true — set Secure on session cookie (prod only)"
+    - "CURATOR_CORS_ORIGIN — explicit allow-list for dev frontend (Vite on :5175). No `*` wildcard."
+    - "CURATOR_STATIC_DIR — SPA static path, default ./static"
+    - "ADMIN_BASE_URL — for MergeProxy, default http://127.0.0.1:8081"
+    - "CURATOR_INTERNAL_KEY — shared secret with admin-backend's CURATOR_INTERNAL_KEY"
+
+deploy:
+  dockerfile: "curator/Dockerfile (multi-stage: node22 frontend build → golang1.24 backend → alpine3.21 runtime)"
+  service_name: "Curator (Railway)"
+  domain: "curator-production-46d7.up.railway.app"
+  exposed_port: 8082
+  static_serving: "./static directory copied from frontend/dist; serves index.html for SPA paths"
+  branch: "main"
+  rootDirectory: "/curator (Railway setting)"
+
+invariants:
+  - "Curator domain types are READ-shape only — admin owns canonical catalog domain. Adding new types here means duplicating, fix at admin first."
+  - "MergeProxy never executes business logic — pure HTTP forwarder. Adding merge variants means add to admin-backend internal endpoint, not curator."
+  - "Session tokens are HASHED at rest (SHA-256). Plaintext only travels in HTTP layer (cookie/Bearer/login response)."
+  - "PromoteAttribute is the only path that modifies catalog DB schema (ALTER TABLE) — wrapped in transaction, gated by validIdent(columnName)."
+  - "Sidebar nav order matters semantically: Operations (tenants, master) > Queues (candidates, junk) > Activity (audit) — operators see the dashboard then drill into work."
+  - "Login does NOT auto-create users — seed-curator command bootstraps the first admin user. New users come via admin-managed flow."
+
+gotchas:
+  - "SQL identifier injection — PromoteAttribute receives column name from candidate.key. validIdent(s) is the gate; bypassing it on a new code path = direct ALTER TABLE injection."
+  - "MergeProxy fire-and-forget for /discover — closing the curator tab does NOT cancel the admin-side run. Long-running LLM costs continue server-side. There's no cancel endpoint currently."
+  - "Curator and admin share the same Postgres but different schemas — curator reads from admin.* and catalog.* schemas; never mutates admin's auth or catalog tables outside PromoteAttribute (and that one writes catalog.master_products)."
+  - "Cookie SameSite=Lax means cross-origin POSTs from curator UI to curator backend MUST share parent domain in prod. CURATOR_CORS_ORIGIN allow-list is for dev only (Vite :5175 → 8082). In prod, frontend and backend share host."
+  - "ADMIN_BASE_URL has no health check — if admin is down, MergeProxy returns the raw fetch error. No circuit breaker or retry."
+  - "Curator has no tests (`*_test.go` count: 0). Adding tests is a known gap; for now any change relies on integration testing against live admin/v4 stack."
+  - "verticalKeys() whitelist must include any new vertical before it can be used in candidate/master filters — silent empty results if missing."
+  - "TenantProductRow.Name uses COALESCE(display_name, original_name, name) — listing rename via admin's editing UI changes display_name only; original is retained."
+
+related_experts:
+  - "admin — owns canonical catalog domain types, MergeApplyUseCase, discovery agent, candidate generation. Curator UI is a thin operator surface over admin's data + endpoints."
+  - "catalog (cross-cutting) — master_products / master_variants / tenant catalog schemas; curator reads these via SQL through its own Client."
+  - "engine-v4 / pipeline-agents — NOT directly related; curator does not consume the chat pipeline. Mentioned only in context: curator audits the catalog that pipeline-agents reads."
+
+active_workstreams:
+  tracker: "docs/PRE_LAUNCH_TASKS.md (curator-related: candidates flow, junk flow, merge UI)"
+  recent_milestones:
+    - "M11 — standalone service split (2026-04-26)"
+    - "Phase D3 — merge proxy + MergeReportPage (2026-04-28)"
+    - "Curator-driven pivot — Этап 1 tenants dashboard (2026-04-27)"
+  hot_files:
+    - "adapters/postgres.go (876 LOC) — single-file adapter, candidate for split when adding more queues (split by domain group: auth.go, candidates.go, tenants.go, master.go)"
+    - "frontend MergeReportPage.jsx (424 LOC) — large detail page; split if more report types added"
+    - "frontend TenantDetailPage.jsx (346 LOC) — operator workspace; growth signal"
