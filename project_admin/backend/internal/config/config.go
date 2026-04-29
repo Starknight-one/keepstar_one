@@ -32,6 +32,12 @@ type Config struct {
 	SMTPFrom     string
 	SMTPFromName string
 
+	// Resend HTTP API — preferred over SMTP. When ResendAPIKey is set we use
+	// HTTPS to api.resend.com instead of stdlib smtp (which hangs silently
+	// on Railway egress). SMTPFrom + SMTPFromName double as the From header
+	// for both transports.
+	ResendAPIKey string
+
 	// Google OAuth
 	GoogleOAuthClientID     string
 	GoogleOAuthClientSecret string
@@ -79,6 +85,8 @@ func Load() *Config {
 		SMTPFrom:     getEnv("SMTP_FROM", ""),
 		SMTPFromName: getEnv("SMTP_FROM_NAME", "Keepstar One"),
 
+		ResendAPIKey: getEnv("RESEND_API_KEY", ""),
+
 		GoogleOAuthClientID:     getEnv("GOOGLE_OAUTH_CLIENT_ID", ""),
 		GoogleOAuthClientSecret: getEnv("GOOGLE_OAUTH_CLIENT_SECRET", ""),
 		GoogleOAuthRedirectURL:  getEnv("GOOGLE_OAUTH_REDIRECT_URL", ""),
@@ -103,7 +111,8 @@ func (c *Config) HasEnrichment() bool { return c.AnthropicAPIKey != "" }
 func (c *Config) HasEncryption() bool { return c.EncryptionKey != "" }
 func (c *Config) HasShopify() bool    { return c.ShopifyAPIKey != "" && c.ShopifyAPISecret != "" }
 
-func (c *Config) HasSMTP() bool { return c.SMTPHost != "" && c.SMTPFrom != "" }
+func (c *Config) HasSMTP() bool   { return c.SMTPHost != "" && c.SMTPFrom != "" }
+func (c *Config) HasResend() bool { return c.ResendAPIKey != "" && c.SMTPFrom != "" }
 func (c *Config) HasGoogleOAuth() bool {
 	return c.GoogleOAuthClientID != "" && c.GoogleOAuthClientSecret != "" && c.GoogleOAuthRedirectURL != ""
 }

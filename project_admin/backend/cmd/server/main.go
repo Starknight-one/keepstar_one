@@ -17,6 +17,7 @@ import (
 	openaiAdapter "keepstar-admin/internal/adapters/openai"
 	"keepstar-admin/internal/adapters/postgres"
 	"keepstar-admin/internal/adapters/shopify"
+	resendAdapter "keepstar-admin/internal/adapters/resend"
 	smtpAdapter "keepstar-admin/internal/adapters/smtp"
 	"keepstar-admin/internal/config"
 	"keepstar-admin/internal/crypto/secretbox"
@@ -112,10 +113,24 @@ func main() {
 		integrationsAdapter = postgres.NewIntegrationsAdapter(dbClient, secretBox)
 	}
 
-	// SMTP mailer — optional. Email-dependent flows (reset, verify, invites,
-	// email-2FA) stay disabled until SMTP_HOST + SMTP_FROM are present.
+	// Mailer — Resend HTTP API preferred (Railway egress kills SMTP 587),
+	// SMTP fallback for self-hosted. Email-dependent flows (reset, verify,
+	// invites, email-2FA, magic-link) stay disabled if neither is configured.
 	var mailer ports.MailerPort
-	if cfg.HasSMTP() {
+	switch {
+	case cfg.HasResend():
+		m, err := resendAdapter.New(resendAdapter.Config{
+			APIKey:   cfg.ResendAPIKey,
+			From:     cfg.SMTPFrom,
+			FromName: cfg.SMTPFromName,
+		})
+		if err != nil {
+			log.Error("resend_init_failed", "error", err)
+		} else {
+			mailer = m
+			log.Info("resend_initialized", "from", cfg.SMTPFrom)
+		}
+	case cfg.HasSMTP():
 		m, err := smtpAdapter.New(smtpAdapter.Config{
 			Host: cfg.SMTPHost, Port: cfg.SMTPPort,
 			User: cfg.SMTPUser, Password: cfg.SMTPPassword,
@@ -127,8 +142,8 @@ func main() {
 			mailer = m
 			log.Info("smtp_initialized", "host", cfg.SMTPHost, "from", cfg.SMTPFrom)
 		}
-	} else {
-		log.Warn("smtp_not_configured — password reset, email verify, invitations disabled")
+	default:
+		log.Warn("mailer_not_configured — password reset, email verify, invitations, magic-link disabled")
 	}
 
 	// Challenges repo (email verify / reset / TOTP setup / email 2FA).
