@@ -173,7 +173,8 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
 			COALESCE(mp.marketing_claim, '') as marketing_claim,
 			mp.benefits,
-			COALESCE(p.extra, '{}'::jsonb) as extra
+			COALESCE(p.extra, '{}'::jsonb) as extra,
+			COALESCE(mp.tier2, '{}'::jsonb) as mp_tier2
 		FROM catalog.products p` + joins + `
 		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
 	`
@@ -339,7 +340,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	for rows.Next() {
 		var p domain.Product
 		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-		var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
+		var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON, mpTier2JSON []byte
 		var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 		var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 		var mvSKU, mvSize, mvColor, mvImageURL *string
@@ -357,7 +358,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			&mpProductForm, &mpTexture, &mpRoutineStep,
 			&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
 			&mpMarketingClaim, &mpBenefits,
-			&extraJSON,
+			&extraJSON, &mpTier2JSON,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan product: %w", err)
@@ -400,6 +401,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			TargetArea:      mpTargetArea,
 			MarketingClaim:  mpMarketingClaim,
 			Benefits:        mpBenefits,
+			Tier2JSON:       mpTier2JSON,
 			VariantSKU:      mvSKU,
 			VariantGTINs:    mvGTINs,
 			VariantSize:     mvSize,
@@ -449,7 +451,8 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
 			COALESCE(mp.marketing_claim, '') as marketing_claim,
 			mp.benefits,
-			COALESCE(p.extra, '{}'::jsonb) as extra
+			COALESCE(p.extra, '{}'::jsonb) as extra,
+			COALESCE(mp.tier2, '{}'::jsonb) as mp_tier2
 		FROM catalog.products p
 		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
 		LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
@@ -460,7 +463,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 
 	var p domain.Product
 	var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-	var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
+	var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON, mpTier2JSON []byte
 	var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 	var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 	var mvSKU, mvSize, mvColor, mvImageURL *string
@@ -478,7 +481,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		&mpProductForm, &mpTexture, &mpRoutineStep,
 		&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
 		&mpMarketingClaim, &mpBenefits,
-		&extraJSON,
+		&extraJSON, &mpTier2JSON,
 	)
 
 	if err != nil {
@@ -523,6 +526,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		TargetArea:      mpTargetArea,
 		MarketingClaim:  mpMarketingClaim,
 		Benefits:        mpBenefits,
+		Tier2JSON:       mpTier2JSON,
 		VariantSKU:      mvSKU,
 		VariantGTINs:    mvGTINs,
 		VariantSize:     mvSize,
@@ -586,6 +590,9 @@ type masterProductRow struct {
 	TargetArea     []string
 	MarketingClaim *string
 	Benefits       []string
+	// Tier2 — curated master-level JSONB; raw bytes here, unmarshalled into
+	// domain.Product.Tier2 in mergeProductWithMaster.
+	Tier2JSON []byte
 	// Variant-level fields (from master_variants).
 	VariantSKU      *string
 	VariantGTINs    []string
@@ -678,6 +685,14 @@ func mergeProductWithMaster(p *domain.Product, mp masterProductRow) error {
 		p.MarketingClaim = *mp.MarketingClaim
 	}
 	p.Benefits = mp.Benefits
+
+	// Tier2 — raw bytes from master_products.tier2 JSONB. Unmarshal failures
+	// are non-fatal (the product still renders with typed fields + listing
+	// extra; we just lose the master-curated keys for this row).
+	if len(mp.Tier2JSON) > 0 {
+		_ = json.Unmarshal(mp.Tier2JSON, &p.Tier2)
+	}
+
 	return nil
 }
 
@@ -714,7 +729,8 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
 			COALESCE(mp.marketing_claim, '') as marketing_claim,
 			mp.benefits,
-			COALESCE(p.extra, '{}'::jsonb) as extra
+			COALESCE(p.extra, '{}'::jsonb) as extra,
+			COALESCE(mp.tier2, '{}'::jsonb) as mp_tier2
 		FROM catalog.products p
 		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
 		JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
@@ -789,7 +805,7 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 	for rows.Next() {
 		var p domain.Product
 		var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
-		var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON []byte
+		var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON, mpTier2JSON []byte
 		var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
 		var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 		var mvSKU, mvSize, mvColor, mvImageURL *string
@@ -807,7 +823,7 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			&mpProductForm, &mpTexture, &mpRoutineStep,
 			&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
 			&mpMarketingClaim, &mpBenefits,
-			&extraJSON,
+			&extraJSON, &mpTier2JSON,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan vector product: %w", err)
@@ -850,6 +866,7 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			TargetArea:      mpTargetArea,
 			MarketingClaim:  mpMarketingClaim,
 			Benefits:        mpBenefits,
+			Tier2JSON:       mpTier2JSON,
 			VariantSKU:      mvSKU,
 			VariantGTINs:    mvGTINs,
 			VariantSize:     mvSize,

@@ -411,6 +411,14 @@ func ProductToMap(p domain.Product) map[string]interface{} {
 			m[k] = v
 		}
 	}
+	// Tier2 carries master-curated attributes (filled by discovery agent +
+	// curator). Comes after Extra because Extra is per-listing override and
+	// Tier2 is master-baseline — listing wins on conflict.
+	for k, v := range p.Tier2 {
+		if _, exists := m[k]; !exists {
+			m[k] = v
+		}
+	}
 	return m
 }
 

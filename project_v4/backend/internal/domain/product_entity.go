@@ -40,6 +40,14 @@ type Product struct {
 	Benefits       []string `json:"benefits,omitempty"`
 
 	// Extra holds extensible fields not captured by typed struct fields.
-	// Engine V2 uses this for tenant-defined custom fields.
+	// Engine V2 uses this for tenant-defined custom fields. Listing-level —
+	// each products row carries its own per-listing overrides.
 	Extra map[string]interface{} `json:"extra,omitempty"`
+
+	// Tier2 holds curated master-level attributes from master_products.tier2
+	// JSONB. Filled by the discovery agent + curator and applied via merge.
+	// For new verticals (furniture/footwear/...) this is the only source of
+	// generic attributes; legacy cosmetics columns (skin_type/concern/...)
+	// stay populated for heybabes-shape catalogs.
+	Tier2 map[string]interface{} `json:"tier2,omitempty"`
 }
