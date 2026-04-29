@@ -81,7 +81,7 @@ func main() {
 	log.Printf("integration tenant=%s shop=%s status=%s", integration.TenantID, integration.ExternalID, integration.Status)
 
 	shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret, cfg.ShopifyAPIVersion, cfg.ShopifyScopes)
-	v2 := usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, stagingAdapter, cfg.PublicBaseURL, lg)
+	v2 := usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, catalogAdapter, stagingAdapter, cfg.PublicBaseURL, lg)
 	harvester := usecases.NewHarvesterLite(stagingAdapter, catalogAdapter, lg)
 	harvester.SetSignals(candidatesAdapter, categoriesAdapter)
 	v2.SetHarvester(harvester)

@@ -192,6 +192,18 @@ func main() {
 		)
 	}
 
+	// Magic-link: signed sign-in links delivered by email. Two callers:
+	//  - Shopify install flow uses Issue + ProvisionShopOwner to email the
+	//    shop owner after first OAuth.
+	//  - The /admin/api/auth/magic endpoint exposes Consume so a click on the
+	//    link mints a session.
+	// Constructed regardless of mailer presence so Consume always works for
+	// links that did manage to go out (e.g. SMTP went down after Issue).
+	magicLinkUC := usecases.NewMagicLinkUseCase(
+		authAdapter, userTenantsRepo, challengesRepo, mailer, sessionsUC,
+		cfg.AuthPublicBaseURL, 24*time.Hour, log,
+	)
+
 	// 2FA — requires secretBox for TOTP secret encryption. Email-2FA path
 	// additionally requires SMTP (reported via mailer being non-nil).
 	var twoFactorUC *usecases.TwoFactorUseCase
@@ -270,7 +282,7 @@ func main() {
 			// master_products, which polluted the master catalog with
 			// mis-classified vertical='cosmetics' rows.
 			shopifyStagingAdapter := postgres.NewShopifyStagingAdapter(dbClient, log)
-			shopifyV2UC = usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, shopifyStagingAdapter, cfg.PublicBaseURL, log)
+			shopifyV2UC = usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, catalogAdapter, shopifyStagingAdapter, cfg.PublicBaseURL, log)
 
 			// Harvester-lite: Tier-1 deterministic mapping from staging →
 			// catalog.products (no master_*). Wired late so the V2 UC can
@@ -282,6 +294,22 @@ func main() {
 			// category_classifier deciding kind = category|showcase|promo).
 			harvesterLite.SetSignals(candidatesAdapter, categoriesV2Adapter)
 			shopifyV2UC.SetHarvester(harvesterLite)
+
+			// Install-flow completion hook: after a fresh Shopify install OAuth,
+			// fetch the shop owner email and provision an admin_user + send a
+			// magic-link. Closure captures shopifyClient + magicLinkUC so
+			// shopify_v2.go itself stays decoupled from auth concerns.
+			shopifyClientLocal := shopifyClient
+			magicLinkUCLocal := magicLinkUC
+			shopifyV2UC.SetInstallCompletionHook(func(ctx context.Context, tenantID, shopDomain, token string) {
+				info, err := shopifyClientLocal.GetShopInfo(ctx, shopDomain, token)
+				if err != nil {
+					log.Warn("shopify_install_provision_shop_lookup_failed",
+						"tenant_id", tenantID, "shop", shopDomain, "error", err)
+					return
+				}
+				magicLinkUCLocal.ProvisionShopOwner(ctx, tenantID, info.Email)
+			})
 
 			// M4c: discovery agent (Sonnet 4.6, 8 tools). Reuses staging +
 			// the M2 master_variants adapter for find_similar_masters /
@@ -317,6 +345,7 @@ func main() {
 	passwordResetHandler := handlers.NewPasswordResetHandler(passwordResetUC, emailVerifyUC, log)
 	sessionsHandler := handlers.NewSessionsHandler(sessionsUC, log)
 	oauthHandler := handlers.NewOAuthHandler(googleAuthUC, telegramAuthUC, log)
+	magicLinkHandler := handlers.NewMagicLinkHandler(magicLinkUC, log)
 	twoFactorHandler := handlers.NewTwoFactorHandler(twoFactorUC, authUC, log)
 	tenantsHandler := handlers.NewTenantsHandler(tenantsUC, log)
 	invitationsHandler := handlers.NewInvitationsHandler(invitationsUC, cfg.JWTSecret, log)
@@ -391,6 +420,7 @@ func main() {
 	mux.HandleFunc("/admin/api/auth/google/start", oauthHandler.HandleGoogleStart)
 	mux.HandleFunc("/admin/api/auth/google/callback", oauthHandler.HandleGoogleCallback)
 	mux.HandleFunc("/admin/api/auth/telegram/callback", oauthHandler.HandleTelegramCallback)
+	mux.HandleFunc("/admin/api/auth/magic", magicLinkHandler.HandleConsume)
 
 	// Invitation preview + accept are public (token in URL is the auth). The
 	// create endpoint is protected below.
@@ -634,6 +664,7 @@ func main() {
 	// Shopify webhook + OAuth callback ride OUTSIDE authMW — HMAC and the
 	// signed state nonce are the auth layer for these routes.
 	if shopifyHandler != nil {
+		mux.HandleFunc("/admin/api/integrations/shopify/app", shopifyHandler.HandleAppEntry)
 		mux.HandleFunc("/admin/api/integrations/shopify/callback", shopifyHandler.HandleCallback)
 		mux.HandleFunc("/admin/api/webhooks/shopify", shopifyHandler.HandleWebhook)
 	}

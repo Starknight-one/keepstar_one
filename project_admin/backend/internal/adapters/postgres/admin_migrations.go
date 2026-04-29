@@ -168,6 +168,13 @@ func (c *Client) RunAdminMigrations(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_oauth_states_expires
 			ON admin.oauth_states(expires_at);`,
+
+		// flow_kind discriminates "connect" (user clicked Connect Shopify in
+		// our admin, pre-existing tenant) from "install" (Shopify install
+		// hand-off, tenant auto-provisioned at entry). Default 'connect'
+		// keeps legacy rows behaving as before.
+		`ALTER TABLE admin.oauth_states
+			ADD COLUMN IF NOT EXISTS flow_kind TEXT NOT NULL DEFAULT 'connect';`,
 	}
 
 	for i, m := range migrations {

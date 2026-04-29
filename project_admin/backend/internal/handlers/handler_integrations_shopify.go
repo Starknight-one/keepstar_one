@@ -51,6 +51,47 @@ func (h *ShopifyHandler) HandleInstall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"install_url": installURL})
 }
 
+// HandleAppEntry — GET /admin/api/integrations/shopify/app
+// Unauthenticated: signed `hmac` query param is the credential. This is the
+// "App URL" registered in the Shopify Partner Dashboard. Shopify redirects
+// here in three cases — App Store install, Partner test-install, and merchant
+// clicking "Open app" inside their Shopify admin — and the use case picks the
+// right next step (start OAuth vs. bounce into our admin) based on whether
+// the shop is already known.
+//
+// Why this handler exists separately from HandleInstall: HandleInstall sits
+// behind authMW (the in-app "Connect Shopify" button) and assumes a known
+// tenant_id from session. This entry has no session — Shopify is the caller —
+// so we auto-provision a tenant when the shop is new.
+func (h *ShopifyHandler) HandleAppEntry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	q := r.URL.Query()
+	shop := q.Get("shop")
+	if shop == "" || q.Get("hmac") == "" {
+		writeError(w, http.StatusBadRequest, "missing shop or hmac")
+		return
+	}
+	if !h.v2.Client().VerifyInstallHMAC(q) {
+		h.log.Warn("shopify_app_entry_bad_hmac", "shop", shop)
+		writeError(w, http.StatusUnauthorized, "bad hmac")
+		return
+	}
+	res, err := h.v2.StartInstallEntry(r.Context(), shop)
+	if err != nil {
+		h.log.FromContext(r.Context()).Error("shopify_app_entry_failed", "shop", shop, "error", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	target := res.InstallURL
+	if target == "" {
+		target = res.RedirectURL
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
 // HandleCallback — GET /admin/api/integrations/shopify/callback
 // Unauthenticated: signed `state` is the credential.
 func (h *ShopifyHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {

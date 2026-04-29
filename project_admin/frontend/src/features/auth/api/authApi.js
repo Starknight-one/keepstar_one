@@ -9,6 +9,7 @@ export const authApi = {
   googleStart: () => api.post('/auth/google/start', {}),
   googleCallback: (code, state) => api.post('/auth/google/callback', { code, state }),
   telegramCallback: (payload) => api.post('/auth/telegram/callback', payload),
+  magicConsume: (code) => api.post('/auth/magic', { code }),
 
   // 2FA — pre-session routes accept a pre-2FA bearer token (from login).
   setupTOTP: () => api.post('/auth/2fa/setup/totp', {}),

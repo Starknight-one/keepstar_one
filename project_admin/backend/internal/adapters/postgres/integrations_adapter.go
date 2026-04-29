@@ -166,10 +166,14 @@ func (a *IntegrationsAdapter) Delete(ctx context.Context, tenantID, id string) e
 // --- OAuth state ---
 
 func (a *IntegrationsAdapter) CreateOAuthState(ctx context.Context, s *domain.OAuthState) error {
+	flowKind := s.FlowKind
+	if flowKind == "" {
+		flowKind = domain.OAuthFlowConnect
+	}
 	_, err := a.client.pool.Exec(ctx,
-		`INSERT INTO admin.oauth_states (state, tenant_id, kind, shop_domain, expires_at)
-		VALUES ($1, $2, $3, NULLIF($4,''), $5)`,
-		s.State, s.TenantID, s.Kind, s.ShopDomain, s.ExpiresAt)
+		`INSERT INTO admin.oauth_states (state, tenant_id, kind, shop_domain, flow_kind, expires_at)
+		VALUES ($1, $2, $3, NULLIF($4,''), $5, $6)`,
+		s.State, s.TenantID, s.Kind, s.ShopDomain, flowKind, s.ExpiresAt)
 	if err != nil {
 		return fmt.Errorf("create oauth state: %w", err)
 	}
@@ -182,9 +186,9 @@ func (a *IntegrationsAdapter) ConsumeOAuthState(ctx context.Context, state strin
 	err := a.client.pool.QueryRow(ctx,
 		`DELETE FROM admin.oauth_states
 		WHERE state = $1 AND expires_at > NOW()
-		RETURNING state, tenant_id, kind, shop_domain, created_at, expires_at`,
+		RETURNING state, tenant_id, kind, shop_domain, flow_kind, created_at, expires_at`,
 		state,
-	).Scan(&s.State, &s.TenantID, &s.Kind, &shop, &s.CreatedAt, &s.ExpiresAt)
+	).Scan(&s.State, &s.TenantID, &s.Kind, &shop, &s.FlowKind, &s.CreatedAt, &s.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("oauth state not found or expired")

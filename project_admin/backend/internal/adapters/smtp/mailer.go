@@ -27,6 +27,7 @@ var subjectFor = map[string]string{
 	"email_verify":   "Confirm your email",
 	"invitation":     "You've been invited to Keepstar One",
 	"email_2fa":      "Your Keepstar One verification code",
+	"magic_link":     "Sign in to Keepstar One",
 }
 
 type Mailer struct {

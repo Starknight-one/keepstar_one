@@ -285,6 +285,46 @@ func (c *Client) GetProduct(ctx context.Context, shop, token string, productID i
 	return &wrap.Product, nil
 }
 
+// ShopInfo is the subset of GET /shop.json we care about post-OAuth — owner
+// email for magic-link delivery and display name for the tenant. ContactEmail
+// is the customer-facing one; Email is the merchant's account email and the
+// right field for sending operator mail.
+type ShopInfo struct {
+	Email        string `json:"email"`
+	ContactEmail string `json:"customer_email"`
+	Name         string `json:"name"`
+	Domain       string `json:"domain"`
+	Currency     string `json:"currency"`
+}
+
+// GetShopInfo returns the merchant's shop record. Used after Shopify OAuth
+// completion to fetch the owner email when we need to provision an admin_user
+// from a self-serve install (no prior account in our system).
+func (c *Client) GetShopInfo(ctx context.Context, shop, token string) (*ShopInfo, error) {
+	u := fmt.Sprintf("https://%s/admin/api/%s/shop.json", shop, c.apiVersion)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Shopify-Access-Token", token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get shop: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("get shop status %d: %s", resp.StatusCode, string(respBody))
+	}
+	var wrap struct {
+		Shop ShopInfo `json:"shop"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrap); err != nil {
+		return nil, fmt.Errorf("parse shop: %w", err)
+	}
+	return &wrap.Shop, nil
+}
+
 // GetProductMetafields fetches metafields for a product. Called per-product
 // on initial sync for catalogs <500; larger catalogs should use GraphQL
 // bulk-query (deferred — falls back to per-product REST for MVP).

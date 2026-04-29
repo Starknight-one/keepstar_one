@@ -69,22 +69,36 @@ type HarvesterLite interface {
 	SoftDeleteOne(ctx context.Context, tenantID, sourceID string) error
 }
 
+// InstallCompletionHook is invoked after a successful install-flow OAuth (i.e.
+// FlowKind == "install"). Implementations live in main.go and typically: fetch
+// the shop owner email via the freshly-issued token, find-or-create an
+// admin_user for that email + tenant, and issue a magic-link so the merchant
+// can sign in from their inbox.
+//
+// Errors are logged by the implementation and never surface to the caller —
+// the integration is already persisted at this point and we don't want to
+// roll back a working install over a transient email/SMTP failure.
+type InstallCompletionHook func(ctx context.Context, tenantID, shopDomain, token string)
+
 // ShopifyV2UseCase owns the full Shopify lifecycle after the curator-driven
 // pivot (2026-04-27): OAuth, webhook subscription, dump-to-staging, discovery
 // agent, and webhook handling via harvester-lite. The legacy ShopifyUseCase
 // (REST initial-sync writing directly to master_products) was removed.
 type ShopifyV2UseCase struct {
-	client       *shopify.Client
-	integrations ports.IntegrationsPort
-	staging      ports.ShopifyStagingPort
-	harvester    HarvesterLite // wired from Этап 2.2; nil-safe (webhook upsert no-op'd)
-	publicURL    string
-	log          *logger.Logger
+	client          *shopify.Client
+	integrations    ports.IntegrationsPort
+	catalog         ports.AdminCatalogPort // tenant CRUD for install-flow auto-provision
+	staging         ports.ShopifyStagingPort
+	harvester       HarvesterLite        // wired from Этап 2.2; nil-safe (webhook upsert no-op'd)
+	onInstallDone   InstallCompletionHook // fired after install-flow OAuth; nil-safe
+	publicURL       string
+	log             *logger.Logger
 }
 
 func NewShopifyV2UseCase(
 	client *shopify.Client,
 	integrations ports.IntegrationsPort,
+	catalog ports.AdminCatalogPort,
 	staging ports.ShopifyStagingPort,
 	publicURL string,
 	log *logger.Logger,
@@ -92,6 +106,7 @@ func NewShopifyV2UseCase(
 	return &ShopifyV2UseCase{
 		client:       client,
 		integrations: integrations,
+		catalog:      catalog,
 		staging:      staging,
 		publicURL:    publicURL,
 		log:          log,
@@ -103,11 +118,21 @@ func NewShopifyV2UseCase(
 // while keeping main.go DI flat).
 func (uc *ShopifyV2UseCase) SetHarvester(h HarvesterLite) { uc.harvester = h }
 
+// SetInstallCompletionHook wires the post-install user-provisioning step.
+// Called from main.go once the magic-link use case is constructed.
+func (uc *ShopifyV2UseCase) SetInstallCompletionHook(h InstallCompletionHook) {
+	uc.onInstallDone = h
+}
+
 // Client exposes the underlying HTTP client so handlers can call VerifyWebhookHMAC.
 func (uc *ShopifyV2UseCase) Client() *shopify.Client { return uc.client }
 
 // StartOAuth — mints state nonce, returns redirect URL for Shopify consent.
 func (uc *ShopifyV2UseCase) StartOAuth(ctx context.Context, tenantID, shop string) (string, error) {
+	return uc.startOAuth(ctx, tenantID, shop, domain.OAuthFlowConnect)
+}
+
+func (uc *ShopifyV2UseCase) startOAuth(ctx context.Context, tenantID, shop, flowKind string) (string, error) {
 	normalized, ok := shopify.ValidateShopDomain(shop)
 	if !ok {
 		return "", fmt.Errorf("invalid shop domain: must be *.myshopify.com")
@@ -122,6 +147,7 @@ func (uc *ShopifyV2UseCase) StartOAuth(ctx context.Context, tenantID, shop strin
 		TenantID:   tenantID,
 		Kind:       string(domain.IntegrationKindShopify),
 		ShopDomain: normalized,
+		FlowKind:   flowKind,
 		CreatedAt:  now,
 		ExpiresAt:  now.Add(10 * time.Minute),
 	}); err != nil {
@@ -129,6 +155,84 @@ func (uc *ShopifyV2UseCase) StartOAuth(ctx context.Context, tenantID, shop strin
 	}
 	redirectURI := uc.publicURL + "/admin/api/integrations/shopify/callback"
 	return uc.client.InstallURL(normalized, redirectURI, state), nil
+}
+
+// InstallEntryResult describes what the install entry handler should do next.
+// Exactly one of InstallURL or RedirectURL is set. RedirectURL points back into
+// our admin when the shop is already installed (no OAuth needed); InstallURL
+// kicks off Shopify consent for first-time and reinstall paths.
+type InstallEntryResult struct {
+	InstallURL  string
+	RedirectURL string
+}
+
+// StartInstallEntry is the unauthenticated entry point used when Shopify itself
+// drives the install — App Store, Partner Dashboard, or merchant clicking "Open
+// app" inside their Shopify admin. The handler hands us the shop domain after
+// HMAC verification and we dispatch:
+//
+//   - Existing integration, status=connected → already installed, just bounce
+//     them into our admin (caller redirects to RedirectURL).
+//   - Existing integration, any other status → reinstall on the same tenant,
+//     start OAuth (FlowKind=install).
+//   - No existing integration → auto-provision tenant from shop_domain, start
+//     OAuth (FlowKind=install). The tenant row is created up-front so a user
+//     who abandons mid-consent and retries reuses the same tenant instead of
+//     spawning duplicates.
+//
+// Idempotency: the dup-check is GetByShopDomain on the integrations table, so
+// repeated install entries for the same shop converge on one tenant + one
+// integration row regardless of how many times the merchant retries.
+func (uc *ShopifyV2UseCase) StartInstallEntry(ctx context.Context, shop string) (*InstallEntryResult, error) {
+	normalized, ok := shopify.ValidateShopDomain(shop)
+	if !ok {
+		return nil, fmt.Errorf("invalid shop domain: must be *.myshopify.com")
+	}
+
+	existing, err := uc.integrations.GetByShopDomain(ctx, normalized)
+	if err == nil && existing != nil {
+		if existing.Status == domain.IntegrationStatusConnected {
+			uc.log.Info("shopify_install_entry_already_connected",
+				"shop", normalized, "tenant_id", existing.TenantID, "integration_id", existing.ID)
+			return &InstallEntryResult{
+				RedirectURL: "/integrations?already_installed=1&id=" + existing.ID,
+			}, nil
+		}
+		// Reinstall on the same tenant — keep tenant_id, force fresh OAuth.
+		installURL, err := uc.startOAuth(ctx, existing.TenantID, normalized, domain.OAuthFlowInstall)
+		if err != nil {
+			return nil, err
+		}
+		uc.log.Info("shopify_install_entry_reinstall",
+			"shop", normalized, "tenant_id", existing.TenantID, "prior_status", existing.Status)
+		return &InstallEntryResult{InstallURL: installURL}, nil
+	}
+
+	// First-time install: auto-provision tenant. Slug derived from shop
+	// subdomain ("hey-babes-cosmetics.myshopify.com" → "hey-babes-cosmetics").
+	subdomain := strings.TrimSuffix(normalized, ".myshopify.com")
+	tenant, err := uc.catalog.CreateTenant(ctx, &domain.Tenant{
+		Slug: slugify(subdomain),
+		Name: subdomain,
+		Type: "retailer",
+		Settings: map[string]any{
+			"currency":         "USD",
+			"shop_domain":      normalized,
+			"provisioned_via":  "shopify_install",
+			"provisioned_at":   time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("auto-provision tenant: %w", err)
+	}
+	uc.log.Info("shopify_install_entry_tenant_provisioned",
+		"shop", normalized, "tenant_id", tenant.ID)
+
+	installURL, err := uc.startOAuth(ctx, tenant.ID, normalized, domain.OAuthFlowInstall)
+	if err != nil {
+		return nil, err
+	}
+	return &InstallEntryResult{InstallURL: installURL}, nil
 }
 
 // CompleteOAuth — verify HMAC, consume state, exchange code → token, persist
@@ -179,6 +283,14 @@ func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state
 				"shop", normalized, "topic", topic, "error", err)
 			// Not fatal — periodic resync (curator-triggered) covers gaps.
 		}
+	}
+
+	// Install flow: provision admin_user from shop email + email a magic-link
+	// so the merchant can sign in. Fired in a goroutine — the OAuth callback
+	// shouldn't block on Shopify shop API + SMTP. Hook is nil-safe; "connect"
+	// flows don't trigger it (the user is already logged in).
+	if record.FlowKind == domain.OAuthFlowInstall && uc.onInstallDone != nil {
+		go uc.onInstallDone(context.Background(), record.TenantID, normalized, token)
 	}
 
 	go uc.runInitialIngest(integration.ID, record.TenantID)

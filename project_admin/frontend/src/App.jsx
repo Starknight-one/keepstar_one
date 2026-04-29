@@ -9,6 +9,7 @@ import PasswordChangedPage from './features/auth/pages/PasswordChangedPage.jsx'
 import VerifyEmailPage from './features/auth/pages/VerifyEmailPage.jsx'
 import SessionExpiredPage from './features/auth/pages/SessionExpiredPage.jsx'
 import OAuthLoadingPage from './features/auth/pages/OAuthLoadingPage.jsx'
+import MagicLinkPage from './features/auth/pages/MagicLinkPage.jsx'
 import AuthErrorPage from './features/auth/pages/AuthErrorPage.jsx'
 import TwoFactorPage from './features/auth/pages/TwoFactorPage.jsx'
 import WorkspacePickerPage from './features/auth/pages/WorkspacePickerPage.jsx'
@@ -53,6 +54,7 @@ export default function App() {
       <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
       <Route path="/auth/session-expired" element={<SessionExpiredPage />} />
       <Route path="/auth/google/callback" element={<OAuthLoadingPage />} />
+      <Route path="/auth/magic" element={<MagicLinkPage />} />
       <Route path="/auth/error" element={<AuthErrorPage />} />
       <Route path="/auth/2fa" element={<TwoFactorPage />} />
       <Route path="/auth/pick-workspace" element={<ProtectedRoute><WorkspacePickerPage /></ProtectedRoute>} />
