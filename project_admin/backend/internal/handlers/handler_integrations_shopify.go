@@ -6,8 +6,10 @@
 package handlers
 
 import (
+	"context"
 	"io"
 	"net/http"
+	"time"
 
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/usecases"
@@ -141,10 +143,16 @@ func (h *ShopifyHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "bad hmac")
 		return
 	}
-	// Ack fast (<5s per Shopify SLA); process in background.
+	// Ack fast (<5s per Shopify SLA); process in background. We must NOT
+	// inherit r.Context() — it gets cancelled the moment the handler returns
+	// (right after WriteHeader below), and any DB call in the goroutine then
+	// fails with "context canceled". Detach onto a fresh background context
+	// with a generous timeout instead.
+	bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	go func() {
-		if err := h.v2.HandleWebhook(r.Context(), topic, shop, body); err != nil {
-			h.log.FromContext(r.Context()).Error("shopify_webhook_handle_failed",
+		defer cancel()
+		if err := h.v2.HandleWebhook(bgCtx, topic, shop, body); err != nil {
+			h.log.Error("shopify_webhook_handle_failed",
 				"shop", shop, "topic", topic, "error", err)
 		}
 	}()
