@@ -20,12 +20,14 @@ func NewClient(ctx context.Context, databaseURL string) (*Client, error) {
 		return nil, fmt.Errorf("parse database URL: %w", err)
 	}
 
-	// Configure pool settings
+	// Tuned for Neon serverless autosuspend (default 5 min). Short idle timeout
+	// + long HealthCheckPeriod so the pool stops pinging idle connections back
+	// into the warm path on quiet periods.
 	config.MaxConns = 10
 	config.MinConns = 0
 	config.MaxConnLifetime = time.Hour
-	config.MaxConnIdleTime = 5 * time.Minute
-	config.HealthCheckPeriod = 5 * time.Minute
+	config.MaxConnIdleTime = time.Minute
+	config.HealthCheckPeriod = 30 * time.Minute
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
