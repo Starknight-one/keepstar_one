@@ -1,0 +1,270 @@
+# Catalog Expertise
+# Cross-cutting domain: write side in admin (project_admin/), read side in V4
+# (project_v4/). Same Postgres schema (catalog.*). Pipeline:
+# ingest → harvest → discovery → mapping artifact → merge_apply → curator.
+
+overview:
+  cross_cutting: true
+  write_side:
+    path: "project_admin/backend/internal/{adapters/postgres, adapters/shopify, usecases, handlers}/"
+    go_module: "keepstar-admin"
+    purpose: "Ingest from sources (Shopify/CSV/manual), discover schema via LLM, build mapping artifact, link listings to master, manage candidates queue"
+  read_side:
+    path: "project_v4/backend/internal/adapters/postgres/postgres_catalog.go"
+    go_module: "keepstar_v4"
+    purpose: "Serve catalog reads to chat pipeline (ListProducts, VectorSearch, GetMasterProduct, GenerateCatalogDigest)"
+  curator_side:
+    path: "curator/backend/internal/adapters/postgres.go"
+    purpose: "Read-only browse + candidate promotion (ALTER TABLE for tier1 promotion). See `curator` expert."
+  database: "Single Neon Postgres. catalog.* schema shared across all three modules."
+
+schema:
+  schemas: ["catalog.*"]
+  core_tables:
+    catalog_tenants: "tenants {id, slug, name, type, settings JSONB, created_at, updated_at}"
+    catalog_categories: "categories {id, name, slug, parent_id (self-ref), created_at}"
+    catalog_master_products: |
+      master_products {id, sku UNIQUE, name, description, brand, category_id,
+      images JSONB, attributes JSONB, owner_tenant_id, embedding vector(384),
+      tier2 JSONB, created_at, updated_at}
+    catalog_master_variants: "master_variants {id, master_product_id, sku, gtins TEXT[], color, size, material, weight_g, volume_ml, image_url}"
+    catalog_products: |
+      products (listings) {id, tenant_id FK, master_product_id FK NULL,
+      master_variant_id FK NULL, name (display_name), original_name, description,
+      price (cents int), currency, stock_quantity, rating, source_system,
+      source_id, raw_payload JSONB, created_at, updated_at}
+    tenant_catalog_schema: "tenant_catalog_schema {tenant_id PK, status, artifact_version, mapping_artifact JSONB, validation_report JSONB, discovered_at, validated_at}"
+    mapping_artifact_versions: "Multiple artifact_version rows per tenant; latest read by status='validated'"
+    catalog_field_definitions: "field_definitions {id, tenant_id, name, label, type, slot_role, ...}"
+  candidate_tables:
+    attribute_candidates: "attribute_candidates {id, key, vertical, seen_in_tenants, sample_values, proposed_type, agent_meta, status (proposed|promoted|dismissed), promoted_to_column}"
+    category_candidates: "category_candidates {id, name, proposed_parent, seen_in_tenants, vertical, status}"
+    junk_candidates: "junk_candidates {id, tenant_id, listing_id, detected_reason JSONB, classification, classified_by}"
+  relations:
+    - "products.tenant_id → tenants.id (FK, required)"
+    - "products.master_product_id → master_products.id (NULLable — un-linked listings exist)"
+    - "products.master_variant_id → master_variants.id (NULLable)"
+    - "master_variants.master_product_id → master_products.id"
+    - "master_products.category_id → categories.id"
+    - "categories.parent_id → categories.id (self-ref hierarchy)"
+    - "master_products.owner_tenant_id → tenants.id (the tenant that 'created' the master)"
+  indexes:
+    - "HNSW on master_products.embedding (pgvector cosine)"
+    - "HNSW on master_services.embedding"
+    - "B-tree on products.tenant_id"
+    - "B-tree on products.master_product_id"
+    - "Unique on master_products.sku"
+  pgvector:
+    extension: "CREATE EXTENSION IF NOT EXISTS vector"
+    dim: 384
+    operator: "<=> (cosine distance)"
+
+write_side_pipeline:
+  description: "Stages from raw source data → curated master catalog. Each stage has inputs/outputs in DB and an LLM-or-deterministic engine."
+  stages:
+    1_ingest:
+      sources:
+        - "Shopify OAuth → bulk products query (Admin GraphQL)"
+        - "CSV upload (handler_integrations_csv.go)"
+        - "Crawler tool (cmd/crawler/main.go) — scrape JSON-LD from sitemap"
+      writes_to: "catalog.products (listings) with raw_payload JSONB; tenant_id FK"
+      handler: "internal/handlers/handler_integrations*.go"
+      usecase: "internal/usecases/integrations.go, integrations_wipe.go, csv_mapping.go"
+    2_harvest:
+      file: "internal/usecases/harvester_lite.go (736 LOC)"
+      use_case: "HarvesterLiteUseCase"
+      purpose: "Per-tenant: parse Shopify bulk JSONL, extract canonical fields (handle, title, vendor, productType, tags, options, variants), record signals for category/attribute candidates"
+      methods:
+        - "RunForTenant — full harvest"
+        - "UpsertOne — single-product update (webhook-driven)"
+        - "SoftDeleteOne — webhook delete"
+      signals: "signalCounters tracks per-attribute, per-category occurrences; persisted to attribute_candidates / category_candidates"
+    3_discovery:
+      file: "internal/usecases/discovery_agent.go (685 LOC) + discovery_run.go + discovery_tools.go (726 LOC) + auto_map_tier1.go"
+      use_case: "DiscoveryAgent"
+      llm_budget: "8 minutes wallclock, ~$0.40 per run (Claude Haiku)"
+      output: "MappingArtifact (versioned JSONB in tenant_catalog_schema)"
+      artifact_shape:
+        field_mapping: "raw payload paths → master fields (e.g. body_html → description)"
+        category_mapping: "tenant categories → master categories"
+        brand_mapping: "vendors → master brand normalization"
+        templates: "MasterTemplateProposal for new master products"
+        junk_signals: "junk_vendors, junk_axis_patterns"
+        match_strategy: "MatchStrategyConfig — thresholds for tier1/tier2 strict/loose"
+        require_identifier: "bool — require GTIN/SKU for confident match"
+      tier1_input: "AutoMapTier1Result — deterministic pass before LLM, populates the artifact builder with high-confidence trivial mappings"
+      builder: "ArtifactBuilder helps build the artifact incrementally"
+    4_validate:
+      file: "internal/usecases/validate_artifact.go"
+      purpose: "Sanity-check the artifact (no orphan refs, no required-field gaps, schema valid). Persists validation_report into tenant_catalog_schema."
+    5_merge_apply:
+      file: "internal/usecases/merge_apply.go (804 LOC) + merge_apply_d3.go"
+      use_case: "MergeApplyUseCase"
+      methods:
+        - "GenerateReport(ctx, tenantID) — dry-run; produces MergeProposal[] without writing"
+        - "WithApplyTx(tx) — wrap with transactional applier (ports.MergeApplyTxPort)"
+        - "WithAudit(audit) — wrap with audit emission"
+      proposal_shape: "MergeProposal {ListingID, ProposedMaster, MatchConfidence, Strategy (strict|loose|new), Score}"
+      thresholds_from_artifact: "thresholdsFromArtifact(artifact) — parses match_strategy_config"
+      tier2_extraction:
+        func: "extractTier2(artifact, raw, vertical)"
+        purpose: "Pulls tier2 attributes from raw payload using artifact's field_mapping; applies transforms (units/lowercase/shorten/split)"
+        recent: "Transform applied 2026-04-29 (commit 4e1c8d1) — units, lowercase, shorten, split"
+      vertical_resolution: "resolveVertical(artifact, vendor, listing) — falls back through vendor→category mapping→default"
+      build_proposed_master: "buildProposedMaster(artifact, listing, vendor, vertical) — proposes new master if no match"
+    6_curator_approval:
+      ownership: "Curator service — see `curator` expert"
+      flow: "Operator sees MergeProposal[] in MergeReportPage, approves/rejects per-listing, applies via curator-frontend → curator-backend → MergeProxy → admin's MergeApplyUseCase.Apply"
+
+read_side_v4:
+  file: "project_v4/backend/internal/adapters/postgres/postgres_catalog.go"
+  size_loc: 1639
+  type: "CatalogAdapter (implements CatalogPort + EmbeddingTargetPort + CatalogDigestPort)"
+  read_methods:
+    - "GetTenantBySlug(ctx, slug) — dispatch by slug header"
+    - "GetCategories(ctx) — full category tree"
+    - "GetMasterProduct(ctx, id) — master+listings join; tier2 attributes inlined"
+    - "ListProducts(ctx, tenantID, filter) — keyword + filter (category/brand/price/attrs); ProductFilter conditions AND-combined; multi-word search splits to OR-of-words ILIKE"
+    - "GetProduct(ctx, tenantID, productID) — single listing"
+    - "VectorSearch(ctx, tenantID, embedding, limit, filter) — pgvector cosine on master_products.embedding; optional VectorFilter for brand/category pre-filter"
+    - "GetStock(ctx, tenantID, productID)"
+    - "ListServices / GetService / VectorSearchServices — services parallel"
+  embedding_methods:
+    - "SeedEmbedding(masterProductID, embedding) — write 384-dim vector"
+    - "GetMasterProductsWithoutEmbedding(ctx) — for batch backfill cron"
+    - "SeedServiceEmbedding / GetMasterServicesWithoutEmbedding"
+  digest:
+    methods: ["GenerateCatalogDigest(tenantID)", "SaveCatalogDigest(tenantID, digest)", "GetCatalogDigest(tenantID)"]
+    purpose: "Pre-aggregated catalog summary (categories list, brands list, price ranges, attribute cardinality) used by Agent1 system prompt"
+    storage: "tenants.catalog_digest JSONB column"
+  tier2_in_reads:
+    behavior: "GetMasterProduct + ListProducts + VectorSearch include tier2 JSONB inline (recent — 2026-04-29 commit 8a3357d, B7 prep)"
+    fallback: "If tier2 NULL or missing key → falls back to product.attributes (legacy tier1 path)"
+
+shopify_integration:
+  file: "project_admin/backend/internal/adapters/shopify/client.go"
+  size_loc: 1302
+  scopes: "Configured via app config; required: read_products, read_orders, write_products (for product create), read_metafields"
+  oauth:
+    install_url: "InstallURL(shop, redirectURI, state)"
+    exchange: "ExchangeCodeForToken(ctx, shop, code)"
+    hmac_verify: "VerifyInstallHMAC(q) for install callback, VerifyWebhookHMAC(body, sig) for webhooks"
+  read:
+    - "ListProducts(shop, token, pageInfo, limit) — REST cursor-paginated"
+    - "GetProduct(shop, token, productID) — single product"
+    - "GetShopInfo — currency, locale, timezone"
+    - "GetProductMetafields — extra structured data"
+    - "MetafieldDefinitions — schema discovery"
+    - "NavigationMenu — for category extraction"
+    - "ShopReferences — references for canonicalizing product variants"
+  bulk:
+    - "RunBulkProductsQuery — async GraphQL bulk operation; fetches FULL catalog as JSONL"
+    - "GetCurrentBulkOperation — poll status (CREATED/RUNNING/COMPLETED/FAILED)"
+    - "FetchBulkJSONL(jsonlURL) — download completed bulk file"
+    - "Used by harvester_lite for full-catalog ingest (1000+ products)"
+  webhooks:
+    register: "RegisterWebhook(shop, token, topic, address)"
+    topics: ["products/create", "products/update", "products/delete", "app/uninstalled", "shop/update"]
+    verification: "VerifyWebhookHMAC must run before processing — admin handler middleware applies it"
+  product_writes:
+    - "ProductCreate(input) — create product on Shopify (export from master)"
+    - "ProductCreateMedia(productGID, imageURLs)"
+    - "CollectionAddProducts(collectionGID, productGIDs)"
+    - "CollectionCreate(title, handle, description)"
+
+usecases_inventory:
+  ingest:
+    - "import.go — generic import dispatch"
+    - "integrations.go, integrations_wipe.go — list/connect/disconnect tenant integrations"
+    - "csv_mapping.go — CSV → master_products schema mapping"
+  harvest_and_classify:
+    - "harvester_lite.go (736) — Shopify bulk parse"
+    - "metadata_harvest.go (566) — extract canonical fields from raw payload"
+    - "category_classifier.go — heuristic / LLM-assisted vertical detection"
+    - "junk_detector.go — flags weird/empty/duplicate listings; writes junk_candidates"
+  discovery_and_artifact:
+    - "discovery_agent.go (685) — main LLM-driven schema discovery"
+    - "discovery_run.go — orchestration (single + retry)"
+    - "discovery_tools.go (726) — tool implementations Agent uses (read tenant samples, fetch ontology, write artifact)"
+    - "auto_map_tier1.go — pre-LLM deterministic Tier1 mapping"
+    - "validate_artifact.go — post-LLM artifact validation"
+  matching:
+    - "match_cascade.go — strict → loose → new master cascade per listing"
+    - "merge_apply.go (804) — generate report + apply (writes products.master_product_id)"
+    - "merge_apply_d3.go — Phase D3 enhancements (deduplication, batch reporting)"
+  enrichment:
+    - "enrichment.go (509) — LLM-driven master product enrichment (PIM fields, descriptions)"
+  basic_crud:
+    - "products.go — listing CRUD"
+    - "stock.go — stock_quantity updates"
+
+http_routes:
+  ingest_admin:
+    - "POST /admin/api/integrations — connect Shopify/CSV/manual"
+    - "POST /admin/api/integrations/{id}/wipe — disconnect + clean"
+    - "POST /admin/api/integrations/csv — CSV upload + map"
+    - "POST /admin/api/integrations/shopify/v2 — Shopify v2 install flow"
+  catalog_admin:
+    - "GET  /admin/api/products?tenant=...&search=... — listings browse"
+    - "POST /admin/api/products/{id}/edit — listing CRUD"
+    - "GET  /admin/api/categories — category tree"
+    - "POST /admin/api/enrichment/run — bulk enrichment"
+    - "POST /admin/api/import — manual import"
+    - "POST /admin/api/junk/{id}/classify — junk decision"
+    - "GET  /admin/api/stock — stock summary"
+  internal_to_curator:
+    - "POST /admin/api/internal/curator/tenants/{id}/merge/run — generate report"
+    - "POST /admin/api/internal/curator/tenants/{id}/discover — run discovery agent"
+    - "GET  /admin/api/internal/curator/tenants/{id}/merge-reports — list reports"
+    - "GET  /admin/api/internal/curator/merge-reports/{id} — single report"
+    - "Auth: X-Internal-Key + X-Curator-User (set by curator MergeProxy)"
+  public_v1:
+    - "GET /api/v1/products?... — public catalog API for tenants (X-API-Key auth)"
+    - "GET /api/v1/categories"
+    - "Spec: docs/api/v1/openapi.yaml"
+  v4_chat_reads:
+    - "GET /api/v1/catalog/* — V4 catalog handler (handler_catalog.go) consumed by Agent1's catalog_search tool"
+
+invariants:
+  - "Schema in catalog.* is owned by admin migrations — V4 is a READER. New tables/columns added via project_admin migrations only."
+  - "products.master_product_id is NULLable — un-linked listings exist legitimately (pre-merge state)."
+  - "VectorSearch HNSW index requires non-NULL embedding — listings without embedding are invisible to vector search (SQL keyword still works)."
+  - "Match cascade order is fixed: strict → loose → new master. Strict requires identifier (GTIN/SKU) match if MappingArtifact.RequireIdentifier=true."
+  - "MergeApplyUseCase has TWO modes: GenerateReport (dry-run, no writes) and Apply (transactional, writes via ports.MergeApplyTxPort). Both go through buildProposal() so cascade logic is shared."
+  - "tier2 attributes are READ-side concerns — V4 chat consumes them via GetMasterProduct/ListProducts/VectorSearch. Write-side puts them into master_products.tier2 JSONB during merge_apply via extractTier2()."
+  - "Shopify webhook handlers MUST verify HMAC before processing — skip = arbitrary write vector."
+  - "Curator's PromoteAttribute is the only path that runs ALTER TABLE on master_products (tier1 promotion). Bypasses go through validIdent() guard in curator's adapter."
+
+gotchas:
+  - "Multi-word search in V4 ListProducts splits query into words and OR-matches each via ILIKE on (name, brand) — narrow categories with many short words can produce spurious matches. Vector search complements with semantic but doesn't replace."
+  - "ProductFilter conditions are AND-combined — passing both category=X AND attributes.brand=Y narrows hard. Loose searches need fewer filters."
+  - "extractTier2 transforms (units/lowercase/shorten/split) are applied ONLY when artifact field_mapping declares them — un-transformed raw values land in tier2 verbatim if no transform key."
+  - "Discovery agent has 8-min wallclock budget AND $0.40 LLM cost per run — closing curator UI doesn't cancel the admin-side run (fire-and-forget by MergeProxy). Re-running before completion = wasted tokens."
+  - "match_cascade strict mode requires identifier (SKU/GTIN). If listing source has no identifier (pure-text Shopify products), strict NEVER matches — all listings cascade to loose or new-master."
+  - "GenerateCatalogDigest is expensive (full table scan per tenant) — cached in tenants.catalog_digest JSONB. Stale digest = stale Agent1 system prompt; bust on schema change."
+  - "Shopify bulk operation is async — RunBulkProductsQuery returns immediately, harvester polls GetCurrentBulkOperation until COMPLETED. State machine: CREATED → RUNNING → COMPLETED|FAILED|CANCELED."
+  - "raw_payload JSONB on products is the source-of-truth for ingest — re-running harvester re-parses raw_payload. Don't drop it after harvest; it's the rollback surface."
+  - "Tier1 promotion (curator's PromoteAttribute) is irreversible at the schema level — column added stays. Dismissing a promoted candidate doesn't drop the column."
+
+related_experts:
+  - "admin — owns the write-side handlers, auth, billing. Catalog is the single biggest concern in admin but admin has more (auth, settings, billing). See `admin` expert."
+  - "pipeline-agents — V4 chat consumes catalog via catalog_search tool; tenant catalog digest is read by Agent1 system prompt. Field renames cascade."
+  - "engine-v4 — formation atoms bound to catalog field names (price, brand, name); tier2 fields are the B7 future for role-based binding via field_definitions."
+  - "curator — read-only browse + candidate promotion. Cross-domain SQL identifier safety (validIdent) is curator's responsibility."
+
+active_workstreams:
+  tracker: "docs/CATALOG_GAPS.md (live source of truth for phase 1 catalog finalize) + docs/PRE_LAUNCH_TASKS.md"
+  recent_milestones:
+    - "B7 prep — V4 chat reads master_products.tier2 (2026-04-29, commit 8a3357d)"
+    - "extractTier2 transforms (2026-04-29, commit 4e1c8d1)"
+    - "M1-M12 admin catalog implementation (2026-04-26)"
+    - "Phase D3 merge dedup + reports (2026-04-28)"
+    - "Curator-driven pivot Этап 0-3 (2026-04-27)"
+  hot_files:
+    - "project_v4/.../postgres_catalog.go (1639 LOC) — V4 read-side; split candidate (search/master/digest/embedding) per experts_plan_2026-04-29.md"
+    - "project_admin/.../shopify/client.go (1302 LOC) — Shopify API; split candidate (products/orders/webhooks/oauth)"
+    - "project_admin/.../catalog_adapter.go (1293 LOC) — admin write-side DB; split candidate (master/listings/categories/proposals)"
+    - "project_admin/.../merge_apply.go (804 LOC)"
+    - "project_admin/.../harvester_lite.go (736 LOC)"
+    - "project_admin/.../discovery_tools.go (726 LOC), catalog_migrations.go (726 LOC)"
+    - "project_admin/.../discovery_agent.go (685 LOC)"
