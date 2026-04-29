@@ -1,105 +1,94 @@
 # backend-domain Self-Improve
 
-Update backend-domain expertise from codebase.
+Update V4 backend-domain expertise from current code in `project_v4/backend/internal/domain/`.
 
 ## Variables
 
-USE_DIFF: $ARGUMENTS (true|false, default: false)
+USE_DIFF: $ARGUMENTS (true | false, default: false)
 EXPERTISE: .claude/commands/experts/backend-domain/expertise.yaml
-CONFIG: ADW/adw.yaml
+CODE_ROOT: project_v4/backend/internal/domain/
+LINE_LIMIT: 250
 
 ## Instructions
 
-- Scan codebase for backend-domain knowledge
-- Update expertise.yaml with findings
-- Keep within line limit from CONFIG
+- Scan code, update YAML, keep under LINE_LIMIT.
+- Preserve mental model: ui_primitives / chat / catalog / pipeline / tracing / errors / gotchas.
+- Refresh anything tied to specific names, fields, or constants.
 
 ## Workflow
 
-### Step 1: Load Current Expertise
-Read EXPERTISE to understand current state.
+### Step 1 — Read current expertise
+Note which sections already exist so you only update, not duplicate.
 
-### Step 2: Load Configuration
-Read CONFIG to get:
-- Paths for this domain
-- Line limit
+### Step 2 — Choose scope
+- USE_DIFF=true →
+  ```bash
+  git diff HEAD~10 --name-only -- project_v4/backend/internal/domain/
+  ```
+  Focus on changed files.
+- USE_DIFF=false → scan all `*_entity.go` files in CODE_ROOT.
 
-### Step 3: Scan Codebase
-If USE_DIFF = true:
+### Step 3 — Refresh facts
+
+For each `<entity>_entity.go`:
+- Re-read top-of-file `type <X> struct { ... }` declarations and `const ( ... )` enums.
+- Update the matching subsection (e.g. `ui_primitives.atom_entity.types`, `state_entity.action_types`) to reflect actual types/enum values.
+- If a NEW type appeared → add a line under the relevant entity's `types` array.
+- If a type was REMOVED → drop the line.
+
+Quick scan command for enums:
 ```bash
-git diff HEAD~5 --name-only
+grep -nE "^type [A-Z][A-Za-z]+ string|^const \(|^\t[A-Z][A-Za-z_]+ +[A-Z][A-Za-z]+ += +" project_v4/backend/internal/domain/<file>.go
 ```
-Focus on changed files.
 
-Otherwise, scan domain paths from CONFIG.
+### Step 3.5 — Integration gotchas
 
-### Step 4: Extract Knowledge
-For each relevant file:
-- File purpose
-- Key patterns
-- Important structures
-- Dependencies
+Preserve the existing gotchas. Add a new one when:
+- A unit/value boundary surprised you (kopecks vs rubles, ms vs seconds, slug vs UUID).
+- Two types have similar names and the wrong one was used (e.g. domain.Preset vs engine_v4.Preset vs preset_v2 Preset).
+- A migration changed a field shape and old data still exists in DB.
 
-### Step 4.5: Extract Integration Gotchas (CRITICAL)
-This prevents spec-to-implementation bugs:
+Remove a gotcha if its underlying behavior changed.
 
-**Data Types:**
-- Check interface parameter types (UUID vs string vs slug)
-- Check numeric types (int cents vs float dollars)
+### Step 4 — Cross-layer drift
 
-**Database Constraints:**
-- Read migration files for REFERENCES (foreign keys)
-- Document: "creating X requires Y to exist first"
+Verify these still hold:
+- All entity files still compile under `keepstar_v4` module (no accidental imports of internal/ packages — domain layer must stay leaf).
+- `LegacyTypeMapping` still exists in atom_entity (used for pre-V4 stored data).
+- `domain_errors.go` still exports the listed errors.
 
-**External APIs:**
-- Extract API versions from adapter code
-- Document auth headers, base URLs
+### Step 5 — Tests
 
-**SQL/Filter Logic:**
-- Check how WHERE conditions combine (AND vs OR)
-- Document edge cases
+```bash
+ls project_v4/backend/internal/domain/*_test.go
+```
+Update `state_entity.test_file` / `catalog_digest_entity.test_file` references and the Tests array if a new test file appeared.
 
-Add findings to `gotchas`, `external_apis`, `integration_patterns` sections.
+### Step 6 — Active workstreams
 
-### Step 5: Update Expertise
-Update expertise.yaml:
+Skim `docs/PRE_LAUNCH_TASKS.md` for waves that introduce new domain types (B7 → field_definitions). Update `active_workstreams.notes` if scope shifted.
 
-**PRESERVE (never modify):**
-- `overview.architecture` — architectural pattern name
-- `overview.description` — high-level description
-- `layer_rules` — dependency rules between layers
-- `patterns` — naming conventions and patterns
+### Step 7 — Report
 
-**UPDATE (from codebase scan):**
-- `project_structure` — actual files and directories
-- `core_implementation` — current implementation details
-- `api_endpoints` — actual endpoints
-- `run_commands` — verified commands
-- `migration_status` — current state
+```
+backend-domain expertise updated
 
-Rules:
-- Keep format consistent
-- Stay within line limit
-- Focus on actionable knowledge
+Changes:
+- Added: <items>
+- Updated: <items>
+- Removed: <items>
 
-### Step 6: Report Changes
+Lines: N / 250
+```
 
 ## Constraints
 
-- DO NOT: exceed line limit
-- DO: focus on patterns, not docs
-- DO: include file paths
-- DO: keep it actionable
+- DO NOT exceed LINE_LIMIT.
+- DO NOT mix in V1/V2 entities from `project/backend/internal/domain/` — that's the legacy expert (deprecated).
+- DO record enum values verbatim from `const ( ... )` — these are user-facing strings used in JSON.
+- DO NOT scan `ADW/adw.yaml` for line limits — it's stale.
+- DO preserve the gotchas section — it's load-bearing for question-answering.
 
 ## Output
 
-```
-backend-domain Expertise Updated
-
-Changes:
-- Added: <what>
-- Updated: <what>
-- Removed: <what>
-
-Lines: N / {limit}
-```
+Updated `expertise.yaml` plus a summary report.

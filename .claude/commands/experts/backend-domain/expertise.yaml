@@ -1,193 +1,227 @@
-# Backend Domain Expertise
-# Entities, types, errors - zero dependencies
+# Backend Domain Expertise (V4)
+# Entities, types, errors — zero internal dependencies (only stdlib).
+# Path: project_v4/backend/internal/domain/
 
 overview:
   layer: "domain"
-  path: "project/backend/internal/domain/"
-  imports: "Nothing from internal/ - only stdlib"
-  contains: "Entities, types, domain errors"
+  path: "project_v4/backend/internal/domain/"
+  go_module: "keepstar_v4"
+  imports: "Nothing from internal/ — only stdlib + (rarely) `github.com/google/uuid`"
+  contains: "Entities, types, domain errors. No business logic, no I/O."
+  naming: "{entity}_entity.go (one entity per file in most cases)"
 
-entities:
-  ui_primitives:
-    atom_entity:
-      file: "atom_entity.go"
-      types: ["AtomType", "AtomSubtype", "AtomSlot", "Atom"]
-      atom_types: ["text", "number", "image", "icon", "video", "audio"]
-      atom_subtypes:
-        text: ["string", "date", "datetime", "url", "email", "phone"]
-        number: ["int", "float", "currency", "percent", "rating"]
-        image: ["url", "base64"]
-        icon: ["name", "emoji", "svg"]
-      atom_slots: ["hero", "badge", "title", "primary", "price", "secondary", "gallery", "stock", "description", "tags", "specs"]
-      atom_fields: ["Type", "Subtype", "Display", "Value", "Slot", "Meta"]
-      legacy_mapping: "LegacyTypeMapping maps old types (price, rating, badge) to new type+subtype+display"
-    display_entity:
-      file: "display_entity.go"
-      types: ["AtomDisplay", "DisplayStyle"]
-      displays:
-        text: ["h1", "h2", "h3", "h4", "body-lg", "body", "body-sm", "caption", "badge", "badge-success", "badge-error", "badge-warning", "tag", "tag-active"]
-        number: ["price", "price-lg", "price-old", "price-discount", "rating", "rating-text", "rating-compact", "percent", "progress"]
-        image: ["image", "image-cover", "avatar", "avatar-sm", "avatar-lg", "thumbnail", "gallery"]
-        icon: ["icon", "icon-sm", "icon-lg"]
-        interactive: ["button-primary", "button-secondary", "button-outline", "button-ghost", "input"]
-        layout: ["divider", "spacer"]
-      display_styles: ["product-hero", "product-compact", "product-detail", "service-card", "service-detail"]
-      helpers: ["DisplayStyles map", "GetDisplayForSlot()"]
-    widget_entity:
-      file: "widget_entity.go"
-      types: ["WidgetType", "WidgetSize", "Widget"]
-      templates: ["ProductCard"]
-      widget_fields: ["ID", "Type", "Template", "Size", "Priority", "Atoms", "Children", "Meta", "EntityRef"]
-    formation_entity:
-      file: "formation_entity.go"
-      types: ["FormationType", "Formation"]
+ui_primitives:
 
-  chat:
-    message_entity:
-      file: "message_entity.go"
-      types: ["MessageRole", "Message"]
-      fields: ["ID", "SessionID", "Role", "Content", "Widgets", "Formation", "TokensUsed", "ModelUsed", "LatencyMs", "SentAt", "ReceivedAt", "Timestamp"]
-    session_entity:
-      file: "session_entity.go"
-      types: ["SessionStatus", "Session"]
-      constants: ["SessionTTL = 5 minutes"]
-      fields: ["ID", "UserID", "TenantID", "Status", "Messages", "Metadata", "StartedAt", "EndedAt", "LastActivityAt", "CreatedAt", "UpdatedAt"]
-    user_entity:
-      file: "user_entity.go"
-      types: ["ChatUser"]
-    event_entity:
-      file: "event_entity.go"
-      types: ["EventType", "ChatEvent"]
-      event_types: ["chat_opened", "message_sent", "message_received", "chat_closed", "widget_clicked", "session_timeout"]
+  atom_entity:
+    file: "atom_entity.go"
+    types:
+      - "AtomType, AtomSubtype, AtomSlot, AtomFormat, Rigidity, Atom"
+      - "TextStyle, MediaStyle, IconStyle, WrapperConfig"
+    atom_types: ["text", "number", "image", "icon", "video", "audio"]
+    atom_subtypes:
+      text: ["string", "date", "datetime", "url", "email", "phone"]
+      number: ["int", "float", "currency", "percent", "rating"]
+      image: ["url", "base64"]
+      icon: ["name", "emoji", "svg"]
+    atom_slots: ["hero", "badge", "title", "primary", "price", "secondary", "gallery", "stock", "description", "tags", "specs"]
+    atom_format_purpose: "Format hint for rendering (price, stars, percent, date — frontend uses for visual display)."
+    rigidity: "How strictly the atom enforces its slot/role. Affects whether layout engine can reflow it."
+    style_blocks:
+      TextStyle: "color, fontSize, weight, lineHeight, align"
+      MediaStyle: "objectFit, aspectRatio, radius"
+      IconStyle: "size, color"
+      WrapperConfig: "background, padding, radius, border — how the atom is boxed"
 
-  catalog:
-    entity_type:
-      file: "entity_type.go"
-      types: ["EntityType"]
-      entity_types: ["product", "service"]
-    product_entity:
-      file: "product_entity.go"
-      types: ["Product"]
-      fields: ["ID", "TenantID", "MasterProductID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Images", "Rating", "StockQuantity", "Brand", "Category", "Tags", "Attributes"]
-    service_entity:
-      file: "service_entity.go"
-      types: ["Service"]
-      fields: ["ID", "TenantID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Duration", "Images", "Rating", "Category", "Provider", "Availability", "Attributes"]
-    tenant_entity:
-      file: "tenant_entity.go"
-      types: ["TenantType", "Tenant"]
-      tenant_types: ["brand", "retailer", "reseller"]
-    category_entity:
-      file: "category_entity.go"
-      types: ["Category"]
-    master_product_entity:
-      file: "master_product_entity.go"
-      types: ["MasterProduct"]
-      fields: ["ID", "SKU", "Name", "Description", "Brand", "CategoryID", "CategoryName", "Images", "Attributes", "OwnerTenantID", "CreatedAt", "UpdatedAt"]
-    catalog_digest_entity:
-      file: "catalog_digest_entity.go"
-      types: ["CatalogDigest", "DigestCategory", "DigestParam"]
-      purpose: "Pre-computed meta-schema of tenant catalog for Agent1 system prompt"
-      digest_fields: ["GeneratedAt", "TotalProducts", "Categories"]
-      category_fields: ["Name", "Slug", "Count", "PriceRange [2]int (kopecks)", "Params"]
-      param_fields: ["Key", "Type (enum|range)", "Cardinality", "Values", "Top", "More", "Families", "Range"]
-      param_tiers:
-        low_cardinality: "cardinality <= 15 → Values (full list)"
-        medium_cardinality: "cardinality 16-50 → Top (top-N) + More (remaining count)"
-        high_cardinality: "cardinality 50+ → Families (grouped values)"
-        range: "numeric → Range string (e.g. '36-47')"
+  display_entity:
+    file: "display_entity.go"
+    types: ["AtomDisplay", "DisplayStyle"]
+    note: "V4 still carries display semantics but most rendering decisions moved into engine_v4 presets."
+
+  widget_entity:
+    file: "widget_entity.go"
+    types: ["WidgetSize", "ReplicateConfig", "Widget"]
+    sizes: ["tiny", "small", "medium", "large"]
+    replicate_config: "Per-widget replication policy (used when widget acts as a row/card template that gets cloned per data item)."
+    widget_fields: ["ID", "Type", "Template", "Size", "Atoms", "Layout *LayoutNode", "Children", "Meta", "EntityRef", "Actions []ActionDef", "States WidgetStates"]
+
+  layout_entity:
+    file: "layout_entity.go"
+    types: ["LayoutNodeType", "LayoutNode", "LayoutChild", "WidgetActionType", "ActionDef", "WidgetStates"]
+    purpose: "V4-specific. Replaces hardcoded slot positions with a recursive layout tree (LayoutNode → LayoutChild). Children can be atom-index references or nested nodes."
+    helpers: ["NewAtomChild(index int) LayoutChild", "NewNodeChild(node *LayoutNode) LayoutChild"]
+    widget_action_type: "User-actionable triggers attached to a widget (like, add_to_cart, navigate, etc.)"
+    action_def_fields: ["Type", "Target", "Label", "Icon", "Meta"]
+    widget_states: "Visual states (default, hovered, pressed, selected, loading)"
+
+  formation_entity:
+    file: "formation_entity.go"
+    types: ["FormationType", "Formation"]
+    note: "Top-level container. Engine wraps it as FormationWithData (see template_entity)."
+
+  template_entity:
+    file: "template_entity.go"
+    types:
+      - "AtomTemplate, WidgetTemplate, GridConfig, FormationTemplate, FormationWithData"
+      - "FieldSpec, RenderConfig, FormationSection, PaginationMeta"
+    formation_with_data: "What the engine returns from Execute — Formation + bound data. THIS is the type Agent2 modifies via ops, NOT plain Formation."
+
+  preset_entity:
+    file: "preset_entity.go"
+    types: ["FieldConfig", "SlotConfig", "Preset", "PresetName"]
+    note: "Legacy V2 preset shape. Still referenced for back-compat but engine_v4 has its own Preset (in engine_v4 package)."
+
+  preset_v2_entity:
+    file: "preset_v2_entity.go"
+    note: "Newer preset shape — coexists with preset_entity. Used by tenant-published canvas presets. Check before assuming which Preset type is meant."
+
+chat:
+
+  message_entity:
+    file: "message_entity.go"
+    types: ["MessageRole", "Message"]
+    fields: ["ID", "SessionID", "Role", "Content", "Widgets", "Formation", "TokensUsed", "ModelUsed", "LatencyMs", "SentAt", "ReceivedAt", "Timestamp"]
+
+  session_entity:
+    file: "session_entity.go"
+    types: ["SessionStatus", "Session"]
+    constants: ["SessionTTL = 5 minutes (sliding)"]
+    fields: ["ID", "UserID", "TenantID", "Status", "Messages", "Metadata", "StartedAt", "EndedAt", "LastActivityAt", "CreatedAt", "UpdatedAt"]
+
+  user_entity:
+    file: "user_entity.go"
+    types: ["ChatUser"]
+
+  event_entity:
+    file: "event_entity.go"
+    types: ["EventType", "ChatEvent"]
+    event_types: ["chat_opened", "message_sent", "message_received", "chat_closed", "widget_clicked", "session_timeout"]
+
+catalog:
+
+  entity_type:
+    file: "entity_type.go"
+    values: ["product", "service"]
+
+  product_entity:
+    file: "product_entity.go"
+    fields_of_note: ["ID", "TenantID", "MasterProductID", "Name", "Description", "Price", "PriceFormatted", "Currency", "Images", "Rating", "StockQuantity", "Brand", "Category", "Tags", "Attributes"]
+
+  service_entity:
+    file: "service_entity.go"
+    note: "Parallel to Product for service-based businesses (booking-style)."
+
+  master_product_entity:
+    file: "master_product_entity.go"
+    fields_of_note: ["ID", "SKU", "Name", "Description", "Brand", "CategoryID", "CategoryName", "Images", "Attributes", "OwnerTenantID"]
+
+  master_service_entity:
+    file: "master_service_entity.go"
+    note: "V4 addition — master record for services (admin/curator can resolve services to a master like products)."
+
+  stock_entity:
+    file: "stock_entity.go"
+    note: "Stock level domain type (separate from Product.StockQuantity for inventory event tracking)."
+
+  category_entity:
+    file: "category_entity.go"
+    types: ["Category"]
+
+  tenant_entity:
+    file: "tenant_entity.go"
+    types: ["TenantType", "Tenant"]
+    tenant_types: ["brand", "retailer", "reseller"]
+
+  catalog_digest_entity:
+    file: "catalog_digest_entity.go"
+    purpose: "Pre-computed meta-schema of tenant catalog injected into Agent1 system prompt."
+    types: ["CatalogDigest", "DigestCategory", "DigestParam"]
+    digest_fields: ["GeneratedAt", "TotalProducts", "Categories"]
+    category_fields: ["Name", "Slug", "Count", "PriceRange [2]int (kopecks)", "Params"]
+    param_fields: ["Key", "Type (enum|range)", "Cardinality", "Values", "Top", "More", "Families", "Range"]
+    param_tiers:
+      low_cardinality: "<=15 → Values (full enum list, used as filter)"
+      medium_cardinality: "16-50 → Top + More (top-N enums + remaining count)"
+      high_cardinality: ">50 → Families (grouped, e.g. ~100 colors → 11 families)"
+      range: "numeric → Range string"
+    methods: ["ToPromptText() string — compact text injected into Agent1 prompt with → filter / → vector_query hints"]
+    helpers: ["formatPriceRange(minKop, maxKop) — kopecks→rubles", "ComputeFamilies(key, values) []string", "computeColorFamilies(values) — RU/EN→11 families"]
+    test_file: "catalog_digest_test.go"
+
+pipeline:
+
+  tool_entity:
+    file: "tool_entity.go"
+    types: ["ToolDefinition", "ToolCall", "ToolResult", "LLMMessage", "LLMResponse", "LLMUsage"]
+    helpers: ["LLMUsage.CalculateCost()", "LLMPricing"]
+    llm_usage_fields: ["InputTokens", "OutputTokens", "TotalTokens", "Model", "CostUSD", "CacheCreationInputTokens", "CacheReadInputTokens"]
+    cost_calc: "write 1.25× base input, read 0.1× base input."
+    pricing_models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20251014", "claude-opus-4-5-20251101", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"]
+
+  state_entity:
+    file: "state_entity.go"
+    types:
+      - "TriggerType, ActionType, Action, ResultMeta"
+      - "Delta, DeltaInfo, DeltaSource, DeltaType"
+      - "StateMeta, StateData, StateCurrent, SessionState"
+      - "ViewMode, EntityRef, ViewSnapshot, ViewState"
+      - "CartItem, StateActions"
+    trigger_types: ["USER_QUERY", "WIDGET_ACTION", "SYSTEM"]
+    action_types: ["SEARCH", "FILTER", "SORT", "LAYOUT", "ROLLBACK"]
+    delta_sources: ["user", "llm", "system"]
+    delta_types: ["add", "remove", "update", "push", "pop", "rollback"]
+    view_modes: ["grid", "detail", "list", "carousel"]
+    delta_info: "Lightweight metadata for creating deltas via zone-write; ToDelta() converts to full Delta with CreatedAt"
+    state_data_fields: ["Products", "Services"]
+    state_meta_fields: ["Count", "ProductCount", "ServiceCount", "Fields", "Aliases"]
+    session_state_fields: ["ID", "SessionID", "Current", "View", "ViewStack", "ConversationHistory", "Step", "CreatedAt", "UpdatedAt"]
+    cart: "CartItem + StateActions are V4 additions for cart/like UX (used by widget action handlers and cart_grid preset)."
+    test_file: "state_entity_test.go"
+
+tracing:
+
+  trace_entity:
+    file: "trace_entity.go"
+    types: ["PipelineTrace", "AgentTrace", "StateSnapshot", "DeltaTrace", "FormationTrace"]
+    pipeline_trace_fields: ["ID", "SessionID", "Query", "TurnID", "Timestamp", "Agent1", "StateAfterAgent1", "Agent2", "FormationResult", "TotalMs", "Error", "CostUSD", "Spans"]
+    agent_trace_fields_of_note: ["LLMMs", "ToolMs", "TotalMs", "StopReason", "Model", "Input/OutputTokens", "CacheRead/Write", "CostUSD", "PromptSent", "RawResponse", "ToolBreakdown"]
+
+  span:
+    file: "span.go"
+    types: ["Span", "SpanCollector"]
+    span_fields: ["Name", "StartMs", "EndMs", "DurationMs", "Detail"]
+    span_collector:
+      purpose: "Thread-safe (sync.Mutex) collector of timed spans for one pipeline execution."
+      ctor: "NewSpanCollector() — anchors to time.Now()"
       methods:
-        - "ToPromptText() string — compact text for LLM prompt with search hints (→ filter / → vector_query)"
-      helpers:
-        - "formatPriceRange(minKop, maxKop) — kopecks→rubles display"
-        - "formatParam(p) — param line with search hint"
-        - "ComputeFamilies(key, values) []string — groups colors into families, top-10 for non-color"
-        - "computeColorFamilies(values) — maps Russian/English color names to family names"
-      vars:
-        - "colorFamilyMap — maps ~100 color names (RU/EN) to 11 color families (Red, Blue, Green, Black, White, Gray, Yellow, Orange, Pink, Purple, Brown)"
-      search_hints:
-        filter: "low/medium cardinality enum, range → use in filters.{param}"
-        vector_query: "high cardinality families → include in vector_query text"
-      test_file: "catalog_digest_test.go"
+        - "Start(name) func(...string) — begins span, returns end fn; end('detail') closes it"
+        - "Spans() []Span — sorted: StartMs ASC, DurationMs DESC (parents before children)"
+    context_helpers: ["WithSpanCollector(ctx, sc)", "SpanFromContext(ctx) *SpanCollector", "WithStage(ctx, stage)", "StageFromContext(ctx) string"]
+    naming: "Dot hierarchy: pipeline, agent1, agent1.llm, agent1.llm.ttfb, agent1.tool.embed, agent2.tool.visual_assembly"
 
-  pipeline:
-    tool_entity:
-      file: "tool_entity.go"
-      types: ["ToolDefinition", "ToolCall", "ToolResult", "LLMMessage", "LLMResponse", "LLMUsage"]
-      helpers: ["LLMUsage.CalculateCost()", "LLMPricing"]
-      llm_usage_fields: ["InputTokens", "OutputTokens", "TotalTokens", "Model", "CostUSD", "CacheCreationInputTokens", "CacheReadInputTokens"]
-      calculate_cost: "Accounts for cache pricing: write ×1.25, read ×0.1 of base input price"
-      llm_pricing_models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20251014", "claude-opus-4-5-20251101", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"]
-    template_entity:
-      file: "template_entity.go"
-      types: ["AtomTemplate", "WidgetTemplate", "GridConfig", "FormationTemplate", "FormationWithData"]
-    state_entity:
-      file: "state_entity.go"
-      types: ["TriggerType", "ActionType", "Action", "ResultMeta", "Delta", "DeltaInfo", "StateMeta", "StateData", "StateCurrent", "SessionState", "DeltaSource", "DeltaType", "ViewMode", "EntityRef", "ViewSnapshot", "ViewState"]
-      trigger_types: ["USER_QUERY", "WIDGET_ACTION", "SYSTEM"]
-      action_types: ["SEARCH", "FILTER", "SORT", "LAYOUT", "ROLLBACK"]
-      delta_sources: ["user", "llm", "system"]
-      delta_types: ["add", "remove", "update", "push", "pop", "rollback"]
-      view_modes: ["grid", "detail", "list", "carousel"]
-      delta_fields: ["Step", "TurnID", "Trigger", "Source", "ActorID", "DeltaType", "Path", "Action", "Result", "Template", "CreatedAt"]
-      delta_info: "Lightweight metadata for creating deltas via zone-write; ToDelta() converts to full Delta with CreatedAt"
-      state_data_fields: ["Products", "Services"]
-      state_meta_fields: ["Count", "ProductCount", "ServiceCount", "Fields", "Aliases"]
-      session_state_fields: ["ID", "SessionID", "Current", "View", "ViewStack", "ConversationHistory", "Step", "CreatedAt", "UpdatedAt"]
-      conversation_history: "[]LLMMessage - LLM conversation history for prompt caching, append-only"
-    preset_entity:
-      file: "preset_entity.go"
-      types: ["FieldConfig", "SlotConfig", "Preset", "PresetName"]
-      preset_names: ["product_grid", "product_card", "product_compact", "product_detail", "service_card", "service_list", "service_detail"]
-      field_config: ["Name", "Slot", "AtomType", "Subtype", "Display", "Priority", "Required"]
-      preset_fields: ["Name", "EntityType", "Template", "Slots", "Fields", "DefaultMode", "DefaultSize", "Displays"]
-
-  tracing:
-    trace_entity:
-      file: "trace_entity.go"
-      types: ["PipelineTrace", "AgentTrace", "StateSnapshot", "DeltaTrace", "FormationTrace"]
-      pipeline_trace_fields: ["ID", "SessionID", "Query", "TurnID", "Timestamp", "Agent1", "StateAfterAgent1", "Agent2", "FormationResult", "TotalMs", "Error", "CostUSD", "Spans"]
-      agent_trace_fields: ["Name", "LLMMs", "ToolMs", "TotalMs", "StopReason", "Model", "InputTokens", "OutputTokens", "CacheRead", "CacheWrite", "CostUSD", "SystemPrompt", "SystemPromptChars", "MessageCount", "ToolDefCount", "ToolName", "ToolInput", "ToolResult", "ToolBreakdown", "PromptSent", "RawResponse"]
-      state_snapshot_fields: ["ProductCount", "ServiceCount", "Fields", "Aliases", "HasTemplate", "DeltaCount", "Deltas"]
-      formation_trace_fields: ["Mode", "WidgetCount", "Cols", "FirstWidget"]
-
-    span:
-      file: "span.go"
-      types: ["Span", "SpanCollector"]
-      span_fields: ["Name", "StartMs", "EndMs", "DurationMs", "Detail"]
-      span_collector:
-        purpose: "Thread-safe collector of timed spans for one pipeline execution"
-        constructor: "NewSpanCollector() — anchors to time.Now()"
-        methods:
-          - "Start(name) func(...string) — begins a named span, returns end function; end('detail') closes the span"
-          - "Spans() []Span — returns sorted copy: StartMs ASC, DurationMs DESC (parents before children)"
-      context_helpers:
-        - "WithSpanCollector(ctx, sc) — attaches SpanCollector to context"
-        - "SpanFromContext(ctx) *SpanCollector — retrieves SpanCollector from context (nil if absent)"
-        - "WithStage(ctx, stage) — attaches current agent stage name (e.g. 'agent1') to context"
-        - "StageFromContext(ctx) string — retrieves stage from context (empty if absent)"
-      naming_convention: "Span names use dot-separated hierarchy: 'agent1.llm.ttfb', 'agent1.tool.embed'"
-
-  test_files:
-    - "state_entity_test.go - DeltaInfo.ToDelta() tests: field transfer, empty TurnID, independent calls"
-    - "catalog_digest_test.go - DigestParam format, ToPromptText (basic, empty, large categories, price formatting, brand handling, filter hints, services), ComputeFamilies color grouping"
-
-  errors:
-    file: "domain_errors.go"
-    errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound", "ErrRateLimitExceeded"]
+errors:
+  file: "domain_errors.go"
+  errors: ["ErrSessionNotFound", "ErrProductNotFound", "ErrInvalidQuery", "ErrLLMUnavailable", "ErrTenantNotFound", "ErrCategoryNotFound", "ErrRateLimitExceeded"]
 
 gotchas:
-  - "Price stored in kopecks (int), not rubles (float)"
-  - "sessionID and tenantID must be valid UUID format"
-  - "ErrSessionNotFound returned when state doesn't exist"
-  - "Service is parallel to Product for service-based businesses"
-  - "Preset defines field→slot→atomType→display mappings for rendering"
-  - "SessionTTL (5 min) used for sliding expiration - session becomes closed after inactivity"
-  - "Atom model: Type (6 types) + Subtype (data format) + Display (visual format)"
-  - "Display can be set by preset, style alias, or explicitly by agent"
-  - "Legacy atom types (price, badge, rating) mapped via LegacyTypeMapping"
-  - "SpanCollector is thread-safe (sync.Mutex) — safe for concurrent span creation"
-  - "Span names use dot hierarchy: pipeline, agent1, agent1.llm, agent1.llm.ttfb, agent1.tool.embed"
-  - "PipelineTrace.Spans []Span — waterfall timeline data recorded by SpanCollector"
+  - "Price stored in KOPECKS (int). PriceFormatted/CurrencyFormatted are display strings. CatalogDigest formatPriceRange handles kopecks→rubles."
+  - "SessionTTL = 5 minutes, sliding (LastActivityAt resets). Session moves to closed status after inactivity."
+  - "ErrSessionNotFound returned when state doesn't exist — handlers map this to 404."
+  - "Service is parallel to Product for service-based businesses (master_service_entity is the V4 master parallel to master_product_entity)."
+  - "Atom model: Type (6 base) + Subtype (data format) + AtomFormat (render hint) + Display (visual style). Don't confuse Subtype with Format."
+  - "V4 introduces LayoutNode tree — replaces V1/V2's flat slot positioning. Widget.Layout *LayoutNode is the source of truth; Widget.Atoms is the indexed pool LayoutChild references."
+  - "ActionDef lives in layout_entity.go (not action_entity.go). Search there when looking for ActionDef."
+  - "Two Preset types coexist: domain.Preset (preset_entity.go, legacy) and engine_v4.Preset (engine_v4/presets.go). The engine works with the engine_v4.Preset; the domain ones are mostly for back-compat. Also: preset_v2_entity.go has yet another Preset shape used by tenant canvas overrides."
+  - "FormationWithData lives in template_entity.go, not formation_entity.go. It is what engine_v4 produces and what Agent2 modifies."
+  - "SpanCollector is thread-safe; safe for concurrent span creation across goroutines."
+  - "LegacyTypeMapping (atom legacy types like price/badge/rating → new type+subtype+display) still exists in atom_entity for back-compat with V1/V2 stored data."
+  - "CartItem + StateActions are V4 additions; older traces in DB may not have these fields populated."
 
-naming: "{entity}_entity.go"
+related_experts:
+  - "engine-v4 — consumes FormationWithData, Atom, Widget, LayoutNode, ActionDef, ReplicateConfig"
+  - "backend-pipeline — uses ToolDefinition, ToolCall, ToolResult, LLMUsage, CatalogDigest"
+  - "backend-ports — interfaces typed against these domain entities"
+  - "backend-adapters — postgres rows → domain entity conversion (kopecks/rubles boundary lives here)"
+
+active_workstreams:
+  tracker: "docs/PRE_LAUNCH_TASKS.md"
+  notes: "B7 (role-based field binding) will introduce new domain types around field_definitions; watch for additions to product_entity / atom_entity attributes."
