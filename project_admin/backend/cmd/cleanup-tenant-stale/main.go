@@ -100,7 +100,7 @@ func main() {
 
 	shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret, cfg.ShopifyAPIVersion, cfg.ShopifyScopes)
 
-	currentProductIDs, currentCollectionGIDs, err := fetchCurrentCatalog(ctx, shopifyClient, *shop, full.Credentials)
+	currentProductIDs, currentProductGIDs, currentCollectionGIDs, err := fetchCurrentCatalog(ctx, shopifyClient, *shop, full.Credentials)
 	if err != nil {
 		log.Fatalf("fetch current catalog: %v", err)
 	}
@@ -109,13 +109,24 @@ func main() {
 		log.Fatal("refusing to proceed with empty current set — would delete everything for this tenant")
 	}
 
-	// Build VARIADIC arg list for product NOT IN.
+	// Build VARIADIC arg list for product NOT IN — catalog.products stores
+	// source_id as bare numeric (e.g. "8289361100989").
 	prodArgs := make([]any, 0, len(currentProductIDs)+1)
 	prodArgs = append(prodArgs, tenantID)
 	for id := range currentProductIDs {
 		prodArgs = append(prodArgs, id)
 	}
 	prodPlaceholders := buildPlaceholders(2, len(currentProductIDs))
+
+	// shopify_raw_imports stores source_id as the FULL GID (e.g.
+	// "gid://shopify/Product/8289361100989"). Same products, different format,
+	// so we need a parallel arg list keyed on GID.
+	gidArgs := make([]any, 0, len(currentProductGIDs)+1)
+	gidArgs = append(gidArgs, tenantID)
+	for gid := range currentProductGIDs {
+		gidArgs = append(gidArgs, gid)
+	}
+	gidPlaceholders := buildPlaceholders(2, len(currentProductGIDs))
 
 	// Build VARIADIC arg list for collection NOT IN. Empty collection set is
 	// allowed: it means every Shopify-sourced tenant_category is stale.
@@ -133,8 +144,8 @@ func main() {
 		log.Fatalf("count stale products: %v", err)
 	}
 	if err := dbClient.Pool().QueryRow(ctx,
-		"SELECT COUNT(*) FROM catalog.shopify_raw_imports WHERE tenant_id=$1 AND source_kind='product' AND source_id NOT IN ("+prodPlaceholders+")",
-		prodArgs...).Scan(&stagingCount); err != nil {
+		"SELECT COUNT(*) FROM catalog.shopify_raw_imports WHERE tenant_id=$1 AND source_kind='product' AND source_id NOT IN ("+gidPlaceholders+")",
+		gidArgs...).Scan(&stagingCount); err != nil {
 		log.Fatalf("count stale staging: %v", err)
 	}
 	if err := dbClient.Pool().QueryRow(ctx,
@@ -194,8 +205,8 @@ func main() {
 	}
 
 	tag2, err := tx.Exec(ctx,
-		"DELETE FROM catalog.shopify_raw_imports WHERE tenant_id=$1 AND source_kind='product' AND source_id NOT IN ("+prodPlaceholders+")",
-		prodArgs...)
+		"DELETE FROM catalog.shopify_raw_imports WHERE tenant_id=$1 AND source_kind='product' AND source_id NOT IN ("+gidPlaceholders+")",
+		gidArgs...)
 	if err != nil {
 		log.Fatalf("delete from staging: %v", err)
 	}
@@ -240,14 +251,17 @@ func stalCategoriesDeleteSQL(placeholders string, n int) string {
 }
 
 // fetchCurrentCatalog runs a fresh Bulk Operations query and returns:
-//   - product IDs (numeric tail of gid://shopify/Product/N) — top-level rows
-//   - collection GIDs (full gid://shopify/Collection/N) — child rows whose ID
+//   - productIDs:    numeric tail of gid://shopify/Product/N (matches the
+//     `source_id` format in catalog.products).
+//   - productGIDs:   full gid://shopify/Product/N (matches `source_id` in
+//     catalog.shopify_raw_imports — note the format differs by table).
+//   - collectionGIDs: full gid://shopify/Collection/N — child rows whose ID
 //     namespace is Collection (collections are bundled per-product in the bulk
 //     stream). Same Collection GID may appear under many products; we dedupe.
-func fetchCurrentCatalog(ctx context.Context, c *shopify.Client, shop, token string) (map[string]struct{}, map[string]struct{}, error) {
+func fetchCurrentCatalog(ctx context.Context, c *shopify.Client, shop, token string) (map[string]struct{}, map[string]struct{}, map[string]struct{}, error) {
 	if _, err := c.RunBulkProductsQuery(ctx, shop, token); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "already in progress") {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		log.Println("a bulk op is already running — polling existing")
 	}
@@ -255,20 +269,20 @@ func fetchCurrentCatalog(ctx context.Context, c *shopify.Client, shop, token str
 	var op *shopify.BulkOperation
 	for {
 		if time.Now().After(deadline) {
-			return nil, nil, errPollTimeout
+			return nil, nil, nil, errPollTimeout
 		}
 		current, err := c.GetCurrentBulkOperation(ctx, shop, token)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if current == nil {
-			return nil, nil, errNoCurrentOp
+			return nil, nil, nil, errNoCurrentOp
 		}
 		switch current.Status {
 		case shopify.BulkOpCompleted:
 			op = current
 		case shopify.BulkOpFailed, shopify.BulkOpCanceled, shopify.BulkOpExpired:
-			return nil, nil, errBulkTerminal(string(current.Status), current.ErrorCode)
+			return nil, nil, nil, errBulkTerminal(string(current.Status), current.ErrorCode)
 		}
 		if op != nil {
 			break
@@ -276,22 +290,23 @@ func fetchCurrentCatalog(ctx context.Context, c *shopify.Client, shop, token str
 		log.Printf("  poll: status=%s objectCount=%s", current.Status, current.ObjectCount)
 		select {
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return nil, nil, nil, ctx.Err()
 		case <-time.After(bulkPollInterval):
 		}
 	}
 	if op.URL == "" {
 		// Empty catalog — caller protects against this case.
-		return map[string]struct{}{}, map[string]struct{}{}, nil
+		return map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}, nil
 	}
 	body, err := c.FetchBulkJSONL(ctx, op.URL)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer body.Close()
 
 	scanner := shopify.ScanBulkJSONL(body)
-	products := make(map[string]struct{}, 256)
+	productIDs := make(map[string]struct{}, 256)
+	productGIDs := make(map[string]struct{}, 256)
 	collections := make(map[string]struct{}, 64)
 	for scanner.Scan() {
 		var head struct {
@@ -302,9 +317,11 @@ func fetchCurrentCatalog(ctx context.Context, c *shopify.Client, shop, token str
 			continue
 		}
 		if head.ParentID == "" {
-			// Top-level Product node. Extract numeric tail.
+			// Top-level Product node. Keep both formats — catalog.products uses
+			// the bare numeric tail, shopify_raw_imports uses the full GID.
+			productGIDs[head.ID] = struct{}{}
 			if idx := strings.LastIndex(head.ID, "/"); idx > 0 && idx < len(head.ID)-1 {
-				products[head.ID[idx+1:]] = struct{}{}
+				productIDs[head.ID[idx+1:]] = struct{}{}
 			}
 			continue
 		}
@@ -314,7 +331,7 @@ func fetchCurrentCatalog(ctx context.Context, c *shopify.Client, shop, token str
 			collections[head.ID] = struct{}{}
 		}
 	}
-	return products, collections, scanner.Err()
+	return productIDs, productGIDs, collections, scanner.Err()
 }
 
 func buildPlaceholders(start, n int) string {
