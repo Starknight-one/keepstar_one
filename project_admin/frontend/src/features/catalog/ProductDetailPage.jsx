@@ -135,7 +135,7 @@ export default function ProductDetailPage() {
                 <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </div>
               <div className="pd-field">
-                <label className="pd-field-label">Price (kopecks)</label>
+                <label className="pd-field-label">Price (cents)</label>
                 <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} />
               </div>
               <div className="pd-field">
@@ -215,11 +215,12 @@ export default function ProductDetailPage() {
                 <input value={(product.gtins && product.gtins.join(', ')) || '—'} disabled />
               </div>
               <div className="pd-field">
-                <label className="pd-field-label">Size / Color</label>
-                <input
-                  value={[product.size, product.color].filter(Boolean).join(' / ') || '—'}
-                  disabled
-                />
+                <label className="pd-field-label">Size</label>
+                <input value={product.size || '—'} disabled />
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Color</label>
+                <input value={product.color || '—'} disabled />
               </div>
               <div className="pd-field">
                 <label className="pd-field-label">Weight (g)</label>

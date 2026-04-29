@@ -1008,6 +1008,63 @@ mutation seedProductSet($input: ProductSetInput!) {
 	return resp.ProductSet.Product.ID, nil
 }
 
+// ProductCreateMedia attaches one or more images to a product by URL. Shopify
+// fetches each URL and hosts the file itself — no upload needed. Used by
+// seed-devstore after ProductCreate to attach scenario images (productSet input
+// in 2026-04 doesn't accept media inline, so this is a follow-up call).
+//
+// Returns nil on full success. Per-image upload errors come back inside
+// `mediaUserErrors` and are flattened into a single error so seed-devstore can
+// log the failure but keep going on remaining products.
+func (c *Client) ProductCreateMedia(ctx context.Context, shop, token, productGID string, imageURLs []string) error {
+	if len(imageURLs) == 0 || productGID == "" {
+		return nil
+	}
+	const mutation = `
+mutation seedProductCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+  productCreateMedia(productId: $productId, media: $media) {
+    media { mediaContentType status }
+    mediaUserErrors { field message }
+  }
+}`
+	media := make([]map[string]any, 0, len(imageURLs))
+	for _, u := range imageURLs {
+		if u == "" {
+			continue
+		}
+		media = append(media, map[string]any{
+			"originalSource":   u,
+			"mediaContentType": "IMAGE",
+		})
+	}
+	data, err := c.graphqlRequest(ctx, shop, token, mutation, map[string]any{
+		"productId": productGID,
+		"media":     media,
+	})
+	if err != nil {
+		return fmt.Errorf("productCreateMedia: %w", err)
+	}
+	var resp struct {
+		ProductCreateMedia struct {
+			MediaUserErrors []struct {
+				Field   []string `json:"field"`
+				Message string   `json:"message"`
+			} `json:"mediaUserErrors"`
+		} `json:"productCreateMedia"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("parse productCreateMedia: %w", err)
+	}
+	if len(resp.ProductCreateMedia.MediaUserErrors) > 0 {
+		errs := make([]string, 0, len(resp.ProductCreateMedia.MediaUserErrors))
+		for _, e := range resp.ProductCreateMedia.MediaUserErrors {
+			errs = append(errs, fmt.Sprintf("%v: %s", e.Field, e.Message))
+		}
+		return fmt.Errorf("productCreateMedia user-errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 // CollectionAddProducts attaches products to a custom collection. Used by
 // seed-devstore after ProductCreate to wire scenario 3.4 (fuzzy category
 // match — products live in "Skincare Solutions" not the canonical "Face Care").

@@ -410,3 +410,75 @@ func TestRevert_RestoresListingLinks_KeepsCreatedMasters(t *testing.T) {
 		t.Fatalf("proposal status should reset to pending after revert")
 	}
 }
+
+// --- resolveVertical (A2) -------------------------------------------------
+
+func TestResolveVertical_BrandMappingHintWins(t *testing.T) {
+	a := &domain.MappingArtifact{
+		BrandMapping: map[string]domain.BrandMappingTarget{
+			"ikea":  {Action: "create_new", Vertical: "furniture"},
+			"cosrx": {Action: "link_existing", MasterBrand: "COSRX", Vertical: "cosmetics"},
+		},
+	}
+	listing := &domain.Product{}
+
+	if got := resolveVertical(a, "ikea", listing); got != "furniture" {
+		t.Errorf("create_new with vertical hint → %q, want furniture", got)
+	}
+	if got := resolveVertical(a, "cosrx", listing); got != "cosmetics" {
+		t.Errorf("link_existing with vertical hint → %q, want cosmetics", got)
+	}
+}
+
+func TestResolveVertical_NoHardcodedCosmetics(t *testing.T) {
+	// Regression: link_existing without vertical hint must NOT silently return
+	// "cosmetics" — that hardcode broke furniture/footwear tenants.
+	a := &domain.MappingArtifact{
+		BrandMapping: map[string]domain.BrandMappingTarget{
+			"ikea": {Action: "link_existing", MasterBrand: "IKEA"}, // no vertical
+		},
+	}
+	listing := &domain.Product{}
+
+	got := resolveVertical(a, "ikea", listing)
+	if got == "cosmetics" {
+		t.Errorf("link_existing without vertical hint must NOT return hardcoded 'cosmetics'; got %q", got)
+	}
+	if got != VerticalUnknown {
+		t.Errorf("with no template fallback either, expected %q; got %q", VerticalUnknown, got)
+	}
+}
+
+func TestResolveVertical_FallsBackToMasterTemplateByCollection(t *testing.T) {
+	a := &domain.MappingArtifact{
+		BrandMapping: map[string]domain.BrandMappingTarget{
+			"randomvendor": {Action: "create_new"}, // no vertical (would normally fail validation, here just to test resolution)
+		},
+		MasterTemplates: []domain.MasterTemplateProposal{
+			{Vertical: "footwear", CategoryHints: []string{"shoes", "sneakers"}},
+		},
+	}
+	listing := &domain.Product{
+		RawAttributes: map[string]interface{}{
+			"collections": []interface{}{
+				map[string]interface{}{"title": "Running Sneakers"},
+			},
+		},
+	}
+
+	if got := resolveVertical(a, "randomvendor", listing); got != "footwear" {
+		t.Errorf("collection 'Running Sneakers' should match template hint 'sneakers' → footwear, got %q", got)
+	}
+}
+
+func TestResolveVertical_UnknownWhenNothingMatches(t *testing.T) {
+	a := &domain.MappingArtifact{
+		BrandMapping: map[string]domain.BrandMappingTarget{
+			"unknownco": {Action: "create_new"},
+		},
+	}
+	listing := &domain.Product{}
+	if got := resolveVertical(a, "unknownco", listing); got != VerticalUnknown {
+		t.Errorf("expected unknown, got %q", got)
+	}
+}

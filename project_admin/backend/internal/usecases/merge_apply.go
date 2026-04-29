@@ -410,16 +410,24 @@ func scoreFromConfidence(c domain.MatchConfidence) float64 {
 }
 
 // resolveVertical picks the vertical for a listing from the artifact rules.
-// Order: vendor → BrandMapping (master_brand may carry vertical hint via
-// MasterTemplates) → collection → MasterTemplates by category hint → unknown.
+// Resolution order — first non-empty wins:
+//
+//  1. BrandMapping[vendor].Vertical — explicit hint from the discovery agent
+//     (required for action="create_new", optional for "link_existing").
+//  2. MasterTemplate matched by collection name (CategoryHints).
+//  3. MasterTemplate matched by vendor name (rare).
+//  4. VerticalUnknown — logged as a soft warning at the call site.
+//
+// We deliberately do NOT hardcode "cosmetics" anywhere — that broke
+// furniture/footwear tenants by stamping the wrong vertical when the agent
+// didn't supply a hint. If you see "unknown" stamped on real proposals, the
+// fix is to update the discovery prompt or have the curator edit
+// BrandMapping[vendor].Vertical, not to reintroduce a fallback here.
 func resolveVertical(a *domain.MappingArtifact, vendor string, listing *domain.Product) string {
-	// 1. BrandMapping → look up master template / fallback to existing master vertical.
-	if bm, ok := a.BrandMapping[vendor]; ok && bm.Action == "link_existing" {
-		// We don't know master vertical here without an extra lookup; the
-		// cascade will refine. Use existing brand → assume cosmetics for now
-		// when the agent didn't tell us otherwise. The proposal stamp is
-		// non-load-bearing — apply step re-resolves from master_products.
-		return "cosmetics"
+	// 1. Explicit BrandMapping vertical hint (works for both link_existing and
+	// create_new — discovery agent is required to provide it for create_new).
+	if bm, ok := a.BrandMapping[vendor]; ok && bm.Vertical != "" {
+		return bm.Vertical
 	}
 
 	// 2. Collection name → MasterTemplates category hints.

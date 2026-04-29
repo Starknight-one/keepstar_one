@@ -91,11 +91,14 @@ type MappingArtifact struct {
 // BrandMappingTarget describes what to do with a tenant vendor.
 //   action="link_existing": link to MasterBrand (must already exist on master_products.brand).
 //   action="create_new":    first listing under this vendor seeds a new master brand.
-//                           Subsequent listings link to it.
+//                           Subsequent listings link to it. Vertical is required
+//                           so the applier can stamp master_products.vertical
+//                           correctly (otherwise it would fall through to "unknown").
 //   action="skip":          skip ALL listings under this vendor (junk vendor).
 type BrandMappingTarget struct {
 	Action      string `json:"action"`                  // "link_existing" | "create_new" | "skip"
 	MasterBrand string `json:"master_brand,omitempty"`  // required for action="link_existing"
+	Vertical    string `json:"vertical,omitempty"`      // required for action="create_new"; optional hint for "link_existing"
 	Reason      string `json:"reason,omitempty"`        // for action="skip", human-readable
 }
 

@@ -114,7 +114,9 @@ func AgentTools() []anthropic.ToolDef {
 			Name: "propose_field_mapping",
 			Description: "Map ONE Shopify field path to a master/listing target. " +
 				"Targets: 'master.brand', 'master.description', 'master_variants.weight_g', 'master_variants.gtins[]', " +
-				"'master_variants.volume_ml', 'master_cosmetics.scent', 'listing.original_name', 'listing.raw_attributes.<key>', " +
+				"'master_variants.volume_ml', 'master.tier2.<key>' (vertical-specific structured field — e.g. " +
+				"master.tier2.skin_type for cosmetics, master.tier2.material for furniture), " +
+				"'listing.original_name', 'listing.raw_attributes.<key>', " +
 				"'candidate:<key>' (for new attribute candidates), or 'tier3.<key>' (for free-form enrichment data).",
 			InputSchema: rawSchema(`{
 				"type":"object",
@@ -150,6 +152,9 @@ func AgentTools() []anthropic.ToolDef {
 			Description: "Map a tenant vendor (vendor field on Shopify products) to an action. " +
 				"action='link_existing' for vendors that match an existing master_products.brand — set master_brand. " +
 				"action='create_new' for new brands the tenant introduces — first matched listing seeds master. " +
+				"For create_new you MUST pass vertical (e.g. 'cosmetics', 'furniture', 'footwear') so the new " +
+				"master_products row gets the right vertical. Without it the applier writes vertical='unknown' " +
+				"and the chat widget can't filter properly. " +
 				"action='skip' for internal/junk vendors (e.g. 'Keepstar Store' selling gift wraps) — set reason. " +
 				"Skip vendors are reviewed by the merge applier alongside JunkRules.",
 			InputSchema: rawSchema(`{
@@ -158,6 +163,7 @@ func AgentTools() []anthropic.ToolDef {
 					"vendor":{"type":"string","description":"Vendor string as it appears in Shopify product.vendor (case-insensitive on apply)"},
 					"action":{"type":"string","enum":["link_existing","create_new","skip"]},
 					"master_brand":{"type":"string","description":"Required for action=link_existing: the master_products.brand value to link to"},
+					"vertical":{"type":"string","description":"Required for action=create_new (e.g. 'cosmetics', 'furniture', 'footwear', 'lighting'). Optional hint for action=link_existing (verified against existing master)."},
 					"reason":{"type":"string","description":"Optional human-readable note (especially useful for action=skip)"}
 				},
 				"required":["vendor","action"]
@@ -520,6 +526,7 @@ type proposeBrandMappingArgs struct {
 	Vendor      string `json:"vendor"`
 	Action      string `json:"action"`
 	MasterBrand string `json:"master_brand,omitempty"`
+	Vertical    string `json:"vertical,omitempty"`
 	Reason      string `json:"reason,omitempty"`
 }
 
@@ -536,7 +543,11 @@ func (d *ToolDispatcher) proposeBrandMapping(input json.RawMessage) (string, boo
 		if args.MasterBrand == "" {
 			return jsonResponse(map[string]string{"error": "master_brand is required for action=link_existing"}), true
 		}
-	case "create_new", "skip":
+	case "create_new":
+		if args.Vertical == "" {
+			return jsonResponse(map[string]string{"error": "vertical is required for action=create_new (e.g. 'cosmetics', 'furniture', 'footwear') — without it the new master gets vertical='unknown'"}), true
+		}
+	case "skip":
 		// ok
 	default:
 		return jsonResponse(map[string]string{"error": "action must be link_existing|create_new|skip"}), true
@@ -544,6 +555,7 @@ func (d *ToolDispatcher) proposeBrandMapping(input json.RawMessage) (string, boo
 	d.builder.SetBrandMapping(args.Vendor, domain.BrandMappingTarget{
 		Action:      args.Action,
 		MasterBrand: args.MasterBrand,
+		Vertical:    args.Vertical,
 		Reason:      args.Reason,
 	})
 	return jsonResponse(map[string]string{

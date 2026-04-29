@@ -99,6 +99,14 @@ func main() {
 		}
 		created++
 		log.Printf("  [%s] + %s (%s)", s.scenarioID, s.input.Title, gid)
+		// productSet doesn't accept media inline — attach images via separate
+		// productCreateMedia call. Failures here log but don't abort: products
+		// without images are still useful for testing merge logic.
+		if len(s.input.ImageURLs) > 0 {
+			if err := client.ProductCreateMedia(ctx, shop, token, gid, s.input.ImageURLs); err != nil {
+				log.Printf("WARN media for %s — %s: %v", s.scenarioID, s.input.Title, err)
+			}
+		}
 		for _, cgid := range s.input.CollectionGIDs {
 			collProducts[cgid] = append(collProducts[cgid], gid)
 		}

@@ -380,6 +380,95 @@ func TestDiscover_EndTurnWithoutCommit_NeedsReview(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// A1+A2 — discovery prompt + brand mapping with vertical
+// =============================================================================
+
+// Sticky test: legacy `master_cosmetics.X` syntax must not reappear in the
+// system prompt. extractTier2 only accepts `master.tier2.*` / `tier2.*` and
+// silently drops everything else, so any drift here makes the agent generate
+// mappings that get thrown away at apply.
+func TestBuildDiscoverySystemPrompt_NoLegacyMasterCosmeticsTargets(t *testing.T) {
+	report := &domain.MetaReport{TenantID: "t1"}
+	prompt := buildDiscoverySystemPrompt(report, AutoMapTier1Result{}, nil)
+
+	if strings.Contains(prompt, "master_cosmetics.") {
+		t.Errorf("system prompt still mentions legacy `master_cosmetics.` target — extractTier2 silently drops these. Found in:\n%s",
+			extractContextAround(prompt, "master_cosmetics."))
+	}
+	if !strings.Contains(prompt, "master.tier2.<key>") {
+		t.Error("system prompt missing the `master.tier2.<key>` target instruction — agent won't know how to map vertical-specific fields")
+	}
+}
+
+func extractContextAround(s, needle string) string {
+	idx := strings.Index(s, needle)
+	if idx < 0 {
+		return ""
+	}
+	start := idx - 80
+	if start < 0 {
+		start = 0
+	}
+	end := idx + len(needle) + 80
+	if end > len(s) {
+		end = len(s)
+	}
+	return "..." + s[start:end] + "..."
+}
+
+func TestDispatch_ProposeBrandMapping_CreateNewRequiresVertical(t *testing.T) {
+	d, _, _ := newDispatcher(t)
+	out, isErr := d.Dispatch(context.Background(), "propose_brand_mapping",
+		json.RawMessage(`{"vendor":"IKEA","action":"create_new"}`))
+	if !isErr {
+		t.Fatalf("expected error for create_new without vertical, got: %s", out)
+	}
+	if !strings.Contains(out, "vertical is required") {
+		t.Errorf("error missing 'vertical is required': %s", out)
+	}
+}
+
+func TestDispatch_ProposeBrandMapping_CreateNewWithVerticalSucceeds(t *testing.T) {
+	d, b, _ := newDispatcher(t)
+	out, isErr := d.Dispatch(context.Background(), "propose_brand_mapping",
+		json.RawMessage(`{"vendor":"IKEA","action":"create_new","vertical":"furniture"}`))
+	if isErr {
+		t.Fatalf("unexpected error: %s", out)
+	}
+	got, ok := b.brandMapping["ikea"]
+	if !ok {
+		t.Fatal("brand mapping not recorded")
+	}
+	if got.Action != "create_new" || got.Vertical != "furniture" {
+		t.Errorf("recorded = %+v, want action=create_new vertical=furniture", got)
+	}
+}
+
+func TestDispatch_ProposeBrandMapping_LinkExistingVerticalOptional(t *testing.T) {
+	d, b, _ := newDispatcher(t)
+	out, isErr := d.Dispatch(context.Background(), "propose_brand_mapping",
+		json.RawMessage(`{"vendor":"COSRX","action":"link_existing","master_brand":"COSRX"}`))
+	if isErr {
+		t.Fatalf("link_existing without vertical should be accepted, got: %s", out)
+	}
+	if got := b.brandMapping["cosrx"].Action; got != "link_existing" {
+		t.Errorf("action = %q", got)
+	}
+}
+
+func TestDispatch_ProposeBrandMapping_LinkExistingVerticalAccepted(t *testing.T) {
+	d, b, _ := newDispatcher(t)
+	out, isErr := d.Dispatch(context.Background(), "propose_brand_mapping",
+		json.RawMessage(`{"vendor":"COSRX","action":"link_existing","master_brand":"COSRX","vertical":"cosmetics"}`))
+	if isErr {
+		t.Fatalf("unexpected error: %s", out)
+	}
+	if got := b.brandMapping["cosrx"].Vertical; got != "cosmetics" {
+		t.Errorf("vertical hint not stored, got %q", got)
+	}
+}
+
 func TestDiscover_TokenBudgetExceeded(t *testing.T) {
 	// Single response burns the entire budget.
 	llm := &scriptedSender{

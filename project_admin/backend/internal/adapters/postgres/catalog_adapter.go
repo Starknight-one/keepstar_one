@@ -1261,22 +1261,33 @@ func (a *CatalogAdapter) SeedServiceEmbedding(ctx context.Context, masterService
 
 // --- helpers ---
 
-func formatPrice(kopecks int, currency string) string {
-	rubles := kopecks / 100
-	str := fmt.Sprintf("%d", rubles)
-	var result strings.Builder
+// formatPrice renders cents → human-readable string. Default currency is USD.
+// Supported: USD ($1,234.56), EUR (€1,234.56). Other ISO codes render with their
+// 3-letter code prefix (e.g. "GBP 1,234.56") rather than guessing a symbol.
+func formatPrice(cents int, currency string) string {
+	if currency == "" {
+		currency = "USD"
+	}
+	whole := cents / 100
+	fraction := cents % 100
+	if fraction < 0 {
+		fraction = -fraction
+	}
+	str := fmt.Sprintf("%d", whole)
+	var sb strings.Builder
 	for i, c := range str {
 		if i > 0 && (len(str)-i)%3 == 0 {
-			result.WriteString(" ")
+			sb.WriteByte(',')
 		}
-		result.WriteRune(c)
+		sb.WriteRune(c)
 	}
-	symbol := "₽"
+	body := fmt.Sprintf("%s.%02d", sb.String(), fraction)
 	switch currency {
 	case "USD":
-		symbol = "$"
+		return "$" + body
 	case "EUR":
-		symbol = "€"
+		return "€" + body
+	default:
+		return currency + " " + body
 	}
-	return result.String() + " " + symbol
 }

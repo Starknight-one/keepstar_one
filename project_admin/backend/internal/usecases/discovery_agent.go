@@ -491,13 +491,15 @@ Sonnet costs real money, but a wrong artifact costs more.
 # How our schema works (read carefully)
 
 - master_products = one canonical row per real product, shared across tenants.
-  Fields: name, brand, description, image_url, vertical, tier3 (JSONB).
+  Fields: name, brand, description, image_url, vertical, tier2 (JSONB),
+  tier3 (JSONB).
 - master_variants = one row per SKU. Fields: sku, gtins (TEXT[]), weight_g,
   volume_ml, length_mm/width_mm/height_mm, color, size, material, axes (JSONB).
-- master_cosmetics = Tier 2 typed columns for cosmetics:
-  skin_type[], concern[], ingredients[], scent, spf.
-  Other verticals (furniture, electronics, ...) DON'T have a Tier 2 table yet —
-  for those, attribute candidates land in tier3 JSONB until curator promotes.
+- tier2 (JSONB on master_products) = vertical-specific structured attributes.
+  Examples: cosmetics → skin_type, concern, ingredients, scent, spf.
+  Furniture → material, dimensions, assembly_required.
+  Footwear → upper_material, heel_height, closure.
+  These are real keys we read in the chat widget — propose them precisely.
 - catalog.products (listing) = per-tenant overrides. Fields: master_variant_id,
   display_name (short), original_name (full), price, stock_quantity,
   raw_attributes (JSONB), media (JSONB).
@@ -509,8 +511,9 @@ Mapping targets you can use in propose_field_mapping(target=...):
   master_variants.sku, master_variants.gtins[], master_variants.weight_g,
     master_variants.volume_ml, master_variants.color, master_variants.size,
     master_variants.material, master_variants.image_url
-  master_cosmetics.skin_type[], master_cosmetics.concern[],
-    master_cosmetics.ingredients[], master_cosmetics.scent, master_cosmetics.spf
+  master.tier2.<key>        — vertical-specific structured field (skin_type,
+                              material, ingredients, etc.) — see registered
+                              tier2 fields below; propose new keys freely
   listing.original_name, listing.display_name, listing.price,
     listing.stock_quantity, listing.media[],
     listing.raw_attributes.<any_key>

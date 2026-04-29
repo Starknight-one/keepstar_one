@@ -334,6 +334,11 @@ func (v *shopifyListingView) toListing(tenantID string) *domain.ListingFromSourc
 		hash = hex.EncodeToString(sum[:])
 	}
 
+	currency := v.currency
+	if currency == "" {
+		currency = "USD"
+	}
+
 	return &domain.ListingFromSource{
 		TenantID:      tenantID,
 		SourceSystem:  "shopify",
@@ -342,7 +347,7 @@ func (v *shopifyListingView) toListing(tenantID string) *domain.ListingFromSourc
 		OriginalName:  v.title,
 		Description:   stripHTML(v.descHTML),
 		PriceCents:    priceCents,
-		Currency:      v.currency,
+		Currency:      currency,
 		StockQuantity: stockTotal,
 		Images:        flatImages,
 		Media:         v.media,

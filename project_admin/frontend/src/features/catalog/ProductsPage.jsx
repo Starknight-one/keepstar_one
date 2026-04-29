@@ -28,7 +28,12 @@ const columns = [
           ? <img src={row.images[0]} alt="" className="product-thumb" />
           : <div className="product-thumb-empty" />}
         <div>
-          <div className="product-cell-name">{row.name}</div>
+          <div className="product-cell-name">
+            {row.name}
+            {row.masterProductId && (
+              <span className="product-cell-master-badge" title="Linked to master — search uses enriched data">MASTER</span>
+            )}
+          </div>
           {row.originalName && row.originalName !== row.name && (
             <div className="product-cell-original">{row.originalName}</div>
           )}
