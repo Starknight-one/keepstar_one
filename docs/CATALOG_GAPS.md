@@ -1,6 +1,8 @@
 # Catalog — known gaps before shipping
 
 > Single source of truth для известных пробелов каталога после Phase D3 + live smoke (2026-04-29). Собрано из: разрозненных update logs, "Что НЕ входит" из pivot doc, "Out of scope" из плана `async-tumbling-wall.md`, кода (TODO маркеры), live smoke на dev-store.
+>
+> **Update 2026-04-29 (вечерняя сессия):** D1, A1, A2 закрыты. Добавлен async discovery в curator UI (fire-and-forget + spinner + polling). Pgxpool tuning под Neon autosuspend. Cleanup-tenant-stale теперь чистит и tenant_categories. HTML-unescape для vendor names в discovery. lookupPath теперь умеет `metafields.<ns>.<key>` форму. Live e2e: 3 dev-store proposals applied, vertical='furniture'/'footwear' стампится корректно, tier2 заполняется реальными значениями metafields. Подробности — `docs/Updates/main-catalog-finalize-flow_2026-04-29_05-30.md`.
 
 ## Severity legend
 
@@ -13,8 +15,8 @@
 
 | # | Sev | Issue |
 |---|---|---|
-| A1 | 🟠 | `proposed_master.tier2 = {}` всегда — discovery prompt пишет field_mapping target=`master_cosmetics.X` (M3 schema), `extractTier2` ищет префикс `tier2.*` или `master.tier2.*`. Нужен либо prompt update, либо translation в extractTier2 |
-| A2 | 🟠 | `proposed_master.vertical = 'unknown'` для всех new_master — `resolveVertical` fallthrough; brand_mapping action=create_new не несёт vertical hint |
+| A1 | ✅ | ~~`proposed_master.tier2 = {}` всегда — discovery prompt пишет `master_cosmetics.X`~~ — fixed `30a59e6` (legacy block убран из системного промпта + sticky test). Дополнительно `8fd8e33` научил `lookupPath` форме `metafields.<ns>.<key>` (Sonnet её эмитит чаще чем bracket-форму) — иначе tier2 оставался пустым даже при чистом промпте |
+| A2 | ✅ | ~~`proposed_master.vertical = 'unknown'` для всех new_master~~ — fixed `30a59e6` (`BrandMappingTarget.Vertical` поле + propose_brand_mapping требует vertical для create_new + `resolveVertical` rewrite без хардкода cosmetics). Hot-fix `8fd8e33` — `html.UnescapeString` для vendor (Sonnet иногда эмитит `Stone &amp; Steel`, lowercase-key не матчился к listing'у `Stone & Steel`) |
 | A3 | 🟡 | `proposed_master.variant.gtins = []` — gtinsFromListing читает raw_attributes.variants[].barcode; на тестовых dev-store products barcode пустой, в реальных каталогах должно работать |
 | A4 | 🟠 | Tier-2 transforms (`ml_from_string`, `units.weight` и т.д.) в `extractTier2` не применяются — данные пишутся 1:1 |
 | A5 | 🟡 | `ValidateArtifact` scoring coverage только на FieldMapping; не учитывает новые BrandMapping / JunkRules / MatchStrategyConfig (D1). Discovery agent забыл brand_mapping для vendor → coverage этого не зафиксирует |
@@ -47,7 +49,7 @@
 
 | # | Sev | Issue |
 |---|---|---|
-| D1 | 🟠 | Products в Admin Catalog после reinstall показываются **пустыми** (no stock / no attrs / no price) — read-path не разворачивает raw_attributes; БД полная, проблема только в admin UI рендере |
+| D1 | ✅ | ~~Products в Admin Catalog показываются пустыми~~ — fixed `30a59e6`. Корни: `formatPrice` хардкодил `₽` + INT-divide cents; harvester писал пустой Currency; UI хардкодил «kopecks»; size/color склеены в одно поле; не было визуального индикатора что листинг привязан к мастеру. Сейчас: `$14.99`, default USD, "Price (cents)", раздельные Size/Color, `MASTER` бейдж в строке таблицы. 8 unit-тестов на formatPrice |
 | D2 | 🟢 | Frontend progress UI на ShopifyConnectPage — отложено явно |
 
 ## E. Pipeline / orchestration
@@ -61,6 +63,14 @@
 | E5 | 🟡 | Bulk POST/DELETE через X-API-Key (M10 stubs) — отложено до первого реального запроса |
 | E6 | 🟢 | Cursor pagination на /api/v1/products — offset работает на текущих объёмах |
 | E7 | 🟠 | Cost monitoring — никто не агрегирует $0.40 × N tenants. 100 connect/нед = $40, не критично, но нет dashboard'а |
+
+## E. Pipeline / orchestration (продолжение)
+
+| # | Sev | Issue |
+|---|---|---|
+| E8 | 🟡 | seed-devstore: `imgCosmetic` URL из старого Shopify CDN устарел — Shopify не может скачать → 14 cosmetics в dev-store без картинок. Furniture/footwear (Unsplash URLs) приезжают ОК. Не блокер реального прода (тенанты сами заливают свои картинки), но мешает визуальному smoke на dev-store. Замена: подобрать актуальный публичный URL |
+| E9 | 🟡 | seed-devstore: stock=0 для всех 20 продуктов даже с `InventoryQty: 200` в input. Корень — Shopify productSet без явных `inventoryQuantities: [{locationId, quantity}]` не активирует inventory tracking. Нужно дописать `cmd/seed-devstore` чтобы fetch'ил primary location и стэмпил per-variant inventory |
+| E10 | 🟡 | Webhook regression: после `seed-devstore -reset` admin почему-то получил 20 события `products/create`, harvester отработал, но **между моментом sync-tenant-now и cleanup-tenant-stale** staging опустошился. Корень не до конца ясен (либо webhook запустил TruncateStaging логику где-то, либо race в DumpToStaging). Не блокер happy path, но оставлять нельзя |
 
 ## F. Heybabes seed cleanup (E2 milestone)
 
@@ -84,6 +94,9 @@
 | H2 | 🟡 | Phase B refactor: `PromoteAttribute` через `master_field_definitions` вместо ALTER TABLE — отложено явно |
 | H3 | 🟢 | Auth между curator-backend и admin-backend — сейчас X-Internal-Key (defense-in-depth, но не идеально). Долгоиграющая цель: shared session token / JWT pass-through |
 | H4 | 🟢 | Refactor оставшихся 5 страниц curator на новые design tokens / shared components — постепенно |
+| H5 | 🟡 | Admin product detail page: «Additional information» блок (Social Links / Gallery / Stories / Reviews) — статичные disabled-инпуты, к данным не подвязаны. Под полную доделку нужен отдельный спек: что туда теннант кладёт, как UI это редактирует, как хранится (новая колонка vs JSONB extension). См. user-list 2026-04-29 #11 |
+| H6 | 🟡 | Admin Catalog: при коннекте dev-store к существующему тенанту (`hey-babes-cosmetics`) UI показывает 999 items = 979 heybabes + 20 dev-store смешанно. По дизайну каждый коннект → отдельный tenant (per-store), но текущий OAuth flow вешает интеграцию на active session-tenant. Архитектурно — отдельное решение: либо forced-create-new-tenant per integration, либо UI tenant-switcher для оператора |
+| H7 | 🟡 | Admin Catalog: sidebar категорий тоже показывает heybabes-категории + dev-store-коллекции миксом. Разрулится когда H6 закроется (per-tenant view) |
 
 ## I. Tests / verification — невыполненное
 
