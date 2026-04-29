@@ -1,0 +1,286 @@
+# Admin Expertise
+# Admin backend (project_admin/) + admin frontend (project_admin/frontend/).
+# Auth, billing, canvas (KeepstarCanvas), settings, traces, widget UI,
+# conversations viewer. Catalog concerns live in the `catalog` expert.
+
+overview:
+  scope: "Everything in project_admin/ EXCEPT catalog write-side. Catalog is its own expert."
+  go_module: "keepstar-admin"
+  paths:
+    backend: "project_admin/backend/"
+    frontend: "project_admin/frontend/ (React 19 + Vite 7 SPA)"
+  purpose: |
+    Operator dashboard for tenant owners. Auth flows (email/password +
+    OAuth + magic-link + 2FA + telegram), tenant/membership management,
+    billing overview, KeepstarCanvas (per-tenant preset/component/token
+    overrides for engine-v4), settings, traces viewer, conversation
+    history, embed code generator.
+  database: "Same Neon Postgres as V4/curator. admin.* schema for auth,
+    sessions, integrations. catalog.* schema shared with catalog expert."
+  deployment: "Single binary multi-stage Dockerfile. One Railway service:
+    Admin → admin-production-4ae4.up.railway.app, branch main, rootDir
+    /project_admin, port 8081."
+
+architecture:
+  pattern: "Hexagonal — proper ports + adapters, multiple usecase packages, ~30 handlers"
+  backend_structure:
+    cmd_server: "project_admin/backend/cmd/server/main.go (798 LOC) — DI bootstrap, all routes"
+    cmd_crawler: "project_admin/backend/cmd/crawler/main.go (608 LOC) — JSON-LD scraper for catalog seed (catalog expert covers details)"
+    domain: "project_admin/backend/internal/domain/ — AdminUser, Tenant, Membership, Invitation, Session, Challenge, MagicLink, Invoice, Preferences, TenantPreset, TenantComponent, DesignToken, BillingOverview, AuditEntry"
+    ports: "project_admin/backend/internal/ports/ — AuthPort, SessionsPort, BillingPort, CanvasPort, AdminCatalogPort, etc."
+    adapters: "project_admin/backend/internal/adapters/postgres/ + adapters/{anthropic, google, openai, resend, smtp, shopify, telegram, totp}/ — most distinct adapter types in the project"
+    usecases: "project_admin/backend/internal/usecases/ — auth (11 files), billing, canvas, plus catalog usecases (catalog expert covers)"
+    handlers: "project_admin/backend/internal/handlers/ — ~30 handler files; auth has 8 alone"
+    crypto: "internal/crypto/secretbox/ — symmetric encryption for stored OAuth tokens, etc."
+  frontend_structure:
+    framework: "React 19 + Vite 7 + React Router"
+    features: ["auth", "billing", "canvas", "catalog", "conversations", "import", "integrations", "layout", "settings", "traces", "widget"]
+    note: "catalog/, import/, integrations/ features are admin frontend's UI for catalog domain — code lives here but logic owned by catalog expert. canvas/ is the largest single feature (CanvasPage.jsx is 785 LOC)."
+
+auth:
+  overview: "Multi-method auth: email/password, Google OAuth, magic link, 2FA, Telegram. JWT tokens (access + refresh) issued on success. Multi-tenant via memberships."
+  domain_user:
+    type: "domain.AdminUser {ID, Email, EmailVerified, PasswordHash, CreatedAt, ...}"
+    table: "admin.users"
+  methods:
+    email_password:
+      file: "internal/usecases/auth.go (AuthUseCase)"
+      flow: "Signup(req) → bcrypt hash → INSERT user → issueTokens(); Login(req) → SELECT by email → bcrypt verify → issueTokens or pre-2FA token"
+      tokens:
+        access: "JWT signed with jwtSecret; short TTL"
+        refresh: "via SessionsUseCase; persisted in admin.sessions"
+        pre_2fa: "Short-lived JWT issued when 2FA enabled — must consume via /auth/2fa/verify; pre2faTTL configurable"
+    two_factor:
+      file: "internal/usecases/auth_2fa.go (TwoFactorUseCase)"
+      adapter: "internal/adapters/totp/ — TOTP HMAC-SHA1 (Google Authenticator compatible)"
+      flow: "Login with 2FA enabled → returns pre-2FA token + needs_2fa=true → POST /auth/2fa/verify with 6-digit code → exchanges for full tokens"
+    google_oauth:
+      file: "internal/usecases/auth_google.go"
+      adapter: "internal/adapters/google/ — Google OAuth2 client"
+      flow: "Redirect → Google consent → callback with code → exchange for ID token → upsert user (link by email)"
+    magic_link:
+      file: "internal/usecases/auth_magic_link.go (MagicLinkUseCase)"
+      methods:
+        - "Issue(ctx, userID, email) — generate code, persist challenge row, send via email port (Resend/SMTP)"
+        - "ProvisionShopOwner(ctx, tenantID, email) — first-touch flow (Shopify install → owner email): create user if needed, attach to tenant, send magic link"
+        - "Consume(ctx, code, ua, ip) → (TokenPair, AdminUser) — validates code, issues tokens"
+      tables: ["admin.challenges (with type='magic_link')"]
+    password_reset:
+      file: "internal/usecases/auth_password_reset.go"
+      flow: "Email → challenge code → email link → submit new password → bcrypt hash → UPDATE"
+    telegram:
+      file: "internal/usecases/auth_telegram.go"
+      flow: "Telegram Login Widget → callback with user data + hash → verify hash with bot token → upsert user"
+    invitations:
+      file: "internal/usecases/auth_invitations.go"
+      table: "admin.invitations"
+      flow: "Owner POST /invitations with email + role → challenge code → email → invitee accepts → joins tenant via UserTenantsPort (memberships)"
+    sessions:
+      file: "internal/usecases/auth_sessions.go (SessionsUseCase)"
+      table: "admin.sessions {id, user_id, refresh_token_hash, ua, ip, last_seen_at, expires_at, ...}"
+      methods:
+        - "Issue(userID, ua, ip) — create session row + return refresh"
+        - "Refresh(refreshToken) — verify, rotate, return new pair"
+        - "Revoke(sessionID) — kill specific"
+        - "ListActive(userID) — for /auth/sessions UI"
+    tenants:
+      file: "internal/usecases/auth_tenants.go"
+      ports: "UserTenantsPort (memberships)"
+      methods: ["List user's tenants", "Switch active tenant", "Membership roles (owner/admin/operator)"]
+
+middleware:
+  files: ["middleware_auth.go", "middleware_auth_pre2fa.go", "middleware_apikey.go", "middleware_internal_key.go", "middleware_cors.go", "middleware_logging.go"]
+  auth: "Verifies JWT access token from Authorization: Bearer header. Sets ctx.UserID + ctx.TenantID. Returns 401 if invalid."
+  pre_2fa: "Special middleware accepting pre-2FA tokens — only allows /auth/2fa/* routes"
+  api_key: "X-API-Key header lookup against admin.api_keys table. For public catalog API (docs/api/v1/openapi.yaml)."
+  internal_key: "X-Internal-Key header for service-to-service calls (curator → admin). Constant-time compare against env CURATOR_INTERNAL_KEY."
+  cors: "Configurable allow-list via env"
+  logging: "Request/response timing + status logging"
+
+routes_overview:
+  auth:
+    public:
+      - "POST /auth/signup"
+      - "POST /auth/login"
+      - "POST /auth/2fa/verify"
+      - "POST /auth/magic/issue, /auth/magic/consume"
+      - "POST /auth/password-reset/request, /auth/password-reset/confirm"
+      - "GET  /auth/google/start, /auth/google/callback"
+      - "POST /auth/telegram/callback"
+    protected:
+      - "GET  /auth/me"
+      - "POST /auth/logout"
+      - "GET  /auth/sessions, DELETE /auth/sessions/{id}"
+      - "GET  /auth/tenants, POST /auth/tenants/switch"
+      - "GET  /auth/invitations, POST /auth/invitations, POST /auth/invitations/{code}/accept"
+  billing:
+    - "GET  /admin/api/billing/overview — current plan, usage, invoices summary"
+    - "GET  /admin/api/billing/invoices?limit=N"
+    - "POST /admin/api/billing/plan — UpdatePlan"
+    - "POST /admin/api/billing/preferences — UpdatePreferences"
+  canvas:
+    - "GET    /admin/api/canvas/presets, /admin/api/canvas/presets/{id}"
+    - "POST   /admin/api/canvas/presets — CreatePreset (draft)"
+    - "PATCH  /admin/api/canvas/presets/{id} — UpdatePreset (draft)"
+    - "POST   /admin/api/canvas/presets/{id}/publish — PublishPreset (V4 read-side picks up)"
+    - "POST   /admin/api/canvas/presets/{id}/fork — ForkPreset"
+    - "DELETE /admin/api/canvas/presets/{id}"
+    - "GET    /admin/api/canvas/components — TenantComponent[]"
+    - "GET    /admin/api/canvas/design-tokens — DesignToken[]"
+  catalog:
+    note: "Owned by `catalog` expert. Brief: /admin/api/products, /admin/api/categories, /admin/api/integrations, /admin/api/import, /admin/api/junk, /admin/api/enrichment, /admin/api/api/v1/* (public)"
+  curator_internal:
+    note: "Internal endpoints called by curator MergeProxy. Auth via X-Internal-Key + X-Curator-User. Owned by `catalog` expert (merge_apply use case)."
+  settings_misc:
+    - "GET  /admin/api/settings — tenant preferences"
+    - "GET  /admin/api/audit?limit=N — audit log"
+    - "GET  /admin/api/traces?limit=... — chat trace browser"
+    - "GET  /admin/api/widget-config — returns {widgetUrl, chatApiUrl} for embed-code generator"
+    - "GET  /admin/api/api-keys, POST /admin/api/api-keys, DELETE /admin/api/api-keys/{id}"
+
+billing:
+  file: "internal/usecases/billing.go"
+  port: "ports.BillingPort"
+  adapter: "internal/adapters/postgres/billing_adapter.go"
+  domain: "domain.BillingOverview, domain.Invoice, domain.Preferences"
+  methods:
+    - "Overview(tenantID) — current plan, MTD usage, last invoice, balance"
+    - "ListInvoices(tenantID, limit)"
+    - "UpdatePlan(tenantID, plan) — switch plan (free/pro/enterprise)"
+    - "UpdatePreferences(tenantID, prefs) — billing email, payment method preferences"
+  status: "Schema + Overview live; payment processor integration (Stripe/etc.) NOT WIRED yet — billing is read-only display from internal accounting tables. Marked as known gap."
+
+canvas:
+  description: "KeepstarCanvas — per-tenant overrides for engine-v4 presets/components/design-tokens. Operator-facing canvas editor in admin UI; V4 read-side via tenant_preset_loader."
+  file: "internal/usecases/canvas.go"
+  port: "ports.CanvasPort"
+  adapter: "internal/adapters/postgres/canvas_adapter.go (870 LOC)"
+  domain: "domain.TenantPreset, TenantComponent, DesignToken"
+  methods:
+    presets:
+      - "ListPresets(tenantID)"
+      - "GetPreset(tenantID, presetID)"
+      - "CreatePreset(tenantID, authorUserID, in) — creates DRAFT (status=draft)"
+      - "UpdatePreset(tenantID, presetID, authorUserID, in) — updates DRAFT"
+      - "PublishPreset(tenantID, presetID) — DRAFT → PUBLISHED; V4 reads only published"
+      - "ForkPreset(tenantID, presetID, authorUserID) — copy as new draft (lets operator iterate without affecting live)"
+      - "DeletePreset"
+    components: "ListComponents — reusable widget components defined per tenant"
+    design_tokens: "ListDesignTokens — colors / spacing / typography / etc., consumed by V4 Agent2 prompt and frontend widget theme"
+  v4_consumption: "engine-v4 expert: tenant_preset_loader.go reads PUBLISHED rows + builds PresetResolver closure for engine_v4.Execute"
+  frontend: "project_admin/frontend/src/features/canvas/ — biggest frontend feature (CanvasPage.jsx 785 LOC); tldraw-based visual editor"
+
+integrations_adapters:
+  shopify:
+    file: "internal/adapters/shopify/client.go (1302 LOC)"
+    note: "Shopify integration owned by `catalog` expert. Admin only handles OAuth + token storage."
+    storage: "Per-tenant OAuth token encrypted via secretbox; admin.tenant_integrations table"
+  google:
+    file: "internal/adapters/google/"
+    purpose: "Google OAuth for auth_google.go"
+  resend:
+    file: "internal/adapters/resend/"
+    purpose: "Transactional email via Resend HTTP API. Adapted because SMTP hangs silently on Railway (commit dab0629, 2026-04-29)."
+    templates: "internal/adapters/resend/templates/ — email body HTML/text templates"
+  smtp:
+    file: "internal/adapters/smtp/"
+    purpose: "Fallback transactional email; deprecated for Railway envs (resend used instead)"
+    templates: "internal/adapters/smtp/templates/"
+  telegram:
+    file: "internal/adapters/telegram/"
+    purpose: "Telegram bot for auth_telegram.go login widget callback verification"
+  totp:
+    file: "internal/adapters/totp/"
+    purpose: "TOTP code generation/verification for 2FA"
+
+frontend_features:
+  layout:
+    purpose: "App shell, sidebar, header, route registration"
+  auth:
+    pages: "Signup, Login, MagicLinkRequest, MagicLinkConsume, PasswordReset, 2FAVerify, GoogleCallback"
+    flow: "On mount → GET /auth/me. 401 → render Login. Success → render Layout shell."
+  billing:
+    pages: "BillingOverview, InvoicesList, PlanPicker, PreferencesForm"
+  canvas:
+    pages: "CanvasPage (785 LOC) — tldraw editor, preset management, component library, design tokens editor"
+    note: "Largest single page; growth area as more design system features land"
+  catalog:
+    note: "Owned by `catalog` expert. Pages: ProductsList, ProductDetail, Categories, Junk, Enrichment, Import, Integrations."
+  conversations:
+    purpose: "View past chat sessions for a tenant — used for QA/debugging"
+  settings:
+    purpose: "Tenant settings, preferences, members"
+  traces:
+    purpose: "Chat trace browser (waterfall view of pipeline runs); calls /admin/api/traces"
+  widget:
+    file: "src/features/widget/WidgetPage.jsx"
+    purpose: "Embed-code generator. Calls GET /admin/api/widget-config to get {widgetUrl, chatApiUrl}, generates a copy-pasteable <script> snippet."
+    drift: "Currently has fallback 'https://YOUR_CHAT_SERVER/widget.js' if widgetUrl env not set. Real env: WIDGET_BASE_URL=v4-engine-production.up.railway.app on Railway Admin service."
+
+env_vars:
+  required:
+    - "DATABASE_URL — Postgres DSN"
+    - "JWT_SECRET — for access tokens"
+    - "ANTHROPIC_API_KEY — used by enrichment + discovery agent"
+    - "OPENAI_API_KEY — embeddings"
+    - "SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SHOPIFY_SCOPES — OAuth"
+    - "RESEND_API_KEY (or SMTP_* for fallback)"
+    - "GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET"
+    - "TELEGRAM_BOT_TOKEN"
+    - "SECRETBOX_KEY — for symmetric encryption of stored OAuth tokens (32 bytes hex)"
+    - "WIDGET_BASE_URL — for embed-code generator (set to V4 engine domain)"
+    - "CHAT_API_URL — exposed in /widget-config response"
+    - "CURATOR_INTERNAL_KEY — for internal curator endpoints"
+    - "PORT — Railway-injected (default 8081)"
+  optional:
+    - "PRE_2FA_TOKEN_TTL — pre-2FA token validity"
+    - "INTERNAL_KEY (legacy alias)"
+
+invariants:
+  - "Auth tokens (refresh) are HASHED at rest in admin.sessions. Plaintext only in HTTP layer."
+  - "Pre-2FA tokens MUST NOT pass middleware_auth — they only work through middleware_auth_pre2fa for 2FA verify endpoints."
+  - "OAuth state param is generated server-side per request (CSRF protection); persisted to admin.oauth_login_states with TTL."
+  - "Magic link codes are SHA-256 hashed at rest; plaintext sent only in email body."
+  - "ProvisionShopOwner is the only auth path that creates a user without an interactive signup — Shopify install treats the shop owner email as authoritative."
+  - "Canvas presets in DRAFT status are tenant-private; V4 reads only PUBLISHED. Forking a published preset creates a new DRAFT row (no in-place edit of live)."
+  - "Memberships (UserTenantsPort) gate cross-tenant access — JWT carries UserID, but every protected handler must check membership for the requested TenantID before reading/writing."
+  - "Internal-key endpoints (X-Internal-Key) MUST be unreachable without the header — accidentally allowing them through middleware_auth = privilege escalation."
+
+gotchas:
+  - "Resend HTTP API is the active mailer — SMTP adapter exists but hangs silently on Railway (commit dab0629). New mail flows MUST use resend port; SMTP only for local dev."
+  - "Default 2FA window is small (TOTP step ±1) — clock skew on operator's phone will fail verify. No clear error message; user sees 'invalid code'."
+  - "Sessions table grows unbounded — there's no automatic prune of expired sessions in admin (compare to V4's retention.go which trims chat_sessions). Manual cleanup or future migration needed."
+  - "OAuth login states aren't TTL-cleaned automatically — orphaned rows persist until manual cleanup."
+  - "Canvas DRAFT vs PUBLISHED is enforced at API level only — direct DB UPDATE bypassing canvas use case can flip status without proper version bump."
+  - "Magic link Issue accepts empty email (no-op for new users without verified email yet) — this is intentional for ProvisionShopOwner ordering, but easy to miss in tests."
+  - "Telegram auth verifies hash with bot token — rotating the bot token invalidates all in-flight login attempts. No graceful migration."
+  - "Billing 'plan' updates only mutate internal accounting tables — no payment processor wired. Dashboard can show inconsistent state if plan != actual paid plan once Stripe lands."
+  - "WIDGET_BASE_URL env value may lack `https://` prefix (current Admin Railway env has bare `v4-engine-production.up.railway.app`) — embed code becomes `<script src='v4-engine-production.../widget.js'>` without protocol; browsers may treat as relative."
+  - "Internal-key middleware uses constant-time compare; using `==` would leak via timing. Verify on every new internal endpoint."
+  - "auth_invitations.Accept does NOT auto-issue tokens — invitee must complete Login or magic_link.Consume separately. Frontend chains the two in one screen but it's two HTTP calls."
+
+related_experts:
+  - "catalog — owns all catalog/import/integrations/junk/enrichment usecases + handlers + adapters (catalog_adapter, shopify/client, harvester_lite, discovery_agent, merge_apply). Admin's catalog/ frontend feature is UI for catalog domain."
+  - "engine-v4 — admin's canvas usecase produces the data engine-v4 reads via tenant_preset_loader.ResolverFor."
+  - "pipeline-agents — admin's canvas DESIGN_CONTEXT feeds Agent2 system prompt; admin's traces UI consumes pipeline_traces table."
+  - "curator — proxies internal-curator endpoints to admin's MergeApplyUseCase; admin owns merge logic, curator only hosts the operator UI."
+  - "widget — admin's widget feature generates the embed code that points at V4 backend (widget expert covers consumer side)."
+
+active_workstreams:
+  tracker: "docs/PRE_LAUNCH_TASKS.md (auth + admin sections), docs/CATALOG_GAPS.md (catalog UI in admin)"
+  recent_milestones:
+    - "Magic-link race-fix (2026-04-29 commit 0fdaf61) — block email when newly-created user has no memberships"
+    - "Resend HTTP adapter (2026-04-29 commit dab0629) — replaces SMTP that hangs on Railway"
+    - "Shopify install + magic-link install flow (2026-04-29 commit 27f8a56)"
+    - "Shopify install dedicated landing page (2026-04-29 commit 978f10e)"
+    - "Magic-link usecase test suite (2026-04-29 commit fc3c1e6)"
+    - "Auth full stack — OAuth/2FA/sessions/workspaces/invites — DONE 2026-04-19/21"
+  hot_files:
+    - "shopify/client.go (1302 LOC) — owned by catalog expert; admin only via OAuth glue"
+    - "canvas_adapter.go (870 LOC) — split candidate when more design system features land"
+    - "merge_apply.go (804 LOC) — catalog domain"
+    - "cmd/server/main.go (798 LOC) — DI bootstrap with all routes; growing as features add. Split candidate by registering route groups."
+    - "shopify_v2.go (786 LOC) — catalog domain (new install flow)"
+    - "CanvasPage.jsx (785 LOC) — frontend; growth signal as canvas matures"
+    - "harvester_lite.go (736 LOC) — catalog domain"
+    - "discovery_tools.go (726 LOC) — catalog domain"
