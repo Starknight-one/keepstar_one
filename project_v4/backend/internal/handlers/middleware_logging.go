@@ -73,8 +73,11 @@ func LoggingMiddleware(log *logger.Logger, logAdapter *postgres.LogAdapter) func
 					"status", wrapped.statusCode, "duration_ms", duration.Milliseconds())
 			}
 
-			// Persist to Postgres (async, fire-and-forget)
-			if logAdapter != nil {
+			// Persist to Postgres (async, fire-and-forget). Skip /health and /ready
+			// — Railway pings them every few seconds, and persisting each one keeps
+			// Neon's serverless compute warm forever (autosuspend never reaches its
+			// idle window).
+			if logAdapter != nil && r.URL.Path != "/health" && r.URL.Path != "/ready" {
 				entry := &postgres.RequestLog{
 					ID:         requestID,
 					Service:    "chat",
