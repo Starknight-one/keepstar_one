@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"strings"
 	"time"
 
@@ -535,6 +536,12 @@ func (d *ToolDispatcher) proposeBrandMapping(input json.RawMessage) (string, boo
 	if err := json.Unmarshal(input, &args); err != nil {
 		return jsonResponse(map[string]string{"error": err.Error()}), true
 	}
+	// Sonnet sometimes emits HTML-encoded ampersands ("Stone &amp; Steel")
+	// even though the source data has the raw "&". Decode defensively here
+	// so the resolved key matches what listings carry — otherwise resolveVertical
+	// can't find the vendor and stamps vertical='unknown'.
+	args.Vendor = html.UnescapeString(args.Vendor)
+	args.MasterBrand = html.UnescapeString(args.MasterBrand)
 	if args.Vendor == "" || args.Action == "" {
 		return jsonResponse(map[string]string{"error": "vendor and action are required"}), true
 	}

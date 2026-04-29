@@ -626,27 +626,67 @@ func matchesJunkAxis(l *domain.Product, patterns []string) string {
 	return ""
 }
 
+// lookupPath resolves a discovery-agent field path against a raw_attributes
+// map. Three syntaxes are supported, matched in order:
+//
+//  1. Direct key — `vendor`, `product_type` etc.
+//  2. Bracket form `metafields[key=X].value` — explicit array walk by key.
+//  3. Dot form `metafields.<namespace>.<key>` — Sonnet's preferred shorthand.
+//     Walks the metafields array and matches both namespace AND key (so
+//     `metafields.custom.wood_type` returns the value of the row where
+//     namespace="custom" AND key="wood_type"). Two-segment form
+//     `metafields.<key>` (no namespace) matches by key alone.
+//
+// Returns nil if the path resolves to nothing — caller decides if that means
+// "skip" or "use default".
 func lookupPath(m map[string]interface{}, path string) interface{} {
 	// Direct key.
 	if v, ok := m[path]; ok {
 		return v
 	}
-	// metafields[key=X].value form: walk metafields array.
+	// metafields[key=X].value form.
 	if strings.HasPrefix(path, "metafields[key=") && strings.HasSuffix(path, "].value") {
 		key := strings.TrimSuffix(strings.TrimPrefix(path, "metafields[key="), "].value")
-		mfs, ok := m["metafields"].([]interface{})
-		if !ok {
-			return nil
+		return findMetafield(m, "", key)
+	}
+	// metafields.<ns>.<key> or metafields.<key>.
+	if strings.HasPrefix(path, "metafields.") {
+		rest := strings.TrimPrefix(path, "metafields.")
+		parts := strings.SplitN(rest, ".", 2)
+		switch len(parts) {
+		case 1:
+			return findMetafield(m, "", parts[0])
+		case 2:
+			return findMetafield(m, parts[0], parts[1])
 		}
-		for _, mf := range mfs {
-			rec, ok := mf.(map[string]interface{})
-			if !ok {
+	}
+	return nil
+}
+
+// findMetafield walks raw_attributes.metafields[] and returns the .value of
+// the first row matching (namespace, key). Empty namespace means "match key
+// regardless of namespace" — used by the legacy bracket form.
+func findMetafield(m map[string]interface{}, namespace, key string) interface{} {
+	mfs, ok := m["metafields"].([]interface{})
+	if !ok {
+		return nil
+	}
+	for _, mf := range mfs {
+		rec, ok := mf.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		k, _ := rec["key"].(string)
+		if k != key {
+			continue
+		}
+		if namespace != "" {
+			ns, _ := rec["namespace"].(string)
+			if ns != namespace {
 				continue
 			}
-			if k, _ := rec["key"].(string); k == key {
-				return rec["value"]
-			}
 		}
+		return rec["value"]
 	}
 	return nil
 }

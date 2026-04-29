@@ -457,6 +457,36 @@ func TestDispatch_ProposeBrandMapping_LinkExistingVerticalOptional(t *testing.T)
 	}
 }
 
+// Sonnet sometimes emits HTML-encoded ampersands ("Stone &amp; Steel") even
+// though the source data has the raw "&". Without decoding, the lowercase key
+// "stone &amp; steel" never matches a listing's vendor "Stone & Steel" and
+// resolveVertical falls through to "unknown".
+func TestDispatch_ProposeBrandMapping_DecodesHTMLEntitiesInVendor(t *testing.T) {
+	d, b, _ := newDispatcher(t)
+	out, isErr := d.Dispatch(context.Background(), "propose_brand_mapping",
+		json.RawMessage(`{"vendor":"Stone &amp; Steel","action":"create_new","vertical":"furniture"}`))
+	if isErr {
+		t.Fatalf("unexpected error: %s", out)
+	}
+	// SetBrandMapping lowercases. We expect the "&amp;" to be decoded back to
+	// "&" before the lowercase, so the key is "stone & steel" (the form a
+	// listing's vendor would normalize to).
+	if _, ok := b.brandMapping["stone & steel"]; !ok {
+		t.Errorf("expected key 'stone & steel', got: %v", keysOf(b.brandMapping))
+	}
+	if _, bad := b.brandMapping["stone &amp; steel"]; bad {
+		t.Errorf("HTML-encoded key 'stone &amp; steel' was stored — html.UnescapeString didn't run")
+	}
+}
+
+func keysOf(m map[string]domain.BrandMappingTarget) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestDispatch_ProposeBrandMapping_LinkExistingVerticalAccepted(t *testing.T) {
 	d, b, _ := newDispatcher(t)
 	out, isErr := d.Dispatch(context.Background(), "propose_brand_mapping",

@@ -482,3 +482,43 @@ func TestResolveVertical_UnknownWhenNothingMatches(t *testing.T) {
 		t.Errorf("expected unknown, got %q", got)
 	}
 }
+
+// --- lookupPath / extractTier2 metafield resolution -----------------------
+
+func TestLookupPath_DotForm_NamespaceAndKey(t *testing.T) {
+	raw := map[string]interface{}{
+		"metafields": []interface{}{
+			map[string]interface{}{"namespace": "custom", "key": "wood_type", "value": "oak"},
+			map[string]interface{}{"namespace": "custom", "key": "frame_material", "value": "steel"},
+			map[string]interface{}{"namespace": "other", "key": "wood_type", "value": "ignored"},
+		},
+	}
+	if got := lookupPath(raw, "metafields.custom.wood_type"); got != "oak" {
+		t.Errorf("metafields.custom.wood_type = %v, want oak", got)
+	}
+	if got := lookupPath(raw, "metafields.custom.frame_material"); got != "steel" {
+		t.Errorf("metafields.custom.frame_material = %v, want steel", got)
+	}
+	// Different namespace must not match.
+	if got := lookupPath(raw, "metafields.other.frame_material"); got != nil {
+		t.Errorf("expected nil for namespace mismatch, got %v", got)
+	}
+}
+
+func TestLookupPath_BracketFormStillWorks(t *testing.T) {
+	raw := map[string]interface{}{
+		"metafields": []interface{}{
+			map[string]interface{}{"namespace": "custom", "key": "wood_type", "value": "oak"},
+		},
+	}
+	if got := lookupPath(raw, "metafields[key=wood_type].value"); got != "oak" {
+		t.Errorf("legacy bracket form lost: %v", got)
+	}
+}
+
+func TestLookupPath_DirectKey(t *testing.T) {
+	raw := map[string]interface{}{"vendor": "IKEA"}
+	if got := lookupPath(raw, "vendor"); got != "IKEA" {
+		t.Errorf("direct key broken: %v", got)
+	}
+}
