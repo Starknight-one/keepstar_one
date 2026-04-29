@@ -121,6 +121,7 @@ func (uc *MagicLinkUseCase) ProvisionShopOwner(ctx context.Context, tenantID, em
 			"tenant_id", tenantID, "email", email, "error", err)
 		return
 	}
+	newlyCreated := false
 	if user == nil || errors.Is(err, domain.ErrUserNotFound) {
 		newUser := &domain.AdminUser{
 			Email:    email,
@@ -133,19 +134,32 @@ func (uc *MagicLinkUseCase) ProvisionShopOwner(ctx context.Context, tenantID, em
 				"tenant_id", tenantID, "email", email, "error", err)
 			return
 		}
+		newlyCreated = true
 		uc.log.Info("install_provision_user_created",
 			"tenant_id", tenantID, "user_id", user.ID, "email", email)
 	}
 
+	membershipOK := true
 	if uc.memberships != nil {
 		if _, ok, _ := uc.memberships.HasMembership(ctx, user.ID, tenantID); !ok {
 			if err := uc.memberships.Add(ctx, user.ID, tenantID, "owner", ""); err != nil {
 				uc.log.Error("install_provision_membership_add_failed",
-					"tenant_id", tenantID, "user_id", user.ID, "error", err)
-				// fall through — still issue the magic-link; user just won't see
-				// this tenant in their workspace picker until membership lands.
+					"tenant_id", tenantID, "user_id", user.ID, "error", err, "newly_created", newlyCreated)
+				membershipOK = false
 			}
 		}
+	}
+
+	// A newly-created user with no membership row would land in our admin via
+	// magic-link only to find an empty workspace picker — no escape. Block the
+	// email so they aren't lured into that dead end; surface the failure in
+	// logs so we can grant manually. Pre-existing users are safe: their other
+	// memberships (Google/Telegram/email-pwd) keep the picker non-empty.
+	if newlyCreated && !membershipOK {
+		uc.log.Warn("install_provision_aborted_no_workspace",
+			"tenant_id", tenantID, "user_id", user.ID,
+			"reason", "membership add failed for new user — manual grant required")
+		return
 	}
 
 	uc.Issue(ctx, user.ID, email)
