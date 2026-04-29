@@ -522,3 +522,133 @@ func TestLookupPath_DirectKey(t *testing.T) {
 		t.Errorf("direct key broken: %v", got)
 	}
 }
+
+// --- applyTransform: units / lowercase / shorten / split -----------------
+
+func TestApplyTransform_UnitsWeight_Kg(t *testing.T) {
+	got := applyTransform("2.5 kg", "units.weight", "")
+	if got != 2500 {
+		t.Errorf("2.5 kg → %v, want 2500", got)
+	}
+}
+
+func TestApplyTransform_UnitsVolume_ML(t *testing.T) {
+	got := applyTransform("236 ml", "units.volume", "")
+	if got != 236 {
+		t.Errorf("236 ml → %v, want 236", got)
+	}
+}
+
+func TestApplyTransform_UnitsVolume_LiterCanonicalises(t *testing.T) {
+	got := applyTransform("1L", "units.volume", "")
+	if got != 1000 {
+		t.Errorf("1L → %v, want 1000", got)
+	}
+}
+
+func TestApplyTransform_UnitsVolume_BareNumberWithDefaultUnit(t *testing.T) {
+	got := applyTransform("30", "units.volume", "mL")
+	if got != 30 {
+		t.Errorf("30 (default mL) → %v, want 30", got)
+	}
+}
+
+func TestApplyTransform_UnitsVolume_GarbageInputPassesThrough(t *testing.T) {
+	got := applyTransform("not a quantity", "units.volume", "")
+	if got != "not a quantity" {
+		t.Errorf("garbage input should pass through unchanged, got %v", got)
+	}
+}
+
+func TestApplyTransform_Lowercase(t *testing.T) {
+	got := applyTransform("Eau de Toilette", "lowercase", "")
+	if got != "eau de toilette" {
+		t.Errorf("lowercase → %v, want 'eau de toilette'", got)
+	}
+}
+
+func TestApplyTransform_Shorten(t *testing.T) {
+	got := applyTransform("0123456789ABCDEF", "shorten:10", "")
+	if got != "0123456789" {
+		t.Errorf("shorten:10 → %v, want '0123456789'", got)
+	}
+}
+
+func TestApplyTransform_Shorten_ShorterThanLimit(t *testing.T) {
+	got := applyTransform("hi", "shorten:10", "")
+	if got != "hi" {
+		t.Errorf("shorter-than-limit input should pass through, got %v", got)
+	}
+}
+
+func TestApplyTransform_Split_Comma(t *testing.T) {
+	got := applyTransform("red, green, blue", "split:,", "")
+	parts, ok := got.([]string)
+	if !ok || len(parts) != 3 || parts[0] != "red" || parts[1] != "green" || parts[2] != "blue" {
+		t.Errorf("split:, → %v, want [red green blue]", got)
+	}
+}
+
+func TestApplyTransform_UnknownTransform_PassesThrough(t *testing.T) {
+	got := applyTransform("anything", "no.such.transform", "")
+	if got != "anything" {
+		t.Errorf("unknown transform should pass through, got %v", got)
+	}
+}
+
+func TestApplyTransform_EmptyTransform_PassesThrough(t *testing.T) {
+	got := applyTransform("anything", "", "")
+	if got != "anything" {
+		t.Errorf("empty transform should pass through, got %v", got)
+	}
+}
+
+func TestApplyTransform_NonString_PassesThrough(t *testing.T) {
+	got := applyTransform(42, "lowercase", "")
+	if got != 42 {
+		t.Errorf("non-string input should pass through unchanged, got %v", got)
+	}
+}
+
+// --- extractTier2: end-to-end with transforms ----------------------------
+
+func TestExtractTier2_AppliesUnitsTransform(t *testing.T) {
+	a := &domain.MappingArtifact{
+		FieldMapping: map[string]domain.FieldMappingTarget{
+			"weight": {Target: "tier2.weight_g", Transform: "units.weight"},
+			"volume": {Target: "master.tier2.volume_ml", Transform: "units.volume"},
+		},
+	}
+	raw := map[string]interface{}{
+		"weight": "2.5 kg",
+		"volume": "236 ml",
+	}
+	got := extractTier2(a, raw, "cosmetics")
+	if got["weight_g"] != 2500 {
+		t.Errorf("weight_g = %v, want 2500", got["weight_g"])
+	}
+	if got["volume_ml"] != 236 {
+		t.Errorf("volume_ml = %v, want 236", got["volume_ml"])
+	}
+}
+
+func TestExtractTier2_AppliesLowercaseAndSplit(t *testing.T) {
+	a := &domain.MappingArtifact{
+		FieldMapping: map[string]domain.FieldMappingTarget{
+			"vendor": {Target: "tier2.brand_lc", Transform: "lowercase"},
+			"tags":   {Target: "tier2.tag_list", Transform: "split:,"},
+		},
+	}
+	raw := map[string]interface{}{
+		"vendor": "IKEA",
+		"tags":   "red,green,blue",
+	}
+	got := extractTier2(a, raw, "furniture")
+	if got["brand_lc"] != "ikea" {
+		t.Errorf("brand_lc = %v, want 'ikea'", got["brand_lc"])
+	}
+	parts, ok := got["tag_list"].([]string)
+	if !ok || len(parts) != 3 {
+		t.Errorf("tag_list = %v, want [red green blue]", got["tag_list"])
+	}
+}

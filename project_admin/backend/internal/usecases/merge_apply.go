@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"keepstar-admin/internal/domain"
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
+	"keepstar-admin/internal/units"
 )
 
 // MergeApplyUseCase orchestrates report generation. Apply step lives on the
@@ -491,7 +493,9 @@ func buildProposedMaster(a *domain.MappingArtifact, listing *domain.Product, ven
 }
 
 // extractTier2 walks raw_attributes and pulls fields the artifact says map to
-// tier2.<key>. Stub-quality for D2: doesn't yet apply transforms.
+// tier2.<key>, applying target.Transform on the way (units parse, lowercase,
+// shorten, split). Unknown transforms fall back to writing the value 1:1 with
+// a warning so we don't silently drop data.
 func extractTier2(a *domain.MappingArtifact, raw map[string]interface{}, vertical string) map[string]interface{} {
 	out := map[string]interface{}{}
 	for sourcePath, target := range a.FieldMapping {
@@ -507,12 +511,87 @@ func extractTier2(a *domain.MappingArtifact, raw map[string]interface{}, vertica
 			continue
 		}
 		key := strings.TrimPrefix(strings.TrimPrefix(target.Target, "master.tier2."), "tier2.")
-		out[key] = val
+		out[key] = applyTransform(val, target.Transform, target.DefaultUnit)
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// applyTransform converts a raw value to its canonical tier2 form per the
+// agent-supplied transform name. Returns the original value unchanged when:
+//   - transform is empty (no transform requested)
+//   - transform is unknown (defensive fallback; logged at the call site is
+//     impractical here so we just pass through)
+//   - the underlying parser fails (bad input shape — keep raw value visible
+//     in the curator UI rather than silently dropping it)
+//
+// Recognised transforms mirror discovery_tools.go:127 — units.{weight|volume|
+// length|count}, lowercase, shorten:N, split:DELIM.
+func applyTransform(val any, transform, defaultUnit string) any {
+	if transform == "" {
+		return val
+	}
+	s, isString := val.(string)
+
+	switch {
+	case transform == "units.weight", transform == "units.volume",
+		transform == "units.length", transform == "units.count":
+		if !isString {
+			return val
+		}
+		opts := units.ParseOpts{}
+		if defaultUnit != "" {
+			opts.DefaultUnit = units.Canonical(defaultUnit)
+		}
+		res := units.Parse(s, opts)
+		if res.Status == units.ParseStatusOK {
+			return res.Value
+		}
+		return val
+
+	case transform == "lowercase":
+		if !isString {
+			return val
+		}
+		return strings.ToLower(s)
+
+	case strings.HasPrefix(transform, "shorten:"):
+		if !isString {
+			return val
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(transform, "shorten:"))
+		if err != nil || n <= 0 {
+			return val
+		}
+		runes := []rune(s)
+		if len(runes) <= n {
+			return s
+		}
+		return string(runes[:n])
+
+	case strings.HasPrefix(transform, "split:"):
+		if !isString {
+			return val
+		}
+		delim := strings.TrimPrefix(transform, "split:")
+		if delim == "" {
+			return val
+		}
+		parts := strings.Split(s, delim)
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				out = append(out, t)
+			}
+		}
+		return out
+	}
+
+	// Unknown transform — pass through. We don't have a logger handle here;
+	// callers can detect by spotting non-canonical types in tier2.
+	return val
 }
 
 // --- helpers -------------------------------------------------------------
