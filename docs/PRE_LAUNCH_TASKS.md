@@ -572,9 +572,11 @@
 
 **Что сделать**: то же, но разные tenant slugs. Проверить isolation.
 
-## 7.7 Code quality / dead code (open)
+## 7.7 Code quality / dead code (partial)
 
-**Что сделать**: `go vet`, `staticcheck`, `deadcode`; на фронте — `ts-prune`, `knip`. Удалить unused. Особое внимание legacy `project/backend/` — возможно целиком снести после merge V4.
+**Что сделать**: `go vet`, `staticcheck`, `deadcode`; на фронте — `ts-prune`, `knip`. Удалить unused.
+
+**Закрыто частично** (phase2-cleanup, ветка): legacy `project/backend/` (~22K строк) снесено через `git rm -r`. Скрипты `scripts/start.sh`/`stop.sh`/`stop_all.sh` переключены на V4 (порт 8082), `start_v4.sh`/`stop_v4.sh` удалены как дубликаты, `ADW/adw.yaml` обновлён. Осталось: dead-code в активных модулях (V4/admin/curator).
 
 ## 7.8 Docs cleanup (done)
 

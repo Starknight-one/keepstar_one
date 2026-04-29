@@ -7,7 +7,7 @@ project:
 
 # Project structure paths (relative to project root)
 paths:
-  backend: "project/backend"
+  backend: "project_v4/backend"
   frontend: "project/frontend"
   database: ""
   specs: "ADW/specs"
@@ -27,12 +27,12 @@ stack:
 # Empty commands are skipped
 validation:
   - name: "Backend build"
-    path: "project/backend"
+    path: "project_v4/backend"
     cmd: "go build ./..."
     required: true
 
   - name: "Backend tests"
-    path: "project/backend"
+    path: "project_v4/backend"
     cmd: "go test ./..."
     required: false
 
@@ -50,7 +50,7 @@ validation:
 # /init will generate expertise files for each
 experts:
   - name: backend
-    paths: ["project/backend"]
+    paths: ["project_v4/backend"]
     line_limit: 300
   - name: frontend
     paths: ["project/frontend"]
