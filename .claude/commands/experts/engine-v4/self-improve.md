@@ -7,7 +7,7 @@ Update the engine-v4 expertise from current code in `project_v4/backend/internal
 USE_DIFF: $ARGUMENTS (true | false, default: false)
 EXPERTISE: .claude/commands/experts/engine-v4/expertise.yaml
 CODE_ROOT: project_v4/backend/internal/engine_v4/
-LINE_LIMIT: 250
+LINE_LIMIT: 500
 
 ## Instructions
 
@@ -60,7 +60,7 @@ Changes:
 - Updated: <items>
 - Removed: <items>
 
-Lines: N / 250
+Lines: N / 500
 ```
 
 ## Constraints

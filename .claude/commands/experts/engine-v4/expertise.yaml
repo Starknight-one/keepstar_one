@@ -9,8 +9,9 @@ overview:
   purpose: |
     Apply a sequence of declarative tree operations (insert/update/delete/move/replace)
     onto a Formation tree. Compose widgets either from scratch or by modifying an
-    existing formation. Bind atom fields to entity data. Emit a compact TreeMap
-    that Agent2 uses as context for its next turn.
+    existing formation. Bind atom fields to entity data. Group consecutive replicated
+    widgets into multi-section compositions. Emit a compact TreeMap that Agent2 uses
+    as context for its next turn.
 
 entry_point:
   file: "engine.go"
@@ -18,63 +19,173 @@ entry_point:
   ctor: "NewEngine() *Engine"
   method: "Execute(input ExecuteInput) ExecuteOutput"
   pipeline:
-    - "1. Init formation (or load Input.Formation)"
-    - "2. Apply formation-level settings: Layout, Columns, Size"
-    - "3. ApplyOps — execute preset+user ops on the tree (preset ops concatenated before user ops in tool layer)"
-    - "4. Limit slice → Replicate (explicit Input.Replicate flag) or single-bind"
-    - "5. Inject DefaultWidgetActions (like, add_to_cart) for entity-bound widgets"
-    - "6. BindData — atoms with FieldName receive values from Data[i]"
-    - "7. ApplyConstraints — normalize/validate"
-    - "8. StampTreeIDs → BuildTreeMap (compact ref structure for Agent2 next turn)"
+    - "Step 1 — Init formation (use Input.Formation if non-nil, else empty FormationWithData)"
+    - "Step 2 — Apply formation-level settings: Layout (→Mode), Columns (→Grid.Cols), Size (→all top-level widgets)"
+    - "Step 3 — Apply operations via ApplyOpsWithResolver (preset+user ops in one batch; appends warnings)"
+    - "Step 4 — Limit slice (Data[:Limit] if Limit>0 and < len(Data)) — applied BEFORE replication"
+    - "Step 4 bridge — legacy Input.Replicate flag → set ReplicateConfig on the lone template widget when len(Widgets)==1 and len(Sections)==0; multi-widget compositions skip bridge (use ReplicateConfig from insertWidget op)"
+    - "Step 4a — expandReplicatedWidgets: clone widgets whose ReplicateConfig.Enabled is true, one per data item; inline-bind atoms to Data[i]; mark Meta.__bound=true so Step 5 skips them"
+    - "Step 4b — autoDetectEntityRefs: for single non-replicated entity-bound widgets, derive EntityRef from Data[0] and inline-bind atoms"
+    - "Step 4.5 — Inject DefaultWidgetActions on every widget that has EntityRef and zero Actions"
+    - "Step 5 — BindData: top-level positional binding — widgets[i] reads Data[i] for unbound atoms; sections handled with widget_offset"
+    - "Step 6 — ApplyConstraints: per-atom (A1/A2) → per-widget (W8) → group cross-widget (C1/C3) scoped by ReplicateConfig.GroupID"
+    - "Step 6.5 — groupIntoSections: collapse consecutive same-GroupID widgets into grid sections; literals → single sections; single-section result rolls back to flat formation.Widgets for backwards compat"
+    - "Step 7 — StampTreeIDs: assign deterministic IDs to widgets/atoms/layout nodes (idempotent — skips already-set unless prefixed __pending_)"
+    - "Step 8 — BuildTreeMap: compact {widgets, widget_count, mode, grid} summary for Agent2 context (literal vs replicated entries; bound vs open atoms)"
 
 types:
   file: "types.go"
   op_type:
+    constants: ["OpInsert", "OpUpdate", "OpDelete", "OpMove", "OpReplace"]
     values: ["insert", "update", "delete", "move", "replace"]
   op_struct:
-    fields: ["Type", "Target", "Ref", "Parent", "After", "Props"]
-    target: "atom/node ID or field-name wildcard"
-    ref: "binding name for chaining ($ref) — exposes this node to subsequent ops"
-    parent: "parent ID or $ref for insert/move"
-    after: "position after sibling"
-    props: "arbitrary key/value bag (label, value, fieldName, size, src, action, etc.)"
+    name: "Op"
+    fields: ["Type (OpType)", "Target (string)", "Ref (string)", "Parent (string)", "After (string)", "Props (map[string]interface{})"]
+    target: "atom/node ID, fieldName wildcard, or empty for whole-formation insert"
+    ref: "binding name for chaining ($ref) — exposes affected node to subsequent ops in same batch"
+    parent: "parent node ID or $refName for insert/move"
+    after: "position after sibling ID for ordered insert"
+    props: "arbitrary key/value bag (label, value, fieldName, size, src, action, slot, format, subtype, etc.)"
   execute_input:
-    fields: ["Ops", "Data", "EntityType", "Formation", "Layout", "Columns", "Size", "Replicate", "Limit", "PresetResolver"]
-    entity_type: "product | service"
-    layout: "grid | list | single | carousel"
-    size: "tiny | small | medium | large"
-    replicate: "explicit B3 flag — engine never auto-replicates"
-    limit: "0 = all data items"
-    preset_resolver: "PresetResolver closure (tenant-aware override). nil → global registry only"
+    fields:
+      - "Ops []Op — operations to apply"
+      - "Data []map[string]interface{} — entity data for binding"
+      - "EntityType string — 'product' or 'service'"
+      - "Formation *domain.FormationWithData — existing formation to modify (nil = fresh)"
+      - "Layout string — grid | list | single | carousel"
+      - "Columns int — grid columns override"
+      - "Size string — tiny | small | medium | large"
+      - "Replicate bool — explicit B3 flag, no magic; optionally inherited from preset.DefaultReplicate"
+      - "Limit int — max data items (0 = all)"
+      - "PresetResolver — closure for tenant-aware preset overrides; nil = global registry only"
   execute_output:
     fields: ["Formation *domain.FormationWithData", "TreeMap map[string]interface{}", "Warnings []string"]
   preset_resolver_type: "func(name string) (*Preset, bool)"
 
 ops:
   file: "ops.go"
-  responsibility: "ApplyOps walks ops in order, mutating the formation tree."
-  ref_binding: "Ops with non-empty Ref expose the affected node in a ref-table; later ops can target $refName as Parent or Target."
+  size_loc: 1361
+  responsibility: "ApplyOps walks ops in array order, mutating the formation tree."
+  ref_binding:
+    rule: "Ops with non-empty Ref expose the affected node in a per-batch ref-table."
+    usage: "Later ops in the SAME batch can target $refName as Parent or Target."
+    note: "Refs do NOT persist across Execute calls — refs only live within one ApplyOps invocation."
+  ordering_invariant: "An update op cannot target a $ref defined by a later insert op — order matters in the array."
+  with_resolver:
+    func: "ApplyOpsWithResolver(formation, ops, resolver)"
+    purpose: "Threads PresetResolver through nested expansions (ExpandInlinePresets in expand.go consults it)."
   expand_inline_presets:
     file: "expand.go"
     purpose: "When an op references an inline preset (e.g. inside a multi-widget composition), resolve it via PresetResolver (or global GetPreset)."
 
 binding:
   file: "binding.go"
-  rule: "Atoms whose Props.fieldName matches a key in Data[i] get Value populated."
-  scope: "Single-bind (Replicate=false): atoms read from Data[0]. Replicate=true: each cloned widget binds to its own Data[i]."
+  func: "BindData(formation, data)"
+  rule: "Atoms with non-empty FieldName get Value populated from data[widgetIndex][fieldName]."
+  positional: "Top-level widgets[i] reads data[i]. Section widgets use a running widget_offset across sections."
+  skip_conditions:
+    - "Widget Meta __bound=true — already inline-bound by expandReplicatedWidgets or autoDetectEntityRefs (Step 4a/4b)."
+    - "Atom FieldName == '' — freestyle atom, never binds."
+    - "Atom Value already non-nil/non-empty/non-'<UNKNOWN>' — preserved; binding only fills empties."
+  unknown_placeholder: "'<UNKNOWN>' is the catalog enrichment marker for missing data — treated as empty by binding (overwritten) and by isBoundAtom (treated as open)."
+  inline_bind:
+    where: "expandReplicatedWidgets clones a template widget per data item and binds atoms in-place, then sets Widget.Meta.__bound=true to prevent Step 5 double-bind."
+  scope_summary:
+    single_bind: "Replicate=false → atoms read from Data[0] (or via EntityRef in Step 4b)."
+    replicated: "Replicate=true → each clone reads its own Data[i]."
 
 constraints:
   file: "constraints.go"
-  responsibility: "Normalize widget sizes, validate parent-child types, drop invalid props."
-  applied: "After data binding, before TreeMap construction."
+  func: "ApplyConstraints(formation)"
+  ordering: "per-atom → per-widget → group cross-widget"
+  rules:
+    A1:
+      name: "Badge text > 20 chars → tag"
+      where: "applyAtomConstraints, atom.Wrapper.Type == 'badge'"
+      threshold: "utf8.RuneCountInString(value) > 20"
+    A2:
+      name: "Tag text > 40 chars → unwrap (Wrapper = nil)"
+      where: "applyAtomConstraints, atom.Wrapper.Type == 'tag'"
+      threshold: "utf8.RuneCountInString(value) > 40"
+    W8:
+      name: "Tiny size → drop image atoms"
+      where: "applyWidgetConstraints, w.Size == WidgetSizeTiny"
+      effect: "filters out atoms where Type == AtomTypeImage"
+    C1:
+      name: "Field present in < 70% of group → remove from all"
+      where: "applyCrossWidgetConstraints"
+      threshold: "fieldCount < int(0.7 * len(group))"
+      scope: "ReplicateConfig.GroupID — only widgets sharing same GroupID, len > 1"
+    C3:
+      name: "Same field → same format across group"
+      where: "applyCrossWidgetConstraints"
+      effect: "first non-empty Format seen for a field becomes canonical; all other widgets with same fieldName get overwritten"
+      scope: "ReplicateConfig.GroupID"
+  group_scope_invariant: |
+    Cross-widget constraints (C1, C3) are scoped to widgets sharing a non-empty
+    ReplicateConfig.GroupID. Literal widgets (no GroupID) are each treated as
+    a group of one and never get cross-checked — a hero with one field never
+    drags down a gallery of cards or vice versa.
 
 tree_ids:
   file: "tree_ids.go"
-  purpose: "Stamp deterministic IDs on every node post-mutation (used for Op.Target lookup and TreeMap keys)."
+  func: "StampTreeIDs(formation)"
+  idempotent: "Skips nodes whose ID is non-empty AND not prefixed __pending_."
+  patterns:
+    widget: "w-s{sectionIdx}-w{widgetIdx}  (e.g. w-s0-w0, w-s1-w2)"
+    atom_named: "a-{prefix}-{fieldName}  (e.g. a-s0-w0-name)"
+    atom_indexed: "a-{prefix}-{i}  (when atom has no FieldName, e.g. a-s0-w0-3)"
+    layout_node_named: "n-{prefix}-{nodeName}  (when LayoutNode.Name is set)"
+    layout_node_indexed: "n-{prefix}-{counter}  (counter scoped to widget)"
+  prefix_format: "s{sectionIdx}-w{widgetIdx}"
+  is_tree_id: "IsTreeID(s) — string starts with 'a-', 'n-', or 'w-' (length >= 3)"
+  use: "Tree IDs become Op.Target lookup keys and TreeMap entry IDs that Agent2 references."
 
 sections:
   file: "sections.go"
-  purpose: "Section hierarchy inside widgets (content blocks). Used by detail presets."
+  func: "groupIntoSections(formation)"
+  purpose: "Walks formation.Widgets, groups consecutive same-GroupID widgets into formation.Sections."
+  rules:
+    - "Each literal widget (no GroupID) becomes its own single-mode section. Hero/explainer/CTA blocks need their own layout container — they can't share a row with replicate-group cards."
+    - "Consecutive widgets sharing a non-empty GroupID collapse into a single grid-mode section. Cols = GridColumnsForCount(len(bucket))."
+    - "Order of formation.Widgets is preserved across sections."
+  single_section_rollback:
+    when: "Grouping yields exactly one section."
+    effect: "Flatten back to formation.Widgets + formation.Mode (taken from section). Frontend keeps rendering legacy single/grid paths."
+    why: "Backwards compat for legacy single-widget flows ('show me creams' → flat grid; 'show me details' → flat single)."
+  multi_section_result:
+    formation_mode: "FormationTypeComposed"
+    formation_widgets: "nil"
+    formation_sections: "[FormationSection{Mode, Grid, Widgets}]"
+  no_op_conditions:
+    - "formation == nil"
+    - "len(formation.Widgets) == 0"
+    - "len(formation.Sections) > 0 (already grouped by upstream caller — don't double-group)"
+
+tree_map:
+  func: "BuildTreeMap(formation)"
+  output_shape:
+    widgets: "[{kind: 'literal', id, atoms[], nodes[]} | {kind: 'replicated', count, ids[], template}]"
+    widget_count: "total widget count across all sections (or formation.Widgets if no sections)"
+    mode: "formation.Mode (composed | grid | single | list | carousel)"
+    grid: "{cols, rows} when formation.Grid is non-nil"
+  walk_order:
+    - "If formation.Sections non-empty → flatten all sections' widgets in order."
+    - "Else → use formation.Widgets directly."
+  grouping: |
+    Consecutive widgets are grouped by ReplicateConfig.GroupID using same logic
+    as groupIntoSections. Each contiguous run of same-GroupID widgets becomes
+    one 'replicated' entry. Each literal widget becomes its own 'literal' entry.
+  atom_schema:
+    bound: "{id, field}  — atom has FieldName + non-nil/non-empty/non-'<UNKNOWN>' Value"
+    open: "{id, type, subtype?, slot?, format?, field?, open: true}"
+    rationale: "bound = 'solved' (Agent2 can reference by id+field), open = 'work for me' (Agent2 needs metadata to pick a binding). See docs/archive/New features/METADATA_DRIVEN_BINDING_2026-04-09.md."
+  is_bound_atom:
+    rule: "FieldName != '' AND Value != nil AND (not string OR (string != '' AND string != '<UNKNOWN>'))"
+  modify_op_targeting: |
+    For replicated entries, modify ops can target:
+    - by fieldName → broadcasts to every clone in the group
+    - by specific clone ID via 'ids' array → updates one clone
 
 default_ops:
   file: "default_ops.go"
@@ -84,15 +195,18 @@ default_ops:
     - "ProductDetailOps() []Op — single product detail formation"
     - "DefaultWidgetActions() []domain.ActionDef — default like/cart actions injected for entity-bound widgets"
     - "GridColumnsForCount(count int) int — heuristic columns picker (used when caller doesn't set Columns)"
+  default_widget_actions:
+    injected_when: "Step 4.5 — widget has EntityRef AND zero Actions"
+    contents: "like + add_to_cart (or domain-equivalent system actions)"
 
 presets:
   registry_file: "presets.go"
   contract:
-    struct: "Preset { Name, Description, Category, Refs []string, DefaultLayout, DefaultColumns, DefaultSize, DefaultReplicate, Build func(...) []Op }"
+    struct_fields: ["Name (string)", "Description (string)", "Category (string)", "Refs ([]string)", "DefaultLayout (string)", "DefaultColumns (int)", "DefaultSize (string)", "DefaultReplicate (bool)", "Build (func(...) []Op)"]
     register: "RegisterPreset(*Preset) called from package-level init() in each presets_*.go file"
     lookup: "GetPreset(name) (*Preset, bool) — global registry"
   exposed_refs: "$w (widget root), $root (container/layout), $info (info column where present), $meta (meta row where present)"
-  default_replicate_inheritance: "If user does not pass Replicate, the preset's DefaultReplicate is used."
+  default_replicate_inheritance: "If user does not pass Replicate explicitly, the preset's DefaultReplicate is used."
   count: 12
 
   product:
@@ -142,18 +256,29 @@ tenant_preset_loader:
     assembly tool threads into ExecuteInput. Falls back to the global registry
     when DB is unavailable or no override exists.
   used_by: "project_v4/backend/internal/tools/tool_visual_assembly.go (sets ExecuteInput.PresetResolver = ResolverFor(tenantID))"
+  fallback_chain:
+    - "1. Tenant-specific override from canvas DB (if any)"
+    - "2. Global registry GetPreset(name)"
+    - "3. Returns (nil, false) if neither matches"
 
 tests:
-  - "ops_test.go — unit tests for ApplyOps mutations"
-  - "presets_behavior_test.go — preset shape + ref exposure"
-  - "composition_behavior_test.go — multi-widget composition + override ops"
-  - "replicate_behavior_test.go — explicit Replicate flag, Limit, single-bind vs replicated"
-  - "tenant_preset_loader_test.go — tenant override resolution + fallback"
+  files:
+    - "ops_test.go — unit tests for ApplyOps mutations (insert/update/delete/move/replace + ref binding)"
+    - "presets_behavior_test.go — preset shape + ref exposure ($w/$root/$info/$meta)"
+    - "composition_behavior_test.go — multi-widget composition + override ops + section grouping"
+    - "replicate_behavior_test.go — explicit Replicate flag, Limit, single-bind vs replicated, GroupID scoping"
+    - "tenant_preset_loader_test.go — tenant override resolution + fallback to global registry"
+  coverage_gaps:
+    - "No tests for constraint rules (A1/A2/W8/C1/C3) — behavior only validated via integration"
+    - "No tests for tree_ids stamping — relies on integration tests downstream"
+    - "No tests for BuildTreeMap output shape — relies on integration tests downstream"
 
 caller_relationships:
-  - "internal/tools/tool_visual_assembly.go → calls Engine.Execute as the main render tool"
-  - "internal/usecases/agent2_execute.go → wraps the visual_assembly tool call in the Agent2 turn"
-  - "internal/usecases/pipeline_execute.go → runs Agent1 (data) then Agent2 (UI ops)"
+  - "internal/tools/tool_visual_assembly.go — calls Engine.Execute as the main render tool; threads PresetResolver from tenant_preset_loader.ResolverFor(tenantID)"
+  - "internal/usecases/agent2_execute.go — wraps the visual_assembly tool call in the Agent2 turn"
+  - "internal/usecases/pipeline_execute.go — runs Agent1 (data) then Agent2 (UI ops)"
+  - "internal/usecases/navigation_expand.go — calls Engine.Execute via default_ops.ProductDetailOps for drill-down"
+  - "internal/usecases/catalog_get_product.go, catalog_list_products.go — direct callers for non-LLM catalog UI"
 
 agent2_contract:
   prompt_file: "internal/prompts/prompt_compose_widgets.go"
@@ -163,23 +288,41 @@ agent2_contract:
     with: ops, optional preset name, optional layout/columns/size, explicit replicate.
     Preset ops are concatenated BEFORE user ops in a single ApplyOps batch — so user
     override-ops can reference $refs exposed by the preset.
+  tool_call_shape:
+    args: ["ops", "preset (optional name)", "replicate (bool)", "limit (int)", "layout/columns/size (optional formation-level)"]
+    preset_concat_order: "preset.Build() ops are prepended before user ops in a single batch"
 
-gotchas:
+invariants:
   - "Engine never auto-replicates — Replicate is an explicit input flag, optionally inherited from preset.DefaultReplicate."
-  - "Atoms bind by Props.fieldName — if a preset hardcodes 'price' but data has 'priceFormatted', binding silently produces empty value."
+  - "Atoms bind by Props.fieldName — silent empty value if preset hardcodes 'price' but data has 'priceFormatted'."
   - "PresetResolver=nil falls back to global GetPreset; tenant overrides are opt-in via ResolverFor()."
   - "Ops apply in array order — order matters: an update op cannot target a $ref defined by a later insert op."
   - "Tree IDs are restamped after every Execute — do not persist Agent2-emitted IDs across turns; use refs/fieldNames instead."
-  - "Cart totals are a known gap (B4 — multi-widget composition not finalized)."
+  - "Refs ($refName) live only within one ApplyOps batch — they don't persist across Execute calls."
+  - "Cross-widget constraints (C1/C3) only apply within a ReplicateConfig.GroupID — literals never cross-influence."
+  - "Inline-bound widgets (Step 4a/4b) set Meta.__bound=true to prevent BindData (Step 5) double-binding."
+  - "groupIntoSections rolls back to flat formation.Widgets when result is exactly 1 section — preserves backwards compat."
+  - "DefaultWidgetActions inject only on widgets that ALREADY have EntityRef AND zero Actions — system presets get no actions."
+
+gotchas:
   - "Preset fieldName binding is hardcoded for cosmetics; B7 will switch to role-based slot resolution from catalog.field_definitions."
-  - "DefaultWidgetActions are auto-injected for entity-bound widgets only (those whose data binding succeeded). System presets get no actions."
+  - "Cart totals are a known gap (B4 — multi-widget composition not finalized for non-product widgets like totals row)."
+  - "Empty Data + Replicate=true silently produces zero widgets (no warning) — caller must check len(Data) before composing."
+  - "'<UNKNOWN>' string in atom Value is treated as 'open' by isBoundAtom — useful for catalog enrichment placeholders, but means freshly-failed enrichments DO NOT block binding."
+  - "Limit is applied BEFORE replication and BEFORE single-bind — so Data[len(Data)] only ever reflects what passed the cap."
+  - "Multi-widget compositions skip the legacy Replicate-bridge (Step 4 bridge) — they set ReplicateConfig per-widget via insertWidget op directly."
+  - "Section widgets use a running widget_offset for positional binding — section[0].widgets[2] gets data[2 + len(section[0].widgets[:2])], NOT data[2]."
+  - "TreeMap walks Sections first if non-empty, ELSE Widgets — never both. groupIntoSections may have collapsed Sections to flat Widgets via single-section rollback."
+  - "Tiny size (W8) silently strips image atoms — if Agent2 sets Size=tiny on a card preset that depends on hero image, the image disappears with no warning."
 
 related_experts:
-  - "backend-pipeline — Agent1/Agent2 system prompts and tools (visual_assembly, catalog_search, state_filter, history_lookup)"
-  - "backend-domain — FormationWithData, Widget, Atom, ActionDef shapes consumed by the engine"
-  - "admin-backend — KeepstarCanvas presets/components (source of tenant overrides)"
+  - "pipeline-agents — Agent1/Agent2 system prompts and tools (visual_assembly, catalog_search, state_filter, history_lookup); how Engine.Execute is wrapped per turn"
+  - "catalog — V4 catalog read-side (postgres_catalog.go) feeds Agent1 → Engine.Execute via Data; field_definitions table feeds future B7 role-based binding"
+  - "admin — KeepstarCanvas presets/components in admin DB (canvas_*_adapter.go on V4 read-side; canvas_adapter.go on admin write-side); source of tenant overrides"
 
 active_workstreams:
   tracker: "docs/PRE_LAUNCH_TASKS.md"
   waves_touching_engine_v4: ["B2", "B3", "B4", "B7"]
-  session_logs: "docs/Updates/feature-engine-v4_<YYYY-MM-DD>_<HH-MM>.md"
+  session_logs: "docs/archive/Updates/feature-engine-v4_*.md (historical), docs/Updates/* (recent)"
+  hot_files:
+    - "ops.go (1361 LOC) — fat module, candidate for maintainability split (deferred per experts_plan_2026-04-29.md)"
