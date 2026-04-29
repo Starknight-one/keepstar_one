@@ -19,7 +19,9 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -62,15 +64,61 @@ func (p *MergeProxy) HandleRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleDiscover POST /curator/tenants/{id}/discover — triggers the M4c
-// discovery agent (~$0.40 LLM, ~2 min). Produces or refreshes MappingArtifact.
+// discovery agent (~$0.40 LLM, ~2 min). Fire-and-forget: returns 202 to the
+// client immediately and runs the admin-side request in a background
+// goroutine with context.Background(). Closing the curator UI tab won't kill
+// the run — admin keeps going until completion and saves the artifact.
+//
+// Frontend polls /curator/tenants/{id}/schema to detect when discovered_at
+// advances; that's how it knows the run finished.
 func (p *MergeProxy) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "tenant id missing")
 		return
 	}
+	if p.key == "" {
+		writeErr(w, http.StatusServiceUnavailable, "merge proxy not configured (CURATOR_INTERNAL_KEY missing)")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+	curatorUser := session.UserID(r.Context())
 	target := p.adminBase + "/admin/api/internal/curator/tenants/" + url.PathEscape(tenantID) + "/discover"
-	p.proxy(w, r, http.MethodPost, target)
+
+	go func() {
+		// Background context — survives client disconnect. Own deadline keeps
+		// us from leaking the goroutine if admin hangs.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+		if err != nil {
+			log.Printf("discover bg: build request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Internal-Key", p.key)
+		if curatorUser != "" {
+			req.Header.Set("X-Curator-User", curatorUser)
+		}
+		resp, err := p.client.Do(req)
+		if err != nil {
+			log.Printf("discover bg: tenant=%s admin call failed: %v", tenantID, err)
+			return
+		}
+		defer resp.Body.Close()
+		// Drain response so the connection can be reused. We don't surface the
+		// body anywhere — UI learns about completion via /schema polling.
+		_, _ = io.Copy(io.Discard, resp.Body)
+		log.Printf("discover bg: tenant=%s done status=%d", tenantID, resp.StatusCode)
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"started","poll":"schema"}`))
 }
 
 // HandleListReports GET /curator/tenants/{id}/merge-reports

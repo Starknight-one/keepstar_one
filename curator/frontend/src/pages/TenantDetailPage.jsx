@@ -113,50 +113,105 @@ function CatalogTab({ tenantId }) {
 function SchemaTab({ tenantId }) {
   const [schema, setSchema] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [running, setRunning] = useState(false)
+  // running={null}: idle; running=Date: timestamp the run started (used to
+  // detect when a fresh artifact lands by comparing to schema.discoveredAt).
+  const [running, setRunning] = useState(null)
+  const [elapsedSec, setElapsedSec] = useState(0)
 
-  function load() {
-    setLoading(true)
-    api.get(`/curator/tenants/${tenantId}/schema`).then(setSchema).finally(() => setLoading(false))
+  function load(silent = false) {
+    if (!silent) setLoading(true)
+    return api.get(`/curator/tenants/${tenantId}/schema`)
+      .then((s) => { setSchema(s); return s })
+      .finally(() => { if (!silent) setLoading(false) })
   }
   useEffect(() => { load() }, [tenantId])
+
+  // Polling loop while a run is in flight. Stops as soon as the server's
+  // discoveredAt advances past `running` (or after 10 min as a safety net so
+  // the spinner doesn't get stuck if admin crashes mid-run).
+  useEffect(() => {
+    if (!running) return
+    const startedAt = running.getTime()
+    let cancelled = false
+
+    const tick = setInterval(() => setElapsedSec(Math.round((Date.now() - startedAt) / 1000)), 1000)
+
+    const poll = async () => {
+      while (!cancelled) {
+        await new Promise((r) => setTimeout(r, 5000))
+        if (cancelled) return
+        try {
+          const s = await load(true)
+          if (s?.discoveredAt && new Date(s.discoveredAt).getTime() > startedAt) {
+            setRunning(null)
+            return
+          }
+        } catch (e) {
+          // Network blip — keep polling.
+        }
+        if (Date.now() - startedAt > 10 * 60 * 1000) {
+          setRunning(null)
+          alert('Discovery is taking longer than 10 minutes. It might still be running on the server — refresh the page in a few minutes to check.')
+          return
+        }
+      }
+    }
+    poll()
+    return () => { cancelled = true; clearInterval(tick) }
+  }, [running, tenantId])
 
   async function runDiscovery() {
     if (!confirm(
       'Run discovery agent for this tenant?\n\n' +
       'Sonnet 4.6 reads ~30 sample products + categories + metafields, then writes a MappingArtifact (rules for the merge step). ' +
-      'Cost: ~$0.40 in LLM. Time: ~2 minutes. Re-running supersedes the prior artifact.'
+      'Cost: ~$0.40 in LLM. Time: ~2 minutes. Re-running supersedes the prior artifact.\n\n' +
+      'You can leave this page after starting — the agent runs on the server.'
     )) return
-    setRunning(true)
+    const startedAt = new Date()
+    setElapsedSec(0)
+    setRunning(startedAt)
     try {
-      const res = await mergeApi.discover(tenantId)
-      alert(
-        `Discovery done:\n` +
-        `· status: ${res.status || 'committed'}\n` +
-        `· turns: ${res.turns ?? '—'}\n` +
-        `· input tokens: ${res.inputTokens ?? '—'}\n` +
-        `· output tokens: ${res.outputTokens ?? '—'}\n` +
-        `· duration: ${Math.round((res.durationMs || 0) / 1000)}s`
-      )
-      load()
+      await mergeApi.discover(tenantId)
+      // 202 Accepted — the polling effect above will pick up completion.
     } catch (e) {
-      alert(`Discovery failed: ${e.message}`)
-    } finally {
-      setRunning(false)
+      setRunning(null)
+      alert(`Failed to start discovery: ${e.message}`)
     }
   }
 
   if (loading) return <div className="loading">loading…</div>
+
+  const spinner = running ? (
+    <div className="discovery-running" style={{
+      marginTop: 16, padding: 12, border: '1px solid var(--accent, #6366f1)',
+      borderRadius: 8, background: 'rgba(99, 102, 241, 0.08)',
+      display: 'flex', alignItems: 'center', gap: 12,
+    }}>
+      <span className="discovery-spinner" style={{
+        width: 14, height: 14, borderRadius: '50%',
+        border: '2px solid var(--accent, #6366f1)',
+        borderRightColor: 'transparent',
+        animation: 'spin 0.8s linear infinite',
+      }} />
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 500 }}>Discovery agent is running…</div>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>
+          Elapsed {elapsedSec}s · usually ~120s · runs on the server, you can leave this page
+        </div>
+      </div>
+    </div>
+  ) : null
 
   if (!schema || !schema.status) {
     return (
       <div>
         <div className="empty">No mapping artifact yet — discovery hasn't been run for this tenant.</div>
         <div style={{ marginTop: 16 }}>
-          <button className="btn-primary" onClick={runDiscovery} disabled={running}>
-            {running ? 'Running discovery (~2 min)…' : '+ Run discovery agent (~$0.40)'}
+          <button className="btn-primary" onClick={runDiscovery} disabled={!!running}>
+            + Run discovery agent (~$0.40)
           </button>
         </div>
+        {spinner}
       </div>
     )
   }
@@ -170,10 +225,11 @@ function SchemaTab({ tenantId }) {
         {schema.validatedAt && <Pill label="validated" value={new Date(schema.validatedAt).toLocaleString()} />}
       </div>
       <div style={{ margin: '12px 0' }}>
-        <button className="btn-secondary" onClick={runDiscovery} disabled={running}>
-          {running ? 'Running discovery…' : 'Re-run discovery (~$0.40)'}
+        <button className="btn-secondary" onClick={runDiscovery} disabled={!!running}>
+          Re-run discovery (~$0.40)
         </button>
       </div>
+      {spinner}
       {schema.validationReport && (
         <details open className="schema-section">
           <summary>Validation report</summary>
