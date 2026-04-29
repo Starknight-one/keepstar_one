@@ -3,6 +3,7 @@ package tools
 import (
 	"testing"
 
+	"keepstar_v4/internal/domain"
 	engine_v4 "keepstar_v4/internal/engine_v4"
 )
 
@@ -78,5 +79,75 @@ func TestValidatePresetWithUserOps_PresetWithAtomInserts_OK(t *testing.T) {
 	}
 	if msg := validatePresetWithUserOps("product_card", ops); msg != "" {
 		t.Errorf("expected ok for preset + atom/node inserts, got %q", msg)
+	}
+}
+
+// --- ProductToMap: typed > Extra > Tier2 precedence ---------------------
+
+// Typed fields claim well-known keys. Extra and Tier2 are extension bags;
+// neither overrides typed keys. Extra is listing-level so it wins over
+// Tier2 (master-level baseline) on collision.
+
+func TestProductToMap_TypedFieldsClaimWellKnownKeys(t *testing.T) {
+	p := domain.Product{
+		Name:  "From Typed",
+		Brand: "BrandTyped",
+		Extra: map[string]interface{}{"name": "FromExtra", "brand": "BrandExtra"},
+		Tier2: map[string]interface{}{"name": "FromTier2", "brand": "BrandTier2"},
+	}
+	m := ProductToMap(p)
+	if m["name"] != "From Typed" {
+		t.Errorf("typed name should win, got %v", m["name"])
+	}
+	if m["brand"] != "BrandTyped" {
+		t.Errorf("typed brand should win, got %v", m["brand"])
+	}
+}
+
+func TestProductToMap_ExtraWinsOverTier2(t *testing.T) {
+	p := domain.Product{
+		Name:  "n",
+		Extra: map[string]interface{}{"material": "wood-from-listing"},
+		Tier2: map[string]interface{}{"material": "metal-from-master"},
+	}
+	m := ProductToMap(p)
+	if m["material"] != "wood-from-listing" {
+		t.Errorf("listing-level Extra should win over master-level Tier2, got %v", m["material"])
+	}
+}
+
+func TestProductToMap_Tier2FillsGaps(t *testing.T) {
+	p := domain.Product{
+		Name:  "n",
+		Tier2: map[string]interface{}{"room": "bedroom", "style": "scandi"},
+	}
+	m := ProductToMap(p)
+	if m["room"] != "bedroom" {
+		t.Errorf("tier2 key not exposed, got %v", m["room"])
+	}
+	if m["style"] != "scandi" {
+		t.Errorf("tier2 key not exposed, got %v", m["style"])
+	}
+}
+
+func TestProductToMap_NilTier2_DoesNotPanic(t *testing.T) {
+	p := domain.Product{Name: "n"} // Tier2 is nil
+	m := ProductToMap(p)
+	if m["name"] != "n" {
+		t.Errorf("expected name 'n', got %v", m["name"])
+	}
+}
+
+func TestProductToMap_TypedClaimsKeyEvenAgainstBothBags(t *testing.T) {
+	p := domain.Product{
+		Name:     "n",
+		Brand:    "TypedBrand",
+		Category: "TypedCategory",
+		Extra:    map[string]interface{}{"brand": "ExtraBrand", "category": "ExtraCategory"},
+		Tier2:    map[string]interface{}{"brand": "Tier2Brand", "category": "Tier2Category"},
+	}
+	m := ProductToMap(p)
+	if m["brand"] != "TypedBrand" || m["category"] != "TypedCategory" {
+		t.Errorf("typed wins over both bags; got brand=%v category=%v", m["brand"], m["category"])
 	}
 }
