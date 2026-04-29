@@ -237,29 +237,32 @@ func (uc *ShopifyV2UseCase) StartInstallEntry(ctx context.Context, shop string) 
 
 // CompleteOAuth — verify HMAC, consume state, exchange code → token, persist
 // integration, register webhooks, kick off background dump-to-staging +
-// harvester-lite (writes only catalog.products, no master_*).
-func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state string, query map[string][]string) (*domain.Integration, error) {
+// harvester-lite (writes only catalog.products, no master_*). Returns the
+// flow kind so the HTTP handler can pick the right post-OAuth redirect (the
+// install path lands on a "check your email" page; the connect path goes
+// straight back into the in-app integrations view).
+func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state string, query map[string][]string) (*domain.Integration, string, error) {
 	normalized, ok := shopify.ValidateShopDomain(shop)
 	if !ok {
-		return nil, fmt.Errorf("invalid shop domain")
+		return nil, "", fmt.Errorf("invalid shop domain")
 	}
 	if !uc.client.VerifyInstallHMAC(query) {
-		return nil, fmt.Errorf("hmac verification failed")
+		return nil, "", fmt.Errorf("hmac verification failed")
 	}
 	record, err := uc.integrations.ConsumeOAuthState(ctx, state)
 	if err != nil {
-		return nil, fmt.Errorf("consume state: %w", err)
+		return nil, "", fmt.Errorf("consume state: %w", err)
 	}
 	if record.ShopDomain != normalized {
-		return nil, fmt.Errorf("state/shop mismatch")
+		return nil, "", fmt.Errorf("state/shop mismatch")
 	}
 	if time.Now().UTC().After(record.ExpiresAt) {
-		return nil, fmt.Errorf("state expired")
+		return nil, "", fmt.Errorf("state expired")
 	}
 
 	token, err := uc.client.ExchangeCodeForToken(ctx, normalized, code)
 	if err != nil {
-		return nil, fmt.Errorf("exchange code: %w", err)
+		return nil, "", fmt.Errorf("exchange code: %w", err)
 	}
 
 	integration := &domain.Integration{
@@ -273,7 +276,7 @@ func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state
 	}
 	integration, err = uc.integrations.Create(ctx, integration)
 	if err != nil {
-		return nil, fmt.Errorf("persist integration: %w", err)
+		return nil, "", fmt.Errorf("persist integration: %w", err)
 	}
 
 	webhookAddress := uc.publicURL + "/admin/api/webhooks/shopify"
@@ -294,7 +297,7 @@ func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state
 	}
 
 	go uc.runInitialIngest(integration.ID, record.TenantID)
-	return integration, nil
+	return integration, record.FlowKind, nil
 }
 
 // runInitialIngest — background after Connect: dump-to-staging then run

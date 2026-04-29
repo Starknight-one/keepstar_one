@@ -109,13 +109,22 @@ func (h *ShopifyHandler) HandleCallback(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "missing shop, code, or state")
 		return
 	}
-	integration, err := h.v2.CompleteOAuth(r.Context(), shop, code, state, q)
+	integration, flowKind, err := h.v2.CompleteOAuth(r.Context(), shop, code, state, q)
 	if err != nil {
 		h.log.FromContext(r.Context()).Error("shopify_callback_failed", "shop", shop, "error", err)
 		writeError(w, http.StatusBadRequest, "oauth callback failed")
 		return
 	}
+	// Install flow: the merchant has no Keepstar account yet — landing them
+	// on the generic /auth/sign-in page next to Google/Telegram buttons is
+	// confusing (they don't know a magic-link is coming, and those buttons
+	// don't apply). Send them to a dedicated "check your inbox" page that
+	// names the magic-link flow explicitly. Connect flow keeps the in-app
+	// redirect since the user is already logged in.
 	target := "/integrations?connected=shopify&id=" + integration.ID
+	if flowKind == "install" {
+		target = "/auth/install-complete?shop=" + shop
+	}
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
