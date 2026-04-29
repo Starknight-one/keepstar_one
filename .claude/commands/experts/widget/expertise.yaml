@@ -1,0 +1,289 @@
+# Widget Expertise
+# Embeddable chat widget — React 19 + Vite IIFE + Shadow DOM. Renders Formation
+# JSON returned by the V4 backend pipeline.
+
+overview:
+  layer: "frontend"
+  path: "project/frontend/"
+  build_target: "widget.js (IIFE bundle)"
+  embed_pattern: |
+    <script src="https://v4-engine-production.up.railway.app/widget.js"
+            data-tenant="<slug>"
+            data-api="https://v4-engine-production.up.railway.app/api/v1"></script>
+  framework: "React 19, Vite 7, Feature-Sliced Design (FSD)"
+  isolation: "Shadow DOM (mode: open) — host page CSS never leaks in or out"
+  served_by: "project_v4 backend's static handler (Dockerfile copies frontend/dist → /app/static)"
+  data_contract: "Renders Formation JSON shape produced by project_v4 engine_v4.BuildTreeMap → expanded tree"
+
+entry_points:
+  bootstrap:
+    file: "src/widget.jsx"
+    purpose: "IIFE entry. Detects script tag, reads data-tenant + data-api, attaches Shadow DOM, injects all CSS, mounts WidgetApp"
+    api_url_resolution_order:
+      - "1. data-api attribute on script tag"
+      - "2. Derived from script.src origin (only in production — script port != 5173 and src not /src/)"
+      - "3. window.__KEEPSTAR_WIDGET__.api (dev fallback)"
+      - "4. apiClient default ('http://localhost:8082/api/v1' after legacy backend removal — actually still 8080 in apiClient.js:3 — DRIFT, see gotchas)"
+    enable_check:
+      url: "{apiBaseUrl}/widget/status?tenant={slug}"
+      condition: "data.enabled === true → mount; otherwise fail closed (don't mount)"
+      bypass: "Dev mode (no script.src or src includes :5173 or /src/) skips status check"
+  root_component:
+    file: "src/WidgetApp.jsx"
+    purpose: "Root React component. Provides theme/config/action context, manages chat-open state, switches between normal/liked/cart views"
+    key_state:
+      - "isChatOpen — toggle button → overlay layout"
+      - "activeFormation — current Formation JSON to render"
+      - "navState — { canGoBack, onExpand, onBack } from ChatPanel"
+      - "viewMode — 'normal' | 'liked' | 'cart'"
+      - "adjacentTemplatesRef + entitiesRef — for LikedView/CartView client-side rendering"
+  preview:
+    file: "src/preview.jsx"
+    purpose: "Dev-only preview page (npm run dev). Loads widget without script-tag detection"
+
+shadow_dom:
+  why: "Host page may have any CSS; Shadow DOM prevents bidirectional style leakage"
+  attach: "host = div#keepstar-widget; shadow = host.attachShadow({mode:'open'})"
+  css_strategy:
+    pattern: "All component CSS imported as `?inline` in widget.jsx, concatenated, injected as <style> in shadow root"
+    files_inlined:
+      - "src/widget.css"
+      - "src/features/overlay/Overlay.css"
+      - "src/features/chat/ChatPanel.css"
+      - "src/entities/widget/Widget.css"
+      - "src/entities/formation/Formation.css"
+      - "src/shared/theme/themes/marketplace.css"
+      - "src/entities/widget/templates/ComparisonTemplate.css"
+      - "src/entities/widget/templates/GenericCardV2Template.css"
+      - "src/features/catalog/ProductGrid.css"
+      - "src/features/navigation/BackButton.css"
+      - "src/features/navigation/Stepper.css"
+      - "src/features/actions/ActionContext.css"
+      - "src/entities/atom/AtomV2.css"
+    suppression: "vite.config.js shadowDomCss plugin intercepts non-?inline CSS imports → returns empty string. Prevents double-injection from component-level imports."
+  fonts: "Google Fonts <link> appended INSIDE shadow root (Inter + Plus Jakarta Sans)"
+  mount_point: "div#keepstar-root inside shadow → React root"
+
+build:
+  config: "vite.config.js"
+  format: "iife (single self-executing function)"
+  output: "dist/widget.js (cssCodeSplit: false, inlineDynamicImports: true)"
+  prod_env_var: "VITE_API_URL=/api/v1 (set in project_v4/Dockerfile:10) — relative path → same domain as host server"
+  dev:
+    server_port: 5173
+    npm_script: "npm run dev"
+    detection: "isDev = !script?.src || src.includes(':5173') || src.includes('/src/')"
+
+fsd_layers:
+  rule: "Feature-Sliced Design: shared (used by all) → entities (domain models + renderers) → features (use-cases) → widgets-level (this is what FSD calls 'widgets', not our 'widget' domain)"
+  shared:
+    path: "src/shared/"
+    contents:
+      - "api/apiClient.js (197 LOC) — axios-like fetch wrapper with timing logs, sets X-Tenant-Slug header"
+      - "theme/ — ThemeProvider + marketplace.css CSS variables (purple primary #8B5CF6)"
+      - "config/WidgetConfigContext.jsx — tenant + api propagation"
+      - "hooks/, lib/, logger/, ui/"
+  entities:
+    path: "src/entities/"
+    contents:
+      - "atom/ — AtomRenderer (V1), AtomV2Renderer (V2 with subtype/display/format/slot), atomModel.js"
+      - "widget/ — WidgetRenderer dispatches to template (GenericCardV2Template, ComparisonTemplate, LayoutTreeRenderer)"
+      - "formation/ — FormationRenderer (composed/comparison/table/grid/list/single/carousel modes) + formationModel.js"
+      - "message/ — chat message shape (messageModel.js with MessageRole enum)"
+  features:
+    path: "src/features/"
+    contents:
+      - "chat/ — ChatPanel, useChatMessages, useChatSubmit, fillFormation, sessionCache, ChatHistory, ChatInput, model/, api/backgroundSync.js"
+      - "navigation/ — BackButton, Stepper, useFormationHistory"
+      - "actions/ — ActionProvider, ActionToolbar, LikedView, CartView, useActionState, actionCache"
+      - "catalog/ — product-related UI (ProductGrid)"
+      - "overlay/ — chat overlay container"
+      - "canvas/ — (TBD; thin or empty)"
+
+formation_renderer:
+  file: "src/entities/formation/FormationRenderer.jsx"
+  size_loc: 156
+  modes:
+    composed: "formation.sections[].length > 0 → render each section as its own FormationRenderer (recursive). Section can have label."
+    comparison: "mode === 'comparison' → ComparisonTemplate with all widgets"
+    table: "mode === 'table' → ComparisonTemplate with table styling"
+    grid: "WidgetList with class formation-grid cols-{N}"
+    carousel: "WidgetList with class formation-carousel"
+    single: "WidgetList with class formation-single"
+    list: "WidgetList default fallback"
+  lazy_loading:
+    batch_size: 12
+    sentinel: "IntersectionObserver on bottom sentinel → load next batch when visible"
+    server_pagination: "If pagination.hasMore and all local widgets visible → call onLoadMore(pagination.offset + pagination.limit)"
+  status_pill: "StatusPill above grid when total > 1: 'N из M' (or 'N из M товаров' with pagination)"
+  click_propagation: "onWidgetClick prop bubbles down to WidgetRenderer (drill-down trigger)"
+
+atom_renderer:
+  file: "src/entities/atom/AtomV2Renderer.jsx"
+  size_loc: 282
+  v1_v2_split:
+    v1: "atoms array — flat list of {type, subtype, display, value, slot}"
+    v2: "atomsV2 + layout (LayoutNode tree) — atoms placed in named slots within tree"
+    detection: "isV2 = Boolean(widget.atomsV2 || widget.layout)"
+    backward_compat: "FormationRenderer renders both via WidgetRenderer dispatcher; new code uses V2"
+  atom_model:
+    file: "src/entities/atom/atomModel.js"
+    types: ["text", "number", "image", "icon", "video", "audio"]
+    subtypes: "currency, rating, url, date, percent, etc. — narrows render path"
+    displays: "h1, h2, h3, badge, tag, price, button, etc. — wrapper styling"
+    formats: "currency, stars, percent, date, text — value transformation"
+    slots: "hero, title, price, primary, secondary, badge, etc. — V2 layout slot binding"
+
+chat_flow:
+  panel: "src/features/chat/ChatPanel.jsx (249 LOC) — orchestrates message list, formation history, navigation"
+  hooks:
+    use_chat_messages: "useChatMessages — messages, sessionId, loading, error state. Reads sessionId from localStorage on mount."
+    use_chat_submit: "useChatSubmit — POST /pipeline, persists sessionId after first response, calls onFormationReceived(formation, adjacentTemplates, entities)"
+  history:
+    hook: "useFormationHistory (features/navigation/)"
+    behavior: "Chronological trail. push() appends; never goes backwards. canGoBack derived from currentIndex > 0."
+    rationale: "Pipeline state on backend is forward-only; client trail mirrors it"
+  background_sync:
+    file: "src/features/chat/api/backgroundSync.js"
+    purpose: "Fire-and-forget POSTs that sync expand/back/action state to backend without blocking UI"
+    note: "Currently falls back to localhost:8080 default — DRIFT vs apiClient.js (also 8080 default). Both should use VITE_API_URL injected by start.sh."
+
+instant_expand:
+  file: "src/features/chat/model/fillFormation.js"
+  purpose: "Drill-down (e.g. tap a product card → detail view) WITHOUT round-trip to backend"
+  inputs:
+    template: "FormationWithData with 1 widget; atoms have fieldName + value=null (carried from initial response as adjacentTemplates['product'])"
+    entity: "Raw entity object (product or service) from entitiesRef"
+    entityType: "'product' | 'service'"
+  algorithm:
+    - "Detect V2 via atomsV2 || layout"
+    - "For each source atom: if fieldName, get value via getField(entity, fieldName); else use atom.value"
+    - "V2: always push (layout tree references atoms by index — skipping breaks the tree)"
+    - "V1: skip atoms with null value (no layout tree dependency)"
+    - "Substitute meta.currency='__ENTITY_CURRENCY__' → entity.currency || '$'"
+  output: "FormationWithData with 1 filled widget + entityRef"
+  field_getter:
+    function: "getField(entity, fieldName)"
+    mirrors: "Go productFieldGetter / serviceFieldGetter in project_v4/backend/internal/usecases/"
+    returns: "null for empty/zero/missing — same skip semantics as backend"
+    keys: ["id", "name", "description", "price", "images", "rating", "brand", "category", "stockQuantity", "tags", "attributes", "duration", "provider", "availability", "fallback: entity[fieldName] ?? null"]
+  why_client_side: |
+    The pipeline already returns adjacentTemplates (1 detail template per entity type)
+    and entities (raw data) alongside the initial result. Drill-down only needs to
+    fill the template — no LLM call required. Saves ~1.5s round-trip, plus avoids
+    cost. Backend is notified async via syncExpand().
+
+session_cache:
+  file: "src/features/chat/sessionCache.js"
+  storage: "localStorage key 'chatSessionCache'"
+  ttl: "30 minutes (data.savedAt + 30*60*1000)"
+  saved_fields:
+    - "sessionId"
+    - "messages (formation stripped to save space — last formation stored separately)"
+    - "formation (last)"
+    - "formationHistory[] + historyIndex"
+    - "adjacentTemplates (for instant expand after F5)"
+    - "entities (for LikedView/CartView after F5)"
+    - "actions (cart + likes)"
+    - "savedAt (timestamp)"
+  load:
+    function: "loadSessionCache() → expired check → return data | null"
+    expired: "calls clearSessionCache() before returning null"
+  clear:
+    function: "clearSessionCache()"
+    removes: ["chatSessionCache key", "chatSessionId key (legacy)", "actionCache (via clearActionCache)"]
+  trigger: "ChatPanel saves on every message/expand/action; clears on /session/kill or explicit logout"
+
+navigation:
+  back_button:
+    file: "src/features/navigation/BackButton.jsx"
+    visibility: "navState.canGoBack — true when formationHistory has prior entries"
+    handler: "navState.onBack — pops history one step, re-renders prior formation"
+  stepper:
+    file: "src/features/navigation/Stepper.jsx"
+    purpose: "Visual breadcrumb of formation history trail"
+  hook:
+    file: "src/features/navigation/useFormationHistory.js"
+    api: "{ history, currentIndex, push, clear, canGoBack }"
+
+views:
+  normal:
+    description: "Default — renders activeFormation via FormationRenderer"
+    nav: "BackButton visible when canGoBack"
+  liked:
+    file: "src/features/actions/LikedView.jsx"
+    data: "adjacentTemplates + entities + actions.likes — filters entities by liked IDs and renders via fillFormation per item"
+    note: "Uses entitiesVersion key to force remount on entity refresh"
+  cart:
+    file: "src/features/actions/CartView.jsx"
+    data: "entities filtered by actions.cart"
+    follow_up: "Cart totals widget pending engine-v4 B4 (multi-widget composition)"
+  switch: "ActionToolbar buttons → setViewMode('normal'|'liked'|'cart')"
+
+theme:
+  provider: "src/shared/theme/ThemeProvider.jsx"
+  default: "marketplace"
+  vars_file: "src/shared/theme/themes/marketplace.css (229 LOC)"
+  primary_color: "#8B5CF6 (purple)"
+  pattern: "CSS Variables on :host — components consume var(--primary), var(--bg), etc."
+  fonts: "Inter (body), Plus Jakarta Sans (display) — loaded inside shadow root"
+
+api_layer:
+  client: "src/shared/api/apiClient.js (197 LOC)"
+  base_url: "VITE_API_URL env at build time, fallback hardcoded localhost:8080 (DRIFT — should be 8082 post-legacy-removal)"
+  setters: "setTenantSlug(slug), setApiBaseUrl(url) — called from WidgetApp.useEffect"
+  headers: "Always 'Content-Type: application/json'; X-Tenant-Slug: <slug> when set"
+  endpoints:
+    - "POST /chat — main pipeline call (sendChatMessage)"
+    - "GET /session/{id} — restore (getSession; 404 → null for cache miss)"
+    - "POST /session/init — bootstrap (initSession)"
+    - "POST /navigation/expand — drill-down (server side; client uses fillFormation)"
+    - "POST /navigation/back — back-step"
+    - "POST /actions — like/cart state sync"
+  timing: "timedFetch wraps every call with performance.now() → log.api(method, path, status, ms)"
+
+action_state:
+  context: "src/features/actions/ActionContext.jsx — provides actions = { likes: Set, cart: Map }"
+  hook: "useActionState"
+  cache: "src/features/actions/actionCache.js — localStorage 'actionCache' key, cleared via clearSessionCache"
+  toolbar: "ActionToolbar — switches viewMode (normal/liked/cart) + shows like/cart counts"
+
+invariants:
+  - "Shadow DOM: every CSS file MUST be imported as ?inline in widget.jsx and added to ALL_CSS array — otherwise styles silently absent from shadow root."
+  - "Session cache messages MUST strip formation field (size) — last formation stored separately to keep cache under localStorage quota."
+  - "fillFormation atom skip rule differs V1/V2: V2 always pushes (layout indices), V1 skips null values."
+  - "Frontend getField is a pure mirror of backend productFieldGetter/serviceFieldGetter — drift between them silently breaks instant expand for new fields."
+  - "Lazy-loading sentinel resets visibleCount to BATCH_SIZE on widgets prop change (new search) — new searches always start at 12 items."
+  - "Widget mount is gated by /widget/status?tenant=X enabled flag in production — fail-closed on any error (no mount)."
+
+gotchas:
+  - "apiClient.js:3 still hardcodes 'http://localhost:8080/api/v1' as fallback after legacy backend deletion. start.sh injects VITE_API_URL=http://localhost:8082/api/v1 to override, but if Vite dev is started without that env var, fetches go to dead 8080. Same fallback in features/chat/api/backgroundSync.js:4."
+  - "shadowDomCss vite plugin SUPPRESSES regular CSS imports — adding `import './X.css'` in a component does nothing. Must add to ALL_CSS in widget.jsx."
+  - "preview.jsx is dev-only; do NOT add it to widget.jsx ALL_CSS or the IIFE — it's a separate entry."
+  - "Session cache 30-min TTL is hardcoded — F5 after 30 minutes silently drops state."
+  - "fillFormation getField does NOT support nested fields (e.g. 'attributes.skin_type'). Backend may return such fieldNames — silent null result for unmapped keys via 'entity[fieldName] ?? null' fallback (returns undefined-ish for paths like 'a.b')."
+  - "FormationRenderer recursive composed path passes a stripped formation {mode, grid, widgets} — section.label rendered above each section (V4 backend should set label only when meaningful)."
+  - "ActionContext likes/cart are Set/Map — JSON-serialized to localStorage requires conversion (actionCache handles this; manual reads of localStorage 'actionCache' need parse/coerce)."
+  - "WidgetApp uses entitiesVersion as React key for LikedView/CartView to force remount on entity refresh — without this, child state would carry over between unrelated entity sets."
+
+related_experts:
+  - "engine-v4 — owns the Formation JSON shape this widget consumes (mode/grid/widgets/sections/atoms layout). Drift in engine output silently breaks rendering."
+  - "pipeline-agents — POST /chat returns the response shape (formation + adjacentTemplates + entities + sessionId). Field renames here cascade to apiClient + ChatPanel."
+  - "admin — KeepstarCanvas is admin-side; canvas/ feature in widget is reserved (currently empty/stub)."
+
+active_workstreams:
+  tracker: "docs/PRE_LAUNCH_TASKS.md"
+  hot_files:
+    - "ActionContext.css (527 LOC) — large stylesheet, candidate for split if more action UIs added"
+    - "ComparisonTemplate.css (307 LOC) — comparison table styling"
+    - "AtomV2Renderer.jsx (282 LOC) — central atom dispatch; growth = signal of subtype proliferation"
+
+build_environment:
+  dev:
+    cmd: "scripts/start.sh (chains V4 backend + this dev server + inspector)"
+    ports: "5173 (this), 8082 (V4), 3457 (inspector)"
+    api_url_env: "VITE_API_URL=http://localhost:8082/api/v1 (injected by start.sh)"
+  prod:
+    dockerfile: "project_v4/Dockerfile (multi-stage: this frontend → dist → /app/static, served alongside V4 backend)"
+    api_url: "VITE_API_URL=/api/v1 (relative — same origin as widget.js host)"
+    deployed_to: "v4-engine-production.up.railway.app"
