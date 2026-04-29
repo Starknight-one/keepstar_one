@@ -1,22 +1,27 @@
 // cleanup-tenant-stale — surgical cleanup of stale Shopify-imported listings
-// for one tenant. Removes catalog.products and catalog.shopify_raw_imports
-// rows whose source_id no longer exists in the merchant's current Shopify
-// catalog. Safe to re-run: idempotent and only touches Shopify-sourced rows
-// (manually-created products / CSV imports keyed differently are untouched).
+// for one tenant. Removes catalog.products, catalog.shopify_raw_imports, and
+// catalog.tenant_categories rows whose source_id / external_id no longer
+// exists in the merchant's current Shopify catalog. Safe to re-run:
+// idempotent and only touches Shopify-sourced rows.
 //
 // Algorithm:
 //
 //   1. Fetch the current Shopify product list via Bulk Operations (full pull,
-//      same query as harvester-lite — one product node per top-level row).
-//   2. Build a set of current numeric source_ids.
-//   3. By default, print what would be deleted and exit (dry-run).
-//   4. With -apply, run two DELETEs in one transaction:
+//      same query as harvester-lite). Collect both product GIDs (top-level
+//      rows) and collection GIDs (child rows with __parentId pointing at a
+//      product — collections come bundled per-product in the JSONL stream).
+//   2. By default, print what would be deleted and exit (dry-run).
+//   3. With -apply, run three DELETEs in one transaction:
 //        DELETE FROM catalog.products
 //          WHERE tenant_id=$1 AND source_system='shopify'
-//            AND source_id NOT IN (current_set);
+//            AND source_id NOT IN (current_product_set);
 //        DELETE FROM catalog.shopify_raw_imports
 //          WHERE tenant_id=$1 AND source_kind='product'
-//            AND source_id NOT IN (current_set);
+//            AND source_id NOT IN (current_product_set);
+//        DELETE FROM catalog.tenant_categories
+//          WHERE tenant_id=$1
+//            AND external_id LIKE 'gid://shopify/Collection/%'
+//            AND external_id NOT IN (current_collection_set);
 //
 // Usage:
 //   ADMIN_ENCRYPTION_KEY=... DATABASE_URL=... \
@@ -95,41 +100,56 @@ func main() {
 
 	shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret, cfg.ShopifyAPIVersion, cfg.ShopifyScopes)
 
-	currentIDs, err := fetchCurrentProductIDs(ctx, shopifyClient, *shop, full.Credentials)
+	currentProductIDs, currentCollectionGIDs, err := fetchCurrentCatalog(ctx, shopifyClient, *shop, full.Credentials)
 	if err != nil {
-		log.Fatalf("fetch current product ids: %v", err)
+		log.Fatalf("fetch current catalog: %v", err)
 	}
-	log.Printf("current Shopify catalog: %d products", len(currentIDs))
-	if len(currentIDs) == 0 {
+	log.Printf("current Shopify catalog: %d products, %d collections", len(currentProductIDs), len(currentCollectionGIDs))
+	if len(currentProductIDs) == 0 {
 		log.Fatal("refusing to proceed with empty current set — would delete everything for this tenant")
 	}
 
-	// Build VARIADIC arg list for NOT IN.
-	idArgs := make([]any, 0, len(currentIDs)+1)
-	idArgs = append(idArgs, tenantID)
-	for id := range currentIDs {
-		idArgs = append(idArgs, id)
+	// Build VARIADIC arg list for product NOT IN.
+	prodArgs := make([]any, 0, len(currentProductIDs)+1)
+	prodArgs = append(prodArgs, tenantID)
+	for id := range currentProductIDs {
+		prodArgs = append(prodArgs, id)
 	}
-	placeholders := buildPlaceholders(2, len(currentIDs))
+	prodPlaceholders := buildPlaceholders(2, len(currentProductIDs))
 
-	var prodCount, stagingCount int
+	// Build VARIADIC arg list for collection NOT IN. Empty collection set is
+	// allowed: it means every Shopify-sourced tenant_category is stale.
+	collArgs := make([]any, 0, len(currentCollectionGIDs)+1)
+	collArgs = append(collArgs, tenantID)
+	for gid := range currentCollectionGIDs {
+		collArgs = append(collArgs, gid)
+	}
+	collPlaceholders := buildPlaceholders(2, len(currentCollectionGIDs))
+
+	var prodCount, stagingCount, catCount int
 	if err := dbClient.Pool().QueryRow(ctx,
-		"SELECT COUNT(*) FROM catalog.products WHERE tenant_id=$1 AND source_system='shopify' AND source_id NOT IN ("+placeholders+")",
-		idArgs...).Scan(&prodCount); err != nil {
+		"SELECT COUNT(*) FROM catalog.products WHERE tenant_id=$1 AND source_system='shopify' AND source_id NOT IN ("+prodPlaceholders+")",
+		prodArgs...).Scan(&prodCount); err != nil {
 		log.Fatalf("count stale products: %v", err)
 	}
 	if err := dbClient.Pool().QueryRow(ctx,
-		"SELECT COUNT(*) FROM catalog.shopify_raw_imports WHERE tenant_id=$1 AND source_kind='product' AND source_id NOT IN ("+placeholders+")",
-		idArgs...).Scan(&stagingCount); err != nil {
+		"SELECT COUNT(*) FROM catalog.shopify_raw_imports WHERE tenant_id=$1 AND source_kind='product' AND source_id NOT IN ("+prodPlaceholders+")",
+		prodArgs...).Scan(&stagingCount); err != nil {
 		log.Fatalf("count stale staging: %v", err)
 	}
+	if err := dbClient.Pool().QueryRow(ctx,
+		stalCategoriesCountSQL(collPlaceholders, len(currentCollectionGIDs)),
+		collArgs...).Scan(&catCount); err != nil {
+		log.Fatalf("count stale tenant_categories: %v", err)
+	}
 
-	log.Printf("stale rows to delete: catalog.products=%d, shopify_raw_imports=%d", prodCount, stagingCount)
+	log.Printf("stale rows to delete: catalog.products=%d, shopify_raw_imports=%d, tenant_categories=%d",
+		prodCount, stagingCount, catCount)
 
 	// Show a few sample stale rows so the operator can sanity-check before -apply.
 	rows, err := dbClient.Pool().Query(ctx,
-		"SELECT source_id, COALESCE(original_name, name, '') FROM catalog.products WHERE tenant_id=$1 AND source_system='shopify' AND source_id NOT IN ("+placeholders+") ORDER BY created_at DESC LIMIT 10",
-		idArgs...)
+		"SELECT source_id, COALESCE(original_name, name, '') FROM catalog.products WHERE tenant_id=$1 AND source_system='shopify' AND source_id NOT IN ("+prodPlaceholders+") ORDER BY created_at DESC LIMIT 10",
+		prodArgs...)
 	if err == nil {
 		log.Println("sample stale catalog.products (up to 10):")
 		for rows.Next() {
@@ -138,6 +158,21 @@ func main() {
 			log.Printf("  source_id=%s name=%q", sid, truncate(name, 60))
 		}
 		rows.Close()
+	}
+
+	if catCount > 0 {
+		catRows, err := dbClient.Pool().Query(ctx,
+			stalCategoriesSampleSQL(collPlaceholders, len(currentCollectionGIDs)),
+			collArgs...)
+		if err == nil {
+			log.Println("sample stale tenant_categories (up to 10):")
+			for catRows.Next() {
+				var name, extID string
+				_ = catRows.Scan(&name, &extID)
+				log.Printf("  name=%q external_id=%s", truncate(name, 60), extID)
+			}
+			catRows.Close()
+		}
 	}
 
 	if !*apply {
@@ -152,32 +187,67 @@ func main() {
 	defer tx.Rollback(ctx)
 
 	tag1, err := tx.Exec(ctx,
-		"DELETE FROM catalog.products WHERE tenant_id=$1 AND source_system='shopify' AND source_id NOT IN ("+placeholders+")",
-		idArgs...)
+		"DELETE FROM catalog.products WHERE tenant_id=$1 AND source_system='shopify' AND source_id NOT IN ("+prodPlaceholders+")",
+		prodArgs...)
 	if err != nil {
 		log.Fatalf("delete from catalog.products: %v", err)
 	}
 
 	tag2, err := tx.Exec(ctx,
-		"DELETE FROM catalog.shopify_raw_imports WHERE tenant_id=$1 AND source_kind='product' AND source_id NOT IN ("+placeholders+")",
-		idArgs...)
+		"DELETE FROM catalog.shopify_raw_imports WHERE tenant_id=$1 AND source_kind='product' AND source_id NOT IN ("+prodPlaceholders+")",
+		prodArgs...)
 	if err != nil {
 		log.Fatalf("delete from staging: %v", err)
+	}
+
+	tag3, err := tx.Exec(ctx,
+		stalCategoriesDeleteSQL(collPlaceholders, len(currentCollectionGIDs)),
+		collArgs...)
+	if err != nil {
+		log.Fatalf("delete from tenant_categories: %v", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		log.Fatalf("commit: %v", err)
 	}
-	log.Printf("APPLIED: catalog.products deleted=%d, shopify_raw_imports deleted=%d",
-		tag1.RowsAffected(), tag2.RowsAffected())
+	log.Printf("APPLIED: catalog.products deleted=%d, shopify_raw_imports deleted=%d, tenant_categories deleted=%d",
+		tag1.RowsAffected(), tag2.RowsAffected(), tag3.RowsAffected())
 }
 
-// fetchCurrentProductIDs runs a fresh Bulk Operations query and returns the set
-// of numeric product IDs currently in the merchant catalog.
-func fetchCurrentProductIDs(ctx context.Context, c *shopify.Client, shop, token string) (map[string]struct{}, error) {
+// stalCategoriesCountSQL / stalCategoriesSampleSQL / stalCategoriesDeleteSQL
+// build SQL that handles the empty-collection-set edge case: when the merchant
+// catalog has zero collections, "NOT IN ()" is a syntax error, so we collapse
+// the predicate to just the prefix filter and tenant scope.
+func stalCategoriesCountSQL(placeholders string, n int) string {
+	if n == 0 {
+		return "SELECT COUNT(*) FROM catalog.tenant_categories WHERE tenant_id=$1 AND external_id LIKE 'gid://shopify/Collection/%'"
+	}
+	return "SELECT COUNT(*) FROM catalog.tenant_categories WHERE tenant_id=$1 AND external_id LIKE 'gid://shopify/Collection/%' AND external_id NOT IN (" + placeholders + ")"
+}
+
+func stalCategoriesSampleSQL(placeholders string, n int) string {
+	if n == 0 {
+		return "SELECT name, external_id FROM catalog.tenant_categories WHERE tenant_id=$1 AND external_id LIKE 'gid://shopify/Collection/%' ORDER BY created_at DESC LIMIT 10"
+	}
+	return "SELECT name, external_id FROM catalog.tenant_categories WHERE tenant_id=$1 AND external_id LIKE 'gid://shopify/Collection/%' AND external_id NOT IN (" + placeholders + ") ORDER BY created_at DESC LIMIT 10"
+}
+
+func stalCategoriesDeleteSQL(placeholders string, n int) string {
+	if n == 0 {
+		return "DELETE FROM catalog.tenant_categories WHERE tenant_id=$1 AND external_id LIKE 'gid://shopify/Collection/%'"
+	}
+	return "DELETE FROM catalog.tenant_categories WHERE tenant_id=$1 AND external_id LIKE 'gid://shopify/Collection/%' AND external_id NOT IN (" + placeholders + ")"
+}
+
+// fetchCurrentCatalog runs a fresh Bulk Operations query and returns:
+//   - product IDs (numeric tail of gid://shopify/Product/N) — top-level rows
+//   - collection GIDs (full gid://shopify/Collection/N) — child rows whose ID
+//     namespace is Collection (collections are bundled per-product in the bulk
+//     stream). Same Collection GID may appear under many products; we dedupe.
+func fetchCurrentCatalog(ctx context.Context, c *shopify.Client, shop, token string) (map[string]struct{}, map[string]struct{}, error) {
 	if _, err := c.RunBulkProductsQuery(ctx, shop, token); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "already in progress") {
-			return nil, err
+			return nil, nil, err
 		}
 		log.Println("a bulk op is already running — polling existing")
 	}
@@ -185,20 +255,20 @@ func fetchCurrentProductIDs(ctx context.Context, c *shopify.Client, shop, token 
 	var op *shopify.BulkOperation
 	for {
 		if time.Now().After(deadline) {
-			return nil, errPollTimeout
+			return nil, nil, errPollTimeout
 		}
 		current, err := c.GetCurrentBulkOperation(ctx, shop, token)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if current == nil {
-			return nil, errNoCurrentOp
+			return nil, nil, errNoCurrentOp
 		}
 		switch current.Status {
 		case shopify.BulkOpCompleted:
 			op = current
 		case shopify.BulkOpFailed, shopify.BulkOpCanceled, shopify.BulkOpExpired:
-			return nil, errBulkTerminal(string(current.Status), current.ErrorCode)
+			return nil, nil, errBulkTerminal(string(current.Status), current.ErrorCode)
 		}
 		if op != nil {
 			break
@@ -206,22 +276,23 @@ func fetchCurrentProductIDs(ctx context.Context, c *shopify.Client, shop, token 
 		log.Printf("  poll: status=%s objectCount=%s", current.Status, current.ObjectCount)
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-time.After(bulkPollInterval):
 		}
 	}
 	if op.URL == "" {
 		// Empty catalog — caller protects against this case.
-		return map[string]struct{}{}, nil
+		return map[string]struct{}{}, map[string]struct{}{}, nil
 	}
 	body, err := c.FetchBulkJSONL(ctx, op.URL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer body.Close()
 
 	scanner := shopify.ScanBulkJSONL(body)
-	out := make(map[string]struct{}, 256)
+	products := make(map[string]struct{}, 256)
+	collections := make(map[string]struct{}, 64)
 	for scanner.Scan() {
 		var head struct {
 			ID       string `json:"id"`
@@ -230,15 +301,20 @@ func fetchCurrentProductIDs(ctx context.Context, c *shopify.Client, shop, token 
 		if err := json.Unmarshal(scanner.Bytes(), &head); err != nil {
 			continue
 		}
-		if head.ParentID != "" {
+		if head.ParentID == "" {
+			// Top-level Product node. Extract numeric tail.
+			if idx := strings.LastIndex(head.ID, "/"); idx > 0 && idx < len(head.ID)-1 {
+				products[head.ID[idx+1:]] = struct{}{}
+			}
 			continue
 		}
-		// Top-level Product. Extract numeric tail from gid://shopify/Product/123.
-		if idx := strings.LastIndex(head.ID, "/"); idx > 0 && idx < len(head.ID)-1 {
-			out[head.ID[idx+1:]] = struct{}{}
+		// Child row — collect GID if it's a Collection (skip variants, images,
+		// metafields).
+		if strings.Contains(head.ID, "/Collection/") {
+			collections[head.ID] = struct{}{}
 		}
 	}
-	return out, scanner.Err()
+	return products, collections, scanner.Err()
 }
 
 func buildPlaceholders(start, n int) string {
