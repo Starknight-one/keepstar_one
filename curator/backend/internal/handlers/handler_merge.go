@@ -38,10 +38,15 @@ type MergeProxy struct {
 
 func NewMergeProxy() *MergeProxy {
 	base := firstNonEmptyEnv("ADMIN_BASE_URL", "http://127.0.0.1:8081")
+	// Discovery agent has an 8-min wallclock budget on the admin side; merge
+	// run is much faster (~20s) but apply on a large report can be slow too.
+	// 10 minutes covers the worst case so curator UI doesn't bail before the
+	// admin-side work finishes (which would burn LLM tokens with no result
+	// surfaced to the operator).
 	return &MergeProxy{
 		adminBase: strings.TrimRight(base, "/"),
 		key:       os.Getenv("CURATOR_INTERNAL_KEY"),
-		client:    &http.Client{Timeout: 90 * time.Second},
+		client:    &http.Client{Timeout: 10 * time.Minute},
 	}
 }
 
