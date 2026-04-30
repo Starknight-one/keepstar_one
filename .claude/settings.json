@@ -1,5 +1,17 @@
 {
   "enabledPlugins": {
     "railway@claude-plugins-official": true
+  },
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/sync_experts_on_session_end.sh"
+          }
+        ]
+      }
+    ]
   }
 }

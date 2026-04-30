@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# SessionEnd hook — auto-refresh vertical-expert YAMLs by re-reading current code.
+#
+# Fires once when user closes Claude Code (exit | logout | prompt_input_exit).
+# Skips on /clear (user keeps working). Always exit 0 (never blocks close).
+#
+# Spawns a fresh headless `claude --print "/sync-experts --auto"` so the
+# self-improve runs with a clean context budget — no need to /compact the
+# user's session beforehand.
+
+set -euo pipefail
+
+INPUT=$(cat)
+REASON=$(echo "$INPUT" | jq -r '.reason // "exit"' 2>/dev/null || echo "exit")
+
+# /clear is just a context wipe — user is still here. Don't sync.
+if [ "$REASON" = "clear" ]; then
+  exit 0
+fi
+
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+cd "$PROJECT_DIR" || exit 0
+
+# Skip if repo has no changes vs origin/main and no working-tree edits.
+# Fast no-op for read-only sessions.
+if git diff --quiet origin/main 2>/dev/null && \
+   git diff --quiet HEAD 2>/dev/null && \
+   [ -z "$(git ls-files --others --exclude-standard)" ]; then
+  exit 0
+fi
+
+# Lock to prevent two parallel SessionEnd hooks from racing.
+LOCK_FILE="${PROJECT_DIR}/.claude/.sync.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  # Another sync is already running — bail.
+  exit 0
+fi
+
+LOG_FILE="${PROJECT_DIR}/.claude/.last_sync.log"
+echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] SessionEnd reason=$REASON — running /sync-experts --auto" > "$LOG_FILE"
+
+# Resolve `claude` binary. Fallback to common installs if PATH is minimal.
+CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
+if [ -z "$CLAUDE_BIN" ]; then
+  for p in /usr/local/bin/claude /opt/homebrew/bin/claude "$HOME/.local/bin/claude"; do
+    if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
+  done
+fi
+if [ -z "$CLAUDE_BIN" ]; then
+  echo "[experts-keeper] claude binary not found in PATH or common locations — skipping" >> "$LOG_FILE"
+  exit 0
+fi
+
+# Run in background to avoid stalling Claude Code's exit. Output to log.
+nohup "$CLAUDE_BIN" --print --dangerously-skip-permissions \
+  "/sync-experts --auto" \
+  >> "$LOG_FILE" 2>&1 &
+disown 2>/dev/null || true
+
+exit 0

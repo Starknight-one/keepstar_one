@@ -1,0 +1,105 @@
+# Vertical experts → file glob mapping.
+# Single source of truth used by:
+#   1. .claude/hooks/sync_experts_on_session_end.sh (auto-sync on Claude close)
+#   2. .claude/commands/sync-experts.md (manual /sync-experts slash command)
+#
+# Each domain lists glob patterns (fnmatch / brace-expansion supported) covering
+# files whose changes should trigger a refresh of that expert's expertise.yaml.
+#
+# Editing rules:
+# - Keep patterns specific. Over-broad globs cause needless self-improve runs.
+# - When you ADD or RENAME a major file in a domain, update the relevant glob.
+# - When you ADD a new vertical expert: add it here AND create the
+#   .claude/commands/experts/<name>/{expertise.yaml,self-improve.md,question.md} trio.
+
+experts:
+  catalog:
+    globs:
+      - "project_admin/backend/internal/usecases/{harvester,discovery,merge,enrichment,match,junk,products,stock,import,integrations,csv_mapping,auto_map,category_classifier,validate_artifact}*.go"
+      - "project_admin/backend/internal/adapters/postgres/catalog*.go"
+      - "project_admin/backend/internal/adapters/postgres/master_variants*.go"
+      - "project_admin/backend/internal/adapters/postgres/{candidates,mapping_artifact,merge_apply_tx,merge_reports,import_adapter,integrations_adapter,shopify_staging,audit_adapter}*.go"
+      - "project_admin/backend/internal/adapters/shopify/**/*.go"
+      - "project_admin/backend/internal/handlers/handler_{categories,products,curator_merge,enrichment,import,integrations,junk,stock,api_v1}*.go"
+      - "project_admin/backend/cmd/crawler/**/*.go"
+      - "project_admin/backend/internal/units/**/*.go"
+      - "project_v4/backend/internal/adapters/postgres/postgres_catalog.go"
+      - "project_v4/backend/internal/adapters/postgres/field_definition_adapter.go"
+      - "project_v4/backend/internal/adapters/postgres/catalog_migrations.go"
+      - "project_v4/backend/internal/usecases/catalog_get_*.go"
+      - "project_v4/backend/internal/usecases/catalog_list_*.go"
+      - "project_v4/backend/internal/handlers/handler_catalog.go"
+
+  engine-v4:
+    globs:
+      - "project_v4/backend/internal/engine_v4/**/*.go"
+      - "project_v4/backend/internal/tools/tool_visual_assembly*.go"
+      - "project_v4/backend/internal/adapters/postgres/canvas_*_adapter.go"
+
+  pipeline-agents:
+    globs:
+      - "project_v4/backend/internal/usecases/pipeline_*.go"
+      - "project_v4/backend/internal/usecases/agent1_*.go"
+      - "project_v4/backend/internal/usecases/agent2_*.go"
+      - "project_v4/backend/internal/usecases/{action_,chat_send,navigation_,state_,template_apply}*.go"
+      - "project_v4/backend/internal/prompts/**/*.go"
+      - "project_v4/backend/internal/tools/tool_catalog_search*.go"
+      - "project_v4/backend/internal/tools/tool_history_lookup*.go"
+      - "project_v4/backend/internal/tools/tool_state_filter*.go"
+      - "project_v4/backend/internal/tools/tool_search_products*.go"
+      - "project_v4/backend/internal/tools/tool_registry*.go"
+      - "project_v4/backend/internal/tools/data_normalize*.go"
+      - "project_v4/backend/internal/adapters/anthropic/**/*.go"
+      - "project_v4/backend/internal/adapters/openai/**/*.go"
+      - "project_v4/backend/internal/handlers/handler_{chat,pipeline,navigation,action,session,testbench,trace,debug}*.go"
+      - "project_v4/backend/internal/adapters/postgres/{postgres_state,postgres_trace,postgres_events,postgres_logs,postgres_cache,retention}*.go"
+
+  widget:
+    globs:
+      - "project/frontend/src/**/*.jsx"
+      - "project/frontend/src/**/*.js"
+      - "project/frontend/src/**/*.css"
+      - "project/frontend/vite.config.js"
+      - "project/frontend/package.json"
+
+  admin:
+    globs:
+      - "project_admin/backend/internal/usecases/auth*.go"
+      - "project_admin/backend/internal/usecases/billing.go"
+      - "project_admin/backend/internal/usecases/canvas.go"
+      - "project_admin/backend/internal/usecases/settings.go"
+      - "project_admin/backend/internal/handlers/handler_auth*.go"
+      - "project_admin/backend/internal/handlers/handler_billing*.go"
+      - "project_admin/backend/internal/handlers/handler_canvas*.go"
+      - "project_admin/backend/internal/handlers/handler_settings*.go"
+      - "project_admin/backend/internal/handlers/handler_api_keys*.go"
+      - "project_admin/backend/internal/handlers/handler_traces*.go"
+      - "project_admin/backend/internal/handlers/handler_audit*.go"
+      - "project_admin/backend/internal/handlers/middleware_*.go"
+      - "project_admin/backend/internal/adapters/google/**/*.go"
+      - "project_admin/backend/internal/adapters/resend/**/*.go"
+      - "project_admin/backend/internal/adapters/smtp/**/*.go"
+      - "project_admin/backend/internal/adapters/telegram/**/*.go"
+      - "project_admin/backend/internal/adapters/totp/**/*.go"
+      - "project_admin/backend/internal/adapters/postgres/auth_adapter*.go"
+      - "project_admin/backend/internal/adapters/postgres/sessions_repo*.go"
+      - "project_admin/backend/internal/adapters/postgres/challenges_repo*.go"
+      - "project_admin/backend/internal/adapters/postgres/oauth_login_states_repo*.go"
+      - "project_admin/backend/internal/adapters/postgres/invitations_repo*.go"
+      - "project_admin/backend/internal/adapters/postgres/user_tenants_repo*.go"
+      - "project_admin/backend/internal/adapters/postgres/api_keys_adapter*.go"
+      - "project_admin/backend/internal/adapters/postgres/billing_adapter*.go"
+      - "project_admin/backend/internal/adapters/postgres/canvas_adapter*.go"
+      - "project_admin/backend/internal/crypto/**/*.go"
+      - "project_admin/backend/cmd/server/main.go"
+      - "project_admin/frontend/src/**/*.jsx"
+      - "project_admin/frontend/src/**/*.js"
+      - "project_admin/frontend/src/**/*.css"
+
+  curator:
+    globs:
+      - "curator/backend/**/*.go"
+      - "curator/frontend/src/**/*.jsx"
+      - "curator/frontend/src/**/*.js"
+      - "curator/frontend/src/**/*.css"
+      - "curator/Dockerfile"
