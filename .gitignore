@@ -16,7 +16,7 @@
 
 # Claude experts auto-sync runtime artifacts (logs, locks)
 .claude/.last_sync.log
-.claude/.sync.lock
+.claude/.sync.lock.d/
 
 # Environment
 .env

@@ -201,8 +201,25 @@ Ops-driven движок — Agent2 строит и модифицирует UI �
 
 Это правило действует всегда когда был plan mode, независимо от размера задачи. Даже маленькое изменение — всё равно лог. Формат уже устоялся, смотри последние файлы в `docs/Updates/` как образец.
 
+## Эксперты
+
+6 вертикальных экспертов покрывают все домены проекта. Используй их для быстрых ответов и плановой работы:
+
+- `/experts:catalog:question` / `:self-improve` — каталог (admin write + V4 read + Shopify)
+- `/experts:engine-v4:question` / `:self-improve` — ops-driven UI engine
+- `/experts:pipeline-agents:question` / `:self-improve` — V4 chat orchestration
+- `/experts:widget:question` / `:self-improve` — embeddable chat widget
+- `/experts:admin:question` / `:self-improve` — auth/billing/canvas/admin SPA
+- `/experts:curator:question` / `:self-improve` — standalone curator service
+
+Селективное обновление сразу нескольких — `/sync-experts` (по diff'у), `/sync-experts --all` (full).
+Авто-синк при закрытии Claude Code — SessionEnd hook, лог в `.claude/.last_sync.log`.
+
+Полное описание системы — `.claude/commands/experts/README.md`.
+
 ## Документация
 
+- `.claude/commands/experts/README.md` — система экспертов (что, как, добавление новых)
 - `docs/Updates/` — дев-логи сессий V4 (актуальное состояние, по дате)
 - `docs/PRE_LAUNCH_TASKS.md` — трекер задач до релиза (волны B2/B3/B4/E1/E2/B7/AD1/...)
 - `docs/archive/` — старые спеки (ARCHITECTURE, VISUAL_ASSEMBLY_ENGINE, LAYOUT_ENGINE_SPEC, GLOSSARY, SPEC_TWO_AGENT_PIPELINE и др.)

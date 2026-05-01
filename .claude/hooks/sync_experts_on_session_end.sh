@@ -29,13 +29,15 @@ if git diff --quiet origin/main 2>/dev/null && \
   exit 0
 fi
 
-# Lock to prevent two parallel SessionEnd hooks from racing.
-LOCK_FILE="${PROJECT_DIR}/.claude/.sync.lock"
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
+# Lock via atomic mkdir (works on macOS where flock is absent).
+# Only one process can create the dir; others get EEXIST and exit.
+LOCK_DIR="${PROJECT_DIR}/.claude/.sync.lock.d"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
   # Another sync is already running — bail.
   exit 0
 fi
+# Cleanup lock dir on any exit.
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 LOG_FILE="${PROJECT_DIR}/.claude/.last_sync.log"
 echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] SessionEnd reason=$REASON — running /sync-experts --auto" > "$LOG_FILE"
