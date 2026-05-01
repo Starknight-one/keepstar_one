@@ -18,6 +18,21 @@ if [ "$REASON" = "clear" ]; then
   exit 0
 fi
 
+# Recursion guard #1 — env var. If our parent process marked this as a nested
+# invocation (we set this when spawning the headless `claude --print`),
+# this hook is firing inside our own child. Skip.
+if [ "${EXPERTS_KEEPER_NESTED:-}" = "1" ]; then
+  exit 0
+fi
+
+# Recursion guard #2 — process check. If a previous sync-experts headless
+# claude is still running, don't spawn another one. Catches the case where
+# env propagation didn't work and prevents pile-up across rapid SessionEnd
+# events from multiple terminals closing at once.
+if pgrep -f "claude.*--print.*sync-experts" > /dev/null 2>&1; then
+  exit 0
+fi
+
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 cd "$PROJECT_DIR" || exit 0
 
@@ -55,7 +70,9 @@ if [ -z "$CLAUDE_BIN" ]; then
 fi
 
 # Run in background to avoid stalling Claude Code's exit. Output to log.
-nohup "$CLAUDE_BIN" --print --dangerously-skip-permissions \
+# EXPERTS_KEEPER_NESTED=1 propagates to the spawned claude → its own
+# SessionEnd hook (when --print finishes) will short-circuit on guard #1.
+EXPERTS_KEEPER_NESTED=1 nohup "$CLAUDE_BIN" --print --dangerously-skip-permissions \
   "/sync-experts --auto" \
   >> "$LOG_FILE" 2>&1 &
 disown 2>/dev/null || true
