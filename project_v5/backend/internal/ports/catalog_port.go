@@ -37,4 +37,10 @@ type CatalogPort interface {
 	GetTenantBySlug(ctx context.Context, slug string) (*domain.Tenant, error)
 	ListProducts(ctx context.Context, tenantID string, filter ProductFilter) ([]domain.Product, int, error)
 	GetProduct(ctx context.Context, tenantID string, productID string) (*domain.Product, error)
+
+	// BuildCatalogDigest assembles a per-tenant compact summary of the catalog
+	// (categories, shared filters, top brands, top ingredients) for inlining
+	// into Agent1's system prompt. V4 stored the result in tenants.catalog_digest;
+	// V5 builds on demand and lets the use case cache in-process.
+	BuildCatalogDigest(ctx context.Context, tenantID string) (*domain.CatalogDigest, error)
 }

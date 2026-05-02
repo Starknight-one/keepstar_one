@@ -129,6 +129,10 @@ func (c *agent1CatalogPort) GetProduct(_ context.Context, _ string, id string) (
 	return nil, domain.ErrProductNotFound
 }
 
+func (c *agent1CatalogPort) BuildCatalogDigest(_ context.Context, _ string) (*domain.CatalogDigest, error) {
+	return &domain.CatalogDigest{TotalProducts: len(c.products)}, nil
+}
+
 // ─── catalog_search ──────────────────────────────────────────────────────
 
 func TestCatalogSearchHappyPath(t *testing.T) {

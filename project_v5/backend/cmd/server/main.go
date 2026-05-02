@@ -78,7 +78,10 @@ func main() {
 	registry.Register(tools.NewHistoryLookupTool(statePort))
 
 	promptCache := usecases.NewPromptCache(fdPort, "product")
+	agent1Cache := usecases.NewAgent1PromptCache(catalogPort)
+	agent1 := usecases.NewAgent1Execute(llm, statePort, catalogPort, registry, agent1Cache, log)
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
+	_ = agent1 // pipeline orchestrator wires this in commit 3
 
 	// Handlers + routing.
 	sessionH := handlers.NewSessionHandler(statePort, pgClient.Pool())

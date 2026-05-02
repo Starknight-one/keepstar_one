@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"keepstar_v5/internal/domain"
@@ -476,4 +477,200 @@ func formatPrice(kopecks int, currency string) string {
 		symbol = "₽"
 	}
 	return result.String() + " " + symbol
+}
+
+// BuildCatalogDigest assembles the per-tenant compact catalog digest used by
+// Agent1's system prompt (~300-400 tokens once formatted via ToPromptText).
+//
+// Four queries:
+//  1. category tree (joined with parent_id for grouping)
+//  2. shared filters (UNION ALL across product_form / texture / routine_step
+//     / unnest(skin_type|concern|key_ingredients|target_area))
+//  3. top-30 brands by product count
+//  4. top-30 ingredients by frequency (uses mp.key_ingredients array directly
+//     — V5 doesn't depend on catalog.product_ingredients seeding)
+//
+// Mirrors V4's GenerateCatalogDigest (project_v4 postgres_catalog.go:974+),
+// minus the SaveCatalogDigest persistence path. V5 builds on demand and lets
+// the use case cache in process.
+func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string) (*domain.CatalogDigest, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.BuildCatalogDigest")
+		defer end(tenantID)
+	}
+
+	// 1. Category tree.
+	catQuery := `
+		SELECT c.name, c.slug, COALESCE(pc.slug, '') AS parent_slug,
+		       COUNT(DISTINCT mp.id) AS product_count
+		FROM catalog.products p
+		JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN catalog.categories pc ON c.parent_id = pc.id
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
+		GROUP BY c.id, c.name, c.slug, pc.slug
+		ORDER BY product_count DESC
+	`
+	catRows, err := a.client.pool.Query(ctx, catQuery, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query categories: %w", err)
+	}
+	defer catRows.Close()
+
+	type leafInfo struct {
+		name, slug, parentSlug string
+		count                  int
+	}
+	var leaves []leafInfo
+	totalProducts := 0
+	for catRows.Next() {
+		var li leafInfo
+		if err := catRows.Scan(&li.name, &li.slug, &li.parentSlug, &li.count); err != nil {
+			return nil, fmt.Errorf("scan category: %w", err)
+		}
+		totalProducts += li.count
+		leaves = append(leaves, li)
+	}
+
+	if len(leaves) == 0 {
+		return &domain.CatalogDigest{GeneratedAt: time.Now(), TotalProducts: 0}, nil
+	}
+
+	// Group by parent slug; leaves without a parent become standalone groups.
+	groupMap := make(map[string]*domain.DigestCategoryGroup)
+	var groupOrder []string
+	for _, li := range leaves {
+		parent := li.parentSlug
+		if parent == "" {
+			parent = li.slug
+		}
+		if _, ok := groupMap[parent]; !ok {
+			groupMap[parent] = &domain.DigestCategoryGroup{Slug: parent, Name: parent}
+			groupOrder = append(groupOrder, parent)
+		}
+		groupMap[parent].Children = append(groupMap[parent].Children, domain.DigestCategoryLeaf{
+			Name: li.name, Slug: li.slug, Count: li.count,
+		})
+	}
+	tree := make([]domain.DigestCategoryGroup, 0, len(groupOrder))
+	for _, slug := range groupOrder {
+		tree = append(tree, *groupMap[slug])
+	}
+
+	// 2. Shared filters — global distinct values.
+	filterQuery := `
+		SELECT attr_key, ARRAY_AGG(DISTINCT attr_value ORDER BY attr_value) AS all_values
+		FROM (
+			SELECT 'product_form' AS attr_key, mp.product_form AS attr_value
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.product_form IS NOT NULL AND mp.product_form != ''
+			UNION ALL
+			SELECT 'texture', mp.texture
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.texture IS NOT NULL AND mp.texture != ''
+			UNION ALL
+			SELECT 'routine_step', mp.routine_step
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.routine_step IS NOT NULL AND mp.routine_step != ''
+			UNION ALL
+			SELECT 'skin_type', unnest(mp.skin_type)
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.skin_type IS NOT NULL
+			UNION ALL
+			SELECT 'concern', unnest(mp.concern)
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.concern IS NOT NULL
+			UNION ALL
+			SELECT 'key_ingredient', unnest(mp.key_ingredients)
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.key_ingredients IS NOT NULL
+			UNION ALL
+			SELECT 'target_area', unnest(mp.target_area)
+			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.target_area IS NOT NULL
+		) AS attrs
+		WHERE attr_value IS NOT NULL AND attr_value != ''
+		GROUP BY attr_key
+		ORDER BY attr_key
+	`
+	filterRows, err := a.client.pool.Query(ctx, filterQuery, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query filters: %w", err)
+	}
+	defer filterRows.Close()
+
+	var sharedFilters []domain.DigestSharedFilter
+	for filterRows.Next() {
+		var key string
+		var values []string
+		if err := filterRows.Scan(&key, &values); err != nil {
+			return nil, fmt.Errorf("scan filter: %w", err)
+		}
+		sharedFilters = append(sharedFilters, domain.DigestSharedFilter{Key: key, Values: values})
+	}
+
+	// 3. Top brands.
+	brandQuery := `
+		SELECT mp.brand
+		FROM catalog.products p
+		JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.brand IS NOT NULL AND mp.brand != ''
+		GROUP BY mp.brand
+		ORDER BY COUNT(*) DESC
+		LIMIT 30
+	`
+	brandRows, err := a.client.pool.Query(ctx, brandQuery, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query brands: %w", err)
+	}
+	defer brandRows.Close()
+
+	var topBrands []string
+	for brandRows.Next() {
+		var brand string
+		if err := brandRows.Scan(&brand); err != nil {
+			return nil, fmt.Errorf("scan brand: %w", err)
+		}
+		topBrands = append(topBrands, brand)
+	}
+
+	// 4. Top ingredients — unnest the array column directly so we don't
+	// depend on catalog.product_ingredients seeding (which V4 hits via JOIN).
+	ingrQuery := `
+		SELECT ingredient
+		FROM (
+			SELECT unnest(mp.key_ingredients) AS ingredient
+			FROM catalog.products p
+			JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.key_ingredients IS NOT NULL
+		) AS x
+		WHERE ingredient IS NOT NULL AND ingredient != ''
+		GROUP BY ingredient
+		ORDER BY COUNT(*) DESC
+		LIMIT 30
+	`
+	var topIngredients []string
+	if ingrRows, err := a.client.pool.Query(ctx, ingrQuery, tenantID); err != nil {
+		// Not fatal — digest is still useful without top ingredients.
+		a.log.Warn("digest_ingredients_query_failed", "error", err)
+	} else {
+		defer ingrRows.Close()
+		for ingrRows.Next() {
+			var name string
+			if err := ingrRows.Scan(&name); err != nil {
+				a.log.Warn("digest_ingredient_scan_failed", "error", err)
+				break
+			}
+			topIngredients = append(topIngredients, name)
+		}
+	}
+
+	return &domain.CatalogDigest{
+		GeneratedAt:    time.Now(),
+		TotalProducts:  totalProducts,
+		CategoryTree:   tree,
+		SharedFilters:  sharedFilters,
+		TopBrands:      topBrands,
+		TopIngredients: topIngredients,
+	}, nil
 }
