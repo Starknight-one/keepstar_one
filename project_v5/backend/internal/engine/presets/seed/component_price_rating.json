@@ -9,12 +9,14 @@
         {
           "type": "text",
           "id": "pr-price",
-          "fieldBinding": "priceFormatted"
+          "fieldBinding": "priceFormatted",
+          "format": "currency"
         },
         {
           "type": "text",
           "id": "pr-rating",
-          "fieldBinding": "rating"
+          "fieldBinding": "rating",
+          "format": "stars-compact"
         }
       ]
     }

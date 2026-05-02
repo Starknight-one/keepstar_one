@@ -273,7 +273,7 @@ func assertCardCloneBound(t *testing.T, clone engine.Node, i int, product domain
 		if first["type"] != engine.FillTypeImage {
 			t.Errorf("clone[%d] hero fill type = %v", i, first["type"])
 		}
-		if url, _ := first["image"].(string); url == "" {
+		if url, _ := first["url"].(string); url == "" {
 			t.Errorf("clone[%d] hero image url empty", i)
 		}
 	}

@@ -70,3 +70,23 @@ const (
 	FormatDate         AtomFormat = "date"
 	FormatText         AtomFormat = "text"
 )
+
+// AtomWrapper is a stylistic envelope for a leaf node: badge / tag / button
+// etc. Backend stores the value on the node as a pass-through property; the
+// frontend renderer reads it and picks the matching CSS class / element.
+// Identical role to V4's WrapperConfig.Type; values mirror V4's enum so the
+// existing renderer knowledge transfers when the frontend port lands.
+type AtomWrapper string
+
+const (
+	WrapperNone     AtomWrapper = "none"
+	WrapperBadge    AtomWrapper = "badge"
+	WrapperTag      AtomWrapper = "tag"
+	WrapperPill     AtomWrapper = "pill"
+	WrapperAvatar   AtomWrapper = "avatar"
+	WrapperTooltip  AtomWrapper = "tooltip"
+	WrapperAlert    AtomWrapper = "alert"
+	WrapperLink     AtomWrapper = "link"
+	WrapperProgress AtomWrapper = "progress"
+	WrapperButton   AtomWrapper = "button"
+)

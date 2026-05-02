@@ -21,6 +21,14 @@ package engine
 // Nodes without `fieldBinding` are skipped entirely — that's how
 // LLM-static text (TextNode with literal `content`) survives binding
 // without modification.
+//
+// `format` (currency/stars/percent/...) and `wrapper` (badge/tag/...) are
+// pass-through properties on leaf nodes. Backend stores them so LLM ops
+// can change them; binding does NOT apply formatting — `content` after
+// BindData carries the raw value (string, number, array). The frontend
+// renderer reads `format` + `wrapper` and produces the visible string +
+// stylistic envelope. Same model as V4 atoms. See domain.AtomFormat /
+// domain.AtomWrapper for the vocabulary.
 
 const (
 	attrFieldBinding   = "fieldBinding"
@@ -30,7 +38,7 @@ const (
 	attrValue          = "value"
 	attrFills          = "fills"
 	attrFillType       = "type"
-	attrFillImageURL   = "image" // payload key on a {type:"image", image:"<url>"} fill
+	attrFillImageURL   = "url" // v9 ImageFill body shape: {type:"image", url:"<url>", mode:"stretch"|"fill"|"fit"}
 	attrFillImageMode  = "mode"
 	defaultImageMode   = "fill"
 	attrReusable       = "reusable" // component definitions in a materialised doc
@@ -148,14 +156,13 @@ func bindTargetForNode(n Node) string {
 }
 
 // setImageFill writes url into the first image fill on n. If n already has
-// a non-empty fills array, the existing fill[0]'s image+type are updated
+// a non-empty fills array, the existing fill[0]'s url+type are updated
 // (preserving any other fill metadata like opacity / mode). Otherwise a
 // fresh fills array with one image fill is installed.
 //
-// Image-fill body shape: {type:"image", image:"<url>", mode:"fill"}.
-// See docs/v5-known-gaps.md — this shape is V5's reasoned guess; payload
-// key is centralised in attrFillImageURL so a single rename suffices if
-// the v9 wire format uses a different key (e.g. "url" or "src").
+// Image-fill body shape: {type:"image", url:"<url>", mode:"fill"}, aligned
+// with v9 ImageFill (packages/domain/src/value-objects/fill.ts in the v9
+// repo). The URL key is centralised in attrFillImageURL.
 func setImageFill(n Node, url string) {
 	existing, _ := n[attrFills].([]any)
 	if len(existing) == 0 {

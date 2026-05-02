@@ -188,8 +188,8 @@ func TestBindDataImageFreshFills(t *testing.T) {
 	if first["type"] != FillTypeImage {
 		t.Errorf("fill type = %v, want %s", first["type"], FillTypeImage)
 	}
-	if first["image"] != "https://cdn.example/x.jpg" {
-		t.Errorf("fill image = %v", first["image"])
+	if first["url"] != "https://cdn.example/x.jpg" {
+		t.Errorf("fill url = %v", first["url"])
 	}
 	if first["mode"] != "fill" {
 		t.Errorf("fill mode = %v, want fill", first["mode"])
@@ -214,7 +214,7 @@ func TestBindDataImageUpdatesExistingFills(t *testing.T) {
 			"fills": []any{
 				map[string]any{
 					"type":    FillTypeImage,
-					"image":   "https://placeholder.example/p.jpg",
+					"url":     "https://placeholder.example/p.jpg",
 					"mode":    "fit",
 					"opacity": 0.5,
 				},
@@ -230,8 +230,8 @@ func TestBindDataImageUpdatesExistingFills(t *testing.T) {
 		t.Fatalf("fills length changed: %+v", fills)
 	}
 	first, _ := fills[0].(map[string]any)
-	if first["image"] != "https://cdn.example/real.jpg" {
-		t.Errorf("image not updated: %+v", first)
+	if first["url"] != "https://cdn.example/real.jpg" {
+		t.Errorf("url not updated: %+v", first)
 	}
 	if first["mode"] != "fit" {
 		t.Errorf("existing mode lost: %+v", first)
