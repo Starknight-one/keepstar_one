@@ -76,3 +76,134 @@ func TestSpanCollectorConcurrent(t *testing.T) {
 		t.Errorf("expected 50 spans recorded under concurrent Start, got %d", got)
 	}
 }
+
+// ─── chunk 8: StartSpan + SpanHandle ────────────────────────────────────
+
+func TestStartSpanParentLinkage(t *testing.T) {
+	sc := NewSpanCollector()
+	ctx := WithSpanCollector(context.Background(), sc)
+
+	ctx, parent := sc.StartSpan(ctx, "agent1.execute")
+	_, child := sc.StartSpan(ctx, "agent1.llm")
+	child.End()
+	parent.End()
+
+	spans := sc.Spans()
+	if len(spans) != 2 {
+		t.Fatalf("expected 2 spans, got %d", len(spans))
+	}
+	// Root: agent1.execute, no parent.
+	var root, nested *Span
+	for i := range spans {
+		switch spans[i].Name {
+		case "agent1.execute":
+			root = &spans[i]
+		case "agent1.llm":
+			nested = &spans[i]
+		}
+	}
+	if root == nil || nested == nil {
+		t.Fatalf("missing spans; got names: %v", names(spans))
+	}
+	if root.ParentID != "" {
+		t.Errorf("root parent_id = %q, want empty", root.ParentID)
+	}
+	if nested.ParentID != root.ID {
+		t.Errorf("nested.ParentID = %q, want root.ID = %q", nested.ParentID, root.ID)
+	}
+	if root.ID == "" || nested.ID == "" || root.ID == nested.ID {
+		t.Errorf("expected distinct non-empty IDs; root=%q nested=%q", root.ID, nested.ID)
+	}
+}
+
+func TestStartSpanSetAttrs(t *testing.T) {
+	sc := NewSpanCollector()
+	ctx := WithSpanCollector(context.Background(), sc)
+
+	_, span := sc.StartSpan(ctx, "agent1.llm")
+	span.SetAttr("model", "claude-haiku-4-5")
+	span.SetAttrs(map[string]any{
+		"tokens.input":      4110,
+		"tokens.cache_read": 6244,
+		"cost_usd":          0.005,
+	})
+	span.End()
+
+	got := sc.Spans()[0]
+	if got.Status != SpanStatusOK {
+		t.Errorf("Status = %q, want %q", got.Status, SpanStatusOK)
+	}
+	if got.Attrs["model"] != "claude-haiku-4-5" {
+		t.Errorf("Attrs[model] = %v", got.Attrs["model"])
+	}
+	if got.Attrs["tokens.input"] != 4110 {
+		t.Errorf("Attrs[tokens.input] = %v, want 4110", got.Attrs["tokens.input"])
+	}
+	if got.Attrs["cost_usd"] != 0.005 {
+		t.Errorf("Attrs[cost_usd] = %v, want 0.005", got.Attrs["cost_usd"])
+	}
+}
+
+func TestStartSpanSetError(t *testing.T) {
+	sc := NewSpanCollector()
+	ctx := WithSpanCollector(context.Background(), sc)
+
+	_, span := sc.StartSpan(ctx, "postgres.UpdateData")
+	span.SetError(errTesting{"connection refused"})
+	span.End()
+
+	got := sc.Spans()[0]
+	if got.Status != SpanStatusError {
+		t.Errorf("Status = %q, want %q", got.Status, SpanStatusError)
+	}
+	if got.Error != "connection refused" {
+		t.Errorf("Error = %q", got.Error)
+	}
+
+	// Nil err should NOT flip status.
+	_, span2 := sc.StartSpan(ctx, "ok.path")
+	span2.SetError(nil)
+	span2.End()
+	if sc.Spans()[1].Status != SpanStatusOK {
+		t.Errorf("nil error must leave Status=ok; got %q", sc.Spans()[1].Status)
+	}
+}
+
+func TestStartSpanEndIsIdempotent(t *testing.T) {
+	sc := NewSpanCollector()
+	ctx := WithSpanCollector(context.Background(), sc)
+	_, span := sc.StartSpan(ctx, "op")
+	span.End()
+	span.End()  // no panic, no double-record
+	span.End()
+	if got := len(sc.Spans()); got != 1 {
+		t.Errorf("expected 1 span after multiple End(), got %d", got)
+	}
+}
+
+func TestStartSpanRootHasNoParent(t *testing.T) {
+	// A bare ctx with no prior StartSpan should yield root spans.
+	sc := NewSpanCollector()
+	ctx := WithSpanCollector(context.Background(), sc)
+	_, s1 := sc.StartSpan(ctx, "first")
+	s1.End()
+	_, s2 := sc.StartSpan(ctx, "second")
+	s2.End()
+	for _, sp := range sc.Spans() {
+		if sp.ParentID != "" {
+			t.Errorf("span %q has unexpected ParentID=%q", sp.Name, sp.ParentID)
+		}
+	}
+}
+
+type errTesting struct{ msg string }
+
+func (e errTesting) Error() string { return e.msg }
+
+func names(ss []Span) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = s.Name
+	}
+	return out
+}
