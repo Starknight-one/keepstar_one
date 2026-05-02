@@ -32,6 +32,10 @@ const componentSelect = `
 `
 
 func (a *ComponentAdapter) GetPublishedComponent(ctx context.Context, tenantSlugOrID string, name string) (*domain.Component, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.GetPublishedComponent")
+		defer end(name)
+	}
 	tenantID, err := resolveTenantID(ctx, a.client, tenantSlugOrID)
 	if err != nil {
 		return nil, err
@@ -55,6 +59,10 @@ func (a *ComponentAdapter) GetPublishedComponent(ctx context.Context, tenantSlug
 }
 
 func (a *ComponentAdapter) ListPublishedComponents(ctx context.Context, tenantSlugOrID string) ([]domain.Component, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.ListPublishedComponents")
+		defer end()
+	}
 	tenantID, err := resolveTenantID(ctx, a.client, tenantSlugOrID)
 	if err != nil {
 		return nil, err

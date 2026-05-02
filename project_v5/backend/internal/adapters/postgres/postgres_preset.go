@@ -38,6 +38,10 @@ const presetSelect = `
 `
 
 func (a *PresetAdapter) GetPublishedPreset(ctx context.Context, tenantSlugOrID string, name string) (*domain.Preset, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.GetPublishedPreset")
+		defer end(name)
+	}
 	tenantID, err := resolveTenantID(ctx, a.client, tenantSlugOrID)
 	if err != nil {
 		return nil, err
@@ -61,6 +65,10 @@ func (a *PresetAdapter) GetPublishedPreset(ctx context.Context, tenantSlugOrID s
 }
 
 func (a *PresetAdapter) ListPublishedPresets(ctx context.Context, tenantSlugOrID string) ([]domain.Preset, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.ListPublishedPresets")
+		defer end()
+	}
 	tenantID, err := resolveTenantID(ctx, a.client, tenantSlugOrID)
 	if err != nil {
 		return nil, err

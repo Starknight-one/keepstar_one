@@ -80,15 +80,24 @@ const historyLimit = 4
 // and are surfaced to the LLM next turn.
 func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) (*Agent2ExecuteResponse, error) {
 	start := time.Now()
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("agent2.execute")
+		defer end()
+	}
 
 	state, err := uc.state.GetState(ctx, req.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
-	systemPrompt, err := uc.promptCache.GetOrBuild(ctx, req.TenantSlug, 3)
-	if err != nil {
-		return nil, fmt.Errorf("build system prompt: %w", err)
+	var systemPrompt string
+	{
+		end := startSpan(ctx, "agent2.prompt")
+		systemPrompt, err = uc.promptCache.GetOrBuild(ctx, req.TenantSlug, 3)
+		end()
+		if err != nil {
+			return nil, fmt.Errorf("build system prompt: %w", err)
+		}
 	}
 
 	// Trim history to the last 4 messages, append the new user query.
@@ -108,7 +117,9 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 		ToolChoice:        "any",
 	}
 
+	end := startSpan(ctx, "agent2.llm")
 	resp, err := uc.llm.ChatWithToolsCached(ctx, systemPrompt, messages, tools, cfg)
+	end()
 	if err != nil {
 		return nil, fmt.Errorf("LLM call: %w", err)
 	}
@@ -120,7 +131,9 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	}
 	historyAppend := []domain.LLMMessage{}
 	for _, tc := range resp.ToolCalls {
+		toolEnd := startSpan(ctx, "agent2.tool."+tc.Name)
 		result, runErr := uc.runToolWithRetry(ctx, toolCtx, tc)
+		toolEnd()
 		if runErr != nil {
 			// Transport-level failure (registry doesn't know the tool, or
 			// Go panic recovered as an error). Surface to caller.
@@ -158,6 +171,24 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 		Usage:     resp.Usage,
 		LatencyMs: time.Since(start).Milliseconds(),
 	}, nil
+}
+
+// startSpan is a small helper that returns a no-op closer when there's
+// no SpanCollector in ctx, so the call sites stay one-liner-ish without
+// the "if sc != nil { ... }" boilerplate spread across the use case.
+// Calling the returned func ends the span — typical pattern is one
+// imperative call after the work block (not defer), so the span end
+// happens before later spans that depend on the same work.
+func startSpan(ctx context.Context, name string) func() {
+	sc := domain.SpanFromContext(ctx)
+	if sc == nil {
+		return func() {}
+	}
+	end := sc.Start(name)
+	return func() {
+		// agent2 spans don't carry per-call detail strings.
+		end()
+	}
 }
 
 // runToolWithRetry invokes a tool once. On Go-error (transport failure),

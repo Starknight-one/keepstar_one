@@ -35,6 +35,10 @@ func NewCatalogAdapter(client *Client) *CatalogAdapter {
 }
 
 func (a *CatalogAdapter) GetTenantBySlug(ctx context.Context, slug string) (*domain.Tenant, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.GetTenantBySlug")
+		defer end(slug)
+	}
 	query := `
 		SELECT id, slug, name, type, settings, created_at, updated_at
 		FROM catalog.tenants
@@ -93,6 +97,10 @@ const catalogProductSelect = `
 `
 
 func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filter ports.ProductFilter) ([]domain.Product, int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.ListProducts")
+		defer end(fmt.Sprintf("limit=%d", filter.Limit))
+	}
 	baseQuery := catalogProductSelect + ` WHERE p.tenant_id = $1 AND p.deleted_at IS NULL`
 	countQuery := `
 		SELECT COUNT(*)
@@ -247,6 +255,10 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 }
 
 func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, productID string) (*domain.Product, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.GetProduct")
+		defer end(productID)
+	}
 	query := catalogProductSelect + ` WHERE p.tenant_id = $1 AND p.id = $2 AND p.deleted_at IS NULL`
 	row := a.client.pool.QueryRow(ctx, query, tenantID, productID)
 
