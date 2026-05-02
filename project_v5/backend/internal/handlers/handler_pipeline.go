@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/usecases"
 )
 
@@ -35,6 +36,10 @@ type pipelineResponse struct {
 	ToolCalls interface{}            `json:"toolCalls"`
 	Usage     interface{}            `json:"usage"`
 	LatencyMs int64                  `json:"latencyMs"`
+	// Spans is the request waterfall captured by SpanCollector — useful
+	// for client-side debugging until the /debug/traces UI ships. Empty
+	// (omitted) when the logging middleware didn't attach a collector.
+	Spans []domain.Span `json:"spans,omitempty"`
 }
 
 // Pipeline handles POST /api/v1/pipeline.
@@ -69,10 +74,14 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pipelineResponse{
+	out := pipelineResponse{
 		Document:  resp.Document,
 		ToolCalls: resp.ToolCalls,
 		Usage:     resp.Usage,
 		LatencyMs: resp.LatencyMs,
-	})
+	}
+	if sc := domain.SpanFromContext(r.Context()); sc != nil {
+		out.Spans = sc.Spans()
+	}
+	writeJSON(w, http.StatusOK, out)
 }

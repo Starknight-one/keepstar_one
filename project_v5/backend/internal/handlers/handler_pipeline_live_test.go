@@ -143,17 +143,36 @@ func TestHTTPLiveSmoke(t *testing.T) {
 		Usage     map[string]any         `json:"usage"`
 		LatencyMs int64                  `json:"latencyMs"`
 		Document  map[string]interface{} `json:"document"`
+		Spans     []map[string]any       `json:"spans"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&pipResp)
 	resp.Body.Close()
-	t.Logf("pipeline: %d tool calls, %dms, usage=%+v",
-		len(pipResp.ToolCalls), pipResp.LatencyMs, pipResp.Usage)
+	t.Logf("pipeline: %d tool calls, %dms, %d spans, usage=%+v",
+		len(pipResp.ToolCalls), pipResp.LatencyMs, len(pipResp.Spans), pipResp.Usage)
 	if len(pipResp.ToolCalls) == 0 {
 		t.Errorf("expected at least one tool call, got 0")
 	}
 	if pipResp.LatencyMs == 0 {
 		t.Errorf("latencyMs is 0; clock arithmetic broken?")
 	}
+	if len(pipResp.Spans) == 0 {
+		t.Errorf("expected non-empty spans (chunk-6d tracer); got 0")
+	}
+	// Spot-check a few expected span names so we know the tracer is
+	// actually firing in production paths.
+	gotNames := map[string]bool{}
+	for _, s := range pipResp.Spans {
+		if name, _ := s["name"].(string); name != "" {
+			gotNames[name] = true
+		}
+	}
+	for _, want := range []string{"agent2.execute", "agent2.llm", "postgres.GetState"} {
+		if !gotNames[want] {
+			t.Errorf("expected span %q to fire, got names: %v", want, keys(gotNames))
+		}
+	}
+
+	_ = pipResp.Document // shape-check: just confirm it parsed
 
 	// GET /api/v1/session/{id}
 	resp, err = http.Get(srv.URL + "/api/v1/session/" + sessResp.SessionID)
@@ -165,4 +184,14 @@ func TestHTTPLiveSmoke(t *testing.T) {
 		t.Fatalf("/session/{id} status %d: %s", resp.StatusCode, body)
 	}
 	resp.Body.Close()
+}
+
+// keys returns the keys of a map[string]bool — used by the live test to
+// produce a useful diagnostic when an expected span name is missing.
+func keys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
