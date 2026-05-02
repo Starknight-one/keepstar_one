@@ -22,47 +22,8 @@ func NewPresetAdapter(client *Client) *PresetAdapter {
 	return &PresetAdapter{client: client}
 }
 
-// resolveTenantID accepts either a slug or a UUID. UUIDs are passed
-// through (any UUID-shaped string is treated as already-resolved); slugs
-// are looked up against catalog.tenants. Centralised here so callers can be
-// slug-or-id-agnostic.
-func (a *PresetAdapter) resolveTenantID(ctx context.Context, slugOrID string) (string, error) {
-	if isUUID(slugOrID) {
-		return slugOrID, nil
-	}
-	var id string
-	err := a.client.pool.QueryRow(ctx,
-		`SELECT id::text FROM catalog.tenants WHERE slug = $1`,
-		slugOrID,
-	).Scan(&id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", domain.ErrTenantNotFound
-		}
-		return "", fmt.Errorf("resolve tenant: %w", err)
-	}
-	return id, nil
-}
-
-func isUUID(s string) bool {
-	if len(s) != 36 {
-		return false
-	}
-	for i, c := range s {
-		switch i {
-		case 8, 13, 18, 23:
-			if c != '-' {
-				return false
-			}
-		default:
-			isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
-			if !isHex {
-				return false
-			}
-		}
-	}
-	return true
-}
+// resolveTenantID + isUUID moved to tenant_resolve.go (shared with
+// ComponentAdapter in chunk 5).
 
 // presetSelect is the JOIN both Get and List share. Column order is
 // preserved by scanPreset.
@@ -77,7 +38,7 @@ const presetSelect = `
 `
 
 func (a *PresetAdapter) GetPublishedPreset(ctx context.Context, tenantSlugOrID string, name string) (*domain.Preset, error) {
-	tenantID, err := a.resolveTenantID(ctx, tenantSlugOrID)
+	tenantID, err := resolveTenantID(ctx, a.client, tenantSlugOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +61,7 @@ func (a *PresetAdapter) GetPublishedPreset(ctx context.Context, tenantSlugOrID s
 }
 
 func (a *PresetAdapter) ListPublishedPresets(ctx context.Context, tenantSlugOrID string) ([]domain.Preset, error) {
-	tenantID, err := a.resolveTenantID(ctx, tenantSlugOrID)
+	tenantID, err := resolveTenantID(ctx, a.client, tenantSlugOrID)
 	if err != nil {
 		return nil, err
 	}

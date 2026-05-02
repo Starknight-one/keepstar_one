@@ -34,6 +34,9 @@ func setupClient(t *testing.T) *Client {
 	if err := c.RunPresetMigrations(ctx); err != nil {
 		t.Fatalf("migrate presets: %v", err)
 	}
+	if err := c.RunComponentMigrations(ctx); err != nil {
+		t.Fatalf("migrate components: %v", err)
+	}
 	return c
 }
 

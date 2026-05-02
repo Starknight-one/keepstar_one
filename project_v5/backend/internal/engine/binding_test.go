@@ -357,6 +357,62 @@ func TestBindDataChildOverridesAncestorDataIndex(t *testing.T) {
 	}
 }
 
+// TestBindDataSkipsReusableSubtree — chunk-5 mechanism: top-level
+// component definitions in a materialised doc are marked reusable:true.
+// They must be skipped entirely so their template atoms don't get bound
+// against data[0]. Atoms inside instances (ref-resolved into the consumer
+// site) still bind because Materialise stamps reusable only on the
+// definition copy, not on the resolved instance.
+func TestBindDataSkipsReusableSubtree(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		// Reusable component definition — atoms inside must not bind.
+		{
+			"type": "frame", "id": "price-rating-root", "reusable": true,
+			"children": []Node{
+				{"type": "text", "id": "tpl-price", "fieldBinding": "name"},
+			},
+		},
+		// Instance (e.g. a clone produced by ResolveAndInline) — atoms inside DO bind.
+		{
+			"type": "frame", "id": "instance",
+			"children": []Node{
+				{"type": "text", "id": "real-price", "fieldBinding": "name"},
+			},
+		},
+	}
+	res := BindData(doc, []map[string]any{{"name": "Cleanser"}})
+
+	if len(res.Bound) != 1 || res.Bound[0] != "real-price" {
+		t.Errorf("only real-price should bind, got: %+v", res)
+	}
+	tpl := FindNodeByID(doc, "tpl-price")
+	if _, has := tpl["__bound"]; has {
+		t.Errorf("template inside reusable subtree must not be bound: %+v", tpl)
+	}
+	if _, has := tpl["content"]; has {
+		t.Errorf("template inside reusable subtree must not have content set: %+v", tpl)
+	}
+}
+
+// TestBindDataReusableFalseStillBinds — defensive: reusable:false (or
+// missing) leaves the subtree open to binding.
+func TestBindDataReusableFalseStillBinds(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		{
+			"type": "frame", "id": "card", "reusable": false,
+			"children": []Node{
+				{"type": "text", "id": "name-atom", "fieldBinding": "name"},
+			},
+		},
+	}
+	res := BindData(doc, []map[string]any{{"name": "Cleanser"}})
+	if len(res.Bound) != 1 || res.Bound[0] != "name-atom" {
+		t.Errorf("reusable:false → atoms should bind: %+v", res)
+	}
+}
+
 // TestBindDataDoesntDescendIntoUnexpandedRefs ensures binding doesn't try
 // to mutate ref-node descendants directly. ComponentResolver expands refs
 // into a separate tree; the source ref subtree has no fieldBinding and

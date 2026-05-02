@@ -33,6 +33,7 @@ const (
 	attrFillImageURL   = "image" // payload key on a {type:"image", image:"<url>"} fill
 	attrFillImageMode  = "mode"
 	defaultImageMode   = "fill"
+	attrReusable       = "reusable" // component definitions in a materialised doc
 )
 
 // BindResult is diagnostics from one BindData run. Use it in tests, or
@@ -62,8 +63,17 @@ func BindData(doc *Document, data []map[string]any) BindResult {
 // bindNodeRecursive walks the subtree rooted at n, threading the nearest
 // ancestor's dataIndex down. inheritedIndex == -1 means "no ancestor has
 // stamped a dataIndex"; in that case bindOneNode falls back to 0.
+//
+// Subtrees rooted at a node carrying `reusable: true` are skipped
+// entirely: they are component definitions sitting at the top of a
+// materialised document, not instances. Refs that consume them have
+// already been inlined by ResolveAndInline before BindData runs, and the
+// definitions themselves should not bind anything.
 func bindNodeRecursive(n Node, data []map[string]any, inheritedIndex int, res *BindResult) {
 	if n == nil {
+		return
+	}
+	if reusable, _ := n[attrReusable].(bool); reusable {
 		return
 	}
 	currentIndex := inheritedIndex

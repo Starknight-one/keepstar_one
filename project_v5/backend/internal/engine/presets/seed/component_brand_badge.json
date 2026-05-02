@@ -1,0 +1,11 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "text",
+      "id": "brand-badge-root",
+      "fieldBinding": "brand",
+      "wrapper": "badge"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "price-rating-root",
+      "layout": {"direction": "row", "gap": "md"},
+      "children": [
+        {
+          "type": "text",
+          "id": "pr-price",
+          "fieldBinding": "priceFormatted"
+        },
+        {
+          "type": "text",
+          "id": "pr-rating",
+          "fieldBinding": "rating"
+        }
+      ]
+    }
+  ]
+}
