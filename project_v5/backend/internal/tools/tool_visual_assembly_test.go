@@ -222,10 +222,15 @@ func TestVisualAssemblyMissingPresetField(t *testing.T) {
 	}
 }
 
-// TestVisualAssemblyOpsIgnored — passing ops shouldn't fail; it's a no-op
-// in chunk 6b. Result still reports preset+replicate normally.
-func TestVisualAssemblyOpsIgnored(t *testing.T) {
-	state := newMinStatePort([]domain.Product{{ID: "p1", Name: "X"}})
+// TestVisualAssemblyOpsApplied — ops on the un-replicated tree land on
+// every replicate clone. Verifies the chunk-6c integration: ApplyOps runs
+// before ExpandReplicates, so an `update` on the title atom propagates to
+// each cloned card.
+func TestVisualAssemblyOpsApplied(t *testing.T) {
+	state := newMinStatePort([]domain.Product{
+		{ID: "p1", Name: "Glow Serum"},
+		{ID: "p2", Name: "Hydration Mist"},
+	})
 	tool := NewVisualAssemblyTool(state,
 		&minPresetPort{byName: map[string]*domain.Preset{"p": minimalPreset("p")}},
 		&minComponentPort{},
@@ -234,9 +239,15 @@ func TestVisualAssemblyOpsIgnored(t *testing.T) {
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
 		map[string]interface{}{
 			"preset":    "p",
-			"replicate": 1,
+			"replicate": 2,
+			// Update the title atom's `format` prop. The op runs against
+			// the un-replicated tree, so both clones inherit the change.
 			"ops": []interface{}{
-				map[string]interface{}{"op": "update", "target": "title", "props": map[string]interface{}{"format": "stars"}},
+				map[string]interface{}{
+					"op":     "update",
+					"target": "title",
+					"props":  map[string]interface{}{"format": "stars-compact"},
+				},
 			},
 		},
 	)
@@ -246,8 +257,62 @@ func TestVisualAssemblyOpsIgnored(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("ToolResult IsError: %s", res.Content)
 	}
-	if state.saved == nil {
-		t.Fatalf("UpdateTemplate not called")
+
+	// Both clones must carry the updated `format` AND the bound content.
+	rawChildren, _ := state.saved["children"].([]interface{})
+	if len(rawChildren) != 2 {
+		t.Fatalf("expected 2 cloned cards, got %d", len(rawChildren))
+	}
+	for i, child := range rawChildren {
+		fmt := findFieldNamedFormat(child)
+		if fmt != "stars-compact" {
+			t.Errorf("clone[%d] format = %q, want stars-compact (op didn't propagate)", i, fmt)
+		}
+	}
+}
+
+// findFieldNamedFormat walks a node tree post-replicate, returns the
+// `format` attribute on the title (fieldBinding=="name") node. Used by
+// the ops-applied test so we can assert per-clone state.
+func findFieldNamedFormat(node interface{}) string {
+	m, ok := node.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	if fb, _ := m["fieldBinding"].(string); fb == "name" {
+		s, _ := m["format"].(string)
+		return s
+	}
+	if children, ok := m["children"].([]interface{}); ok {
+		for _, c := range children {
+			if got := findFieldNamedFormat(c); got != "" {
+				return got
+			}
+		}
+	}
+	return ""
+}
+
+// TestVisualAssemblyOpsBadShape — ops with malformed shape fails as a
+// ToolResult IsError, not a Go error.
+func TestVisualAssemblyOpsBadShape(t *testing.T) {
+	state := newMinStatePort(nil)
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{"p": minimalPreset("p")}},
+		&minComponentPort{},
+	)
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{
+			"preset": "p",
+			"ops":    "not-an-array",
+		},
+	)
+	if err != nil {
+		t.Fatalf("expected ToolResult, got Go error: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("expected IsError on bad ops shape, got %+v", res)
 	}
 }
 

@@ -104,15 +104,11 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 
 	replicate := readReplicate(input)
 
-	// FIXME(chunk-6c): wire ops into engine.Command + CommandHistory.
-	// The schema declares ops so the prompt + LLM can reason about the
-	// architecture; for chunk 6b the field is a no-op. Logging the count
-	// keeps a breadcrumb in case Haiku decides to send ops before the
-	// applier ships.
-	if rawOps, ok := input["ops"]; ok {
-		if opsList, ok := rawOps.([]interface{}); ok && len(opsList) > 0 {
-			slog.Debug("visual_assembly: ignoring ops (chunk-6c work)", "count", len(opsList))
-		}
+	// Parse ops upfront so we can run them after Materialise but BEFORE
+	// ExpandReplicates — see the pipeline ordering comment below.
+	parsedOps, err := parseOpsList(input["ops"])
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	// 1. Load preset.
@@ -149,7 +145,23 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 	data := productsToBindData(state.Current.Data.Products)
 
 	// 4. Run the V5 engine pipeline.
+	//
+	// Pipeline order matters:
+	//   Materialise(preset, components)  — pulls preset + reusable defs
+	//   ApplyOps(merged, ops)            — LLM tweaks BEFORE replication
+	//                                       so the same edit lands on
+	//                                       every clone (V4 broadcast).
+	//   ExpandReplicates(merged, count)  — fan-out + reID + dataIndex
+	//   ResolveAndInline(merged)         — Ref → resolved subtree
+	//   BindData(merged, data)           — fill atoms from data records
+	//
+	// Putting ApplyOps before ExpandReplicates means the LLM addresses
+	// the un-replicated tree (single set of stable ids); after replicate,
+	// ids are minted fresh per clone and would diverge.
 	merged := engine.Materialise(presetDoc, componentDocs)
+	if err := engine.ApplyOps(merged, parsedOps); err != nil {
+		return errorResult(fmt.Sprintf("applyOps: %v", err)), nil
+	}
 	engine.ExpandReplicates(merged, replicate)
 	resolveStats := engine.ResolveAndInline(merged)
 	bindRes := engine.BindData(merged, data)
@@ -177,6 +189,36 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 		presetName, replicate, resolveStats.Resolved, len(resolveStats.Failed), len(bindRes.Bound), len(bindRes.Missing),
 	)
 	return &domain.ToolResult{Content: summary}, nil
+}
+
+// parseOpsList coerces the raw `ops` input value into the
+// []map[string]any shape engine.ApplyOps expects. Tolerates the two JSON
+// shapes the LLM might emit:
+//
+//   - []interface{} of map[string]interface{}  (json.Unmarshal default)
+//   - []map[string]interface{}                  (already-typed)
+//
+// nil / missing → nil (no ops). Anything malformed → typed error so the
+// caller surfaces it as a ToolResult IsError.
+func parseOpsList(raw any) ([]map[string]any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	switch v := raw.(type) {
+	case []map[string]any:
+		return v, nil
+	case []interface{}:
+		out := make([]map[string]any, 0, len(v))
+		for i, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("ops[%d]: expected object, got %T", i, item)
+			}
+			out = append(out, m)
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("ops: expected array, got %T", raw)
 }
 
 // readReplicate accepts integer-shaped values from the LLM tool_use input.
