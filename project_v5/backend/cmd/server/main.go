@@ -68,9 +68,14 @@ func main() {
 	// LLM client.
 	llm := anthropicAdapter.NewClient(cfg.AnthropicAPIKey, cfg.LLMModel)
 
-	// Tools + use cases.
+	// Tools + use cases. The registry is shared across both agents — Agent1
+	// filters by name prefix ("catalog_" / "_internal_") at call time so it
+	// never sees Agent2's visual_assembly, and vice versa.
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort))
+	registry.Register(tools.NewCatalogSearchTool(statePort, catalogPort))
+	registry.Register(tools.NewStateFilterTool(statePort))
+	registry.Register(tools.NewHistoryLookupTool(statePort))
 
 	promptCache := usecases.NewPromptCache(fdPort, "product")
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
