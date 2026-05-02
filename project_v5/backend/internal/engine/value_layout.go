@@ -1,5 +1,22 @@
 package engine
 
+// Layout enums (string discriminators stored on the Node map).
+const (
+	LayoutModeNone       = "none"
+	LayoutModeVertical   = "vertical"
+	LayoutModeHorizontal = "horizontal"
+
+	JustifyContentStart        = "start"
+	JustifyContentCenter       = "center"
+	JustifyContentEnd          = "end"
+	JustifyContentSpaceBetween = "space_between"
+	JustifyContentSpaceAround  = "space_around"
+
+	AlignItemsStart  = "start"
+	AlignItemsCenter = "center"
+	AlignItemsEnd    = "end"
+)
+
 // Padding constants help build padding values.
 //
 // v9 padding can be:

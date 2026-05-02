@@ -13,18 +13,22 @@ type InsertCommand struct {
 }
 
 // NewInsertCommand prepares an insert. parentID is the parent node's ID, or
-// "" for the document root. nodeData is the node payload; if it lacks an
-// "id" key, one is generated and stored on nodeData (so it shows up in the
-// inserted tree and can be referenced after Execute).
+// "" for the document root. nodeData is the node payload; the input map is
+// NOT mutated — a shallow copy with a guaranteed "id" key is stored on the
+// command (matches v9's spread semantics).
 func NewInsertCommand(parentID string, nodeData Node) *InsertCommand {
 	id, ok := nodeData["id"].(string)
 	if !ok || id == "" {
 		id = GenerateID()
-		nodeData["id"] = id
 	}
+	clone := make(Node, len(nodeData)+1)
+	for k, v := range nodeData {
+		clone[k] = v
+	}
+	clone["id"] = id
 	return &InsertCommand{
 		parentID:   parentID,
-		nodeData:   nodeData,
+		nodeData:   clone,
 		insertedID: id,
 	}
 }

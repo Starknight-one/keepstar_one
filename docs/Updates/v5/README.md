@@ -37,8 +37,16 @@ How we verified locally (commands run, tests passing). What to watch on prod onc
 What's NOT closed yet. Deferred details. Follow-ups.
 ```
 
+## Per-chunk plans
+
+Each implementation chunk gets a detailed plan document in `plans/`, written
+in plan mode and approved before execution. Naming:
+`plans/chunk-<N>-<short-name>.md` (e.g. `plans/chunk-1-engine-port.md`).
+
+Plan + log are paired: the plan describes what we set out to do; the log
+describes what actually happened (commit sha, files changed, gaps).
+
 ## See also
 
 - High-level plan: `../../v5-engine-plan.md`
-- Per-chunk implementation plans live in `~/.claude/plans/` (not committed)
 - V4 reference logs: `../feature-engine-v4_*.md`
