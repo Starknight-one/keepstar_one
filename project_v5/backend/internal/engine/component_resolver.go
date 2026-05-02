@@ -85,6 +85,16 @@ func (cr *ComponentResolver) expandRef(refNode Node, doc *Document, depth int) R
 
 	clone := cloneNode(source)
 
+	// `reusable:true` is stamped by Materialise on every component definition
+	// root and deep-copied here. The clone is an instance, not a definition,
+	// so the marker must come off — otherwise BindData (which skips
+	// `reusable:true` subtrees) would silently ignore the whole instance.
+	// Stripping inside expandRef covers the recursive nested-ref case too:
+	// when a component references another component, the nested expansion
+	// at the bottom of this function calls expandRef again and produces a
+	// reusable-free clone.
+	delete(clone, "reusable")
+
 	// Apply root-level overrides from the RefNode (skip ref-specific keys).
 	for k, v := range refNode {
 		if rootSkipKeys[k] {

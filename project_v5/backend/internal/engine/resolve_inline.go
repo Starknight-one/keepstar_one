@@ -47,12 +47,9 @@ func inlineRefsInChildren(children []Node, doc *Document, cr *ComponentResolver,
 		if NodeType(child) == NodeTypeRef {
 			resolved := cr.Expand(child, doc)
 			if resolved.Ok {
-				// The resolved subtree was cloned from a `reusable:true`
-				// component definition. The clone is an instance, not a
-				// definition — strip the marker so BindData walks it.
-				// (`reusable` is only ever stamped on the component root
-				// by Materialise, so a single delete is enough.)
-				delete(resolved.Root, attrReusable)
+				// `reusable:true` is stripped inside expandRef itself, so
+				// both top-level and nested ref expansions produce
+				// instance-shaped clones BindData will walk.
 				out[i] = resolved.Root
 				stats.Resolved++
 			} else {

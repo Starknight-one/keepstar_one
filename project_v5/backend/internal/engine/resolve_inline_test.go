@@ -122,6 +122,65 @@ func TestResolveAndInlineStripsReusableFromInstances(t *testing.T) {
 	}
 }
 
+// TestResolveAndInlineStripsReusableFromNestedRefs — regression guard for a
+// latent chunk-5 bug: cloneNode(source) propagates `reusable:true` into the
+// clone, and without stripping inside expandRef itself the recursive nested
+// ref expansion (component_resolver.go) leaves the inner instance flagged
+// reusable. BindData would then silently skip the entire nested subtree.
+//
+// Setup: component "leaf-comp" → component "wrapper-comp" (which refs leaf)
+// → consumer ref. After ResolveAndInline, no node inside the consumer
+// subtree should carry reusable:true, and BindData should fill the deepest
+// leaf node.
+func TestResolveAndInlineStripsReusableFromNestedRefs(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		{"type": "frame", "id": "leaf-comp", "reusable": true,
+			"children": []Node{
+				{"type": "text", "id": "leaf-text", "fieldBinding": "name"},
+			},
+		},
+		{"type": "frame", "id": "wrapper-comp", "reusable": true,
+			"children": []Node{
+				{"type": "ref", "id": "wrapper-uses-leaf", "ref": "leaf-comp"},
+			},
+		},
+		{"type": "ref", "id": "consumer", "ref": "wrapper-comp"},
+	}
+	ResolveAndInline(doc)
+
+	consumer := doc.Children[2]
+	WalkNodes(consumer, func(n Node, _ int) {
+		if r, _ := n["reusable"].(bool); r {
+			t.Errorf("consumer subtree still carries reusable:true on %s: %+v", NodeID(n), n)
+		}
+	})
+
+	// Top-level definitions still flagged reusable (unchanged).
+	if r, _ := doc.Children[0]["reusable"].(bool); !r {
+		t.Errorf("leaf-comp definition lost reusable marker")
+	}
+	if r, _ := doc.Children[1]["reusable"].(bool); !r {
+		t.Errorf("wrapper-comp definition lost reusable marker")
+	}
+
+	// BindData must walk into the consumer subtree and fill the leaf.
+	res := BindData(doc, []map[string]any{{"name": "Alpha"}})
+	if len(res.Bound) == 0 {
+		t.Fatalf("expected at least one bound node inside consumer, got Bound=%v Missing=%v", res.Bound, res.Missing)
+	}
+	// Find the leaf and assert its content.
+	var leafContent any
+	WalkNodes(consumer, func(n Node, _ int) {
+		if fb, _ := n["fieldBinding"].(string); fb == "name" {
+			leafContent = n["content"]
+		}
+	})
+	if leafContent != "Alpha" {
+		t.Errorf("nested leaf content = %v, want \"Alpha\" (BindData skipped the subtree)", leafContent)
+	}
+}
+
 func TestResolveAndInlineRefInsideFrame(t *testing.T) {
 	doc := NewDocument()
 	doc.Children = []Node{
