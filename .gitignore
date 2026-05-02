@@ -30,6 +30,8 @@ dist/
 project/backend/server
 project/backend/bin/
 project/backend/bootstrap
+project_v5/backend/server
+project_v5/backend/bin/
 project_admin/backend/server
 project_admin/backend/crawler
 project_admin/backend/dump-bulk-jsonl
