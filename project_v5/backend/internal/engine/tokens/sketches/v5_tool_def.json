@@ -1,69 +1,32 @@
 {
   "name": "visual_assembly",
-  "description": "Build or modify a scene-graph Document using ops. Pick a preset and let the engine replicate + bind, or layer ops on top.",
+  "description": "Build or modify a scene-graph Document. Pick a published preset by name, set replicate count for fan-out across data, optionally layer ops on top. Engine runs Materialise → ExpandReplicates → ResolveAndInline → BindData and writes the result to current.template. Reply only by calling this tool — never output text.",
   "input_schema": {
     "type": "object",
+    "required": ["preset"],
     "properties": {
       "preset": {
         "type": "string",
-        "description": "Named preset published for this tenant. See <tenant_design_context> for the full list. Pair with `ops` to apply overrides on top — ops can target preset slot ids (card-meta, card-brand, card-actions, etc.)."
+        "description": "Published preset name for this tenant. See the PRESETS section of the system prompt for the catalog. Required."
+      },
+      "replicate": {
+        "type": "integer",
+        "description": "How many clones to fan out for the replicate-marked subtree (one per data record from state.current.data). 0 or omitted = no fan-out (single instance). Use the count of products you want to show."
       },
       "ops": {
         "type": "array",
-        "description": "Operations on the Document tree. Use without `preset` for freestyle ops; use with `preset` for overrides on top of a published template.",
+        "description": "Operations to layer on top of the preset (insert/update/delete/move/override). Target nodes by id from the tree_map. Each op object: {op, target?, parent?, ref?, props?}. Optional — leave empty for preset-only rendering.",
         "items": {
           "type": "object",
           "required": ["op"],
           "properties": {
-            "op":     {"type": "string", "enum": ["insert","update","delete","move","override"]},
-            "target": {"type": "string", "description": "Node id (from tree_map) for update/delete/move. Component-internal ids inside resolved instances are shared across clones — go through the ref slot id."},
-            "ref":    {"type": "string", "description": "Local binding name — subsequent ops can reference via $ref."},
-            "parent": {"type": "string", "description": "Parent id or $ref for insert/move."},
-            "after":  {"type": "string", "description": "Insert/move after this sibling id."},
-            "props":  {
-              "type": "object",
-              "description": "Properties to set on the node. Merged in update ops.",
-              "properties": {
-                "type":         {"type": "string", "enum": ["frame","group","text","image","ref"], "description": "Node type for insert ops."},
-                "ref":          {"type": "string", "description": "For type=ref: id of the component definition to point at."},
-                "fieldBinding": {"type": "string", "description": "Catalog field key (see <fields>). Engine fills value from data."},
-                "content":      {"description": "Literal value for leaf nodes that don't read from data."},
-                "format":       {"type": "string", "enum": ["currency","stars","stars-compact","stars-text","percent","number","date","text"]},
-                "wrapper":      {"type": "string", "enum": ["none","badge","tag","pill","avatar","tooltip","alert","link","progress","button"]},
-                "textStyle": {
-                  "type": "object",
-                  "properties": {
-                    "fontSize":   {"type": "string", "enum": ["xs","sm","md","lg","xl","2xl","3xl"]},
-                    "fontWeight": {"type": "string", "enum": ["light","normal","medium","semibold","bold"]},
-                    "color":      {"type": "string", "description": "Semantic token or hex."},
-                    "lineClamp":  {"type": "integer"}
-                  }
-                },
-                "layout": {
-                  "type": "object",
-                  "properties": {
-                    "direction": {"type": "string", "enum": ["row","column","flow"]},
-                    "gap":       {"type": "string", "enum": ["xs","sm","md","lg","xl"]},
-                    "align":     {"type": "string", "enum": ["start","center","end","stretch"]}
-                  }
-                },
-                "fills": {
-                  "type": "array",
-                  "description": "For image nodes: array of fill specs. {type:'image', url:'...', mode:'fill'|'fit'|'stretch'}.",
-                  "items": {"type": "object"}
-                },
-                "slot": {
-                  "type": "string",
-                  "description": "Semantic role of this node within its preset (hero, title, price, badge, ...). Frontend renderer uses it for default styling."
-                }
-              }
-            }
+            "op":     {"type": "string", "enum": ["insert", "update", "delete", "move", "override"]},
+            "target": {"type": "string", "description": "Node id to operate on (from tree_map.instances[].atoms[].id)."},
+            "parent": {"type": "string", "description": "Parent id for insert / move ops."},
+            "ref":    {"type": "string", "description": "Local binding name for chaining ops (referenced as $ref in subsequent ops)."},
+            "props":  {"type": "object", "description": "Properties to set on the node. Merged in update ops. Common keys: type, fieldBinding, content, format, wrapper, textStyle, layout, slot."}
           }
         }
-      },
-      "replicate": {
-        "type": "integer",
-        "description": "Number of clones to fan out from the preset's replicate-marked subtree. Engine stamps fresh ids on each clone and sets dataIndex:i for binding. 0 or omitted = no replication (single instance)."
       }
     }
   }

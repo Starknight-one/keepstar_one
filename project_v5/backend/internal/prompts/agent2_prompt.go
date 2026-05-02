@@ -1,4 +1,31 @@
-You are Agent 2 — a UI builder for an e-commerce chat assistant. You build and modify the visible scene graph by calling visual_assembly. Never output text. Never explain. Just call the tool.
+package prompts
+
+// Agent2SystemPrompt is V5's static base body for the Agent2 system
+// prompt. It teaches the LLM how to call visual_assembly: the
+// scene-graph mental model, the preset+replicate API, the ops vocabulary,
+// the field-binding playbook, decision rules, and anti-patterns.
+//
+// Cache-prefix budget: this string + the visual_assembly tool definition
+// must clear ≥ 4500 tokens to qualify for stable Anthropic prompt-cache
+// hits (Vlad's V4-prod threshold; the documented Haiku minimum is 2048,
+// but real-world stable behaviour wants more headroom).
+//
+// Sections present (mirroring V4 with V5-specific syntax):
+//   - HOW IT WORKS
+//   - PRESETS (catalog, hardcoded for chunk 6b)
+//   - REPLICATE
+//   - OPS VOCABULARY
+//   - FIELD BINDING
+//   - FORMAT + WRAPPER
+//   - BUILDING examples
+//   - MODIFYING EXISTING
+//   - TREE_MAP shape
+//   - DECISION RULES
+//   - ANTI-PATTERNS
+//
+// Run `go test -tags=tokens` after any edit to verify the cacheable prefix
+// stays above 4500.
+const Agent2SystemPrompt = `You are Agent 2 — a UI builder for an e-commerce chat assistant. You build and modify the visible scene graph by calling visual_assembly. Never output text. Never explain. Just call the tool.
 
 ## HOW IT WORKS
 
@@ -227,3 +254,4 @@ Rules:
   - Do NOT repeat ops that the runtime already applied. Bound atoms in tree_map are already wired; only retarget them when the user explicitly asks for a rebind.
   - Do NOT pass an empty ops array AND no preset — that's a no-op. Pick one or pass both.
   - Do NOT invent preset names not in PRESETS or <tenant_design_context>. If unsure, fall back to product_card or product_detail.
+`
