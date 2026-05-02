@@ -3,78 +3,76 @@
 // scaffolding so we can iterate on the V5 prompt design with concrete
 // numbers instead of intuition.
 //
-// The CountInputTokens helper wraps Anthropic's /v1/messages/count_tokens
-// endpoint directly via net/http to avoid pulling the SDK as a dep before
-// chunk 6a (which is when the SDK lands properly).
+// As of chunk 6a, CountInputTokens delegates to the SDK-backed adapter
+// (`internal/adapters/anthropic`). The exported signature is preserved so
+// `measurement_test.go` keeps working without changes; the underlying call
+// is now typed (Anthropic Go SDK) instead of hand-rolled HTTP.
 package tokens
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
-	"time"
+
+	"keepstar_v5/internal/adapters/anthropic"
+	"keepstar_v5/internal/domain"
 )
 
-// CountTokensRequest is the subset of /v1/messages/count_tokens we use.
-// System and Tools both contribute to input_tokens; messages must include at
-// least one user message.
-type CountTokensRequest struct {
-	Model    string                   `json:"model"`
-	System   string                   `json:"system,omitempty"`
-	Tools    []map[string]interface{} `json:"tools,omitempty"`
-	Messages []CountMessage           `json:"messages"`
-}
-
+// CountMessage is the trivial message shape exposed to callers (mostly the
+// measurement test). Role is "user" | "assistant"; Content is plain text.
 type CountMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-type CountTokensResponse struct {
-	InputTokens int `json:"input_tokens"`
+// CountInputTokens calls the Anthropic count_tokens endpoint via the SDK
+// adapter and returns input_tokens.
+//
+// `tools` is each tool's full schema as a parsed JSON map (matches what
+// json.Unmarshal of a tool-def file produces). The map must carry `name`,
+// `description`, and `input_schema` top-level keys.
+func CountInputTokens(apiKey, model string, system string, tools []map[string]interface{}, messages []CountMessage) (int, error) {
+	client := anthropic.NewClient(apiKey, model)
+
+	domainTools, err := convertTools(tools)
+	if err != nil {
+		return 0, err
+	}
+	domainMsgs := convertMessages(messages)
+
+	return client.CountInputTokens(context.Background(), system, domainMsgs, domainTools)
 }
 
-// CountInputTokens calls the Anthropic count_tokens endpoint with the given
-// system prompt, tool definitions, and messages, and returns input_tokens.
-// Network errors and non-200 responses are surfaced as Go errors so the
-// caller (test) can decide whether to skip or fail.
-func CountInputTokens(apiKey, model string, system string, tools []map[string]interface{}, messages []CountMessage) (int, error) {
-	body := CountTokensRequest{
-		Model:    model,
-		System:   system,
-		Tools:    tools,
-		Messages: messages,
+// convertTools turns each parsed tool-schema map into a typed
+// domain.ToolDefinition. Returns an error if a required field is missing
+// or has the wrong type — these would silently produce empty SDK params
+// and skew the measurement.
+func convertTools(tools []map[string]interface{}) ([]domain.ToolDefinition, error) {
+	out := make([]domain.ToolDefinition, 0, len(tools))
+	for i, raw := range tools {
+		name, _ := raw["name"].(string)
+		if name == "" {
+			return nil, fmt.Errorf("tools[%d]: missing or non-string `name`", i)
+		}
+		desc, _ := raw["description"].(string)
+		schema, ok := raw["input_schema"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("tools[%d]: missing or non-object `input_schema`", i)
+		}
+		out = append(out, domain.ToolDefinition{
+			Name:        name,
+			Description: desc,
+			InputSchema: schema,
+		})
 	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return 0, fmt.Errorf("marshal request: %w", err)
-	}
+	return out, nil
+}
 
-	req, err := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages/count_tokens", bytes.NewReader(raw))
-	if err != nil {
-		return 0, fmt.Errorf("build request: %w", err)
+// convertMessages maps CountMessage to domain.LLMMessage. Pure plumbing —
+// the test layer doesn't construct tool_use / tool_result messages today.
+func convertMessages(msgs []CountMessage) []domain.LLMMessage {
+	out := make([]domain.LLMMessage, len(msgs))
+	for i, m := range msgs {
+		out[i] = domain.LLMMessage{Role: m.Role, Content: m.Content}
 	}
-	req.Header.Set("content-type", "application/json")
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("call count_tokens: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("count_tokens %d: %s", resp.StatusCode, string(respBytes))
-	}
-
-	var out CountTokensResponse
-	if err := json.Unmarshal(respBytes, &out); err != nil {
-		return 0, fmt.Errorf("decode response: %w", err)
-	}
-	return out.InputTokens, nil
+	return out
 }
