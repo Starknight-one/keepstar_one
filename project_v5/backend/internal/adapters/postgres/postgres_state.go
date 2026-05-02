@@ -418,7 +418,14 @@ func (a *StateAdapter) GetDeltasUntil(ctx context.Context, sessionID string, toS
 	return a.scanDeltas(rows)
 }
 
-func (a *StateAdapter) scanDeltas(rows pgx.Rows) ([]domain.Delta, error) {
+// deltaRows is the minimal pgx.Rows surface scanDeltas uses. Lets us pass a
+// fake in unit tests without mocking the whole 9-method pgx.Rows interface.
+type deltaRows interface {
+	Next() bool
+	Scan(dest ...any) error
+}
+
+func (a *StateAdapter) scanDeltas(rows deltaRows) ([]domain.Delta, error) {
 	var deltas []domain.Delta
 	for rows.Next() {
 		var d domain.Delta
