@@ -3,13 +3,24 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"keepstar_v5/internal/domain"
 )
+
+// pgExecutor is the subset of pgxpool.Pool / pgx.Tx that the AddDelta
+// path uses. Lets the same SQL run either against the pool directly
+// (public AddDelta) or inside a tx (zoneWriteWithDelta).
+type pgExecutor interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
 
 // StateAdapter implements ports.StatePort against Postgres. Ported from V4
 // with table names rewritten to v5_*, span tracing dropped, and the same
@@ -88,6 +99,10 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 }
 
 func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.SessionState, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.GetState")
+		defer end()
+	}
 	var state domain.SessionState
 	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON, agent2HistoryJSON, actionsJSON []byte
 	var viewMode *string
@@ -214,12 +229,64 @@ func (a *StateAdapter) UpdateState(ctx context.Context, state *domain.SessionSta
 	return nil
 }
 
-// AddDelta inserts a delta with auto-assigned step (MAX(step)+1 per session)
-// and syncs v5_chat_session_state.step. NOTE: not wrapped in a transaction —
-// concurrent inserts within one session can race on the MAX(step) read; the
-// UNIQUE(session_id, step) constraint guarantees one of them errors out and
-// the caller must retry. Ported verbatim from V4 (see chunk-2 plan Risks).
+// addDeltaMaxRetries caps the number of attempts when AddDelta hits the
+// UNIQUE(session_id, step) constraint under concurrent writers. Each
+// retry waits a randomised 10–50ms.
+const addDeltaMaxRetries = 3
+
+// AddDelta inserts a delta with auto-assigned step (MAX(step)+1 per
+// session) and syncs v5_chat_session_state.step.
+//
+// Race handling: the CTE reads MAX(step) and INSERTs in one statement,
+// but two concurrent writers per session can still read the same
+// MAX(step) under READ COMMITTED. The UNIQUE(session_id, step)
+// constraint guarantees integrity — one INSERT errors with SQLSTATE
+// 23505. AddDelta now retries up to addDeltaMaxRetries times with a
+// short randomised backoff before surfacing the error.
+//
+// The state.step sync UPDATE is best-effort and runs after a successful
+// delta INSERT — failures are logged, not surfaced.
 func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *domain.Delta) (int, error) {
+	step, err := a.addDeltaWithRetry(ctx, a.client.pool, sessionID, delta)
+	if err != nil {
+		return 0, err
+	}
+	if _, syncErr := a.client.pool.Exec(ctx, `
+		UPDATE v5_chat_session_state SET step = $1, updated_at = NOW()
+		WHERE session_id = $2
+	`, step, sessionID); syncErr != nil {
+		a.log.Warn("sync state step", "session_id", sessionID, "step", step, "error", syncErr)
+	}
+	delta.Step = step
+	return step, nil
+}
+
+// addDeltaWithRetry calls addDeltaOnce against the given executor (pool
+// or tx) up to addDeltaMaxRetries times on unique-constraint violation.
+// Other errors bail immediately.
+func (a *StateAdapter) addDeltaWithRetry(ctx context.Context, exec pgExecutor, sessionID string, delta *domain.Delta) (int, error) {
+	var lastErr error
+	for attempt := 0; attempt < addDeltaMaxRetries; attempt++ {
+		step, err := a.addDeltaOnce(ctx, exec, sessionID, delta)
+		if err == nil {
+			return step, nil
+		}
+		if !isUniqueViolation(err) {
+			return 0, fmt.Errorf("add delta: %w", err)
+		}
+		lastErr = err
+		a.log.Debug("AddDelta unique-violation; retrying",
+			"session_id", sessionID, "attempt", attempt+1, "max", addDeltaMaxRetries)
+		// Randomised 10-50ms backoff so retries don't lock-step.
+		time.Sleep(time.Duration(10+rand.Intn(40)) * time.Millisecond)
+	}
+	return 0, fmt.Errorf("add delta: exhausted %d retries: %w", addDeltaMaxRetries, lastErr)
+}
+
+// addDeltaOnce runs a single CTE INSERT against the provided executor
+// (pool or tx). Returns the assigned step on success; passes the
+// underlying pgx error through on failure (caller decides retry policy).
+func (a *StateAdapter) addDeltaOnce(ctx context.Context, exec pgExecutor, sessionID string, delta *domain.Delta) (int, error) {
 	actionJSON, err := json.Marshal(delta.Action)
 	if err != nil {
 		return 0, fmt.Errorf("marshal action: %w", err)
@@ -247,7 +314,7 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 	}
 
 	var assignedStep int
-	err = a.client.pool.QueryRow(ctx, `
+	err = exec.QueryRow(ctx, `
 		WITH next_step AS (
 			SELECT COALESCE(MAX(step), 0) + 1 AS step
 			FROM v5_chat_session_deltas
@@ -265,21 +332,26 @@ func (a *StateAdapter) AddDelta(ctx context.Context, sessionID string, delta *do
 		source, delta.ActorID, deltaType, delta.Path,
 		actionJSON, resultJSON, templateJSON, delta.TurnID).Scan(&assignedStep)
 	if err != nil {
-		return 0, fmt.Errorf("add delta: %w", err)
+		return 0, err // unwrapped so retry can detect 23505
 	}
-
-	if _, syncErr := a.client.pool.Exec(ctx, `
-		UPDATE v5_chat_session_state SET step = $1, updated_at = NOW()
-		WHERE session_id = $2
-	`, assignedStep, sessionID); syncErr != nil {
-		a.log.Warn("sync state step", "session_id", sessionID, "step", assignedStep, "error", syncErr)
-	}
-
-	delta.Step = assignedStep
 	return assignedStep, nil
 }
 
+// isUniqueViolation reports whether err is a Postgres unique-constraint
+// violation (SQLSTATE 23505). Used by AddDelta retry logic.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
+}
+
 func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data domain.StateData, meta domain.StateMeta, info domain.DeltaInfo) (int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.UpdateData")
+		defer end()
+	}
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return 0, fmt.Errorf("marshal data: %w", err)
@@ -297,6 +369,10 @@ func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data do
 }
 
 func (a *StateAdapter) UpdateTemplate(ctx context.Context, sessionID string, template map[string]interface{}, info domain.DeltaInfo) (int, error) {
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		end := sc.Start("postgres.UpdateTemplate")
+		defer end()
+	}
 	templateJSON, err := json.Marshal(template)
 	if err != nil {
 		return 0, fmt.Errorf("marshal template: %w", err)
@@ -371,18 +447,41 @@ func (a *StateAdapter) AppendAgent2History(ctx context.Context, sessionID string
 	return nil
 }
 
-// zoneWriteWithDelta runs a zone UPDATE then AddDelta sequentially. Not in a
-// transaction (V4 parity); if AddDelta fails the zone update remains. Caller
-// can retry AddDelta — zone state is the source of truth, deltas are an
-// audit log.
+// zoneWriteWithDelta runs a zone UPDATE and the matching delta INSERT
+// inside a single transaction (READ COMMITTED) — chunk-6d hygiene. Prior
+// to this, the two writes ran as separate Exec calls and could diverge
+// on AddDelta failure (zone written, no audit row).
+//
+// addDeltaWithRetry is invoked inside the tx. If the unique-step race
+// triggers within the tx context, the retry loop kicks in; on terminal
+// failure the tx rolls back and the zone update is undone.
+//
+// state.step sync UPDATE is also part of the tx so it can never lag the
+// delta INSERT.
 func (a *StateAdapter) zoneWriteWithDelta(ctx context.Context, sessionID string, delta *domain.Delta, zoneSQL string, zoneArgs ...interface{}) (int, error) {
-	if _, err := a.client.pool.Exec(ctx, zoneSQL, zoneArgs...); err != nil {
+	tx, err := a.client.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op after Commit
+
+	if _, err := tx.Exec(ctx, zoneSQL, zoneArgs...); err != nil {
 		return 0, fmt.Errorf("zone update: %w", err)
 	}
-	step, err := a.AddDelta(ctx, sessionID, delta)
+	step, err := a.addDeltaWithRetry(ctx, tx, sessionID, delta)
 	if err != nil {
-		return 0, fmt.Errorf("add delta: %w", err)
+		return 0, err
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE v5_chat_session_state SET step = $1, updated_at = NOW()
+		WHERE session_id = $2
+	`, step, sessionID); err != nil {
+		return 0, fmt.Errorf("sync step: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	delta.Step = step
 	return step, nil
 }
 
