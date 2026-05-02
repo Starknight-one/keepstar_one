@@ -173,9 +173,11 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	// Spot-check a few expected span names so we know the tracer is
 	// actually firing in production paths for both agents.
 	gotNames := map[string]bool{}
+	byName := map[string]map[string]any{}
 	for _, s := range pipResp.Spans {
 		if name, _ := s["name"].(string); name != "" {
 			gotNames[name] = true
+			byName[name] = s
 		}
 	}
 	for _, want := range []string{
@@ -188,6 +190,66 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	} {
 		if !gotNames[want] {
 			t.Errorf("expected span %q to fire, got names: %v", want, keys(gotNames))
+		}
+	}
+
+	// Chunk-8 trace upgrade: each span carries an id; nested spans carry parent_id.
+	if pipExec, ok := byName["pipeline.execute"]; ok {
+		if id, _ := pipExec["id"].(string); id == "" {
+			t.Errorf("pipeline.execute span has no id: %+v", pipExec)
+		}
+		if pid, _ := pipExec["parent_id"].(string); pid != "" {
+			t.Errorf("pipeline.execute should be root (no parent_id), got %q", pid)
+		}
+		// pipeline.execute attrs: request_id + agent1_ms + agent2_ms + microcontext.
+		attrs, _ := pipExec["attrs"].(map[string]any)
+		if attrs == nil {
+			t.Error("pipeline.execute has no attrs")
+		} else {
+			if rid, _ := attrs["request_id"].(string); rid == "" {
+				t.Errorf("pipeline.execute.attrs.request_id missing: %+v", attrs)
+			}
+			if _, ok := attrs["agent1_ms"]; !ok {
+				t.Errorf("pipeline.execute.attrs.agent1_ms missing: %+v", attrs)
+			}
+			if mc, _ := attrs["microcontext"].(string); mc == "" {
+				t.Errorf("pipeline.execute.attrs.microcontext missing")
+			}
+		}
+	}
+	if a2llm, ok := byName["agent2.llm"]; ok {
+		if pid, _ := a2llm["parent_id"].(string); pid == "" {
+			t.Errorf("agent2.llm must have parent_id (parent=agent2.execute), got empty")
+		}
+		attrs, _ := a2llm["attrs"].(map[string]any)
+		if attrs == nil {
+			t.Error("agent2.llm has no attrs")
+		} else {
+			// JSON-decoded numbers come back as float64.
+			if v, _ := attrs["tokens.input"].(float64); v <= 0 {
+				t.Errorf("agent2.llm.attrs.tokens.input = %v, want > 0", attrs["tokens.input"])
+			}
+			if v, _ := attrs["cost_usd"].(float64); v <= 0 {
+				t.Errorf("agent2.llm.attrs.cost_usd = %v, want > 0", attrs["cost_usd"])
+			}
+			if model, _ := attrs["model"].(string); model == "" {
+				t.Errorf("agent2.llm.attrs.model missing")
+			}
+		}
+	}
+	if listProducts, ok := byName["postgres.ListProducts"]; ok {
+		attrs, _ := listProducts["attrs"].(map[string]any)
+		if _, ok := attrs["tenant_id"].(string); !ok {
+			t.Errorf("postgres.ListProducts.attrs.tenant_id missing: %+v", attrs)
+		}
+		if _, ok := attrs["rows"]; !ok {
+			t.Errorf("postgres.ListProducts.attrs.rows missing: %+v", attrs)
+		}
+	}
+	// No span should be in error status on a happy-path run.
+	for _, s := range pipResp.Spans {
+		if status, _ := s["status"].(string); status == "error" {
+			t.Errorf("unexpected error span on happy path: %+v", s)
 		}
 	}
 

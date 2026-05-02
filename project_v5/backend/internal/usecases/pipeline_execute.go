@@ -54,6 +54,9 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 	start := time.Now()
 	ctx, topSpan := withSpan(ctx, "pipeline.execute")
 	defer topSpan.End()
+	if rid := domain.RequestIDFromContext(ctx); rid != "" {
+		topSpan.SetAttr("request_id", rid)
+	}
 	if req.TurnID != "" {
 		topSpan.SetAttr("turn_id", req.TurnID)
 	}

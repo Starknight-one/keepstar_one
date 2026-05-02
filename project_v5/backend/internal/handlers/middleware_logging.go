@@ -37,8 +37,12 @@ func WithLogging(log *slog.Logger) func(http.Handler) http.Handler {
 
 			// Stamp request id + a fresh SpanCollector so adapters and
 			// use cases can emit spans without taking dep on context plumbing.
+			// Both the local handlers-package key (used by middleware/handler
+			// helpers) and the domain-package key (used by use cases / adapters
+			// that don't import handlers) carry the same id.
 			sc := domain.NewSpanCollector()
 			ctx := context.WithValue(r.Context(), ctxKeyRequestID{}, rid)
+			ctx = domain.WithRequestID(ctx, rid)
 			ctx = domain.WithSpanCollector(ctx, sc)
 
 			rw := &recordingWriter{ResponseWriter: w, status: http.StatusOK}

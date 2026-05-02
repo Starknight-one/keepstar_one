@@ -98,16 +98,25 @@ func (a *StateAdapter) CreateState(ctx context.Context, sessionID string) (*doma
 	return state, nil
 }
 
-func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.SessionState, error) {
+func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (out *domain.SessionState, err error) {
+	var span *domain.SpanHandle
 	if sc := domain.SpanFromContext(ctx); sc != nil {
-		end := sc.Start("postgres.GetState")
-		defer end()
+		ctx, span = sc.StartSpan(ctx, "postgres.GetState")
+		span.SetAttr("session_id", sessionID)
+		defer func() {
+			// ErrSessionNotFound is a domain signal, not a transport
+			// failure — don't flag it as span error.
+			if err != nil && err != domain.ErrSessionNotFound {
+				span.SetError(err)
+			}
+			span.End()
+		}()
 	}
 	var state domain.SessionState
 	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON, agent2HistoryJSON, actionsJSON []byte
 	var viewMode *string
 
-	err := a.client.pool.QueryRow(ctx, `
+	err = a.client.pool.QueryRow(ctx, `
 		SELECT id, session_id, current_data, current_meta, current_template,
 		       view_mode, view_focused, view_stack, conversation_history, agent2_history, actions, step, created_at, updated_at
 		FROM v5_chat_session_state
@@ -118,10 +127,12 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 		&state.Step, &state.CreatedAt, &state.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
-		return nil, domain.ErrSessionNotFound
+		err = domain.ErrSessionNotFound
+		return nil, err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get state: %w", err)
+		err = fmt.Errorf("get state: %w", err)
+		return nil, err
 	}
 
 	if len(dataJSON) > 0 {
@@ -177,6 +188,9 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (*domain.
 		state.Actions.CartItems = []domain.CartItem{}
 	}
 
+	if span != nil {
+		span.SetAttr("step", state.Step)
+	}
 	return &state, nil
 }
 
@@ -347,42 +361,68 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
-func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data domain.StateData, meta domain.StateMeta, info domain.DeltaInfo) (int, error) {
+func (a *StateAdapter) UpdateData(ctx context.Context, sessionID string, data domain.StateData, meta domain.StateMeta, info domain.DeltaInfo) (step int, err error) {
+	var span *domain.SpanHandle
 	if sc := domain.SpanFromContext(ctx); sc != nil {
-		end := sc.Start("postgres.UpdateData")
-		defer end()
+		ctx, span = sc.StartSpan(ctx, "postgres.UpdateData")
+		span.SetAttrs(map[string]any{
+			"session_id":    sessionID,
+			"product_count": meta.ProductCount,
+		})
+		defer func() {
+			if err != nil {
+				span.SetError(err)
+			} else {
+				span.SetAttr("step", step)
+			}
+			span.End()
+		}()
 	}
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
-		return 0, fmt.Errorf("marshal data: %w", err)
+		err = fmt.Errorf("marshal data: %w", err)
+		return 0, err
 	}
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
-		return 0, fmt.Errorf("marshal meta: %w", err)
+		err = fmt.Errorf("marshal meta: %w", err)
+		return 0, err
 	}
 	delta := info.ToDelta()
-	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
+	step, err = a.zoneWriteWithDelta(ctx, sessionID, delta, `
 		UPDATE v5_chat_session_state
 		SET current_data = $1, current_meta = $2, updated_at = NOW()
 		WHERE session_id = $3
 	`, dataJSON, metaJSON, sessionID)
+	return step, err
 }
 
-func (a *StateAdapter) UpdateTemplate(ctx context.Context, sessionID string, template map[string]interface{}, info domain.DeltaInfo) (int, error) {
+func (a *StateAdapter) UpdateTemplate(ctx context.Context, sessionID string, template map[string]interface{}, info domain.DeltaInfo) (step int, err error) {
+	var span *domain.SpanHandle
 	if sc := domain.SpanFromContext(ctx); sc != nil {
-		end := sc.Start("postgres.UpdateTemplate")
-		defer end()
+		ctx, span = sc.StartSpan(ctx, "postgres.UpdateTemplate")
+		span.SetAttr("session_id", sessionID)
+		defer func() {
+			if err != nil {
+				span.SetError(err)
+			} else {
+				span.SetAttr("step", step)
+			}
+			span.End()
+		}()
 	}
 	templateJSON, err := json.Marshal(template)
 	if err != nil {
-		return 0, fmt.Errorf("marshal template: %w", err)
+		err = fmt.Errorf("marshal template: %w", err)
+		return 0, err
 	}
 	delta := info.ToDelta()
-	return a.zoneWriteWithDelta(ctx, sessionID, delta, `
+	step, err = a.zoneWriteWithDelta(ctx, sessionID, delta, `
 		UPDATE v5_chat_session_state
 		SET current_template = $1, updated_at = NOW()
 		WHERE session_id = $2
 	`, templateJSON, sessionID)
+	return step, err
 }
 
 func (a *StateAdapter) UpdateView(ctx context.Context, sessionID string, view domain.ViewState, stack []domain.ViewSnapshot, info domain.DeltaInfo) (int, error) {

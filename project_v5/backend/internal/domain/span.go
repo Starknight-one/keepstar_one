@@ -250,6 +250,22 @@ func (h *SpanHandle) End() {
 
 type spanCtxKey struct{}
 type spanParentIDCtxKey struct{}
+type requestIDCtxKey struct{}
+
+// WithRequestID returns ctx with id stamped as the per-request id. Set by
+// the logging middleware so use cases / adapters can pick it up via
+// RequestIDFromContext and attach it to spans / logs without the handler
+// needing to thread it through every request struct.
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDCtxKey{}, id)
+}
+
+// RequestIDFromContext returns the per-request id stamped by the logging
+// middleware, or "" when missing (e.g. tests that bypass middleware).
+func RequestIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(requestIDCtxKey{}).(string)
+	return v
+}
 
 // WithSpanCollector returns ctx with sc attached. Adapters and use cases
 // pull the collector via SpanFromContext to emit spans without taking a

@@ -97,10 +97,25 @@ const catalogProductSelect = `
 	LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
 `
 
-func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filter ports.ProductFilter) ([]domain.Product, int, error) {
+func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filter ports.ProductFilter) (products []domain.Product, total int, err error) {
+	var span *domain.SpanHandle
 	if sc := domain.SpanFromContext(ctx); sc != nil {
-		end := sc.Start("postgres.ListProducts")
-		defer end(fmt.Sprintf("limit=%d", filter.Limit))
+		ctx, span = sc.StartSpan(ctx, "postgres.ListProducts")
+		span.SetAttrs(map[string]any{
+			"tenant_id":  tenantID,
+			"limit":      filter.Limit,
+			"has_search": filter.Search != "",
+			"has_filter": filter.Brand != "" || filter.CategoryName != "" || filter.MinPrice > 0 || filter.MaxPrice > 0,
+		})
+		defer func() {
+			if err != nil {
+				span.SetError(err)
+			} else {
+				span.SetAttr("rows", len(products))
+				span.SetAttr("total", total)
+			}
+			span.End()
+		}()
 	}
 	baseQuery := catalogProductSelect + ` WHERE p.tenant_id = $1 AND p.deleted_at IS NULL`
 	countQuery := `
@@ -205,9 +220,9 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		countQuery += condStr
 	}
 
-	var total int
-	if err := a.client.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count products: %w", err)
+	if err = a.client.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		err = fmt.Errorf("count products: %w", err)
+		return nil, 0, err
 	}
 
 	limit := filter.Limit
@@ -239,14 +254,15 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 
 	rows, err := a.client.pool.Query(ctx, baseQuery, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("query products: %w", err)
+		err = fmt.Errorf("query products: %w", err)
+		return nil, 0, err
 	}
 	defer rows.Close()
 
-	var products []domain.Product
 	for rows.Next() {
-		p, err := scanCatalogProduct(rows)
-		if err != nil {
+		p, scanErr := scanCatalogProduct(rows)
+		if scanErr != nil {
+			err = scanErr
 			return nil, 0, err
 		}
 		p.PriceFormatted = formatPrice(p.Price, p.Currency)
@@ -493,10 +509,25 @@ func formatPrice(kopecks int, currency string) string {
 // Mirrors V4's GenerateCatalogDigest (project_v4 postgres_catalog.go:974+),
 // minus the SaveCatalogDigest persistence path. V5 builds on demand and lets
 // the use case cache in process.
-func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string) (*domain.CatalogDigest, error) {
+func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string) (digest *domain.CatalogDigest, err error) {
+	var span *domain.SpanHandle
 	if sc := domain.SpanFromContext(ctx); sc != nil {
-		end := sc.Start("postgres.BuildCatalogDigest")
-		defer end(tenantID)
+		ctx, span = sc.StartSpan(ctx, "postgres.BuildCatalogDigest")
+		span.SetAttr("tenant_id", tenantID)
+		defer func() {
+			if err != nil {
+				span.SetError(err)
+			} else if digest != nil {
+				span.SetAttrs(map[string]any{
+					"total_products":   digest.TotalProducts,
+					"category_groups":  len(digest.CategoryTree),
+					"shared_filters":   len(digest.SharedFilters),
+					"top_brands":       len(digest.TopBrands),
+					"top_ingredients":  len(digest.TopIngredients),
+				})
+			}
+			span.End()
+		}()
 	}
 
 	// 1. Category tree.
