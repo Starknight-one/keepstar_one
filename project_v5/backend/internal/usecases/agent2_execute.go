@@ -87,22 +87,25 @@ const historyLimit = 4
 // and are surfaced to the LLM next turn.
 func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) (*Agent2ExecuteResponse, error) {
 	start := time.Now()
-	if sc := domain.SpanFromContext(ctx); sc != nil {
-		end := sc.Start("agent2.execute")
-		defer end()
-	}
+	ctx, topSpan := withSpan(ctx, "agent2.execute")
+	defer topSpan.End()
 
 	state, err := uc.state.GetState(ctx, req.SessionID)
 	if err != nil {
+		topSpan.SetError(err)
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
 	var systemPrompt string
 	{
-		end := startSpan(ctx, "agent2.prompt")
+		_, promptSpan := withSpan(ctx, "agent2.prompt")
 		systemPrompt, err = uc.promptCache.GetOrBuild(ctx, req.TenantSlug, 3)
-		end()
 		if err != nil {
+			promptSpan.SetError(err)
+		}
+		promptSpan.End()
+		if err != nil {
+			topSpan.SetError(err)
 			return nil, fmt.Errorf("build system prompt: %w", err)
 		}
 	}
@@ -128,12 +131,25 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 		ToolChoice:        "any",
 	}
 
-	end := startSpan(ctx, "agent2.llm")
+	_, llmSpan := withSpan(ctx, "agent2.llm")
 	resp, err := uc.llm.ChatWithToolsCached(ctx, systemPrompt, messages, tools, cfg)
-	end()
 	if err != nil {
+		llmSpan.SetError(err)
+		llmSpan.End()
+		topSpan.SetError(err)
 		return nil, fmt.Errorf("LLM call: %w", err)
 	}
+	llmSpan.SetAttrs(map[string]any{
+		"model":                  resp.Usage.Model,
+		"tokens.input":           resp.Usage.InputTokens,
+		"tokens.output":          resp.Usage.OutputTokens,
+		"tokens.cache_read":      resp.Usage.CacheReadInputTokens,
+		"tokens.cache_creation":  resp.Usage.CacheCreationInputTokens,
+		"cost_usd":               resp.Usage.CostUSD,
+		"tool_calls":             len(resp.ToolCalls),
+		"stop_reason":            resp.StopReason,
+	})
+	llmSpan.End()
 
 	// Run each tool call; collect history messages.
 	toolCtx := domain.ToolContext{
@@ -142,12 +158,19 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	}
 	historyAppend := []domain.LLMMessage{}
 	for _, tc := range resp.ToolCalls {
-		toolEnd := startSpan(ctx, "agent2.tool."+tc.Name)
+		_, toolSpan := withSpan(ctx, "agent2.tool."+tc.Name)
+		toolSpan.SetAttr("tool_name", tc.Name)
 		result, runErr := uc.runToolWithRetry(ctx, toolCtx, tc)
-		toolEnd()
+		if runErr != nil {
+			toolSpan.SetError(runErr)
+		} else if result != nil && result.IsError {
+			toolSpan.SetAttr("is_error", true)
+		}
+		toolSpan.End()
 		if runErr != nil {
 			// Transport-level failure (registry doesn't know the tool, or
 			// Go panic recovered as an error). Surface to caller.
+			topSpan.SetError(runErr)
 			return nil, fmt.Errorf("tool %s: %w", tc.Name, runErr)
 		}
 		historyAppend = append(historyAppend,
@@ -187,12 +210,9 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	}, nil
 }
 
-// startSpan is a small helper that returns a no-op closer when there's
-// no SpanCollector in ctx, so the call sites stay one-liner-ish without
-// the "if sc != nil { ... }" boilerplate spread across the use case.
-// Calling the returned func ends the span — typical pattern is one
-// imperative call after the work block (not defer), so the span end
-// happens before later spans that depend on the same work.
+// startSpan is a legacy helper retained for un-migrated call sites.
+// New code should use withSpan(ctx, name) which returns a SpanHandle for
+// SetAttr / SetError and threads parent linkage through the returned ctx.
 func startSpan(ctx context.Context, name string) func() {
 	sc := domain.SpanFromContext(ctx)
 	if sc == nil {

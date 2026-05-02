@@ -86,11 +86,12 @@ func NewAgent1Execute(
 // Execute runs one Agent1 turn end-to-end.
 func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) (*Agent1ExecuteResponse, error) {
 	start := time.Now()
-	endTopSpan := startSpan(ctx, "agent1.execute")
-	defer endTopSpan()
+	ctx, topSpan := withSpan(ctx, "agent1.execute")
+	defer topSpan.End()
 
 	state, err := uc.state.GetState(ctx, req.SessionID)
 	if err != nil {
+		topSpan.SetError(err)
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
@@ -116,14 +117,23 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	// If data is on screen AND query is an obvious subset/filter request
 	// (and NOT a style request) → bypass the LLM and call state_filter directly.
 	if state.Current.Meta.ProductCount > 0 && filterTriggers.MatchString(req.UserQuery) && !styleFieldNames.MatchString(req.UserQuery) {
-		end := startSpan(ctx, "agent1.tool._internal_state_filter")
+		_, guardSpan := withSpan(ctx, "agent1.tool._internal_state_filter")
+		guardSpan.SetAttrs(map[string]any{
+			"tool_name": "_internal_state_filter",
+			"bypassed":  true,
+		})
 		toolStart := time.Now()
 		result, runErr := uc.toolRegistry.Execute(ctx, toolCtx, domain.ToolCall{
 			Name:  "_internal_state_filter",
 			Input: map[string]interface{}{"text_match": req.UserQuery},
 		})
 		toolMs := time.Since(toolStart).Milliseconds()
-		end()
+		if runErr != nil {
+			guardSpan.SetError(runErr)
+		} else if result != nil && result.IsError {
+			guardSpan.SetAttr("is_error", true)
+		}
+		guardSpan.End()
 		if runErr != nil {
 			// Guard failed — fall through to LLM path. Log and continue.
 			uc.log.Warn("agent1: deterministic guard failed; falling through to LLM", "err", runErr)
@@ -153,9 +163,9 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	}
 
 	// ── LLM path ──
-	endPrompt := startSpan(ctx, "agent1.prompt")
+	_, promptSpan := withSpan(ctx, "agent1.prompt")
 	systemPrompt := uc.promptCache.GetOrBuild(ctx, req.TenantSlug)
-	endPrompt()
+	promptSpan.End()
 
 	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, &state.Actions, req.UserQuery)
 
@@ -189,14 +199,27 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 		ToolChoice: "auto",
 	}
 
-	endLLM := startSpan(ctx, "agent1.llm")
+	_, llmSpan := withSpan(ctx, "agent1.llm")
 	llmStart := time.Now()
 	resp, err := uc.llm.ChatWithToolsCached(ctx, systemPrompt, messages, toolDefs, cfg)
 	llmMs := time.Since(llmStart).Milliseconds()
-	endLLM()
 	if err != nil {
+		llmSpan.SetError(err)
+		llmSpan.End()
+		topSpan.SetError(err)
 		return nil, fmt.Errorf("agent1 LLM call: %w", err)
 	}
+	llmSpan.SetAttrs(map[string]any{
+		"model":                 resp.Usage.Model,
+		"tokens.input":          resp.Usage.InputTokens,
+		"tokens.output":         resp.Usage.OutputTokens,
+		"tokens.cache_read":     resp.Usage.CacheReadInputTokens,
+		"tokens.cache_creation": resp.Usage.CacheCreationInputTokens,
+		"cost_usd":              resp.Usage.CostUSD,
+		"tool_calls":            len(resp.ToolCalls),
+		"stop_reason":           resp.StopReason,
+	})
+	llmSpan.End()
 
 	out := &Agent1ExecuteResponse{
 		Usage:         resp.Usage,
@@ -215,13 +238,20 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 		out.ToolName = tc.Name
 		out.ToolInput = tc.Input
 
-		endTool := startSpan(ctx, "agent1.tool."+tc.Name)
+		_, toolSpan := withSpan(ctx, "agent1.tool."+tc.Name)
+		toolSpan.SetAttr("tool_name", tc.Name)
 		toolStart := time.Now()
 		result, runErr := uc.runToolWithRetry(ctx, toolCtx, tc)
 		toolMs := time.Since(toolStart).Milliseconds()
-		endTool()
+		if runErr != nil {
+			toolSpan.SetError(runErr)
+		} else if result != nil && result.IsError {
+			toolSpan.SetAttr("is_error", true)
+		}
+		toolSpan.End()
 
 		if runErr != nil {
+			topSpan.SetError(runErr)
 			return nil, fmt.Errorf("agent1 tool %s: %w", tc.Name, runErr)
 		}
 		out.ToolResult = result

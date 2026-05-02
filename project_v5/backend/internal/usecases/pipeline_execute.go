@@ -52,8 +52,14 @@ func NewPipelineExecute(agent1 *Agent1Execute, agent2 *Agent2Execute, log *slog.
 // agent failed — caller decides whether to retry or surface to the user.
 func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteRequest) (*PipelineExecuteResponse, error) {
 	start := time.Now()
-	endTopSpan := startSpan(ctx, "pipeline.execute")
-	defer endTopSpan()
+	ctx, topSpan := withSpan(ctx, "pipeline.execute")
+	defer topSpan.End()
+	if req.TurnID != "" {
+		topSpan.SetAttr("turn_id", req.TurnID)
+	}
+	if req.TenantSlug != "" {
+		topSpan.SetAttr("tenant_slug", req.TenantSlug)
+	}
 
 	// ── Agent1 ──
 	a1, err := uc.agent1.Execute(ctx, Agent1ExecuteRequest{
@@ -63,6 +69,7 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		TurnID:     req.TurnID,
 	})
 	if err != nil {
+		topSpan.SetError(err)
 		return nil, fmt.Errorf("agent1: %w", err)
 	}
 
@@ -76,8 +83,15 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		Microcontext: microcontext,
 	})
 	if err != nil {
+		topSpan.SetError(err)
 		return nil, fmt.Errorf("agent2: %w", err)
 	}
+
+	topSpan.SetAttrs(map[string]any{
+		"agent1_ms":    a1.LatencyMs,
+		"agent2_ms":    a2.LatencyMs,
+		"microcontext": microcontext,
+	})
 
 	// Aggregate ToolCalls (Agent1's first if it ran a tool, Agent2's all).
 	toolCalls := make([]domain.ToolCall, 0, 1+len(a2.ToolCalls))
