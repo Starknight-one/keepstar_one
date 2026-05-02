@@ -11,19 +11,19 @@ import (
 // PipelineHandler owns POST /api/v1/pipeline.
 //
 // Request body: {"sessionId": "...", "query": "..."}.
-// Response: {document, toolCalls, usage, latencyMs}.
+// Response: {document, toolCalls, usage, latencyMs, agent1Ms, agent2Ms, spans?}.
 //
 // The handler extracts tenant from middleware-stamped context and hands
-// everything off to Agent2Execute. Tool execution + state writes happen
-// inside the use case.
+// everything off to PipelineExecute, which runs Agent1 (data) → Agent2
+// (render) and returns a merged response.
 type PipelineHandler struct {
-	agent2 *usecases.Agent2Execute
+	pipeline *usecases.PipelineExecute
 }
 
-// NewPipelineHandler constructs the handler. agent2 is the only dep —
-// state, presets, components, LLM, tools all live behind it.
-func NewPipelineHandler(agent2 *usecases.Agent2Execute) *PipelineHandler {
-	return &PipelineHandler{agent2: agent2}
+// NewPipelineHandler constructs the handler. pipeline is the only dep —
+// agents, state, presets, components, LLM, tools all live behind it.
+func NewPipelineHandler(pipeline *usecases.PipelineExecute) *PipelineHandler {
+	return &PipelineHandler{pipeline: pipeline}
 }
 
 type pipelineRequest struct {
@@ -36,6 +36,9 @@ type pipelineResponse struct {
 	ToolCalls interface{}            `json:"toolCalls"`
 	Usage     interface{}            `json:"usage"`
 	LatencyMs int64                  `json:"latencyMs"`
+	// Per-agent latency breakdown for client-side debugging.
+	Agent1Ms int64 `json:"agent1Ms"`
+	Agent2Ms int64 `json:"agent2Ms"`
 	// Spans is the request waterfall captured by SpanCollector — useful
 	// for client-side debugging until the /debug/traces UI ships. Empty
 	// (omitted) when the logging middleware didn't attach a collector.
@@ -64,7 +67,7 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.agent2.Execute(r.Context(), usecases.Agent2ExecuteRequest{
+	resp, err := h.pipeline.Execute(r.Context(), usecases.PipelineExecuteRequest{
 		SessionID:  req.SessionID,
 		TenantSlug: tenant.Slug,
 		UserQuery:  req.Query,
@@ -79,6 +82,8 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		ToolCalls: resp.ToolCalls,
 		Usage:     resp.Usage,
 		LatencyMs: resp.LatencyMs,
+		Agent1Ms:  resp.Agent1Ms,
+		Agent2Ms:  resp.Agent2Ms,
 	}
 	if sc := domain.SpanFromContext(r.Context()); sc != nil {
 		out.Spans = sc.Spans()

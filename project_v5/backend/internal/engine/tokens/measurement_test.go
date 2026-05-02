@@ -240,3 +240,142 @@ func TestSystemAndToolBreakdown(t *testing.T) {
 		t.Logf("%-50s %5d tokens", c.name, n)
 	}
 }
+
+// TestAgent1PrefixSize logs the size of V5 Agent1's cacheable prefix —
+// system prompt (no digest, no tenant) + Agent1's 3 tool definitions. No
+// hard gate this chunk; we just want a number to track. Vlad's V4-prod
+// experience says ≥ 4500 tokens for stable Haiku caching; if Agent1's bare
+// prefix is below that, the first turn likely misses cache and only later
+// turns benefit (once <conversation_history> grows past the threshold).
+//
+// The digest block adds 300-400 tokens per tenant — when the digest is
+// present, prefix should clear ≥ 4500 for catalogs with non-trivial
+// taxonomy. This test runs without DB so the digest portion is omitted.
+func TestAgent1PrefixSize(t *testing.T) {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		t.Skip("ANTHROPIC_API_KEY not set — skipping")
+	}
+
+	type agent1Tool struct {
+		Name        string                 `json:"name"`
+		Description string                 `json:"description"`
+		InputSchema map[string]interface{} `json:"input_schema"`
+	}
+
+	// Build the three Agent1 tool defs inline so we don't import V5 packages
+	// in the tokens-tag-only build (avoids cycle risk).
+	tools := []map[string]interface{}{
+		mustParseTool(t, []byte(catalogSearchSchema)),
+		mustParseTool(t, []byte(stateFilterSchema)),
+		mustParseTool(t, []byte(historyLookupSchema)),
+	}
+
+	msgs := []CountMessage{{Role: "user", Content: "Покажи 3 продукта"}}
+
+	n, err := CountInputTokens(apiKey, model, agent1SystemPrompt, tools, msgs)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	t.Logf("Agent1 bare prefix (system + 3 tool defs, no digest): %d tokens", n)
+
+	const stableCacheBar = 4500
+	if n < stableCacheBar {
+		t.Logf("⚠️  prefix %d < %d (stable-cache bar). Turn-1 cache likely misses; turn-N hits as conversation grows.", n, stableCacheBar)
+	} else {
+		t.Logf("✓ prefix ≥ %d — clears stable-cache bar.", stableCacheBar)
+	}
+}
+
+// agent1SystemPrompt copies the static base from prompts.Agent1SystemPrompt.
+// We can't import prompts here (build-tag isolation), so duplicate the
+// string. Drift between this copy and the source is OK — token count is a
+// rough gauge, and the test reports the gap for a human to act on.
+const agent1SystemPrompt = `You are Agent 1 - a data retrieval agent for an e-commerce chat.
+
+Your job: call catalog_search when user needs NEW data. If the user is asking about STYLE or DISPLAY (not new data), do nothing.
+
+Rules:
+
+## CRITICAL: FILTER vs SEARCH decision (check FIRST)
+When loaded_products > 0 in <state>:
+- User wants SUBSET of current data → _internal_state_filter (NOT catalog_search!)
+- User wants DIFFERENT/NEW data → catalog_search
+Subset triggers: "только X", "лишь X", "оставь X", "дешевле N", "дороже N", "с рейтингом выше N"
+NEVER filter triggers — these are STYLE/DISPLAY requests, NOT data filters:
+  "убери/покажи/добавь/без" + FIELD NAME (описание, рейтинг, бренд, цена, фото, название, теги, категория) → DO NOT call any tool
+
+## Other rules
+1. If user asks for products → call catalog_search
+2. catalog_search has two inputs:
+   - filters: exact match filters. Use enum values from <catalog> block.
+   - vector_query: semantic search in user's ORIGINAL language. Do NOT translate.
+3. Match user intent to exact filter values from <catalog> → filters.{key}. Everything else → vector_query.
+4. Prices are in RUBLES.
+5. If user asks to CHANGE DISPLAY STYLE → DO NOT call any tool. Just stop.
+6. Do NOT explain. Do NOT ask questions. Make best guess.
+7. After getting "ok"/"empty", stop. Do not call more tools.
+`
+
+// catalogSearchSchema, stateFilterSchema, historyLookupSchema are JSON
+// snapshots of the V5 Agent1 tool defs. Kept inline so this test stays
+// hermetic from the production code path. Update when the schemas change.
+const catalogSearchSchema = `{
+  "name": "catalog_search",
+  "description": "Catalog search for products. Put structured/exact filters in 'filters'. Put semantic search intent in 'vector_query' in user's original language.",
+  "input_schema": {
+    "type": "object",
+    "required": ["vector_query"],
+    "properties": {
+      "vector_query": {"type": "string", "description": "Semantic search in user's original language."},
+      "filters": {
+        "type": "object",
+        "description": "Exact filters. Only include filters you're confident about.",
+        "properties": {
+          "brand": {"type": "string"},
+          "category": {"type": "string"},
+          "min_price": {"type": "number"},
+          "max_price": {"type": "number"},
+          "product_form": {"type": "string", "enum": ["cream", "gel", "serum", "toner", "essence", "lotion", "oil", "balm", "foam", "mousse", "mist", "spray", "powder", "stick", "patch", "sheet-mask", "wash-off-mask", "peel", "scrub", "soap"]},
+          "skin_type": {"type": "string", "enum": ["normal", "dry", "oily", "combination", "sensitive", "acne-prone", "mature"]},
+          "concern": {"type": "string", "enum": ["hydration", "anti-aging", "brightening", "acne", "pores", "dark-spots", "redness", "sun-protection", "exfoliation", "firmness", "dark-circles", "lip-dryness", "oil-control", "texture", "dullness"]},
+          "key_ingredient": {"type": "string", "enum": ["hyaluronic-acid", "niacinamide", "retinol", "vitamin-c", "salicylic-acid", "glycolic-acid", "centella-asiatica", "ceramides", "peptides", "snail-mucin", "tea-tree", "aloe-vera", "collagen", "aha-bha", "squalane", "shea-butter", "argan-oil", "rice-extract", "green-tea", "propolis", "mugwort", "panthenol", "zinc", "turmeric", "charcoal"]},
+          "routine_step": {"type": "string", "enum": ["cleansing", "toning", "exfoliation", "treatment", "moisturizing", "sun-protection", "makeup"]},
+          "texture": {"type": "string", "enum": ["watery", "gel", "milky", "creamy", "thick", "oily", "powdery", "foamy", "balmy"]},
+          "target_area": {"type": "string", "enum": ["face", "eye-area", "lips", "neck", "body", "hands", "feet", "scalp"]}
+        }
+      },
+      "sort_by": {"type": "string", "enum": ["price", "rating", "name"]},
+      "sort_order": {"type": "string", "enum": ["asc", "desc"]},
+      "limit": {"type": "integer"}
+    }
+  }
+}`
+
+const stateFilterSchema = `{
+  "name": "_internal_state_filter",
+  "description": "Filter already loaded products in state. Use when user wants a SUBSET of existing data.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "brand": {"type": "string"},
+      "category": {"type": "string"},
+      "min_price": {"type": "number"},
+      "max_price": {"type": "number"},
+      "min_rating": {"type": "number"},
+      "text_match": {"type": "string"}
+    }
+  }
+}`
+
+const historyLookupSchema = `{
+  "name": "_internal_history_lookup",
+  "description": "Search session history deltas.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {"type": "string"},
+      "last_n": {"type": "integer"}
+    }
+  }
+}`

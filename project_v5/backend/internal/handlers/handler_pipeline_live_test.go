@@ -71,11 +71,18 @@ func TestHTTPLiveSmoke(t *testing.T) {
 
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort))
+	registry.Register(tools.NewCatalogSearchTool(statePort, catalog))
+	registry.Register(tools.NewStateFilterTool(statePort))
+	registry.Register(tools.NewHistoryLookupTool(statePort))
+
 	promptCache := usecases.NewPromptCache(fdPort, "product")
+	agent1Cache := usecases.NewAgent1PromptCache(catalog)
+	agent1 := usecases.NewAgent1Execute(llm, statePort, catalog, registry, agent1Cache, log)
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
+	pipeline := usecases.NewPipelineExecute(agent1, agent2, log)
 
 	sessionH := handlers.NewSessionHandler(statePort, pg.Pool())
-	pipelineH := handlers.NewPipelineHandler(agent2)
+	pipelineH := handlers.NewPipelineHandler(pipeline)
 	router := handlers.RegisterRoutes(log, catalog, "hey-babes-cosmetics", sessionH, pipelineH)
 
 	srv := httptest.NewServer(router)
@@ -121,12 +128,11 @@ func TestHTTPLiveSmoke(t *testing.T) {
 			`DELETE FROM v5_chat_sessions WHERE id = $1::uuid`, sessResp.SessionID)
 	})
 
-	// POST /api/v1/pipeline — note: the LLM needs SOMETHING in
-	// state.Current.Data. For chunk 6c we don't have an Agent1 to fill
-	// it, but the smoke test assertions are loose — we just want a
-	// real-looking response with toolCalls + a Document or a graceful
-	// no-data fallback.
-	pipBody := []byte(`{"sessionId":"` + sessResp.SessionID + `","query":"Show me products from your catalog"}`)
+	// POST /api/v1/pipeline — full Agent1 → Agent2 chain. Agent1 should
+	// pick catalog_search and populate state.Current.Data, Agent2 should
+	// then call visual_assembly and write a Document. Spans from both
+	// agents land in the same collector so we can verify both fired.
+	pipBody := []byte(`{"sessionId":"` + sessResp.SessionID + `","query":"Show me 3 products from your catalog"}`)
 	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/api/v1/pipeline", bytes.NewReader(pipBody))
 	req.Header.Set("X-Tenant-Slug", "hey-babes-cosmetics")
 	req.Header.Set("Content-Type", "application/json")
@@ -142,31 +148,44 @@ func TestHTTPLiveSmoke(t *testing.T) {
 		ToolCalls []map[string]any       `json:"toolCalls"`
 		Usage     map[string]any         `json:"usage"`
 		LatencyMs int64                  `json:"latencyMs"`
+		Agent1Ms  int64                  `json:"agent1Ms"`
+		Agent2Ms  int64                  `json:"agent2Ms"`
 		Document  map[string]interface{} `json:"document"`
 		Spans     []map[string]any       `json:"spans"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&pipResp)
 	resp.Body.Close()
-	t.Logf("pipeline: %d tool calls, %dms, %d spans, usage=%+v",
-		len(pipResp.ToolCalls), pipResp.LatencyMs, len(pipResp.Spans), pipResp.Usage)
+	t.Logf("pipeline: %d tool calls, %dms (a1=%dms a2=%dms), %d spans, usage=%+v",
+		len(pipResp.ToolCalls), pipResp.LatencyMs, pipResp.Agent1Ms, pipResp.Agent2Ms,
+		len(pipResp.Spans), pipResp.Usage)
 	if len(pipResp.ToolCalls) == 0 {
 		t.Errorf("expected at least one tool call, got 0")
 	}
 	if pipResp.LatencyMs == 0 {
 		t.Errorf("latencyMs is 0; clock arithmetic broken?")
 	}
+	if pipResp.Agent1Ms == 0 || pipResp.Agent2Ms == 0 {
+		t.Errorf("expected both Agent1Ms + Agent2Ms > 0, got a1=%d a2=%d", pipResp.Agent1Ms, pipResp.Agent2Ms)
+	}
 	if len(pipResp.Spans) == 0 {
 		t.Errorf("expected non-empty spans (chunk-6d tracer); got 0")
 	}
 	// Spot-check a few expected span names so we know the tracer is
-	// actually firing in production paths.
+	// actually firing in production paths for both agents.
 	gotNames := map[string]bool{}
 	for _, s := range pipResp.Spans {
 		if name, _ := s["name"].(string); name != "" {
 			gotNames[name] = true
 		}
 	}
-	for _, want := range []string{"agent2.execute", "agent2.llm", "postgres.GetState"} {
+	for _, want := range []string{
+		"pipeline.execute",
+		"agent1.execute",
+		"agent1.llm",
+		"agent2.execute",
+		"agent2.llm",
+		"postgres.GetState",
+	} {
 		if !gotNames[want] {
 			t.Errorf("expected span %q to fire, got names: %v", want, keys(gotNames))
 		}

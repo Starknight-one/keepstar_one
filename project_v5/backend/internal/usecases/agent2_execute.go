@@ -14,12 +14,19 @@ import (
 // Agent2ExecuteRequest is the contract callers (HTTP handler in chunk 6c
 // or the smoke test in 6b) hand to Agent2Execute. SessionID must already
 // exist (created upstream by /session/init in 6c, or directly by the
-// smoke test). State.Current.Data must be populated — Agent1 doesn't
-// exist yet in V5.
+// smoke test). State.Current.Data must be populated by Agent1 before this
+// call (chunk 7) or by the test/fixture wiring.
 type Agent2ExecuteRequest struct {
 	SessionID  string
 	TenantSlug string
 	UserQuery  string
+	// Microcontext is a one-line signal from the pipeline orchestrator
+	// (chunk 7) describing what Agent1 just did — e.g.
+	// "new_search: 12 items found", "filtered: 3 items", "no_data_change".
+	// When non-empty it's prepended to the user message inside a
+	// <microcontext> envelope so Agent2 can decide whether to re-render.
+	// V4 pattern at pipeline_execute.go (microcontext signal generation).
+	Microcontext string
 }
 
 // Agent2ExecuteResponse carries everything the caller needs after one
@@ -107,7 +114,11 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	}
 	messages := make([]domain.LLMMessage, 0, len(prior)+1)
 	messages = append(messages, prior...)
-	messages = append(messages, domain.LLMMessage{Role: "user", Content: req.UserQuery})
+	userContent := req.UserQuery
+	if req.Microcontext != "" {
+		userContent = "<microcontext>" + req.Microcontext + "</microcontext>\n" + req.UserQuery
+	}
+	messages = append(messages, domain.LLMMessage{Role: "user", Content: userContent})
 
 	tools := uc.toolRegistry.GetDefinitions()
 	cfg := ports.CacheConfig{
@@ -151,8 +162,11 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 
 	if len(historyAppend) > 0 {
 		// Persist the user message + the new assistant/tool-result pair.
+		// Use the same userContent (with microcontext) we sent to the LLM
+		// so the cached conversation block stays byte-stable on the next
+		// turn.
 		full := append([]domain.LLMMessage{}, prior...)
-		full = append(full, domain.LLMMessage{Role: "user", Content: req.UserQuery})
+		full = append(full, domain.LLMMessage{Role: "user", Content: userContent})
 		full = append(full, historyAppend...)
 		if err := uc.state.AppendAgent2History(ctx, req.SessionID, full); err != nil {
 			slog.Warn("agent2: AppendAgent2History failed", "session", req.SessionID, "err", err)
