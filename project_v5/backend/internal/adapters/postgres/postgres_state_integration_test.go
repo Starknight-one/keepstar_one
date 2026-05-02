@@ -29,7 +29,10 @@ func setupClient(t *testing.T) *Client {
 	}
 	t.Cleanup(c.Close)
 	if err := c.RunStateMigrations(ctx); err != nil {
-		t.Fatalf("migrate: %v", err)
+		t.Fatalf("migrate state: %v", err)
+	}
+	if err := c.RunPresetMigrations(ctx); err != nil {
+		t.Fatalf("migrate presets: %v", err)
 	}
 	return c
 }

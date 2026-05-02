@@ -1,0 +1,76 @@
+{
+  "version": "2.10",
+  "themes": null,
+  "imports": null,
+  "variables": null,
+  "children": [
+    {
+      "type": "frame",
+      "id": "card",
+      "replicate": true,
+      "layout": {"direction": "column", "gap": "sm"},
+      "children": [
+        {
+          "type": "frame",
+          "id": "hero",
+          "layout": {"direction": "column"},
+          "children": [
+            {
+              "type": "image",
+              "id": "hero-img",
+              "fieldBinding": "heroImage"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "info",
+          "layout": {"direction": "column", "gap": "xs"},
+          "children": [
+            {
+              "type": "text",
+              "id": "title",
+              "fieldBinding": "name",
+              "textStyle": {"fontSize": "xl", "fontWeight": "bold"}
+            },
+            {
+              "type": "frame",
+              "id": "meta",
+              "layout": {"direction": "row", "gap": "md"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "price",
+                  "fieldBinding": "priceFormatted"
+                },
+                {
+                  "type": "text",
+                  "id": "rating",
+                  "fieldBinding": "rating"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "brand",
+              "fieldBinding": "brand",
+              "wrapper": "badge"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "actions",
+          "layout": {"direction": "row", "gap": "sm"},
+          "children": []
+        },
+        {
+          "type": "frame",
+          "id": "specs",
+          "layout": {"direction": "column"},
+          "children": []
+        }
+      ]
+    }
+  ]
+}

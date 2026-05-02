@@ -165,6 +165,198 @@ func TestBindDataAfterJSONRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBindDataImageFreshFills covers chunk-4 image binding: an image atom
+// with no existing fills should get a freshly-installed fill array of
+// length 1 with the resolved URL.
+func TestBindDataImageFreshFills(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		{"type": NodeTypeImage, "id": "hero", "fieldBinding": "heroImage"},
+	}
+	data := []map[string]any{{"heroImage": "https://cdn.example/x.jpg"}}
+	res := BindData(doc, data)
+
+	if len(res.Bound) != 1 || res.Bound[0] != "hero" {
+		t.Fatalf("expected hero bound: %+v", res)
+	}
+	hero := FindNodeByID(doc, "hero")
+	fills, _ := hero["fills"].([]any)
+	if len(fills) != 1 {
+		t.Fatalf("expected single fill, got: %+v", hero["fills"])
+	}
+	first, _ := fills[0].(map[string]any)
+	if first["type"] != FillTypeImage {
+		t.Errorf("fill type = %v, want %s", first["type"], FillTypeImage)
+	}
+	if first["image"] != "https://cdn.example/x.jpg" {
+		t.Errorf("fill image = %v", first["image"])
+	}
+	if first["mode"] != "fill" {
+		t.Errorf("fill mode = %v, want fill", first["mode"])
+	}
+	// Image atom must NOT have a `value` or `content` set as a side effect.
+	if _, has := hero["value"]; has {
+		t.Errorf("image atom should not have value: %+v", hero)
+	}
+	if _, has := hero["content"]; has {
+		t.Errorf("image atom should not have content: %+v", hero)
+	}
+}
+
+// TestBindDataImageUpdatesExistingFills makes sure we mutate the existing
+// fill[0] in place rather than appending. Preserves any extra metadata
+// callers (e.g. canvas) put on the fill object.
+func TestBindDataImageUpdatesExistingFills(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		{
+			"type": NodeTypeImage, "id": "hero", "fieldBinding": "heroImage",
+			"fills": []any{
+				map[string]any{
+					"type":    FillTypeImage,
+					"image":   "https://placeholder.example/p.jpg",
+					"mode":    "fit",
+					"opacity": 0.5,
+				},
+			},
+		},
+	}
+	data := []map[string]any{{"heroImage": "https://cdn.example/real.jpg"}}
+	BindData(doc, data)
+
+	hero := FindNodeByID(doc, "hero")
+	fills, _ := hero["fills"].([]any)
+	if len(fills) != 1 {
+		t.Fatalf("fills length changed: %+v", fills)
+	}
+	first, _ := fills[0].(map[string]any)
+	if first["image"] != "https://cdn.example/real.jpg" {
+		t.Errorf("image not updated: %+v", first)
+	}
+	if first["mode"] != "fit" {
+		t.Errorf("existing mode lost: %+v", first)
+	}
+	if first["opacity"] != 0.5 {
+		t.Errorf("existing opacity lost: %+v", first)
+	}
+}
+
+// TestBindDataImageMissingField — image atom asks for a field absent from
+// data; must NOT set fills, must NOT mark __bound, must land in Missing.
+// Mirrors Грабля #1 fix for image atoms specifically.
+func TestBindDataImageMissingField(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		{"type": NodeTypeImage, "id": "hero", "fieldBinding": "heroImage"},
+	}
+	data := []map[string]any{{"name": "Cleanser"}}
+	res := BindData(doc, data)
+
+	if len(res.Missing) != 1 || res.Missing[0] != "hero" {
+		t.Errorf("expected hero in Missing: %+v", res)
+	}
+	hero := FindNodeByID(doc, "hero")
+	if _, has := hero["fills"]; has {
+		t.Errorf("missing image must not write fills: %+v", hero)
+	}
+	if _, has := hero["__bound"]; has {
+		t.Errorf("missing image must not mark __bound: %+v", hero)
+	}
+}
+
+// TestBindDataImageNonStringValue — if data carries a non-string value at
+// the bound key (defensive guard against mis-shaped catalog rows), treat
+// it as a miss rather than coercing junk into the fill URL.
+func TestBindDataImageNonStringValue(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		{"type": NodeTypeImage, "id": "hero", "fieldBinding": "heroImage"},
+	}
+	data := []map[string]any{{"heroImage": []string{"a", "b"}}}
+	res := BindData(doc, data)
+
+	if len(res.Missing) != 1 || res.Missing[0] != "hero" {
+		t.Errorf("expected hero in Missing for non-string image: %+v", res)
+	}
+	hero := FindNodeByID(doc, "hero")
+	if _, has := hero["fills"]; has {
+		t.Errorf("non-string image must not write fills: %+v", hero)
+	}
+}
+
+// TestBindDataInheritsDataIndexFromAncestor — the chunk-4 mechanism that
+// lets a replicate fan-out stamp dataIndex once on the clone root and have
+// every descendant atom bind against that record. Closes plan-agent
+// finding #2.
+func TestBindDataInheritsDataIndexFromAncestor(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		// Card-shaped subtree with dataIndex on the OUTER frame only.
+		{
+			"type": "frame", "id": "card-1", "dataIndex": 1,
+			"children": []Node{
+				{
+					"type": "frame", "id": "card-1-info",
+					"children": []Node{
+						{"type": "text", "id": "card-1-name", "fieldBinding": "name"},
+						{"type": "text", "id": "card-1-brand", "fieldBinding": "brand"},
+					},
+				},
+			},
+		},
+		{
+			"type": "frame", "id": "card-2", "dataIndex": 2,
+			"children": []Node{
+				{"type": "text", "id": "card-2-name", "fieldBinding": "name"},
+			},
+		},
+	}
+	data := []map[string]any{
+		{"name": "Alpha", "brand": "A-Brand"},
+		{"name": "Bravo", "brand": "B-Brand"},
+		{"name": "Charlie", "brand": "C-Brand"},
+	}
+	BindData(doc, data)
+
+	// card-1's descendants should have inherited dataIndex=1 → "Bravo"/"B-Brand".
+	if n := FindNodeByID(doc, "card-1-name"); n["content"] != "Bravo" {
+		t.Errorf("card-1-name = %v, want Bravo", n["content"])
+	}
+	if n := FindNodeByID(doc, "card-1-brand"); n["content"] != "B-Brand" {
+		t.Errorf("card-1-brand = %v, want B-Brand", n["content"])
+	}
+	// card-2's descendant should have inherited dataIndex=2 → "Charlie".
+	if n := FindNodeByID(doc, "card-2-name"); n["content"] != "Charlie" {
+		t.Errorf("card-2-name = %v, want Charlie", n["content"])
+	}
+}
+
+// TestBindDataChildOverridesAncestorDataIndex — explicit child dataIndex
+// wins over inherited. Edge case for when a preset author wires a single
+// "always-data[0]" header inside a replicated card.
+func TestBindDataChildOverridesAncestorDataIndex(t *testing.T) {
+	doc := NewDocument()
+	doc.Children = []Node{
+		{
+			"type": "frame", "id": "card", "dataIndex": 2,
+			"children": []Node{
+				{"type": "text", "id": "inherited", "fieldBinding": "name"},
+				{"type": "text", "id": "pinned", "fieldBinding": "name", "dataIndex": 0},
+			},
+		},
+	}
+	data := []map[string]any{
+		{"name": "Alpha"}, {"name": "Bravo"}, {"name": "Charlie"},
+	}
+	BindData(doc, data)
+	if n := FindNodeByID(doc, "inherited"); n["content"] != "Charlie" {
+		t.Errorf("inherited = %v, want Charlie", n["content"])
+	}
+	if n := FindNodeByID(doc, "pinned"); n["content"] != "Alpha" {
+		t.Errorf("pinned = %v, want Alpha", n["content"])
+	}
+}
+
 // TestBindDataDoesntDescendIntoUnexpandedRefs ensures binding doesn't try
 // to mutate ref-node descendants directly. ComponentResolver expands refs
 // into a separate tree; the source ref subtree has no fieldBinding and

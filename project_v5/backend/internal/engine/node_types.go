@@ -24,6 +24,11 @@ const (
 	NodeTypeContext   = "context"
 	NodeTypeIconFont  = "icon_font"
 	NodeTypeRef       = "ref"
+	// NodeTypeImage is a V5 addition to the v9 vocabulary: an atom-level
+	// image hint so the binding layer routes resolved URLs to fills[0].image
+	// instead of a generic value key. Frontend renderers map it onto a
+	// Rectangle with an image fill at draw time.
+	NodeTypeImage = "image"
 )
 
 // NodeType returns n's "type" string, or "" if missing/wrong shape.
