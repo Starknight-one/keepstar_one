@@ -1,0 +1,70 @@
+{
+  "name": "visual_assembly",
+  "description": "Build or modify a scene-graph Document using ops. Pick a preset and let the engine replicate + bind, or layer ops on top.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "preset": {
+        "type": "string",
+        "description": "Named preset published for this tenant. See <tenant_design_context> for the full list. Pair with `ops` to apply overrides on top — ops can target preset slot ids (card-meta, card-brand, card-actions, etc.)."
+      },
+      "ops": {
+        "type": "array",
+        "description": "Operations on the Document tree. Use without `preset` for freestyle ops; use with `preset` for overrides on top of a published template.",
+        "items": {
+          "type": "object",
+          "required": ["op"],
+          "properties": {
+            "op":     {"type": "string", "enum": ["insert","update","delete","move","override"]},
+            "target": {"type": "string", "description": "Node id (from tree_map) for update/delete/move. Component-internal ids inside resolved instances are shared across clones — go through the ref slot id."},
+            "ref":    {"type": "string", "description": "Local binding name — subsequent ops can reference via $ref."},
+            "parent": {"type": "string", "description": "Parent id or $ref for insert/move."},
+            "after":  {"type": "string", "description": "Insert/move after this sibling id."},
+            "props":  {
+              "type": "object",
+              "description": "Properties to set on the node. Merged in update ops.",
+              "properties": {
+                "type":         {"type": "string", "enum": ["frame","group","text","image","ref"], "description": "Node type for insert ops."},
+                "ref":          {"type": "string", "description": "For type=ref: id of the component definition to point at."},
+                "fieldBinding": {"type": "string", "description": "Catalog field key (see <fields>). Engine fills value from data."},
+                "content":      {"description": "Literal value for leaf nodes that don't read from data."},
+                "format":       {"type": "string", "enum": ["currency","stars","stars-compact","stars-text","percent","number","date","text"]},
+                "wrapper":      {"type": "string", "enum": ["none","badge","tag","pill","avatar","tooltip","alert","link","progress","button"]},
+                "textStyle": {
+                  "type": "object",
+                  "properties": {
+                    "fontSize":   {"type": "string", "enum": ["xs","sm","md","lg","xl","2xl","3xl"]},
+                    "fontWeight": {"type": "string", "enum": ["light","normal","medium","semibold","bold"]},
+                    "color":      {"type": "string", "description": "Semantic token or hex."},
+                    "lineClamp":  {"type": "integer"}
+                  }
+                },
+                "layout": {
+                  "type": "object",
+                  "properties": {
+                    "direction": {"type": "string", "enum": ["row","column","flow"]},
+                    "gap":       {"type": "string", "enum": ["xs","sm","md","lg","xl"]},
+                    "align":     {"type": "string", "enum": ["start","center","end","stretch"]}
+                  }
+                },
+                "fills": {
+                  "type": "array",
+                  "description": "For image nodes: array of fill specs. {type:'image', url:'...', mode:'fill'|'fit'|'stretch'}.",
+                  "items": {"type": "object"}
+                },
+                "slot": {
+                  "type": "string",
+                  "description": "Semantic role of this node within its preset (hero, title, price, badge, ...). Frontend renderer uses it for default styling."
+                }
+              }
+            }
+          }
+        }
+      },
+      "replicate": {
+        "type": "integer",
+        "description": "Number of clones to fan out from the preset's replicate-marked subtree. Engine stamps fresh ids on each clone and sets dataIndex:i for binding. 0 or omitted = no replication (single instance)."
+      }
+    }
+  }
+}

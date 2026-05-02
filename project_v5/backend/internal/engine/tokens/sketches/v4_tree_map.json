@@ -1,0 +1,28 @@
+{
+  "widgets": [
+    {
+      "kind": "replicated",
+      "count": 3,
+      "ids": ["w-s0-w0-c0","w-s0-w0-c1","w-s0-w0-c2"],
+      "template": {
+        "id": "w-s0-w0",
+        "size": "medium",
+        "atoms": [
+          {"id":"a-s0-w0-images","field":"images"},
+          {"id":"a-s0-w0-name","field":"name"},
+          {"id":"a-s0-w0-price","field":"price"},
+          {"id":"a-s0-w0-rating","field":"rating"},
+          {"id":"a-s0-w0-brand","field":"brand"}
+        ],
+        "nodes": [
+          {"id":"n-s0-w0-root","type":"column"},
+          {"id":"n-s0-w0-info","type":"column"},
+          {"id":"n-s0-w0-meta","type":"row"}
+        ]
+      }
+    }
+  ],
+  "widget_count": 3,
+  "mode": "grid",
+  "grid": {"cols": 3, "rows": 1}
+}

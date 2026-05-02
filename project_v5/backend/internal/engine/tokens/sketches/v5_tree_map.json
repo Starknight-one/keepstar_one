@@ -1,0 +1,20 @@
+{
+  "preset_in_use": "product_card",
+  "instances": {
+    "count": 3,
+    "ids": ["card-7c4f","card-9d3a","card-b1e5"],
+    "shape": {
+      "atoms": [
+        {"id":"title","field":"name"},
+        {"id":"hero-img","field":"heroImage"},
+        {"id":"card-meta","ref":"price-rating-root","slot":"price"},
+        {"id":"card-brand","ref":"brand-badge-root","slot":"badge"}
+      ]
+    }
+  },
+  "components": [
+    {"id":"price-rating-root","atoms":[{"field":"priceFormatted","format":"currency"},{"field":"rating","format":"stars-compact"}]},
+    {"id":"brand-badge-root","atoms":[{"field":"brand","wrapper":"badge"}]}
+  ],
+  "data_count": 3
+}
