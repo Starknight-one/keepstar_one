@@ -123,16 +123,22 @@ Full-page v9 canvas embedded in `project_admin/`. Tenants edit preset components
 
 State + binding **first** — they are the foundation. Graph and actions depend on state shape; if state is rebuilt later, graph/actions get rewritten too.
 
-1. **Scaffold V5 backend** — skeleton Go service + v9 ops engine wrapped as a Go package or service
-2. **Port state + delta-stream** — sectional state + AppendDelta + reconstruct + rollback. Adapt to scene-graph instead of Formation. Plumb through pipeline_execute.
-3. **Port binding layer** — slot vocabulary, ProductToMap, conditional tree_map in prompt, per-instance scope via RefNode descendants. Tests on a single product card preset.
-4. **Build first preset** end-to-end (product card, 5-7 groups). Verify tool-call payload size.
-5. **Microprésets discipline** — port 3-5 of V4's existing presets into v9 component form. Verify token efficiency on real queries.
-6. **Transition graph + prefetch** — port adjacency map, plumb prefetch payload.
-7. **Actions** — auto-inject defaults, wire button → delta flow.
-8. **Run-binding cache** — implement the `binding_id → node_id` persistence across batches in a turn.
-9. **Pipeline integration** — wire into existing `POST /api/v1/pipeline` endpoint, keep API contract.
-10. **Smoke test on real prompts** — measure tokens, latency, output quality vs V4.
+1. **Scaffold V5 backend** — skeleton Go service + v9 ops engine wrapped as a Go package or service ✅ (chunk 1)
+2. **Port state + delta-stream** — sectional state + AppendDelta + reconstruct + rollback. Adapt to scene-graph instead of Formation. ✅ (chunk 2)
+3. **Port binding layer** — fieldBinding vocabulary, ProductToMap, per-instance scope via dataIndex inheritance. ✅ (chunk 3)
+4. **First preset end-to-end** — product card, 5-7 groups, replicate fan-out, image binding. ✅ (chunk 4)
+5. **Microprésets via v9 RefNode components** — two presets sharing two components, validate reuse + replicate × resolve combo. ✅ (chunk 5)
+5.5. **Hygiene** — nested-ref reusable strip, image-fill `url` alignment, format/wrapper pass-through, first token measurement, chunk-6 split. ✅ (chunk 5.5)
+6. **LLM in the loop** — split into:
+   - **6a** — Anthropic adapter shell + `count_tokens` integration; first real token measurement against the V4 baseline using actual API.
+   - **6b** — Agent2 prompt-builder with `<fields>` block; first end-to-end Agent2 turn against V5 (no HTTP yet — invoked from a test entry point). **HARD GATE**: V5 system + tools prefix must clear ≥ 4500 tokens with `cache_control: ephemeral` applied, otherwise prompt caching is unstable and the per-turn win evaporates. Re-run `internal/engine/tokens/measurement_test.go` after each prompt-builder iteration.
+   - **6c** — HTTP server + handlers (`pipeline`, `navigation`, `session`) + DI of state / preset / component migrations from `cmd/server/main.go`.
+   - **6d** — `zoneWriteWithDelta` transaction fix + `AddDelta` retry/advisory-lock; span tracing port + re-add `domain.SpanFromContext` to PG adapters; LLMMessage cache_control hint plumbing.
+7. **Transition graph + prefetch** — port adjacency map, plumb prefetch payload.
+8. **Actions** — auto-inject defaults, wire button → delta flow.
+9. **Run-binding cache** — implement the `binding_id → node_id` persistence across batches in a turn.
+10. **Pipeline integration** — wire into existing `POST /api/v1/pipeline` endpoint, keep API contract.
+11. **Smoke test on real prompts** — measure tokens, latency, output quality vs V4 (close the loop on the constraint declared in §7 above).
 
 ---
 
