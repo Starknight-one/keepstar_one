@@ -179,7 +179,8 @@ Presets currently hardcode cosmetics fieldNames (images/name/price/rating/brand/
 - **Shadow DOM**: full style isolation from the host page (mode: open). All CSS imported as `?inline` and injected into shadow root.
 - **Instant expand**: `adjacentTemplates` + `fillFormation()` — drill-down to detail with no round-trip; mirrors backend `productFieldGetter`/`serviceFieldGetter`.
 - **Session cache**: localStorage, 30-min TTL, restored on F5
-- **Theme**: CSS Variables (marketplace theme, purple primary `#8B5CF6`)
+- **Theme**: CSS Variables. Brand palette: light blue `#5BA4D9` + orange `#F0924A` (gradient for action circles), white bg, text `#1a1a1a`. **No purple anywhere.**
+- **Layout**: full-screen overlay when chat opens. `chat-area` — narrow 360px column on the right; `widget-display-area` — flex:1 on the left (max-width 1200, centers formation). Widgets render **beside** chat, not inside it.
 
 ## Admin panel
 
