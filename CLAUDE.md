@@ -139,11 +139,11 @@ V5 is the next-generation chat engine: v9 scene-graph foundation + V4
 strengths ported on top (binding, state with delta-stream, system
 preset registry). Lives in `project_v5/`.
 
-**Status as of 2026-05-03**: chunks 1-14 closed. P0-A (tool surface),
+**Status as of 2026-05-03**: chunks 1-15 closed. P0-A (tool surface),
 P0-B (render path), P0-C (interaction loop), chunk-12 render polish,
-chunk-13 cross-tenant chat/trace inspection in Curator, and chunk-14
-**Railway deploy** all green. **V5 backend live at
-`https://v5-engine-production.up.railway.app`**:
+chunk-13 cross-tenant trace inspection, chunk-14 Railway deploy, and
+chunk-15 V4-vs-V5 prod smoke all green. **V5 backend live at
+`https://v5-engine-production.up.railway.app` (US region)**:
 - engine, state, binding, components, replicate, ops applier
 - Anthropic adapter, prompt-builders for both agents, HTTP server,
   postgres adapters with transactions / retries
@@ -173,15 +173,22 @@ chunk-13 cross-tenant chat/trace inspection in Curator, and chunk-14
 - chunk 14: `project_v5/Dockerfile` (3-stage, mirrors V4); `/readyz`
   with `pgxpool.Ping`; static fileserver on `GET /` so `widget.js` is
   served same-origin (V5 widget.jsx auto-detects `apiBaseUrl` from
-  script.src.origin); Railway service `v5-engine` in
-  `selfless-tranquility/production` with shared Neon. Live smoke green
-  on real Railway URL: healthz/readyz/widget.js + 1 pipeline turn
-  (`product_card` replicate=3, cache_read=7546, $0.006, 7.2s cold).
+  script.src.origin); Railway service `v5-engine` (US region) with
+  shared Neon.
+- chunk 15: V4-vs-V5 prod smoke comparison. New `scripts/v5-smoke.sh`
+  + `scripts/v5-smoke-prompts.json` (25 prompts × 5 tags). Output:
+  per-prompt JSON dumps (gitignored) + `docs/v5-smoke/<UTC>/summary.md`
+  with aggregates. **Discovery**: V5 was originally in Singapore region
+  while Anthropic API + Neon DB are us-east — explained ~75% of the
+  observed «8s p50» as trans-Pacific network. After Vlad migrated V5
+  to US, latency dropped to 1881-2423ms warm cache, 3446ms cold —
+  competitive with V4 (~2600ms p50). Latency no longer a blocker for
+  swap. Quality dive: V5 emits structured intentional output
+  (empty_not_found, composed frames), V4 dumps 50-widget grids OR
+  shows 0 widgets on greeting/compose.
 
-NOT covered yet: chunk 15 (V4 vs V5 smoke comparison on 20-30 prompts +
-steady-state latency baseline) and chunk 16 (frontend route swap behind
-flag — V4 widget still owns embed). Detailed status:
-`docs/v5-engine-plan.md`.
+NOT covered yet: chunk 16 (frontend route swap behind flag — V4 widget
+still owns embed). Detailed status: `docs/v5-engine-plan.md`.
 
 **Local dev** (V4 holds 8082 in this monorepo, so V5 runs on 8084):
 

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "description": "V5 prod smoke suite — 25 prompts × 5 tags. Mixed RU + EN. Realistic hey-babes-cosmetics shop queries plus 4 edge cases.",
+  "prompts": [
+    { "id": "p01", "tag": "search",  "query": "покажи 3 продукта" },
+    { "id": "p02", "tag": "search",  "query": "тонер для жирной кожи" },
+    { "id": "p03", "tag": "search",  "query": "крем для сухой кожи" },
+    { "id": "p04", "tag": "search",  "query": "что у вас есть для глаз" },
+    { "id": "p05", "tag": "search",  "query": "недорогая сыворотка" },
+    { "id": "p06", "tag": "search",  "query": "новинки" },
+    { "id": "p07", "tag": "search",  "query": "show me COSRX products" },
+    { "id": "p08", "tag": "search",  "query": "очищающее средство до 1500 рублей" },
+
+    { "id": "p09", "tag": "drill",   "query": "открой первый" },
+    { "id": "p10", "tag": "drill",   "query": "детали третьего" },
+    { "id": "p11", "tag": "drill",   "query": "расскажи подробнее" },
+    { "id": "p12", "tag": "drill",   "query": "show me details" },
+
+    { "id": "p13", "tag": "modify",  "query": "сделай заголовок красным" },
+    { "id": "p14", "tag": "modify",  "query": "уменьши карточки" },
+    { "id": "p15", "tag": "modify",  "query": "убери цены" },
+    { "id": "p16", "tag": "modify",  "query": "добавь рейтинги" },
+    { "id": "p17", "tag": "modify",  "query": "make titles bigger" },
+
+    { "id": "p18", "tag": "compose", "query": "сделай лендинг с этими продуктами" },
+    { "id": "p19", "tag": "compose", "query": "покажи как landing page" },
+    { "id": "p20", "tag": "compose", "query": "карточка крупно + остальные мелко" },
+    { "id": "p21", "tag": "compose", "query": "hero блок + три карточки снизу" },
+
+    { "id": "p22", "tag": "edge",    "query": "покажи квантовые компьютеры" },
+    { "id": "p23", "tag": "edge",    "query": "..." },
+    { "id": "p24", "tag": "edge",    "query": "aaaaa" },
+    { "id": "p25", "tag": "edge",    "query": "привет" }
+  ]
+}
