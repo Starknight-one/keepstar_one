@@ -5,21 +5,39 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/engine/presets"
 )
 
 // PresetAdapter implements ports.PresetPort against v5_presets +
 // v5_preset_versions. Read-only — write side will land with the future
 // v9-canvas microservice (Stream B).
+//
+// When the DB returns ErrPresetNotFound (tenant has not authored the
+// requested preset), the adapter falls back to systemRegistry to serve
+// one of the in-process system presets shipped with the binary. DB
+// hits always win — the registry is a back-stop, not an override.
+// systemRegistry is optional: nil means "no fallback" (used by tests
+// that exercise pure DB behaviour).
 type PresetAdapter struct {
-	client *Client
+	client         *Client
+	systemRegistry *presets.SystemPresetRegistry
 }
 
+// NewPresetAdapter constructs an adapter without a system fallback.
+// Useful for tests of the raw DB path.
 func NewPresetAdapter(client *Client) *PresetAdapter {
 	return &PresetAdapter{client: client}
+}
+
+// NewPresetAdapterWithSystem constructs an adapter with a system preset
+// fallback wired in. Production code path; main.go uses this.
+func NewPresetAdapterWithSystem(client *Client, registry *presets.SystemPresetRegistry) *PresetAdapter {
+	return &PresetAdapter{client: client, systemRegistry: registry}
 }
 
 // resolveTenantID + isUUID moved to tenant_resolve.go (shared with
@@ -57,11 +75,47 @@ func (a *PresetAdapter) GetPublishedPreset(ctx context.Context, tenantSlugOrID s
 	preset, err := scanPreset(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// DB miss → try system fallback before declaring «not found».
+			if sys := a.systemPresetFallback(name); sys != nil {
+				slog.Debug("preset.system_fallback", "name", name, "tenant", tenantSlugOrID)
+				return sys, nil
+			}
 			return nil, domain.ErrPresetNotFound
 		}
 		return nil, fmt.Errorf("query preset: %w", err)
 	}
 	return preset, nil
+}
+
+// systemPresetFallback wraps the named system-registry payload (if any)
+// as a domain.Preset. Used by GetPublishedPreset when DB has no row;
+// IsSystem flag lets downstream observers (tracing, future canvas)
+// distinguish defaults from tenant-authored versions.
+func (a *PresetAdapter) systemPresetFallback(name string) *domain.Preset {
+	if a.systemRegistry == nil {
+		return nil
+	}
+	body, ok := a.systemRegistry.Get(name)
+	if !ok {
+		return nil
+	}
+	now := time.Now().UTC()
+	return &domain.Preset{
+		ID:               "system:" + name,
+		TenantID:         "system",
+		Name:             name,
+		Category:         "system",
+		EntityType:       "product",
+		Description:      "system-default preset",
+		DefaultReplicate: a.systemRegistry.DefaultReplicate(name),
+		Version:          0,
+		Status:           domain.PresetStatusPublished,
+		DocumentJSON:     json.RawMessage(append([]byte(nil), body...)),
+		PublishedAt:      &now,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		IsSystem:         true,
+	}
 }
 
 func (a *PresetAdapter) ListPublishedPresets(ctx context.Context, tenantSlugOrID string) ([]domain.Preset, error) {
@@ -93,15 +147,29 @@ func (a *PresetAdapter) ListPublishedPresets(ctx context.Context, tenantSlugOrID
 	defer rows.Close()
 
 	var out []domain.Preset
+	dbHave := map[string]bool{}
 	for rows.Next() {
 		preset, err := scanPreset(rows)
 		if err != nil {
 			return nil, err
 		}
+		dbHave[preset.Name] = true
 		out = append(out, *preset)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iter presets: %w", err)
+	}
+	// Union with system registry — DB rows already win because we skip
+	// any registry name the DB returned.
+	if a.systemRegistry != nil {
+		for _, name := range a.systemRegistry.List() {
+			if dbHave[name] {
+				continue
+			}
+			if sys := a.systemPresetFallback(name); sys != nil {
+				out = append(out, *sys)
+			}
+		}
 	}
 	sortPresetsByName(out)
 	return out, nil

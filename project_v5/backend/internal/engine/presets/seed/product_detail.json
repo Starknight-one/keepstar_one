@@ -1,0 +1,66 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "detail",
+      "layout": {"direction": "column", "gap": "lg"},
+      "children": [
+        {
+          "type": "image",
+          "id": "hero-img",
+          "fieldBinding": "heroImage",
+          "slot": "hero",
+          "mediaStyle": {"aspectRatio": "16:9"}
+        },
+        {
+          "type": "frame",
+          "id": "body",
+          "layout": {"direction": "column", "gap": "md"},
+          "children": [
+            {
+              "type": "text",
+              "id": "title",
+              "fieldBinding": "name",
+              "slot": "title",
+              "textStyle": {"fontSize": "2xl", "fontWeight": "bold"}
+            },
+            {
+              "type": "frame",
+              "id": "price-row",
+              "layout": {"direction": "row", "gap": "md", "align": "center"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "price",
+                  "fieldBinding": "priceFormatted",
+                  "format": "currency",
+                  "slot": "price",
+                  "textStyle": {"fontSize": "xl", "fontWeight": "semibold"}
+                },
+                {
+                  "type": "text",
+                  "id": "rating",
+                  "fieldBinding": "rating",
+                  "format": "stars"
+                }
+              ]
+            },
+            {
+              "type": "ref",
+              "id": "detail-brand",
+              "ref": "brand-badge-root"
+            },
+            {
+              "type": "text",
+              "id": "description",
+              "fieldBinding": "description",
+              "slot": "description",
+              "textStyle": {"fontSize": "md", "lineClamp": 8}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

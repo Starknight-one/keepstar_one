@@ -2,11 +2,13 @@ package usecases
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/tools"
 )
@@ -111,15 +113,34 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	}
 
 	// Trim history to the last 4 messages, append the new user query.
+	//
+	// Pair-aware trim: if the cutoff would leave a user message whose
+	// content is a tool_result orphan (no preceding assistant tool_use),
+	// step back one position. The Anthropic API rejects orphaned
+	// tool_result blocks with «messages.0.content.0: unexpected
+	// `tool_use_id` found in `tool_result` blocks». Each tool_use lands
+	// just before its tool_result, so backing up by 1 always lands on
+	// the matching assistant message (or earlier user content).
 	prior := state.Agent2History
 	if len(prior) > historyLimit {
-		prior = prior[len(prior)-historyLimit:]
+		start := len(prior) - historyLimit
+		for start > 0 && isToolResultOnly(prior[start]) {
+			start--
+		}
+		prior = prior[start:]
 	}
 	messages := make([]domain.LLMMessage, 0, len(prior)+1)
 	messages = append(messages, prior...)
 	userContent := req.UserQuery
 	if req.Microcontext != "" {
 		userContent = "<microcontext>" + req.Microcontext + "</microcontext>\n" + req.UserQuery
+	}
+	// Build tree_map of the current Document (modify-mode context for
+	// Agent2). Empty doc → nil → no <formation_tree> envelope. The map
+	// fits inside the per-turn-variable suffix of the user message; it
+	// does NOT enter the cached system+tools prefix.
+	if treeBlock := buildFormationTreeBlock(ctx, state.Current.Template); treeBlock != "" {
+		userContent = treeBlock + "\n" + userContent
 	}
 	messages = append(messages, domain.LLMMessage{Role: "user", Content: userContent})
 
@@ -165,6 +186,14 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 			toolSpan.SetError(runErr)
 		} else if result != nil && result.IsError {
 			toolSpan.SetAttr("is_error", true)
+			// Surface the error content so we can diagnose tool-side
+			// failures from logs without re-running the LLM call. Tool
+			// content is short (one-line summary or error string).
+			slog.Warn("agent2: tool returned IsError",
+				"tool", tc.Name,
+				"content", result.Content,
+				"input", tc.Input,
+			)
 		}
 		toolSpan.End()
 		if runErr != nil {
@@ -208,6 +237,57 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 		Usage:     resp.Usage,
 		LatencyMs: time.Since(start).Milliseconds(),
 	}, nil
+}
+
+// isToolResultOnly reports whether m is a user message that carries only
+// a ToolResult (no Content). Such messages are tool-result orphans when
+// they appear without a preceding assistant tool_use — the trim helper
+// uses this signal to pick a clean cutoff.
+func isToolResultOnly(m domain.LLMMessage) bool {
+	return m.Role == "user" && m.ToolResult != nil && m.Content == ""
+}
+
+// buildFormationTreeBlock turns state.Current.Template (the previous
+// turn's Document, stored as map[string]interface{}) into a compact
+// <formation_tree> envelope for Agent2's modify-mode context. Returns
+// "" when the doc is empty/nil — no envelope, no token cost.
+//
+// The doc is round-tripped through engine.Document so BuildTreeMap's
+// typed walker can run. The cost is one JSON marshal+unmarshal per turn;
+// trivial relative to the LLM call. Logs size + atom count for cost
+// visibility under chunk-8 spans.
+func buildFormationTreeBlock(ctx context.Context, tpl map[string]interface{}) string {
+	if len(tpl) == 0 {
+		return ""
+	}
+	_, span := withSpan(ctx, "agent2.tree_map.build")
+	defer span.End()
+
+	raw, err := json.Marshal(tpl)
+	if err != nil {
+		span.SetError(err)
+		return ""
+	}
+	var doc engine.Document
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		span.SetError(err)
+		return ""
+	}
+	tm := engine.BuildTreeMap(&doc)
+	if tm == nil {
+		return ""
+	}
+	body, err := json.Marshal(tm)
+	if err != nil {
+		span.SetError(err)
+		return ""
+	}
+	span.SetAttrs(map[string]any{
+		"size_bytes": len(body),
+		"data_count": tm.DataCount,
+		"components": len(tm.Components),
+	})
+	return "<formation_tree>" + string(body) + "</formation_tree>"
 }
 
 // startSpan is a legacy helper retained for un-migrated call sites.

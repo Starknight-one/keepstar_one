@@ -358,3 +358,166 @@ func findTitleContent(t *testing.T, node interface{}) string {
 
 // silence unused-import warnings
 var _ = errors.Is
+
+// TestVisualAssemblyFreestyle — preset omitted, ops only: tool starts
+// from an empty Document and builds the tree from ops alone. Mirrors
+// V4's "BUILDING FROM SCRATCH" path.
+func TestVisualAssemblyFreestyle(t *testing.T) {
+	state := newMinStatePort([]domain.Product{
+		{ID: "p1", Name: "Glow Serum"},
+	})
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{}}, // no preset available
+		&minComponentPort{},
+	)
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{
+			"ops": []interface{}{
+				map[string]interface{}{
+					"op":     "insert",
+					"parent": "formation",
+					"props":  map[string]interface{}{"type": "frame", "id": "card", "replicate": true},
+				},
+				map[string]interface{}{
+					"op":     "insert",
+					"parent": "card",
+					"props":  map[string]interface{}{"type": "text", "id": "title", "fieldBinding": "name"},
+				},
+			},
+			"replicate": 1,
+		},
+	)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("ToolResult IsError: %s", res.Content)
+	}
+	rawChildren, _ := state.saved["children"].([]interface{})
+	if len(rawChildren) != 1 {
+		t.Fatalf("expected 1 root child, got %d", len(rawChildren))
+	}
+	if findTitleContent(t, rawChildren[0]) != "Glow Serum" {
+		t.Errorf("freestyle did not bind product[0].name")
+	}
+}
+
+// TestVisualAssemblyMultiWidgetCompose — preset omitted, ops insert
+// MULTIPLE top-level frames (hero literal + replicated gallery + cta
+// literal). Mirrors V4's COMPOSING path. Asserts ≥3 root children and
+// at least one with replicate:true (the gallery).
+func TestVisualAssemblyMultiWidgetCompose(t *testing.T) {
+	state := newMinStatePort([]domain.Product{
+		{ID: "p1", Name: "Glow Serum"},
+		{ID: "p2", Name: "Hydration Mist"},
+	})
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{}},
+		&minComponentPort{},
+	)
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{
+			"ops": []interface{}{
+				// hero literal
+				map[string]interface{}{
+					"op":     "insert",
+					"parent": "root",
+					"props":  map[string]interface{}{"type": "frame", "id": "hero"},
+				},
+				map[string]interface{}{
+					"op":     "insert",
+					"parent": "hero",
+					"props":  map[string]interface{}{"type": "text", "id": "hero-text", "content": "New collection"},
+				},
+				// replicated gallery
+				map[string]interface{}{
+					"op":     "insert",
+					"parent": "",
+					"props":  map[string]interface{}{"type": "frame", "id": "gallery", "replicate": true},
+				},
+				map[string]interface{}{
+					"op":     "insert",
+					"parent": "gallery",
+					"props":  map[string]interface{}{"type": "text", "id": "g-title", "fieldBinding": "name"},
+				},
+				// cta literal
+				map[string]interface{}{
+					"op":     "insert",
+					"parent": "formation",
+					"props":  map[string]interface{}{"type": "frame", "id": "cta"},
+				},
+				map[string]interface{}{
+					"op":     "insert",
+					"parent": "cta",
+					"props":  map[string]interface{}{"type": "text", "id": "cta-text", "content": "Shop now", "wrapper": "button"},
+				},
+			},
+			"replicate": 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("ToolResult IsError: %s", res.Content)
+	}
+	rawChildren, _ := state.saved["children"].([]interface{})
+	// Expect: hero literal + 2 replicated gallery clones + cta literal = 4.
+	// (Gallery's replicate:true expands to 2 since we have 2 products.)
+	if len(rawChildren) < 3 {
+		t.Fatalf("expected ≥3 root children for compose, got %d", len(rawChildren))
+	}
+	// At least one root child must have content "New collection" (hero).
+	foundHero := false
+	for _, c := range rawChildren {
+		if findContentString(c, "New collection") {
+			foundHero = true
+			break
+		}
+	}
+	if !foundHero {
+		t.Errorf("hero literal not found among root children")
+	}
+}
+
+// TestVisualAssemblyBothAbsentErrors — neither preset nor ops → IsError
+// (cheaper to surface to LLM than silently render an empty Document).
+func TestVisualAssemblyBothAbsentErrors(t *testing.T) {
+	state := newMinStatePort(nil)
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{}},
+		&minComponentPort{},
+	)
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{},
+	)
+	if err != nil {
+		t.Fatalf("expected ToolResult, got Go error: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("expected IsError when both preset and ops absent, got %+v", res)
+	}
+}
+
+// findContentString walks a node tree and returns true if any text node's
+// content matches the needle.
+func findContentString(node interface{}, needle string) bool {
+	m, ok := node.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	if c, _ := m["content"].(string); c == needle {
+		return true
+	}
+	if children, ok := m["children"].([]interface{}); ok {
+		for _, c := range children {
+			if findContentString(c, needle) {
+				return true
+			}
+		}
+	}
+	return false
+}

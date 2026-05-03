@@ -64,20 +64,34 @@ func expandIn(parent any, count int) {
 // fanOut produces `count` independent deep-clones of template. count == 0
 // returns nil — the marker disappears with no replacement, matching the
 // "data was empty" case.
+//
+// Each clone carries `__templateOrigin: <template id>` so post-expand
+// consumers (tree_map builder, future constraints engine for cross-widget
+// rules) can group clones back to their source. Lightweight cousin of the
+// V4 GroupID — see docs/v5-known-gaps.md for the full GroupID port.
 func fanOut(template Node, count int) []Node {
 	if count <= 0 {
 		return nil
 	}
+	originID, _ := template["id"].(string)
 	out := make([]Node, count)
 	for i := 0; i < count; i++ {
 		clone := cloneNode(template)
 		clearReplicateMarkers(clone)
 		clone[attrDataIndex] = i
 		reIDSubtree(clone)
+		if originID != "" {
+			clone[attrTemplateOrigin] = originID
+		}
 		out[i] = clone
 	}
 	return out
 }
+
+// attrTemplateOrigin is the cloned-root attribute that records the
+// id of the template node fanOut copied. Used by tree_map and (later)
+// the constraints engine.
+const attrTemplateOrigin = "__templateOrigin"
 
 // isReplicateMarker reports whether n carries replicate:true. Anything
 // else (false, missing, wrong type) is not a marker.

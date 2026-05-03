@@ -145,6 +145,129 @@ To toggle a representation, send a single update op:
 
 The engine doesn't re-bind on a format change — the raw value is already in content; the frontend just re-renders.
 
+## BUILDING FROM SCRATCH — when no preset matches
+
+Sometimes the user asks for something no preset covers — a custom hero, a
+brand storytelling block, an unusual comparison layout. Then drop the
+preset entirely and build the tree with ops alone. Same applies when you
+want a one-off freestyle widget alongside a preset-based one (use the
+COMPOSING shape below for that).
+
+Step 1: Insert a top-level frame at parent="formation" (alias "root" or "")
+Step 2: Insert nested frames + atoms inside it, using "ref" so subsequent
+        ops can target them via "$ref"
+Step 3: Set replicate:true on the outer frame for fan-out across data;
+        omit it for literal one-offs
+
+### Example — freestyle product card grid (no preset):
+
+  visual_assembly({
+    replicate: 3,
+    ops: [
+      { "op": "insert", "parent": "formation", "ref": "card",
+        "props": { "type": "frame", "id": "card", "replicate": true,
+                   "layout": { "direction": "column", "gap": "sm" } } },
+      { "op": "insert", "parent": "$card",
+        "props": { "type": "image", "fieldBinding": "heroImage", "slot": "hero",
+                   "mediaStyle": { "aspectRatio": "4:3" } } },
+      { "op": "insert", "parent": "$card", "ref": "info",
+        "props": { "type": "frame", "layout": { "direction": "column", "gap": "xs" } } },
+      { "op": "insert", "parent": "$info",
+        "props": { "type": "text", "fieldBinding": "name", "slot": "title",
+                   "textStyle": { "fontSize": "xl", "fontWeight": "bold" } } },
+      { "op": "insert", "parent": "$info", "ref": "meta",
+        "props": { "type": "frame", "layout": { "direction": "row", "gap": "md" } } },
+      { "op": "insert", "parent": "$meta",
+        "props": { "type": "text", "fieldBinding": "priceFormatted", "slot": "price",
+                   "format": "currency" } },
+      { "op": "insert", "parent": "$meta",
+        "props": { "type": "text", "fieldBinding": "rating", "format": "stars-compact" } }
+    ]
+  })
+
+### Example — single product detail (no preset):
+
+  visual_assembly({
+    replicate: 1,
+    ops: [
+      { "op": "insert", "parent": "formation", "ref": "detail",
+        "props": { "type": "frame", "layout": { "direction": "column", "gap": "lg" } } },
+      { "op": "insert", "parent": "$detail",
+        "props": { "type": "image", "fieldBinding": "heroImage", "slot": "hero",
+                   "mediaStyle": { "aspectRatio": "16:9" } } },
+      { "op": "insert", "parent": "$detail", "ref": "body",
+        "props": { "type": "frame", "layout": { "direction": "column", "gap": "md" } } },
+      { "op": "insert", "parent": "$body",
+        "props": { "type": "text", "fieldBinding": "name", "slot": "title",
+                   "textStyle": { "fontSize": "2xl", "fontWeight": "bold" } } },
+      { "op": "insert", "parent": "$body", "ref": "price-row",
+        "props": { "type": "frame", "layout": { "direction": "row", "gap": "md" } } },
+      { "op": "insert", "parent": "$price-row",
+        "props": { "type": "text", "fieldBinding": "priceFormatted", "format": "currency",
+                   "textStyle": { "fontSize": "xl" } } },
+      { "op": "insert", "parent": "$price-row",
+        "props": { "type": "text", "fieldBinding": "rating", "format": "stars" } },
+      { "op": "insert", "parent": "$body",
+        "props": { "type": "text", "fieldBinding": "description", "slot": "description",
+                   "textStyle": { "lineClamp": 6 } } }
+    ]
+  })
+
+### Rules for freestyle:
+- parent: "formation" / "root" / "" all mean «document root» (V4 used
+  "formation"; V5 normalises all three).
+- Use "ref" on inserts whose new id you want to reference in a later
+  insert via "$ref" (chained nesting).
+- Set replicate:true on the OUTER frame for grids/lists; one outer
+  replicate-marked frame fans out to N clones.
+- For one-off literals (hero, cta, explainer) omit replicate.
+- Never insert N copies of one widget for N data items — set replicate.
+
+## COMPOSING — multi-widget responses (landings, presentations)
+
+When the user wants a «presentation», «landing page», a hero+gallery+CTA
+combo, or any response combining different block types: insert MULTIPLE
+top-level frames in ONE call. The engine renders them stacked. Per-widget
+replicate goes inside each frame's props.
+
+### Example — product line presentation:
+
+  visual_assembly({
+    ops: [
+      // hero literal
+      { "op": "insert", "parent": "formation", "ref": "hero",
+        "props": { "type": "frame", "layout": { "direction": "column" } } },
+      { "op": "insert", "parent": "$hero",
+        "props": { "type": "text", "content": "New glossy collection",
+                   "textStyle": { "fontSize": "3xl", "fontWeight": "bold" } } },
+      // replicated gallery
+      { "op": "insert", "parent": "formation", "ref": "gallery",
+        "props": { "type": "frame", "id": "gallery", "replicate": true,
+                   "layout": { "direction": "column", "gap": "sm" } } },
+      { "op": "insert", "parent": "$gallery",
+        "props": { "type": "image", "fieldBinding": "heroImage", "slot": "hero" } },
+      { "op": "insert", "parent": "$gallery",
+        "props": { "type": "text", "fieldBinding": "name", "slot": "title" } },
+      // cta literal
+      { "op": "insert", "parent": "formation", "ref": "cta",
+        "props": { "type": "frame", "layout": { "direction": "row", "justify": "center" } } },
+      { "op": "insert", "parent": "$cta",
+        "props": { "type": "text", "content": "Shop the line", "wrapper": "button" } }
+    ],
+    replicate: 12
+  })
+
+### Rules for compose:
+- Per-widget replicate goes INSIDE the frame's props
+  ({type:"frame", replicate:true, ...}). The top-level "replicate"
+  parameter caps how many data records are bound to replicate-marked
+  subtrees overall.
+- Mix literal frames (no fieldBindings — set "content" directly) with
+  replicated frames (bound to data).
+- Use "wrapper":"button" on a text node to render it as a CTA button
+  (frontend renders a <button> element).
+- Keep top-level frames small in number — 2-5 for a typical landing.
+
 ## BUILDING — fresh search results / detail / empty state
 
 ### Example 1 — show 3 products in a grid (most common case):
@@ -234,14 +357,28 @@ Rules:
 
 ## DECISION RULES
 
-  1. If a preset matches the user's intent, USE it. Hand-rolled freestyle ops are last resort.
-  2. data_change present (new search results, fresh data) → fresh build with a preset; don't try to ops your way out of stale state.
-  3. data_change absent + cosmetic / structural tweak → ops only, no preset.
-  4. props are merged in update ops — only send what changes.
-  5. Don't over-specify — the engine handles defaults (layout direction, gap, alignment).
-  6. Don't write data values yourself — use fieldBinding.
-  7. Don't target component-internal ids across instances — go through the parent ref-slot id.
-  8. When picking replicate count: count of items in state.current.data, capped by what the user asked for. Default to 3 for unspecified-grid asks, 1 for detail / single asks.
+  1. There are THREE call shapes — pick one per turn:
+     (a) preset name (± ops on top) — cheap, use whenever a preset matches;
+     (b) ops only, no preset — for freestyle and modify-mode tweaks;
+     (c) multi-widget compose — omit preset and insert multiple top-level
+         frames in one call (landings, presentations, hero + grid + cta).
+  2. If a preset matches the user's intent, USE it. Hand-rolled freestyle
+     ops are last resort. Compose only when one preset can't carry it
+     (multiple distinct block types in one response).
+  3. data_change present (new search results, fresh data) → fresh build
+     with a preset OR freestyle ops; don't try to modify-ops your way out
+     of stale state.
+  4. data_change absent + cosmetic / structural tweak → ops only, no
+     preset. Target ids from tree_map.
+  5. props are merged in update ops — only send what changes.
+  6. Don't over-specify — the engine handles defaults (layout direction,
+     gap, alignment).
+  7. Don't write data values yourself — use fieldBinding.
+  8. Don't target component-internal ids across instances — go through
+     the parent ref-slot id.
+  9. When picking replicate count: count of items in state.current.data,
+     capped by what the user asked for. Default to 3 for unspecified-grid
+     asks, 1 for detail / single asks.
 
 ## ANTI-PATTERNS
 

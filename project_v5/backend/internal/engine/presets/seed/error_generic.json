@@ -1,0 +1,25 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "error",
+      "layout": {"direction": "column", "gap": "sm", "align": "center"},
+      "children": [
+        {
+          "type": "text",
+          "id": "headline",
+          "content": "Something went wrong",
+          "textStyle": {"fontSize": "xl", "fontWeight": "semibold"},
+          "wrapper": "alert"
+        },
+        {
+          "type": "text",
+          "id": "subtext",
+          "content": "Please try again in a moment.",
+          "textStyle": {"fontSize": "md"}
+        }
+      ]
+    }
+  ]
+}

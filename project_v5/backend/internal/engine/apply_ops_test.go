@@ -231,3 +231,40 @@ func TestApplyOpsEmptyList(t *testing.T) {
 		t.Errorf("empty ops should be a no-op, got: %v", err)
 	}
 }
+
+// TestApplyOpsParentAliases — V4-style parent values "root" and
+// "formation" must normalise to "" (document root) at insert time.
+// V5's op_insert.go treats empty parentID as root; without aliasing,
+// the LLM emitting V4-style "formation" would error with «parent
+// not found».
+func TestApplyOpsParentAliases(t *testing.T) {
+	cases := []struct {
+		name   string
+		parent string
+	}{
+		{"empty", ""},
+		{"root", "root"},
+		{"formation", "formation"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := NewDocument()
+			err := ApplyOps(doc, []map[string]any{
+				{
+					"op":     "insert",
+					"parent": tc.parent,
+					"props":  map[string]any{"type": "frame", "id": "card-" + tc.name},
+				},
+			})
+			if err != nil {
+				t.Fatalf("ApplyOps with parent=%q: %v", tc.parent, err)
+			}
+			if len(doc.Children) != 1 {
+				t.Fatalf("expected 1 root child, got %d (parent=%q)", len(doc.Children), tc.parent)
+			}
+			if NodeID(doc.Children[0]) != "card-"+tc.name {
+				t.Errorf("inserted node id = %q, want card-%s", NodeID(doc.Children[0]), tc.name)
+			}
+		})
+	}
+}

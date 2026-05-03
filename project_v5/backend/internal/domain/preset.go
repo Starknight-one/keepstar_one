@@ -38,4 +38,10 @@ type Preset struct {
 	PublishedAt      *time.Time      `json:"publishedAt,omitempty"`
 	CreatedAt        time.Time       `json:"createdAt"`
 	UpdatedAt        time.Time       `json:"updatedAt"`
+	// IsSystem reports whether the preset was served from the in-process
+	// SystemPresetRegistry rather than the v5_presets table. System
+	// presets ship with the binary and back-stop tenants who have not
+	// authored anything in the (future) v9-canvas microservice yet. DB
+	// hits override system fallbacks (see PostgresPresetAdapter).
+	IsSystem bool `json:"isSystem,omitempty"`
 }

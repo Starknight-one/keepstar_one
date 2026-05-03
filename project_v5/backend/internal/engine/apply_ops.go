@@ -151,8 +151,13 @@ func stringField(op map[string]any, key string) string {
 }
 
 // resolveRef rewrites a `$name` reference into its concrete node id from
-// refMap. Pass-through for non-`$` strings.
+// refMap. Pass-through for non-`$` strings, with two normalisations:
+//   - "root" / "formation" / "" → "" (V4 used "formation" for document
+//     root insert; V5 engine treats "" as root in op_insert.go)
 func resolveRef(s string, refMap map[string]string) string {
+	if s == "root" || s == "formation" {
+		return ""
+	}
 	if !strings.HasPrefix(s, "$") {
 		return s
 	}

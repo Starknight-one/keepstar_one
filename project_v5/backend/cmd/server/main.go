@@ -17,6 +17,7 @@ import (
 	anthropicAdapter "keepstar_v5/internal/adapters/anthropic"
 	"keepstar_v5/internal/adapters/postgres"
 	"keepstar_v5/internal/config"
+	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/handlers"
 	"keepstar_v5/internal/tools"
 	"keepstar_v5/internal/usecases"
@@ -58,10 +59,14 @@ func main() {
 		log.Info("migration applied", "name", mig.name)
 	}
 
-	// Adapters → ports.
+	// Adapters → ports. Preset adapter uses a system fallback registry
+	// so any LLM ask for a name no tenant has authored (product_detail,
+	// empty_not_found, ...) resolves via the embedded JSON shipped with
+	// the binary. DB rows always win.
+	systemPresetRegistry := presets.NewSystemPresetRegistry()
 	catalogPort := postgres.NewCatalogAdapter(pgClient)
 	statePort := postgres.NewStateAdapter(pgClient, log)
-	presetPort := postgres.NewPresetAdapter(pgClient)
+	presetPort := postgres.NewPresetAdapterWithSystem(pgClient, systemPresetRegistry)
 	componentPort := postgres.NewComponentAdapter(pgClient)
 	fdPort := postgres.NewFieldDefinitionAdapter(pgClient)
 

@@ -95,6 +95,13 @@ func (cr *ComponentResolver) expandRef(refNode Node, doc *Document, depth int) R
 	// reusable-free clone.
 	delete(clone, "reusable")
 
+	// Stamp the source ref name on the resolved clone root so post-resolve
+	// consumers (tree_map builder, future constraints/canvas tooling) can
+	// distinguish "this subtree came from component X" from "this subtree
+	// is part of the host preset". Inert at runtime — engine passes
+	// (BindData / constraints) ignore the marker.
+	clone[attrResolvedFrom] = refTarget
+
 	// Apply root-level overrides from the RefNode (skip ref-specific keys).
 	for k, v := range refNode {
 		if rootSkipKeys[k] {

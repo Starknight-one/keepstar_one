@@ -37,3 +37,67 @@ var ComponentPriceRatingJSON []byte
 //
 //go:embed seed/component_brand_badge.json
 var ComponentBrandBadgeJSON []byte
+
+// Chunk 9 — additional system presets seeded into the in-process
+// SystemPresetRegistry (DB miss → registry fallback). The names match
+// the catalog the Agent2 system prompt advertises so any LLM ask for
+// product_detail / empty_not_found / etc. resolves without a tenant
+// having to author them in the (future) v9-canvas microservice.
+
+//go:embed seed/product_card_compact.json
+var ProductCardCompactJSON []byte
+
+//go:embed seed/product_card_horizontal.json
+var ProductCardHorizontalJSON []byte
+
+//go:embed seed/product_detail.json
+var ProductDetailJSON []byte
+
+//go:embed seed/product_detail_horizontal.json
+var ProductDetailHorizontalJSON []byte
+
+//go:embed seed/text_explainer.json
+var TextExplainerJSON []byte
+
+//go:embed seed/empty_not_found.json
+var EmptyNotFoundJSON []byte
+
+//go:embed seed/error_generic.json
+var ErrorGenericJSON []byte
+
+// SystemPresetSeeds maps the public preset name to its embedded JSON
+// body. All entries here are served by SystemPresetRegistry as a
+// DB-fallback for any tenant. ProductCard variants share the two
+// existing components (price-rating-root, brand-badge-root) so
+// Materialise + ResolveAndInline pull them in via the tenant's
+// component table the same way as the chunk-5 micropresets.
+//
+// Keys must match the names listed in agent2_prompt.go PRESETS section,
+// otherwise the LLM picks names the registry cannot serve.
+var SystemPresetSeeds = map[string][]byte{
+	"product_card":              ProductCardJSON,
+	"product_card_compact":      ProductCardCompactJSON,
+	"product_card_horizontal":   ProductCardHorizontalJSON,
+	"product_card_list_row":     ProductCardListRowJSON,
+	"product_detail":            ProductDetailJSON,
+	"product_detail_horizontal": ProductDetailHorizontalJSON,
+	"text_explainer":            TextExplainerJSON,
+	"empty_not_found":           EmptyNotFoundJSON,
+	"error_generic":             ErrorGenericJSON,
+}
+
+// SystemPresetDefaultReplicate captures the default-replicate behaviour
+// the registry advertises in domain.Preset.DefaultReplicate. Detail
+// presets and system one-offs default to false; product cards default
+// to true.
+var SystemPresetDefaultReplicate = map[string]bool{
+	"product_card":              true,
+	"product_card_compact":      true,
+	"product_card_horizontal":   true,
+	"product_card_list_row":     true,
+	"product_detail":            false,
+	"product_detail_horizontal": false,
+	"text_explainer":            false,
+	"empty_not_found":           false,
+	"error_generic":             false,
+}

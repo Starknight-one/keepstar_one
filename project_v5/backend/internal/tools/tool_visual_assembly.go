@@ -46,22 +46,30 @@ var _ Tool = (*VisualAssemblyTool)(nil)
 // Definition returns the JSON-Schema the LLM sees. Schema is intentionally
 // stable across runs — anything we change here busts the prompt cache.
 //
-// Chunk 6b note: `ops` is declared so the LLM can reason about the
-// architecture, but the implementation does NOT apply ops yet. Chunk 6c
-// will wire the engine.CommandHistory translation; until then, ops are
-// logged and ignored. Keeping the schema declaration today means chunk 6c
-// adds applier code only — no schema drift, no prompt rewrite.
+// Chunk 9 note: `preset` is OPTIONAL. The LLM picks one of three call
+// shapes:
+//
+//	1. preset only (or preset + ops on top) — fast path; engine
+//	   Materialises preset + components and the ops layer on top.
+//	2. ops only, no preset — freestyle build (BUILDING FROM SCRATCH in
+//	   the system prompt) or modify-mode (ops target ids from the
+//	   tree_map of the existing Document, which is injected by the
+//	   orchestrator into the user message).
+//	3. multi-widget compose — preset omitted, ops insert MULTIPLE
+//	   top-level frames at parent="formation" / "root" / "" for
+//	   landings, presentations, hero+grid+cta combos.
+//
+// Both preset and ops absent → ToolResult IsError.
 func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 	return domain.ToolDefinition{
 		Name:        "visual_assembly",
-		Description: "Build or modify a scene-graph Document. Pick a published preset by name, set replicate count for fan-out across data, optionally layer ops on top. Engine runs Materialise → ExpandReplicates → ResolveAndInline → BindData and writes the result to current.template. Reply only by calling this tool — never output text.",
+		Description: "Build or modify a scene-graph Document. Three call shapes: (1) preset name + optional ops on top — cheapest, use whenever a preset matches; (2) ops only, no preset — for freestyle builds and modify-mode tweaks against the tree_map; (3) multi-widget compose — omit preset and insert multiple top-level frames in one call (landings, presentations, hero + grid + cta). Engine runs Materialise (when preset present) → ApplyOps → ExpandReplicates → ResolveAndInline → BindData and writes the result to current.template. Reply only by calling this tool — never output text.",
 		InputSchema: map[string]interface{}{
-			"type":     "object",
-			"required": []string{"preset"},
+			"type": "object",
 			"properties": map[string]interface{}{
 				"preset": map[string]interface{}{
 					"type":        "string",
-					"description": "Published preset name for this tenant. See the PRESETS section of the system prompt for the catalog. Required.",
+					"description": "Published preset name for this tenant. See the PRESETS section of the system prompt for the catalog. Optional — omit for freestyle / modify / multi-widget compose.",
 				},
 				"replicate": map[string]interface{}{
 					"type":        "integer",
@@ -89,81 +97,159 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 
 // Execute runs one tool call.
 //
+// Three call shapes (chunk 9):
+//   - preset present (± ops)      → load preset + components → Materialise →
+//                                    ApplyOps → ExpandReplicates → ResolveAndInline → BindData
+//   - preset absent, ops present  → start from engine.NewDocument() →
+//                                    ApplyOps → ExpandReplicates →
+//                                    ResolveAndInline (in case the LLM
+//                                    inserted ref nodes; safe no-op
+//                                    otherwise) → BindData
+//   - both absent                 → ToolResult IsError
+//
 // Failure modes:
-//   - missing/invalid `preset`            → ToolResult{IsError:true, Content: "..."}
-//   - preset / component not found in DB  → ToolResult{IsError:true, Content: "..."}
+//   - both preset and ops absent          → ToolResult IsError
+//   - preset / component not found in DB or registry → ToolResult IsError
 //   - state retrieval / write fails       → returns Go error (transport-layer)
 //
-// On success: ToolResult.Content reports a one-line summary
-// (preset name, replicate count, bind diagnostics counts).
+// On success: ToolResult.Content reports a one-line summary including
+// the call-shape mode for trace correlation.
 func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
-	presetName, ok := input["preset"].(string)
-	if !ok || presetName == "" {
-		return errorResult("preset is required (string)"), nil
-	}
+	presetName, _ := input["preset"].(string)
 
 	replicate := readReplicate(input)
 
-	// Parse ops upfront so we can run them after Materialise but BEFORE
-	// ExpandReplicates — see the pipeline ordering comment below.
+	// Parse ops upfront so the call-shape decision can branch on whether
+	// any ops were provided.
 	parsedOps, err := parseOpsList(input["ops"])
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
-	// 1. Load preset.
-	preset, err := t.presets.GetPublishedPreset(ctx, toolCtx.TenantSlug, presetName)
-	if err != nil {
-		return errorResult(fmt.Sprintf("preset %q not found: %v", presetName, err)), nil
-	}
-	presetDoc, err := unmarshalDoc(preset.DocumentJSON)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal preset doc: %w", err)
+	// Both absent → IsError. Surfaces to the LLM next turn; cheaper than
+	// silently rendering an empty Document.
+	if presetName == "" && len(parsedOps) == 0 {
+		return errorResult("either `preset` or `ops` (or both) must be provided"), nil
 	}
 
-	// 2. Load all published components for the tenant. Materialise picks
-	// the ones the preset references by id; extras are harmless.
-	components, err := t.components.ListPublishedComponents(ctx, toolCtx.TenantSlug)
-	if err != nil {
-		return errorResult(fmt.Sprintf("list components: %v", err)), nil
-	}
-	componentDocs := make([]*engine.Document, 0, len(components))
-	for _, c := range components {
-		cd, err := unmarshalDoc(c.DocumentJSON)
-		if err != nil {
-			slog.Warn("visual_assembly: component doc unmarshal failed; skipping", "component", c.Name, "err", err)
-			continue
-		}
-		componentDocs = append(componentDocs, cd)
+	// Provisional call-shape — the no-preset branch may upgrade
+	// "freestyle" to "modify" once it sees the existing template.
+	mode := "preset"
+	if presetName == "" {
+		mode = "freestyle"
+	} else if len(parsedOps) > 0 {
+		mode = "preset+ops"
 	}
 
-	// 3. Load session state for catalog data.
+	var (
+		merged       *engine.Document
+		resolveStats engine.ResolveStats
+		isSystem     bool
+	)
+
+	// Load session state up front — both paths need it (catalog data;
+	// modify-mode also needs the previous Document).
 	state, err := t.state.GetState(ctx, toolCtx.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 	data := productsToBindData(state.Current.Data.Products)
 
-	// 4. Run the V5 engine pipeline.
-	//
-	// Pipeline order matters:
-	//   Materialise(preset, components)  — pulls preset + reusable defs
-	//   ApplyOps(merged, ops)            — LLM tweaks BEFORE replication
-	//                                       so the same edit lands on
-	//                                       every clone (V4 broadcast).
-	//   ExpandReplicates(merged, count)  — fan-out + reID + dataIndex
-	//   ResolveAndInline(merged)         — Ref → resolved subtree
-	//   BindData(merged, data)           — fill atoms from data records
-	//
-	// Putting ApplyOps before ExpandReplicates means the LLM addresses
-	// the un-replicated tree (single set of stable ids); after replicate,
+	if presetName != "" {
+		// 1. Load preset (DB → SystemPresetRegistry fallback inside adapter).
+		preset, err := t.presets.GetPublishedPreset(ctx, toolCtx.TenantSlug, presetName)
+		if err != nil {
+			return errorResult(fmt.Sprintf("preset %q not found: %v", presetName, err)), nil
+		}
+		presetDoc, err := unmarshalDoc(preset.DocumentJSON)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal preset doc: %w", err)
+		}
+		isSystem = preset.IsSystem
+
+		// 2. Load all published components for the tenant. Materialise
+		// picks the ones the preset references by id; extras are harmless.
+		components, err := t.components.ListPublishedComponents(ctx, toolCtx.TenantSlug)
+		if err != nil {
+			return errorResult(fmt.Sprintf("list components: %v", err)), nil
+		}
+		componentDocs := make([]*engine.Document, 0, len(components))
+		for _, c := range components {
+			cd, err := unmarshalDoc(c.DocumentJSON)
+			if err != nil {
+				slog.Warn("visual_assembly: component doc unmarshal failed; skipping", "component", c.Name, "err", err)
+				continue
+			}
+			componentDocs = append(componentDocs, cd)
+		}
+		merged = engine.Materialise(presetDoc, componentDocs)
+	} else {
+		// No-preset path. Two sub-cases drive the starting point:
+		//
+		//   modify    — there IS a Document on file (state.Current.Template).
+		//               Load it so ops target real ids the LLM saw via
+		//               tree_map. Replicate / Resolve / Bind run as no-ops
+		//               or idempotent passes (the previous turn already
+		//               expanded clones and resolved refs).
+		//   freestyle — first turn (or rebuild without preset). Empty
+		//               Document; ops construct the entire tree.
+		//
+		// Discriminate by whether state.Current.Template is non-empty.
+		if len(state.Current.Template) > 0 {
+			loaded, err := mapToDoc(state.Current.Template)
+			if err != nil {
+				return nil, fmt.Errorf("unmarshal current template: %w", err)
+			}
+			merged = loaded
+			mode = "modify"
+		} else {
+			merged = engine.NewDocument()
+		}
+	}
+
+	slog.Info("visual_assembly",
+		"mode", mode,
+		"preset", presetName,
+		"ops", len(parsedOps),
+		"replicate", replicate,
+		"system_preset", isSystem,
+		"session_id", toolCtx.SessionID,
+		"tenant", toolCtx.TenantSlug,
+	)
+
+	// 4. Apply ops BEFORE ExpandReplicates so the LLM addresses the
+	// un-replicated tree (single set of stable ids); after replicate,
 	// ids are minted fresh per clone and would diverge.
-	merged := engine.Materialise(presetDoc, componentDocs)
 	if err := engine.ApplyOps(merged, parsedOps); err != nil {
 		return errorResult(fmt.Sprintf("applyOps: %v", err)), nil
 	}
 	engine.ExpandReplicates(merged, replicate)
-	resolveStats := engine.ResolveAndInline(merged)
+
+	// In freestyle mode the LLM may have inserted ref nodes pointing at
+	// tenant components. Load components on demand to resolve them; in
+	// preset mode Materialise already pulled them in.
+	if presetName == "" && documentHasRefs(merged) {
+		components, err := t.components.ListPublishedComponents(ctx, toolCtx.TenantSlug)
+		if err != nil {
+			return errorResult(fmt.Sprintf("list components: %v", err)), nil
+		}
+		// Append component children into merged.Variables for the resolver
+		// to find — same shape Materialise produces.
+		for _, c := range components {
+			cd, err := unmarshalDoc(c.DocumentJSON)
+			if err != nil {
+				slog.Warn("visual_assembly: component doc unmarshal failed; skipping", "component", c.Name, "err", err)
+				continue
+			}
+			// Append component roots into merged.Children with reusable=true
+			// so resolver sees them as templates (not rendered output).
+			for _, child := range cd.Children {
+				child["reusable"] = true
+				merged.Children = append(merged.Children, child)
+			}
+		}
+	}
+	resolveStats = engine.ResolveAndInline(merged)
 	bindRes := engine.BindData(merged, data)
 
 	// 5. Marshal the Document and write it to state.current.template.
@@ -185,10 +271,28 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 	}
 
 	summary := fmt.Sprintf(
-		"OK preset=%s replicate=%d resolved_refs=%d failed_refs=%d bound=%d missing=%d",
-		presetName, replicate, resolveStats.Resolved, len(resolveStats.Failed), len(bindRes.Bound), len(bindRes.Missing),
+		"OK mode=%s preset=%s system=%v replicate=%d resolved_refs=%d failed_refs=%d bound=%d missing=%d",
+		mode, presetName, isSystem, replicate, resolveStats.Resolved, len(resolveStats.Failed), len(bindRes.Bound), len(bindRes.Missing),
 	)
 	return &domain.ToolResult{Content: summary}, nil
+}
+
+// documentHasRefs reports whether any node in the document tree is a Ref.
+// Used in freestyle mode to decide whether to load components on demand.
+func documentHasRefs(doc *engine.Document) bool {
+	var walk func([]engine.Node) bool
+	walk = func(nodes []engine.Node) bool {
+		for _, n := range nodes {
+			if engine.IsRef(n) {
+				return true
+			}
+			if walk(engine.Children(n)) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(doc.Children)
 }
 
 // parseOpsList coerces the raw `ops` input value into the
@@ -283,6 +387,21 @@ func docToMap(doc *engine.Document) (map[string]interface{}, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// mapToDoc is the inverse of docToMap: parses the persisted template
+// back into an engine.Document so modify-mode ops can target ids inside
+// it. Used only on the no-preset path.
+func mapToDoc(tpl map[string]interface{}) (*engine.Document, error) {
+	raw, err := json.Marshal(tpl)
+	if err != nil {
+		return nil, err
+	}
+	var doc engine.Document
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	return &doc, nil
 }
 
 // errorResult is a convenience for input-shape / lookup errors that should
