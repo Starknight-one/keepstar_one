@@ -10,10 +10,12 @@
 
 ## Snapshot — where we are now
 
-**Chunks 1-13 closed.** Backend (chunks 1-9, 11, 12, 13) + frontend (chunks 10, 11,
-12) + Curator (chunk 13) cover the full P0-A (tool surface), P0-B (render path),
-P0-C (interaction loop), chunk-12 render-quality polish, and chunk-13
-cross-tenant chats / trace inspection. V5 can now:
+**Chunks 1-14 closed.** Backend (chunks 1-9, 11, 12, 13) + frontend (chunks 10, 11,
+12) + Curator (chunk 13) + Railway deploy (chunk 14) cover the full P0-A
+(tool surface), P0-B (render path), P0-C (interaction loop), chunk-12
+render-quality polish, chunk-13 cross-tenant chats / trace inspection,
+and **V5 backend now lives at `https://v5-engine-production.up.railway.app`**
+(item 14 + 15 closed). V5 can now:
 
 - accept all three V4-compatible tool call shapes (preset / freestyle /
   multi-widget compose / ops-only modify), with parent-name aliasing
@@ -47,12 +49,17 @@ POST /actions/like, /navigation/expand, /navigation/back).
 
 **What's still NOT shippable for prod**:
 
-1. **Not deployed.** V5 backend still runs locally (`:8084` in dev to
-   avoid clashing with V4 on `:8082`). Curator already deploys to
-   Railway and consumes the trace table from chunk 13 — V5 backend
-   itself is the next deploy. See P1 items.
-2. **No measured comparison vs V4.** No real-prompt smoke at scale,
-   no token/latency parity numbers from production region. See P1.
+1. **No measured comparison vs V4.** No real-prompt smoke at scale,
+   no token/latency parity numbers from production region. First
+   turn against deployed V5 measured at 7.2s (cold cache + cold
+   pool); steady-state needs the 20-30 prompt run. See P1 item 16.
+2. **GitHub auto-deploy not wired yet.** First deploy via `railway up`
+   from CLI; repo-link needs Vlad's hand in Railway dashboard
+   (Settings → Source → Connect GitHub repo + branch `v5`). After
+   that, push-to-deploy is automatic.
+3. **Frontend swap behind flag not done.** V4 widget still owns the
+   embed. V5 deploy gives us the URL; chunk 16 will route real chat
+   traffic through V5 behind a flag.
 
 Everything else (search quality parity, layout constraints, observability
 UI, tenant canvas, internal hardening) is real but secondary — addressed
@@ -81,6 +88,7 @@ in P1 / P2 / Deferred sections.
 | 11 — actions + nav + prefetch | `2e3df77` | Closed P0-C interaction loop. `domain.UserActionKind` (9-kind closed vocab), `engine.InjectDefaultActions` pass after BindData (auto-injects like + cart_add on entity-bound subtrees), POST `/api/v1/actions` (backend handles like/unlike/cart_add/cart_remove), POST `/api/v1/navigation/{expand,back}` with snapshot stack restore, hardcoded `presets.SystemAdjacency` map, `usecases.PrefetchBuilder` ships 1-level prefetch payload (`{adjacentTemplate, entities}`) on every pipeline response. Frontend `actionDispatch.js` + `fillTemplate.js` + `RenderContext` + clickable replicate clones (Frame.jsx) + back button. Agent2 tool-filter fix (only visual_assembly, mirroring Agent1 prefix-filter). 32/32 vitest, 5-turn live HTTP smoke + actions + nav green. |
 | 13 — curator chats UI | `ed2f29c` | Per-turn trace persistence (`v5_chat_session_traces`) + Curator UI for cross-tenant inspection. V5 side: TraceAdapter (idempotent INSERT on `(session_id, request_id)`), best-effort async persist hook in pipeline handler (covers success and error paths), boot-time migration. Curator side: 3 read endpoints (list / timeline / turn detail) reading shared Neon directly; ChatsPage + ChatDetailPage + sidebar «Tracing» section. Live smoke verifies trace persists. Railway-ready with first commit. |
 | 12 — render polish | `d3394e7` | Closed render-quality gaps from first manual test. REQUIRED `mode: rebuild\|modify` enum back on `visual_assembly` schema (defeats modify-bias — LLM picks per turn, V4-style). Card seeds wrapped in grid frame; `Frame.jsx` reads `layout.wrap` + `width/maxWidth/minWidth` → CSS flex-wrap + inline style. New `tests/frame-layout.test.jsx` (6 tests). Agent2 prompt: new MODE section + DECISION RULES updated + every example carries mode. Live HTTP smoke green: turn 4 lands `mode=modify` (тweak), turns 1-3+5 land `mode=rebuild`. 38/38 vitest. |
+| 14 — railway deploy | `<backfill>` | V5 backend live at `https://v5-engine-production.up.railway.app`. New `project_v5/Dockerfile` (3-stage, mirrors V4: vite build → go build → alpine runtime). New `/readyz` (DB-ping readiness probe, 1s timeout). Static fileserver on `GET /` so `widget.js` lands same-origin (V5 widget.jsx auto-detects `apiBaseUrl` from script.src.origin → embed-anywhere works without `data-api`). Railway service `v5-engine` in `selfless-tranquility/production`, env vars mirrored from local `.env`, shared Neon (creates `v5_*` tables, no V4 conflict). Live smoke green: healthz/readyz/widget.js + 1 pipeline turn (`product_card` preset replicate=3, 17 spans, cache_read=7546 tokens, $0.006/turn, 7.2s first-turn cold). |
 
 Tree clean. Last commit `2e3df77`. Live HTTP smoke (chunk-11 five-turn
 + actions + nav run): ~47 s total, all assertions pass.
@@ -226,13 +234,15 @@ change". For today: option (a) — easier rollback. The frontend renderer
 
 ### P1 — Production readiness
 
-**14. Railway deploy.** ❌
-V5 has only run on `httptest.NewServer` from macOS hitting Neon. Need a
-real Railway service: separate from V4's `v4-engine-production`, own DB
-URL, env vars, `Procfile` / Dockerfile.
+**14. Railway deploy.** ✅ — closed in chunk 14.
+V5 backend live at `https://v5-engine-production.up.railway.app`.
+Service `v5-engine` in `selfless-tranquility/production`. Shared Neon
+DB. First deploy via `railway up --service v5-engine --ci`; GitHub repo
+auto-deploy to be wired in dashboard by Vlad.
 
-**15. Health check endpoints (`/healthz`, `/readyz`).** ❌
-Required by Railway to know "is the service alive, ready for traffic".
+**15. Health check endpoints (`/healthz`, `/readyz`).** ✅ — closed in chunk 14.
+`/healthz` (process alive) was already in place; chunk 14 added
+`/readyz` (`pgxpool.Ping` with 1s timeout, 200/503).
 
 **16. Smoke test V4 vs V5 on real prompts.** ❌
 20-30 representative prompts (search / drill-down / modify / compose /

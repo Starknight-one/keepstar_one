@@ -3,8 +3,12 @@ package handlers
 import (
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"keepstar_v5/internal/ports"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // HealthHandler returns 200 OK with a one-liner JSON body. Used by
@@ -18,7 +22,8 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //
 // Endpoint catalog:
 //
-//	GET  /healthz                            — health probe
+//	GET  /healthz                            — liveness probe (process alive)
+//	GET  /readyz                             — readiness probe (DB ping)
 //	POST /api/v1/session/init                — create session
 //	GET  /api/v1/session/{id}                — read session state (debug)
 //	POST /api/v1/pipeline                    — run Agent2 turn
@@ -34,13 +39,15 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 // the tenant middleware bounces. CORS pre-flight (OPTIONS) is short-
 // circuited inside WithCORS so it doesn't hit tenant lookup. Tenant
 // middleware applies to ALL routes so handlers can rely on
-// TenantFromContext being populated; /healthz is the lone exception
-// (handled by ordering — health is registered first and middleware
-// applies to the entire mux uniformly, so we accept the redundant
-// tenant lookup on /healthz as a tiny cost).
+// TenantFromContext being populated; /healthz and /readyz are the lone
+// exceptions (handled by ordering — they're registered first and the
+// middleware applies to the entire mux uniformly, so we accept the
+// redundant tenant lookup on probes as a tiny cost).
 func RegisterRoutes(
 	log *slog.Logger,
 	catalog ports.CatalogPort,
+	pool *pgxpool.Pool,
+	staticDir string,
 	defaultTenantSlug string,
 	session *SessionHandler,
 	pipeline *PipelineHandler,
@@ -49,6 +56,7 @@ func RegisterRoutes(
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", HealthHandler)
+	mux.HandleFunc("GET /readyz", ReadyzHandler(pool))
 	mux.HandleFunc("POST /api/v1/session/init", session.Init)
 	mux.HandleFunc("GET /api/v1/session/", session.Get)
 	mux.HandleFunc("POST /api/v1/pipeline", pipeline.Pipeline)
@@ -56,9 +64,42 @@ func RegisterRoutes(
 	mux.HandleFunc("POST /api/v1/navigation/expand", navigation.Expand)
 	mux.HandleFunc("POST /api/v1/navigation/back", navigation.Back)
 
+	// Static fileserver (V4 pattern, project_v4/backend/cmd/server/main.go:347-357).
+	// Serves the V5 widget IIFE bundle (widget.js + widget.html) from same
+	// origin so an embed `<script src=".../widget.js">` auto-resolves the
+	// API base URL via script.src.origin (widget.jsx:30). When staticDir
+	// is empty (e.g. local `go run` without a built frontend) the catch-
+	// all is skipped and unknown paths get the default mux 404.
+	if staticDir != "" {
+		if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
+			fs := http.FileServer(http.Dir(staticDir))
+			mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+				path := filepath.Join(staticDir, r.URL.Path)
+				if st, err := os.Stat(path); err == nil && !st.IsDir() {
+					fs.ServeHTTP(w, r)
+					return
+				}
+				// SPA fallback — useful for any future HTML host page.
+				if idx := filepath.Join(staticDir, "index.html"); fileExists(idx) {
+					http.ServeFile(w, r, idx)
+					return
+				}
+				http.NotFound(w, r)
+			})
+			log.Info("static_fileserver_enabled", "dir", staticDir)
+		} else {
+			log.Warn("static_fileserver_skipped", "dir", staticDir, "err", err)
+		}
+	}
+
 	withTenant := WithTenant(catalog, defaultTenantSlug)
 	withLogging := WithLogging(log)
 
 	// Compose: logging(cors(tenant(mux)))
 	return withLogging(WithCORS(withTenant(mux)))
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }

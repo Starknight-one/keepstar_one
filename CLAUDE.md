@@ -102,7 +102,7 @@ scripts/                    — start.sh, stop.sh, start_admin.sh, stop_admin.sh
 | Service | Path | Port |
 |--------|------|------|
 | V4 Chat backend (PRODUCTION) | `project_v4/backend/` | 8082 |
-| V5 Chat backend (in build, local) | `project_v5/backend/` | 8084 (avoids V4 clash; PORT env) |
+| V5 Chat backend (deployed to Railway, also local) | `project_v5/backend/` | 8084 local · `v5-engine-production.up.railway.app` prod |
 | Chat widget V4 | `project/frontend/` | 5173 |
 | Chat widget V5 (in build) | `project_v5/frontend/` | 5173 (when V4 widget not running) |
 | Admin backend | `project_admin/backend/` | 8081 |
@@ -139,9 +139,11 @@ V5 is the next-generation chat engine: v9 scene-graph foundation + V4
 strengths ported on top (binding, state with delta-stream, system
 preset registry). Lives in `project_v5/`.
 
-**Status as of 2026-05-03**: chunks 1-13 closed. P0-A (tool surface),
+**Status as of 2026-05-03**: chunks 1-14 closed. P0-A (tool surface),
 P0-B (render path), P0-C (interaction loop), chunk-12 render polish,
-and chunk-13 cross-tenant chat/trace inspection in Curator all green:
+chunk-13 cross-tenant chat/trace inspection in Curator, and chunk-14
+**Railway deploy** all green. **V5 backend live at
+`https://v5-engine-production.up.railway.app`**:
 - engine, state, binding, components, replicate, ops applier
 - Anthropic adapter, prompt-builders for both agents, HTTP server,
   postgres adapters with transactions / retries
@@ -168,8 +170,18 @@ and chunk-13 cross-tenant chat/trace inspection in Curator all green:
   best-effort async; Curator reads shared Neon directly. Sidebar:
   Tracing → Chat Sessions
 
-NOT covered yet: P1 deploy of V5 backend itself + smoke comparison
-vs V4. Detailed status: `docs/v5-engine-plan.md`.
+- chunk 14: `project_v5/Dockerfile` (3-stage, mirrors V4); `/readyz`
+  with `pgxpool.Ping`; static fileserver on `GET /` so `widget.js` is
+  served same-origin (V5 widget.jsx auto-detects `apiBaseUrl` from
+  script.src.origin); Railway service `v5-engine` in
+  `selfless-tranquility/production` with shared Neon. Live smoke green
+  on real Railway URL: healthz/readyz/widget.js + 1 pipeline turn
+  (`product_card` replicate=3, cache_read=7546, $0.006, 7.2s cold).
+
+NOT covered yet: chunk 15 (V4 vs V5 smoke comparison on 20-30 prompts +
+steady-state latency baseline) and chunk 16 (frontend route swap behind
+flag — V4 widget still owns embed). Detailed status:
+`docs/v5-engine-plan.md`.
 
 **Local dev** (V4 holds 8082 in this monorepo, so V5 runs on 8084):
 

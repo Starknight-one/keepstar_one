@@ -17,6 +17,8 @@ import (
 //   - LLMModel:        e.g. "claude-haiku-4-5" (default)
 //   - TenantSlug:      fallback tenant when X-Tenant-Slug header absent
 //   - LogLevel:        slog level — "debug" | "info" | "warn" | "error"
+//   - StaticDir:       optional dir served on `GET /` (e.g. ./static for
+//                      a vite-built widget bundle); empty disables it
 type Config struct {
 	Port            string
 	DatabaseURL     string
@@ -24,6 +26,7 @@ type Config struct {
 	LLMModel        string
 	TenantSlug      string
 	LogLevel        slog.Level
+	StaticDir       string
 }
 
 // Load reads env vars, applies defaults, and validates required fields.
@@ -36,6 +39,7 @@ func Load() (*Config, error) {
 		LLMModel:        envOr("LLM_MODEL", "claude-haiku-4-5"),
 		TenantSlug:      envOr("TENANT_SLUG", "hey-babes-cosmetics"),
 		LogLevel:        parseLogLevel(envOr("LOG_LEVEL", "info")),
+		StaticDir:       envOr("STATIC_DIR", "./static"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
