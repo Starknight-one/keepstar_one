@@ -6,55 +6,64 @@
   "children": [
     {
       "type": "frame",
-      "id": "row-card",
-      "replicate": true,
-      "layout": {"direction": "row", "gap": "md"},
+      "id": "list",
+      "layout": {"direction": "column", "gap": "md"},
       "children": [
         {
           "type": "frame",
-          "id": "row-hero",
-          "layout": {"direction": "column"},
+          "id": "row-card",
+          "replicate": true,
+          "layout": {"direction": "row", "gap": "md"},
           "children": [
             {
-              "type": "image",
-              "id": "row-hero-img",
-              "fieldBinding": "heroImage"
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "row-info",
-          "layout": {"direction": "column", "gap": "xs"},
-          "children": [
-            {
-              "type": "text",
-              "id": "row-title",
-              "fieldBinding": "name",
-              "textStyle": {"fontSize": "md", "fontWeight": "bold"}
-            },
-            {
-              "type": "text",
-              "id": "row-desc",
-              "fieldBinding": "description",
-              "textStyle": {"fontSize": "sm"},
-              "lineClamp": 2
-            },
-            {
-              "type": "ref",
-              "id": "row-meta",
-              "ref": "price-rating-root"
-            },
-            {
-              "type": "ref",
-              "id": "row-brand",
-              "ref": "brand-badge-root"
+              "type": "frame",
+              "id": "row-hero",
+              "width": 120,
+              "layout": {"direction": "column"},
+              "children": [
+                {
+                  "type": "image",
+                  "id": "row-hero-img",
+                  "fieldBinding": "heroImage",
+                  "mediaStyle": {"aspectRatio": "1:1"}
+                }
+              ]
             },
             {
               "type": "frame",
-              "id": "actions",
-              "layout": {"direction": "row", "gap": "sm"},
-              "children": []
+              "id": "row-info",
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "row-title",
+                  "fieldBinding": "name",
+                  "textStyle": {"fontSize": "md", "fontWeight": "bold"}
+                },
+                {
+                  "type": "text",
+                  "id": "row-desc",
+                  "fieldBinding": "description",
+                  "textStyle": {"fontSize": "sm"},
+                  "lineClamp": 2
+                },
+                {
+                  "type": "ref",
+                  "id": "row-meta",
+                  "ref": "price-rating-root"
+                },
+                {
+                  "type": "ref",
+                  "id": "row-brand",
+                  "ref": "brand-badge-root"
+                },
+                {
+                  "type": "frame",
+                  "id": "actions",
+                  "layout": {"direction": "row", "gap": "sm"},
+                  "children": []
+                }
+              ]
             }
           ]
         }

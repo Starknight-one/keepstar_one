@@ -2,9 +2,12 @@ import NodeRenderer from '../NodeRenderer'
 import { useRenderContext } from '../RenderContext'
 import { dispatchAction } from '../actionDispatch'
 
-// Frame — flexbox container. Reads node.layout for {direction, gap,
-// align, justify}. Recurses into children. Empty children → empty box
-// (still rendered so layout placeholders work).
+// Frame — flexbox container. Reads:
+//   layout.{direction, gap, align, justify, wrap}  → flexbox knobs
+//   width / minWidth / maxWidth                    → inline-style sizing
+//                                                    (numbers → px,
+//                                                    strings pass through)
+// Recurses into children. Empty children → empty box (placeholders OK).
 //
 // Replicate clones (frames carrying __templateOrigin from the engine
 // fan-out) get an entire-card click handler that fires drill_detail
@@ -17,6 +20,7 @@ export default function Frame({ node }) {
   const children = Array.isArray(node.children) ? node.children : []
 
   const drillProps = computeDrillProps(node, ctx)
+  const styleProps = sizingStyle(node)
 
   return (
     <div
@@ -25,7 +29,9 @@ export default function Frame({ node }) {
       data-gap={layout.gap || ''}
       data-align={layout.align || ''}
       data-justify={layout.justify || ''}
+      data-wrap={layout.wrap ? 'true' : ''}
       data-id={node.id || ''}
+      style={styleProps}
       role={drillProps ? 'button' : undefined}
       tabIndex={drillProps ? 0 : undefined}
       onClick={drillProps ? drillProps.onClick : undefined}
@@ -36,6 +42,28 @@ export default function Frame({ node }) {
       ))}
     </div>
   )
+}
+
+// sizingStyle turns node.width / minWidth / maxWidth into an inline
+// style object. Number → "<n>px"; string → pass-through (lets seeds
+// emit "100%", "50vw", etc. when they need to). Returns undefined when
+// no sizing is set so React doesn't add an empty style attribute.
+function sizingStyle(node) {
+  const out = {}
+  const w = sizeValue(node.width)
+  if (w !== undefined) out.width = w
+  const mw = sizeValue(node.maxWidth)
+  if (mw !== undefined) out.maxWidth = mw
+  const mn = sizeValue(node.minWidth)
+  if (mn !== undefined) out.minWidth = mn
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function sizeValue(v) {
+  if (v === undefined || v === null) return undefined
+  if (typeof v === 'number') return `${v}px`
+  if (typeof v === 'string' && v !== '') return v
+  return undefined
 }
 
 // computeDrillProps returns onClick + onKeyDown handlers if this

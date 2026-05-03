@@ -3,36 +3,44 @@
   "children": [
     {
       "type": "frame",
-      "id": "card",
-      "replicate": true,
-      "layout": {"direction": "column", "gap": "xs"},
+      "id": "grid",
+      "layout": {"direction": "row", "wrap": true, "gap": "md", "justify": "start"},
       "children": [
         {
-          "type": "image",
-          "id": "hero-img",
-          "fieldBinding": "heroImage",
-          "mediaStyle": {"aspectRatio": "1:1"}
-        },
-        {
-          "type": "text",
-          "id": "title",
-          "fieldBinding": "name",
-          "slot": "title",
-          "textStyle": {"fontSize": "sm", "fontWeight": "medium", "lineClamp": 2}
-        },
-        {
-          "type": "text",
-          "id": "price",
-          "fieldBinding": "priceFormatted",
-          "format": "currency",
-          "slot": "price",
-          "textStyle": {"fontSize": "sm", "fontWeight": "bold"}
-        },
-        {
           "type": "frame",
-          "id": "actions",
-          "layout": {"direction": "row", "gap": "xs"},
-          "children": []
+          "id": "card",
+          "replicate": true,
+          "width": 200,
+          "layout": {"direction": "column", "gap": "xs"},
+          "children": [
+            {
+              "type": "image",
+              "id": "hero-img",
+              "fieldBinding": "heroImage",
+              "mediaStyle": {"aspectRatio": "1:1"}
+            },
+            {
+              "type": "text",
+              "id": "title",
+              "fieldBinding": "name",
+              "slot": "title",
+              "textStyle": {"fontSize": "sm", "fontWeight": "medium", "lineClamp": 2}
+            },
+            {
+              "type": "text",
+              "id": "price",
+              "fieldBinding": "priceFormatted",
+              "format": "currency",
+              "slot": "price",
+              "textStyle": {"fontSize": "sm", "fontWeight": "bold"}
+            },
+            {
+              "type": "frame",
+              "id": "actions",
+              "layout": {"direction": "row", "gap": "xs"},
+              "children": []
+            }
+          ]
         }
       ]
     }

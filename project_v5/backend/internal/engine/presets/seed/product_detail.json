@@ -4,6 +4,7 @@
     {
       "type": "frame",
       "id": "detail",
+      "maxWidth": 720,
       "layout": {"direction": "column", "gap": "lg"},
       "children": [
         {

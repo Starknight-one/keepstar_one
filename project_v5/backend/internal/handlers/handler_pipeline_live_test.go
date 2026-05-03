@@ -307,6 +307,12 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	if turn4.usedPresetForLastCall() {
 		t.Logf("turn 4: agent used preset (acceptable but suboptimal); want ops-only modify. last input: %s", turn4.summary())
 	}
+	// Chunk 12 — mode is REQUIRED on every call. A genuine modify ask
+	// must land mode="modify". If the LLM goes mode="rebuild" instead,
+	// the tweak isn't a tweak.
+	if mode := turn4.modeForLastCall(); mode != "modify" {
+		t.Errorf("turn 4: expected mode=modify on tweak ask, got mode=%q", mode)
+	}
 
 	// Inspect the rich tracing on turn 4 — when state has a current
 	// Document, tree_map must have fired.
@@ -351,6 +357,17 @@ func TestHTTPLiveSmoke(t *testing.T) {
 		t.Fatalf("turn 5: state has no products to drive action / nav tests")
 	}
 	firstID := products[0].ID
+
+	// Chunk 12 — turn 5 is a fresh-session rebuild; mode must be rebuild.
+	if mode := turn5.modeForLastCall(); mode != "rebuild" {
+		t.Errorf("turn 5: expected mode=rebuild on fresh-session ask, got mode=%q", mode)
+	}
+
+	// Chunk 12 — rebuild on a card preset emits a top-level grid wrapper
+	// (frame with layout.wrap=true). Verify it lands in the response.
+	if !turn5HasGridWrapper(turn5.parsed.Document) {
+		t.Logf("turn 5: top-level grid wrapper missing; doc=%s", turn5.summary())
+	}
 
 	// Pipeline response should now carry the prefetch payload (preset
 	// product_card has product_detail as drill target via SystemAdjacency).
@@ -572,6 +589,22 @@ func (r *pipelineTurnResult) usedPresetForLastCall() bool {
 	return false
 }
 
+// modeForLastCall returns the `mode` value the LLM passed on the last
+// visual_assembly invocation, or "" if the tool wasn't called.
+func (r *pipelineTurnResult) modeForLastCall() string {
+	for i := len(r.parsed.ToolCalls) - 1; i >= 0; i-- {
+		tc := r.parsed.ToolCalls[i]
+		name, _ := tc["name"].(string)
+		if name != "visual_assembly" {
+			continue
+		}
+		input, _ := tc["input"].(map[string]any)
+		mode, _ := input["mode"].(string)
+		return mode
+	}
+	return ""
+}
+
 // hasSpanName reports whether any span in the response has the given name.
 func (r *pipelineTurnResult) hasSpanName(name string) bool {
 	for _, s := range r.parsed.Spans {
@@ -625,6 +658,28 @@ func (r *pipelineTurnResult) firstProducts(t *testing.T, statePort ports.StatePo
 		t.Fatalf("GetState: %v", err)
 	}
 	return state.Current.Data.Products
+}
+
+// turn5HasGridWrapper reports whether the chunk-12 grid wrapper is
+// present at the document root (frame with layout.wrap=true). Used to
+// confirm card preset rebuilds produce a row-of-cards rather than a
+// vertical stack of clones.
+func turn5HasGridWrapper(doc map[string]interface{}) bool {
+	kids, _ := doc["children"].([]interface{})
+	for _, k := range kids {
+		m, ok := k.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := m["type"].(string); t != "frame" {
+			continue
+		}
+		layout, _ := m["layout"].(map[string]any)
+		if w, _ := layout["wrap"].(bool); w {
+			return true
+		}
+	}
+	return false
 }
 
 // containsString reports whether s contains v. Mirrors the helper in

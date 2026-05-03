@@ -12,6 +12,7 @@ package prompts
 //
 // Sections present (mirroring V4 with V5-specific syntax):
 //   - HOW IT WORKS
+//   - MODE (chunk 12 — REQUIRED rebuild|modify decision)
 //   - PRESETS (catalog, hardcoded for chunk 6b)
 //   - REPLICATE
 //   - OPS VOCABULARY
@@ -43,6 +44,35 @@ You decide which preset to consume and how many clones to fan out. The engine do
   BindData(doc, data)             → fills atoms with fieldBinding from data[i] using the inherited dataIndex
 
 You never write data values into the tool call. You never spell out N copies for N items. The engine clones, the engine binds. You just pick the shape.
+
+## MODE — REQUIRED, pick one every turn
+
+The tool requires a "mode" parameter. No default. Pick based on user intent:
+
+  mode: "rebuild" — discard the previous Document and build fresh from
+    preset / ops. Use when:
+      • new data arrived (search results, filter applied, drill-down)
+      • user asks for a different view ("show ...", "render ...",
+        "make a landing", "compare these", "детали", "грид", "лендинг")
+      • current view is irrelevant to what the user wants next
+      • first turn (no Document yet)
+
+  mode: "modify" — load the existing Document and apply ops as deltas
+    on top. Use when:
+      • cosmetic tweak ("сделай цены красными", "make titles bold",
+        "remove rating")
+      • structural tweak on the current view ("add a Buy button",
+        "2 columns")
+      • formation_tree present + the request is about changing what is
+        already on screen, not about replacing it
+
+When in doubt: if the user could have said «оставь что есть, но ...» or
+«keep what's on screen but ...» — it's "modify". If they said «покажи»
+/ «сделай» / «render» / «show me» and it implies different content —
+it's "rebuild".
+
+modify on an empty Document is an error — pick rebuild for the first
+turn even if the user asked for a tweak.
 
 ## PRESETS
 
@@ -162,6 +192,7 @@ Step 3: Set replicate:true on the outer frame for fan-out across data;
 ### Example — freestyle product card grid (no preset):
 
   visual_assembly({
+    mode: "rebuild",
     replicate: 3,
     ops: [
       { "op": "insert", "parent": "formation", "ref": "card",
@@ -188,6 +219,7 @@ Step 3: Set replicate:true on the outer frame for fan-out across data;
 ### Example — single product detail (no preset):
 
   visual_assembly({
+    mode: "rebuild",
     replicate: 1,
     ops: [
       { "op": "insert", "parent": "formation", "ref": "detail",
@@ -233,6 +265,7 @@ replicate goes inside each frame's props.
 ### Example — product line presentation:
 
   visual_assembly({
+    mode: "rebuild",
     ops: [
       // hero literal
       { "op": "insert", "parent": "formation", "ref": "hero",
@@ -272,13 +305,14 @@ replicate goes inside each frame's props.
 
 ### Example 1 — show 3 products in a grid (most common case):
 
-  visual_assembly({ preset: "product_card", replicate: 3 })
+  visual_assembly({ mode: "rebuild", preset: "product_card", replicate: 3 })
 
 That's it. Engine pulls product_card + its components (price-rating, brand-badge, etc.), fans out 3 clones, binds each to data[0..2]. No ops needed.
 
-### Example 2 — same as #1 but make all prices red:
+### Example 2 — same as #1 but make all prices red on the FIRST render:
 
   visual_assembly({
+    mode: "rebuild",
     preset: "product_card",
     replicate: 3,
     ops: [
@@ -290,11 +324,12 @@ The "card-meta" id targets the price-rating Ref slot in product_card. Ops cascad
 
 ### Example 3 — single product detail (drill-down):
 
-  visual_assembly({ preset: "product_detail", replicate: 1 })
+  visual_assembly({ mode: "rebuild", preset: "product_detail", replicate: 1 })
 
 ### Example 4 — empty state with custom messaging:
 
   visual_assembly({
+    mode: "rebuild",
     preset: "empty_not_found",
     ops: [
       { "op": "update", "target": "headline", "props": { "content": "No serums match those filters" } },
@@ -304,7 +339,7 @@ The "card-meta" id targets the price-rating Ref slot in product_card. Ops cascad
 
 ### Example 5 — list row layout instead of grid:
 
-  visual_assembly({ preset: "product_card_list_row", replicate: 5 })
+  visual_assembly({ mode: "rebuild", preset: "product_card_list_row", replicate: 5 })
 
 ## MODIFYING EXISTING — tweaking what's already on screen
 
@@ -313,6 +348,7 @@ When the runtime hands you a tree_map (the user is mid-conversation, the previou
 ### Example — user says "make the prices bigger and remove the rating":
 
   visual_assembly({
+    mode: "modify",
     ops: [
       { "op": "update", "target": "card-meta",  "props": { "textStyle": { "fontSize": "xl" } } },
       { "op": "delete", "target": "pr-rating" }
@@ -321,9 +357,9 @@ When the runtime hands you a tree_map (the user is mid-conversation, the previou
 
 ### Example — user says "show 6 instead of 3":
 
-  visual_assembly({ preset: "product_card", replicate: 6 })
+  visual_assembly({ mode: "rebuild", preset: "product_card", replicate: 6 })
 
-(In this case you DO repass the preset because replication count comes from a fresh build, not from an op on an existing tree.)
+(In this case mode is "rebuild" — replication count comes from a fresh build, not from an op on an existing tree.)
 
 ## TREE_MAP — what you see in modify mode
 
@@ -357,19 +393,20 @@ Rules:
 
 ## DECISION RULES
 
-  1. There are THREE call shapes — pick one per turn:
+  1. ALWAYS pass mode. data_change present, user asks for a different
+     view, or this is the first turn → mode="rebuild". Cosmetic /
+     structural tweak on the existing view → mode="modify".
+  2. There are THREE call shapes — pick one per turn:
      (a) preset name (± ops on top) — cheap, use whenever a preset matches;
-     (b) ops only, no preset — for freestyle and modify-mode tweaks;
+     (b) ops only, no preset — for rebuild freestyle and for modify tweaks;
      (c) multi-widget compose — omit preset and insert multiple top-level
-         frames in one call (landings, presentations, hero + grid + cta).
-  2. If a preset matches the user's intent, USE it. Hand-rolled freestyle
+         frames in one rebuild call (landings, presentations, hero + grid
+         + cta).
+  3. If a preset matches the user's intent, USE it. Hand-rolled freestyle
      ops are last resort. Compose only when one preset can't carry it
      (multiple distinct block types in one response).
-  3. data_change present (new search results, fresh data) → fresh build
-     with a preset OR freestyle ops; don't try to modify-ops your way out
-     of stale state.
-  4. data_change absent + cosmetic / structural tweak → ops only, no
-     preset. Target ids from tree_map.
+  4. modify on an empty Document is an error — first turn, even when the
+     ask sounds like a tweak, must be mode="rebuild".
   5. props are merged in update ops — only send what changes.
   6. Don't over-specify — the engine handles defaults (layout direction,
      gap, alignment).

@@ -139,8 +139,9 @@ V5 is the next-generation chat engine: v9 scene-graph foundation + V4
 strengths ported on top (binding, state with delta-stream, system
 preset registry). Lives in `project_v5/`.
 
-**Status as of 2026-05-03**: chunks 1-11 closed. P0-A (tool surface),
-P0-B (render path), and P0-C (interaction loop) all green:
+**Status as of 2026-05-03**: chunks 1-12 closed. P0-A (tool surface),
+P0-B (render path), P0-C (interaction loop), and chunk-12 render polish
+all green:
 - engine, state, binding, components, replicate, ops applier
 - Anthropic adapter, prompt-builders for both agents, HTTP server,
   postgres adapters with transactions / retries
@@ -157,10 +158,13 @@ P0-B (render path), and P0-C (interaction loop) all green:
   on every pipeline response
 - frontend `actionDispatch` + `RenderContext` + clickable cards +
   back button
+- card render polish: REQUIRED `mode: rebuild|modify` enum on
+  visual_assembly (defeats modify-bias); card seeds wrapped in grid
+  frame with `layout.wrap=true`; Frame.jsx reads `width/maxWidth`
+  → CSS flex-wrap + sensible card widths
 
-NOT covered yet: chunk 12 (render-quality polish — 4 gaps from first
-manual test), chunk 13 (Curator chats UI), P1 deploy + smoke comparison
-vs V4. Detailed status: `docs/v5-engine-plan.md`.
+NOT covered yet: chunk 13 (Curator chats UI), P1 deploy + smoke
+comparison vs V4. Detailed status: `docs/v5-engine-plan.md`.
 
 **Local dev** (V4 holds 8082 in this monorepo, so V5 runs on 8084):
 

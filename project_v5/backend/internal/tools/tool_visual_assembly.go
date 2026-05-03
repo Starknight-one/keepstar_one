@@ -46,27 +46,29 @@ var _ Tool = (*VisualAssemblyTool)(nil)
 // Definition returns the JSON-Schema the LLM sees. Schema is intentionally
 // stable across runs — anything we change here busts the prompt cache.
 //
-// Chunk 9 note: `preset` is OPTIONAL. The LLM picks one of three call
-// shapes:
+// Three call shapes (chunk 9), each carries an explicit `mode` (chunk 12):
 //
-//	1. preset only (or preset + ops on top) — fast path; engine
-//	   Materialises preset + components and the ops layer on top.
-//	2. ops only, no preset — freestyle build (BUILDING FROM SCRATCH in
-//	   the system prompt) or modify-mode (ops target ids from the
-//	   tree_map of the existing Document, which is injected by the
-//	   orchestrator into the user message).
-//	3. multi-widget compose — preset omitted, ops insert MULTIPLE
-//	   top-level frames at parent="formation" / "root" / "" for
-//	   landings, presentations, hero+grid+cta combos.
+//	1. preset name (± ops on top) — fast path; engine Materialises
+//	   preset + components and the ops layer on top.
+//	2. ops only — freestyle build (mode=rebuild) or modify on existing
+//	   Document (mode=modify; ops target ids from the tree_map).
+//	3. multi-widget compose — preset omitted, mode=rebuild, ops insert
+//	   multiple top-level frames at parent="formation" / "root" / "".
 //
 // Both preset and ops absent → ToolResult IsError.
+// `mode` missing or out of enum → ToolResult IsError.
 func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 	return domain.ToolDefinition{
 		Name:        "visual_assembly",
-		Description: "Build or modify a scene-graph Document. Three call shapes: (1) preset name + optional ops on top — cheapest, use whenever a preset matches; (2) ops only, no preset — for freestyle builds and modify-mode tweaks against the tree_map; (3) multi-widget compose — omit preset and insert multiple top-level frames in one call (landings, presentations, hero + grid + cta). Engine runs Materialise (when preset present) → ApplyOps → ExpandReplicates → ResolveAndInline → BindData and writes the result to current.template. Reply only by calling this tool — never output text.",
+		Description: "Build or modify a scene-graph Document. Always pass mode=rebuild|modify. Three call shapes: (1) preset name + optional ops — cheapest, use whenever a preset matches; (2) ops only — freestyle (rebuild) or tweaks on the current view (modify, target ids from tree_map); (3) multi-widget compose — rebuild, ops insert multiple top-level frames in one call (landings, presentations, hero + grid + cta). Engine runs Materialise (when preset present) → ApplyOps → ExpandReplicates → ResolveAndInline → BindData and writes the result to current.template. Reply only by calling this tool — never output text.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"rebuild", "modify"},
+					"description": "REQUIRED. \"rebuild\" — discard the previous Document and build fresh from preset/ops (use when the user asks for new content, a different layout, drill-down, or after a search). \"modify\" — load the current Document and apply ops as deltas targeting ids from tree_map (cosmetic / structural tweaks on what's on screen). When in doubt: «keep what's on screen but ...» = modify; «show me ...» / «render ...» = rebuild.",
+				},
 				"preset": map[string]interface{}{
 					"type":        "string",
 					"description": "Published preset name for this tenant. See the PRESETS section of the system prompt for the catalog. Optional — omit for freestyle / modify / multi-widget compose.",
@@ -91,54 +93,56 @@ func (t *VisualAssemblyTool) Definition() domain.ToolDefinition {
 					},
 				},
 			},
+			"required": []string{"mode"},
 		},
 	}
 }
 
 // Execute runs one tool call.
 //
-// Three call shapes (chunk 9):
-//   - preset present (± ops)      → load preset + components → Materialise →
-//                                    ApplyOps → ExpandReplicates → ResolveAndInline → BindData
-//   - preset absent, ops present  → start from engine.NewDocument() →
-//                                    ApplyOps → ExpandReplicates →
-//                                    ResolveAndInline (in case the LLM
-//                                    inserted ref nodes; safe no-op
-//                                    otherwise) → BindData
-//   - both absent                 → ToolResult IsError
+// `mode` (chunk 12) is REQUIRED — explicit per-turn decision:
+//
+//   - mode=rebuild + preset    → load preset + components → Materialise
+//                                (ignores any current Document; fresh build)
+//   - mode=rebuild + ops only  → start from engine.NewDocument()
+//                                (freestyle / multi-widget compose)
+//   - mode=modify  + ops       → load state.Current.Template; ops apply as
+//                                deltas targeting tree_map ids
+//
+// Common pipeline (after the start-state chosen above):
+//
+//   ApplyOps → ExpandReplicates → ResolveAndInline → BindData →
+//   InjectDefaultActions → marshal → UpdateTemplate
 //
 // Failure modes:
-//   - both preset and ops absent          → ToolResult IsError
-//   - preset / component not found in DB or registry → ToolResult IsError
-//   - state retrieval / write fails       → returns Go error (transport-layer)
+//   - mode missing / not in enum             → ToolResult IsError
+//   - both preset and ops absent (rebuild)   → ToolResult IsError
+//   - modify on empty Template               → ToolResult IsError
+//                                              (LLM should pick rebuild)
+//   - preset / component not found           → ToolResult IsError
+//   - state retrieval / write fails          → returns Go error
 //
 // On success: ToolResult.Content reports a one-line summary including
 // the call-shape mode for trace correlation.
 func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
-	presetName, _ := input["preset"].(string)
+	mode, _ := input["mode"].(string)
+	if mode != "rebuild" && mode != "modify" {
+		return errorResult("mode required: must be \"rebuild\" or \"modify\""), nil
+	}
 
+	presetName, _ := input["preset"].(string)
 	replicate := readReplicate(input)
 
-	// Parse ops upfront so the call-shape decision can branch on whether
-	// any ops were provided.
 	parsedOps, err := parseOpsList(input["ops"])
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
-	// Both absent → IsError. Surfaces to the LLM next turn; cheaper than
-	// silently rendering an empty Document.
-	if presetName == "" && len(parsedOps) == 0 {
-		return errorResult("either `preset` or `ops` (or both) must be provided"), nil
+	if mode == "rebuild" && presetName == "" && len(parsedOps) == 0 {
+		return errorResult("rebuild requires either `preset` or `ops` (or both)"), nil
 	}
-
-	// Provisional call-shape — the no-preset branch may upgrade
-	// "freestyle" to "modify" once it sees the existing template.
-	mode := "preset"
-	if presetName == "" {
-		mode = "freestyle"
-	} else if len(parsedOps) > 0 {
-		mode = "preset+ops"
+	if mode == "modify" && len(parsedOps) == 0 {
+		return errorResult("modify requires `ops`"), nil
 	}
 
 	var (
@@ -155,8 +159,9 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 	}
 	data := productsToBindData(state.Current.Data.Products)
 
-	if presetName != "" {
-		// 1. Load preset (DB → SystemPresetRegistry fallback inside adapter).
+	switch {
+	case mode == "rebuild" && presetName != "":
+		// rebuild + preset — load preset + components, Materialise.
 		preset, err := t.presets.GetPublishedPreset(ctx, toolCtx.TenantSlug, presetName)
 		if err != nil {
 			return errorResult(fmt.Sprintf("preset %q not found: %v", presetName, err)), nil
@@ -167,8 +172,6 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 		}
 		isSystem = preset.IsSystem
 
-		// 2. Load all published components for the tenant. Materialise
-		// picks the ones the preset references by id; extras are harmless.
 		components, err := t.components.ListPublishedComponents(ctx, toolCtx.TenantSlug)
 		if err != nil {
 			return errorResult(fmt.Sprintf("list components: %v", err)), nil
@@ -183,28 +186,21 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 			componentDocs = append(componentDocs, cd)
 		}
 		merged = engine.Materialise(presetDoc, componentDocs)
-	} else {
-		// No-preset path. Two sub-cases drive the starting point:
-		//
-		//   modify    — there IS a Document on file (state.Current.Template).
-		//               Load it so ops target real ids the LLM saw via
-		//               tree_map. Replicate / Resolve / Bind run as no-ops
-		//               or idempotent passes (the previous turn already
-		//               expanded clones and resolved refs).
-		//   freestyle — first turn (or rebuild without preset). Empty
-		//               Document; ops construct the entire tree.
-		//
-		// Discriminate by whether state.Current.Template is non-empty.
-		if len(state.Current.Template) > 0 {
-			loaded, err := mapToDoc(state.Current.Template)
-			if err != nil {
-				return nil, fmt.Errorf("unmarshal current template: %w", err)
-			}
-			merged = loaded
-			mode = "modify"
-		} else {
-			merged = engine.NewDocument()
+
+	case mode == "rebuild" && presetName == "":
+		// rebuild + ops only — fresh empty Document, ops build the tree.
+		merged = engine.NewDocument()
+
+	case mode == "modify":
+		// modify — load existing Document so ops target real ids.
+		if len(state.Current.Template) == 0 {
+			return errorResult("modify requires a current Document; pick mode=rebuild for the first turn"), nil
 		}
+		loaded, err := mapToDoc(state.Current.Template)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal current template: %w", err)
+		}
+		merged = loaded
 	}
 
 	slog.Info("visual_assembly",

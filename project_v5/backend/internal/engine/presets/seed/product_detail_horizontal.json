@@ -4,6 +4,7 @@
     {
       "type": "frame",
       "id": "detail",
+      "maxWidth": 960,
       "layout": {"direction": "row", "gap": "xl", "align": "start"},
       "children": [
         {

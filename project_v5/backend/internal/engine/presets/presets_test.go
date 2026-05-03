@@ -10,6 +10,10 @@ import (
 // TestProductCardSeedRoundTrip — chunk 5 refactor moved price/rating/brand
 // out of inline atoms and into RefNodes. The card now carries hero+title
 // directly and points at two components for meta + brand.
+//
+// Chunk 12 added a top-level grid-wrapper frame so flex-wrap renders the
+// replicate clones as a sensible row-of-cards instead of stacking them.
+// The card frame is now nested inside the wrapper at children[0].
 func TestProductCardSeedRoundTrip(t *testing.T) {
 	if len(ProductCardJSON) == 0 {
 		t.Fatal("ProductCardJSON is empty — embed broken")
@@ -19,11 +23,19 @@ func TestProductCardSeedRoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if len(doc.Children) != 1 {
-		t.Fatalf("expected 1 root child, got %d", len(doc.Children))
+		t.Fatalf("expected 1 root child (grid wrapper), got %d", len(doc.Children))
 	}
-	card := doc.Children[0]
+	grid := doc.Children[0]
+	if engine.NodeID(grid) != "grid" {
+		t.Errorf("root id = %q, want grid", engine.NodeID(grid))
+	}
+	gridChildren := engine.Children(grid)
+	if len(gridChildren) != 1 {
+		t.Fatalf("grid wrapper should have exactly 1 card child, got %d", len(gridChildren))
+	}
+	card := gridChildren[0]
 	if engine.NodeID(card) != "card" {
-		t.Errorf("root id = %q, want card", engine.NodeID(card))
+		t.Errorf("card id = %q, want card", engine.NodeID(card))
 	}
 	if rep, _ := card["replicate"].(bool); !rep {
 		t.Errorf("card frame must carry replicate:true")
@@ -73,10 +85,16 @@ func TestProductCardListRowSeedRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(ProductCardListRowJSON, &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(doc.Children) != 1 || engine.NodeID(doc.Children[0]) != "row-card" {
-		t.Fatalf("root not row-card: %+v", doc.Children)
+	// Chunk 12 added a top-level list wrapper (column-stack) so the row
+	// cards live one level down. Walk into it.
+	if len(doc.Children) != 1 || engine.NodeID(doc.Children[0]) != "list" {
+		t.Fatalf("root not list wrapper: %+v", doc.Children)
 	}
-	root := doc.Children[0]
+	listChildren := engine.Children(doc.Children[0])
+	if len(listChildren) != 1 || engine.NodeID(listChildren[0]) != "row-card" {
+		t.Fatalf("list wrapper child not row-card: %+v", listChildren)
+	}
+	root := listChildren[0]
 	if rep, _ := root["replicate"].(bool); !rep {
 		t.Errorf("row-card must carry replicate:true")
 	}

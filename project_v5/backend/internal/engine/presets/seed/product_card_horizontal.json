@@ -3,50 +3,58 @@
   "children": [
     {
       "type": "frame",
-      "id": "card",
-      "replicate": true,
-      "layout": {"direction": "row", "gap": "md", "align": "center"},
+      "id": "grid",
+      "layout": {"direction": "row", "wrap": true, "gap": "md", "justify": "start"},
       "children": [
         {
-          "type": "image",
-          "id": "hero-img",
-          "fieldBinding": "heroImage",
-          "mediaStyle": {"aspectRatio": "1:1"}
-        },
-        {
           "type": "frame",
-          "id": "info",
-          "layout": {"direction": "column", "gap": "xs"},
+          "id": "card",
+          "replicate": true,
+          "width": 540,
+          "layout": {"direction": "row", "gap": "md", "align": "center"},
           "children": [
             {
-              "type": "text",
-              "id": "title",
-              "fieldBinding": "name",
-              "slot": "title",
-              "textStyle": {"fontSize": "lg", "fontWeight": "bold"}
-            },
-            {
-              "type": "text",
-              "id": "description",
-              "fieldBinding": "description",
-              "slot": "description",
-              "textStyle": {"fontSize": "sm", "lineClamp": 2}
-            },
-            {
-              "type": "ref",
-              "id": "card-meta",
-              "ref": "price-rating-root"
-            },
-            {
-              "type": "ref",
-              "id": "card-brand",
-              "ref": "brand-badge-root"
+              "type": "image",
+              "id": "hero-img",
+              "fieldBinding": "heroImage",
+              "mediaStyle": {"aspectRatio": "1:1"}
             },
             {
               "type": "frame",
-              "id": "actions",
-              "layout": {"direction": "row", "gap": "sm"},
-              "children": []
+              "id": "info",
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "title",
+                  "fieldBinding": "name",
+                  "slot": "title",
+                  "textStyle": {"fontSize": "lg", "fontWeight": "bold"}
+                },
+                {
+                  "type": "text",
+                  "id": "description",
+                  "fieldBinding": "description",
+                  "slot": "description",
+                  "textStyle": {"fontSize": "sm", "lineClamp": 2}
+                },
+                {
+                  "type": "ref",
+                  "id": "card-meta",
+                  "ref": "price-rating-root"
+                },
+                {
+                  "type": "ref",
+                  "id": "card-brand",
+                  "ref": "brand-badge-root"
+                },
+                {
+                  "type": "frame",
+                  "id": "actions",
+                  "layout": {"direction": "row", "gap": "sm"},
+                  "children": []
+                }
+              ]
             }
           ]
         }

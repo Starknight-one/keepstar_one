@@ -71,6 +71,7 @@
   max-width: 1200px;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--kw-gap-lg);
 }
 
@@ -196,6 +197,19 @@
 }
 .kw-frame[data-justify='space-between'] {
   justify-content: space-between;
+}
+.kw-frame[data-justify='start'] {
+  justify-content: flex-start;
+}
+.kw-frame[data-justify='end'] {
+  justify-content: flex-end;
+}
+
+/* Chunk 12 — flex-wrap support. Card-grid presets emit
+   layout:{direction:row, wrap:true} so replicate clones flow as a
+   sensible row-of-cards instead of stacking. */
+.kw-frame[data-wrap='true'] {
+  flex-wrap: wrap;
 }
 
 .kw-frame[data-gap='xs']  { gap: var(--kw-gap-xs); }

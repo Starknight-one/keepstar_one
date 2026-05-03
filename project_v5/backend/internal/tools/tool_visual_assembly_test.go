@@ -150,7 +150,7 @@ func TestVisualAssemblyHappyPath(t *testing.T) {
 
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
-		map[string]interface{}{"preset": "product_card", "replicate": 2},
+		map[string]interface{}{"mode": "rebuild", "preset": "product_card", "replicate": 2},
 	)
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
@@ -189,7 +189,7 @@ func TestVisualAssemblyMissingPreset(t *testing.T) {
 	)
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
-		map[string]interface{}{"preset": "no_such_preset"},
+		map[string]interface{}{"mode": "rebuild", "preset": "no_such_preset"},
 	)
 	if err != nil {
 		t.Fatalf("expected ToolResult, got Go error: %v", err)
@@ -202,9 +202,9 @@ func TestVisualAssemblyMissingPreset(t *testing.T) {
 	}
 }
 
-// TestVisualAssemblyMissingPresetField — the tool requires a string preset
-// field. Missing → ToolResult with IsError=true.
-func TestVisualAssemblyMissingPresetField(t *testing.T) {
+// TestVisualAssemblyMissingMode — schema requires a `mode` enum value.
+// Missing → ToolResult with IsError=true.
+func TestVisualAssemblyMissingMode(t *testing.T) {
 	state := newMinStatePort(nil)
 	tool := NewVisualAssemblyTool(state,
 		&minPresetPort{byName: map[string]*domain.Preset{}},
@@ -212,13 +212,13 @@ func TestVisualAssemblyMissingPresetField(t *testing.T) {
 	)
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
-		map[string]interface{}{},
+		map[string]interface{}{"preset": "p"},
 	)
 	if err != nil {
 		t.Fatalf("expected ToolResult, got Go error: %v", err)
 	}
 	if !res.IsError {
-		t.Errorf("expected IsError=true on missing preset, got %+v", res)
+		t.Errorf("expected IsError=true on missing mode, got %+v", res)
 	}
 }
 
@@ -238,6 +238,7 @@ func TestVisualAssemblyOpsApplied(t *testing.T) {
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
 		map[string]interface{}{
+			"mode":      "rebuild",
 			"preset":    "p",
 			"replicate": 2,
 			// Update the title atom's `format` prop. The op runs against
@@ -304,6 +305,7 @@ func TestVisualAssemblyOpsBadShape(t *testing.T) {
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
 		map[string]interface{}{
+			"mode":   "rebuild",
 			"preset": "p",
 			"ops":    "not-an-array",
 		},
@@ -373,6 +375,7 @@ func TestVisualAssemblyFreestyle(t *testing.T) {
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
 		map[string]interface{}{
+			"mode": "rebuild",
 			"ops": []interface{}{
 				map[string]interface{}{
 					"op":     "insert",
@@ -419,6 +422,7 @@ func TestVisualAssemblyMultiWidgetCompose(t *testing.T) {
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
 		map[string]interface{}{
+			"mode": "rebuild",
 			"ops": []interface{}{
 				// hero literal
 				map[string]interface{}{
@@ -482,9 +486,10 @@ func TestVisualAssemblyMultiWidgetCompose(t *testing.T) {
 	}
 }
 
-// TestVisualAssemblyBothAbsentErrors — neither preset nor ops → IsError
-// (cheaper to surface to LLM than silently render an empty Document).
-func TestVisualAssemblyBothAbsentErrors(t *testing.T) {
+// TestVisualAssemblyRebuildBothAbsentErrors — rebuild with neither
+// preset nor ops → IsError (cheaper to surface to LLM than silently
+// render an empty Document).
+func TestVisualAssemblyRebuildBothAbsentErrors(t *testing.T) {
 	state := newMinStatePort(nil)
 	tool := NewVisualAssemblyTool(state,
 		&minPresetPort{byName: map[string]*domain.Preset{}},
@@ -492,7 +497,7 @@ func TestVisualAssemblyBothAbsentErrors(t *testing.T) {
 	)
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
-		map[string]interface{}{},
+		map[string]interface{}{"mode": "rebuild"},
 	)
 	if err != nil {
 		t.Fatalf("expected ToolResult, got Go error: %v", err)
@@ -500,6 +505,139 @@ func TestVisualAssemblyBothAbsentErrors(t *testing.T) {
 	if !res.IsError {
 		t.Errorf("expected IsError when both preset and ops absent, got %+v", res)
 	}
+}
+
+// TestVisualAssemblyModifyEmptyTemplate — modify with no current
+// Document → IsError. LLM must pick rebuild for the first turn.
+func TestVisualAssemblyModifyEmptyTemplate(t *testing.T) {
+	state := newMinStatePort(nil)
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{}},
+		&minComponentPort{},
+	)
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{
+			"mode": "modify",
+			"ops": []interface{}{
+				map[string]interface{}{"op": "update", "target": "title", "props": map[string]interface{}{"content": "X"}},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("expected ToolResult, got Go error: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("expected IsError on modify with empty template, got %+v", res)
+	}
+}
+
+// TestVisualAssemblyRebuildIgnoresExistingTemplate — rebuild on a
+// session that ALREADY has a Document discards it and renders fresh
+// from preset. This is the chunk-12 fix for modify-bias.
+func TestVisualAssemblyRebuildIgnoresExistingTemplate(t *testing.T) {
+	// Pre-populate a stale template so rebuild has something to discard.
+	state := newMinStatePort([]domain.Product{{ID: "p1", Name: "Glow Serum"}})
+	state.state.Current.Template = map[string]interface{}{
+		"version": "2.10",
+		"children": []interface{}{
+			map[string]interface{}{"type": "frame", "id": "stale", "children": []interface{}{}},
+		},
+	}
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{"product_card": minimalPreset("product_card")}},
+		&minComponentPort{},
+	)
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{"mode": "rebuild", "preset": "product_card", "replicate": 1},
+	)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("ToolResult IsError: %s", res.Content)
+	}
+	rawChildren, _ := state.saved["children"].([]interface{})
+	if len(rawChildren) != 1 {
+		t.Fatalf("expected 1 root child (rebuilt card), got %d", len(rawChildren))
+	}
+	// The stale "stale" frame must NOT survive — rebuild started from the
+	// preset, not from the previous Document.
+	first, _ := rawChildren[0].(map[string]interface{})
+	if id, _ := first["id"].(string); id == "stale" {
+		t.Errorf("rebuild kept the stale frame; expected fresh card from preset")
+	}
+}
+
+// TestVisualAssemblyModifyOnExistingTemplate — modify reads
+// state.Current.Template and applies ops on top.
+func TestVisualAssemblyModifyOnExistingTemplate(t *testing.T) {
+	state := newMinStatePort([]domain.Product{{ID: "p1", Name: "Glow Serum"}})
+	state.state.Current.Template = map[string]interface{}{
+		"version": "2.10",
+		"children": []interface{}{
+			map[string]interface{}{
+				"type": "frame", "id": "card", "children": []interface{}{
+					map[string]interface{}{"type": "text", "id": "title", "content": "Old"},
+				},
+			},
+		},
+	}
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{}},
+		&minComponentPort{},
+	)
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{
+			"mode": "modify",
+			"ops": []interface{}{
+				map[string]interface{}{
+					"op":     "update",
+					"target": "title",
+					"props":  map[string]interface{}{"content": "New"},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("ToolResult IsError: %s", res.Content)
+	}
+	// "card" frame survived (modify loaded existing template) and
+	// "title" content is now "New".
+	rawChildren, _ := state.saved["children"].([]interface{})
+	if len(rawChildren) != 1 {
+		t.Fatalf("expected 1 root child (existing card), got %d", len(rawChildren))
+	}
+	titleContent := findContentByID(rawChildren[0], "title")
+	if titleContent != "New" {
+		t.Errorf("modify did not update title; got %q", titleContent)
+	}
+}
+
+// findContentByID walks a node tree, returns content of the node with
+// the given id (or "" if not found).
+func findContentByID(node interface{}, id string) string {
+	m, ok := node.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	if nid, _ := m["id"].(string); nid == id {
+		c, _ := m["content"].(string)
+		return c
+	}
+	if children, ok := m["children"].([]interface{}); ok {
+		for _, c := range children {
+			if got := findContentByID(c, id); got != "" {
+				return got
+			}
+		}
+	}
+	return ""
 }
 
 // findContentString walks a node tree and returns true if any text node's
