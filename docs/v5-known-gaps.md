@@ -78,6 +78,51 @@ the system seed JSONs, the tool schema (mode + layout + columns), the
 prompt (rebuild bias + new params doc), and the renderer (kw-grid class
 + size clamps).
 
+## Cross-tenant chat / trace inspection in Curator (no UI yet)
+
+Today the only way to look at what a real session did is:
+
+- tail `/tmp/v5-logs/backend.log` while the dev server runs (lost on
+  restart), OR
+- query Neon directly: `SELECT * FROM v5_chat_session_deltas WHERE
+  session_id = '<uuid>' ORDER BY step` — gives you action.params per
+  visual_assembly call but no token cost / latency / span breakdown,
+  AND
+- inspect `pipelineResponse.spans[]` in devtools the moment the response
+  lands — gone the second the user closes the tab.
+
+That's how the chunk-9/10 four-gap diagnosis above had to be done: by
+hand, against an in-memory log file, with cross-referencing to a single
+session id. Not scalable past a single dev box, impossible to do for
+production traffic, no way to spot patterns across tenants.
+
+What's needed is a **first-class «Chats» surface in the Curator app**
+(`curator/`) — Curator already runs cross-tenant CRUD over the master
+catalog and has the auth + tenant-list scaffolding. Adding a `/chats`
+menu item there is the cheapest way to surface this without building a
+fresh internal admin from scratch.
+
+Concretely, this gap has three layers:
+
+| Layer | What's missing | What lands | Closes in chunk |
+|---|---|---|---|
+| **DB persistence — trace + cost metadata** | Chunk-8 `Span` shape (id / parent_id / status / attrs with tokens, cost, rows, tenant_id) lives only in `pipelineResponse.spans[]`. Nothing writes it to Neon. Conversation + visual_assembly inputs ARE persisted via `v5_chat_session_deltas` (action.params), but spans / tokens / cost are not — so per-chat cost rollups are impossible today. | New table `v5_chat_session_traces`: one row per pipeline turn with FK to session, `request_id`, `agent1_ms` / `agent2_ms` / `total_ms`, `tokens_input` / `tokens_output` / `cache_read` / `cost_usd`, full `spans` JSONB. Written from the pipeline handler at the same point that `out.Spans` is built. | Future chunk («observability persistence») — backend-only, ~2-3 hours. |
+| **Curator backend — read-side endpoints** | Curator backend (`curator/backend/`) talks to its own Postgres tables but has no read access to V5's `v5_chat_*` tables. Need a thin internal API: list sessions across tenants, list turns of a session, fetch one turn's spans. | New routes in Curator backend: `GET /api/chats?tenant=&active=&q=` (list with filters), `GET /api/chats/:sessionId` (turn-by-turn timeline), `GET /api/chats/:sessionId/turns/:turnId/spans` (waterfall data for one turn). MergeProxy → admin-internal-key style; respect Curator's existing auth. | Same chunk as the DB persistence above (writer + reader together). |
+| **Curator frontend — `/chats` page + detail view** | Curator's `App.jsx` route table (login / tenants / master / candidates / junk / audit) has no chats entry. | New `pages/ChatsPage.jsx` listing rows: tenant slug, session id (short), started_at / last_activity_at, **active flag** (last activity within ~30 min ⇒ active, else closed), turn count, **total cost USD** rolled up from per-turn rows. Click row → `pages/ChatDetailPage.jsx`: full conversation timeline (user msgs + Agent2 tool calls + rendered Document preview if cheap enough), per-turn span waterfall (chunk 8 shape: id / parent_id / duration_ms / attrs), aggregate token + cost numbers. New menu item «Chats» in the sidebar between «Tenants» and «Master». | Chunk after the persistence one — frontend-only, ~3-4 hours. |
+
+Vlad flagged this as the canonical home for the kind of detailed trace
+analysis we just did manually. Without it, every iteration of the
+diagnosis loop costs us a manual log scrape + DB query + memory
+juggling. With it, we click into a session and see the trace + cost +
+ops history in one place — and can spot cross-tenant patterns (which
+prompts cause modify-bias, which tenants have field-binding mismatches,
+which sessions are draining budget).
+
+Order of attack: backend persistence first (writer + reader together),
+frontend after. Persistence is also the foundation for the deferred
+`/debug/traces` waterfall UI (currently scoped as chunk-12 inside V5
+itself) — these two surfaces should share the same span schema.
+
 ## Risks worth re-checking
 
 | Risk | Trigger | Mitigation today |
