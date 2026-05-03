@@ -10,33 +10,38 @@
 
 ## Snapshot — where we are now
 
-**Backend infra is solid.** Engine, state, binding, components, replicate,
-ops applier, Anthropic adapter, prompt-builder for both agents, HTTP server,
-postgres adapters, transactions, retries, tracer with parent linkage and
-structured attrs — all done and exercised by a live HTTP smoke test against
-Neon + Haiku. See "Status — chunks 1-8" below.
+**Chunks 1-10 closed.** Backend (chunks 1-9) + frontend (chunk 10) cover
+the full P0-A (tool surface) and P0-B (render path) blocks. V5 can now:
 
-**The product is NOT yet shippable.** Three categories of gap:
+- accept all three V4-compatible tool call shapes (preset / freestyle /
+  multi-widget compose / ops-only modify), with parent-name aliasing
+- back-stop tenants who haven't authored anything via 7 in-process
+  system presets (DB miss → registry fallback)
+- compute a compact `tree_map` and inject it into Agent2 in modify-mode
+- render any scene-graph the backend emits via a Vite + React 19 +
+  Shadow DOM bundle at `project_v5/frontend/`
 
-1. **V5 tool surface is currently NARROWER than V4** — `visual_assembly`
-   requires a preset, doesn't accept multi-widget composition, has no
-   freestyle build path. V4 has all three. Until we close this, V5 is a
-   regression on the use cases V4 already handles ("draw me a landing",
-   "compose hero + grid + cta"). See P0-A items below.
-2. **No frontend for the new format.** V5 emits scene-graph; the chat
-   widget today only knows V4 Formation. Without a renderer the user sees
-   nothing. See P0-B items below.
-3. **No interaction loop.** Buttons (LIKE / CART) don't auto-appear, click
-   handlers don't exist, drill-down to detail isn't wired, back navigation
-   is missing. See P0-C items below.
+End-to-end exercised by a live HTTP smoke test against Neon + Haiku
+(4 turns: search → system-fallback detail → multi-widget compose →
+ops-only modify).
 
-Everything else (search quality parity, layout constraints, deploy,
-measurements, tenant tooling, internal hardening) is real but secondary —
-addressed in P1 / P2 / Deferred sections.
+**What's still NOT shippable for prod**:
+
+1. **No interaction loop.** Buttons render but onClick is a no-op. No
+   drill-down, no back navigation, no actions endpoint. See P0-C items
+   below — Vlad has a design discussion planned before we start it.
+2. **Not deployed.** Everything still runs locally (V5 backend on :8084
+   in dev to avoid clashing with V4 on :8082). See P1 items.
+3. **No measured comparison vs V4.** No real-prompt smoke at scale,
+   no token/latency parity numbers from production region. See P1.
+
+Everything else (search quality parity, layout constraints, observability
+UI, tenant canvas, internal hardening) is real but secondary — addressed
+in P1 / P2 / Deferred sections.
 
 ---
 
-## Status — chunks 1-8 (closed in `v5` branch)
+## Status — chunks 1-10 (closed in `v5` branch)
 
 | Chunk | Commits | What it shipped |
 |---|---|---|
@@ -52,10 +57,17 @@ addressed in P1 / P2 / Deferred sections.
 | 6d — tx + tracer | `5da40a2`, `c2ec2c5`, `b00a995`, `ceaf999` | `zoneWriteWithDelta` wrapped in `pgx.Tx`, `AddDelta` retry on 23505, SpanCollector + `domain.SpanFromContext` re-added on PG adapters and use cases |
 | 7 — agent1 | `bae9fde`, `5871ffe`, `a176daa` | Agent1 tools (`catalog_search` keyword-only / `state_filter` / `history_lookup`) + Agent1 prompt + catalog digest + pipeline orchestrator (Agent1 → Agent2) + microcontext |
 | 8 — trace upgrade | `58571d2`, `0b0376f`, `aa40504` | `Span.id` / `parent_id` / `status` / `attrs`; LLM spans carry tokens + cost; postgres spans carry rows + tenant; `request_id` flows through ctx |
+| 9 — tool surface + presets + tree_map | `aad071a` | `visual_assembly` `preset` optional; freestyle / multi-widget compose / modify shapes; parent aliases (root/formation/""); 7 system presets via in-process registry (DB miss → fallback); BUILDING + COMPOSING sections in Agent2 prompt; `tree_map` computation + `<formation_tree>` injection in modify-mode; pair-aware history trim fix; live 4-turn HTTP smoke green |
+| 10 — frontend renderer | `e9589b7` | New `project_v5/frontend/` (Vite + React 19 + Shadow DOM, IIFE 206KB / 64KB gz). SceneGraphRenderer → Frame/Group/Text/Image/Ref. format.js (currency/stars/percent/etc) + wrapper.js (badge/tag/button/etc; buttons render `<button>` with no-op onClick logging). 13/13 vitest jsdom smoke. |
 
-Tree clean. Last commit `aa40504`. Live HTTP smoke (turn 1, cache_creation):
-9520 ms total (Agent1 5798 ms, Agent2 3721 ms), 23 spans, all assertions
-pass.
+Tree clean. Last commit `e9589b7`. Live HTTP smoke (chunk-9 four-turn run):
+~30 s total, 4 turns × ~5-9 s each, all assertions pass; tree_map size
+600-1500 bytes (~150-400 tokens) per turn.
+
+**Local dev**: V5 backend on `:8084` (V4 holds `:8082`), V5 frontend on
+`:5173`. Backend reads `project_v5/.env` (PORT + DB + keys mirrored from
+V4). See `docs/Updates/v5/v5_2026-05-03_15-08_chunk-10.md` for full
+manual-check recipe.
 
 ---
 
@@ -315,31 +327,37 @@ through V4 until they expire. No active-migration logic needed.
 
 ## Order of attack — today (2026-05-03)
 
-P0-A → P0-B → P0-C → P1 deploy → P1 smoke → P2 if time.
+**Done today (chunks 9 + 10)**:
 
-Concretely:
+1. ✅ **P0-A items 1-3** (tool surface): preset optional, multi-widget
+   compose, modify-mode end-to-end. Closed in chunk 9 (`aad071a`).
+2. ✅ **P0-B item 6** (seed system presets): 7 system presets via
+   in-process registry, DB-miss fallback. Closed in chunk 9.
+3. ✅ **P0-B items 4-5** (frontend renderer + format/wrapper): new
+   `project_v5/frontend/` with scene-graph renderer + format/wrapper
+   passes. Closed in chunk 10 (`e9589b7`).
+4. ✅ **Bonus**: tree_map computation + injection (was hidden gap in
+   chunk 7-8 — Agent2 prompt advertised tree_map but runtime never
+   built one). Closed in chunk 9 alongside P0-A item 3.
 
-1. **P0-A items 1-3** (tool surface): drop required preset, add multi-widget,
-   verify modify path. Backend-only, 1 batch of edits.
-2. **P0-B item 6** (seed system presets in DB): unblocks Agent2 from saying
-   "preset not found". Backend-only, migration + Go preset builders.
-3. **P0-B items 4-5** (frontend renderer + format/wrapper): largest single
-   chunk; unblocks visual verification of everything else. Use flexbox-CSS,
-   not Yoga, to fit today.
-4. **P0-C items 7-8** (default actions + actions endpoint): widgets get
+**Next session (after Vlad's design discussion)**:
+
+5. **P0-C items 7-8** (default actions + actions endpoint): widgets get
    buttons that work.
-5. **P0-C items 9-12** (prefetch + nav handlers + session): drill-down +
+6. **P0-C items 9-12** (prefetch + nav handlers + session): drill-down +
    back work, sessions persist.
-6. **P0-C item 13** (V5 route prefix + frontend flag): switch the frontend
-   to V5 behind a flag.
-7. **P1 items 14-15** (Railway deploy + healthz): V5 in real prod region.
-8. **P1 items 16-17** (smoke test + baseline): real numbers.
-9. **P2 items as time permits** — search vector / constraints / debug UI.
+7. **P0-C item 13** (V5 route prefix + frontend flag): switch the
+   frontend to V5 behind a flag.
+8. **P1 items 14-15** (Railway deploy + healthz): V5 in real prod region.
+9. **P1 items 16-17** (smoke test + baseline): real numbers vs V4.
+10. **P2 items as time permits** — search vector / constraints / debug
+    UI / hardening.
 
-If anything in P0 blows up past expected size, P1 items 18-19 (vector
-search, services) and P2 items slip first. P0-C item 13 (frontend flag)
-is the gate for "decide on prod swap" — until the frontend can render V5
-output, no decision is possible.
+P0-C item 13 (frontend swap behind flag) is the gate for "decide on prod
+swap" — but visual verification is now possible, so the call doesn't
+have to wait for full P0-C completion. We can decide on V5's quality
+based on local manual testing once chunk 10's UI renders things the
+user is happy with.
 
 ---
 

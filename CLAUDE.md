@@ -52,7 +52,30 @@ project_v4/backend/         — Go 1.24, hexagonal — V4 chat engine (PRODUCTIO
     prompts/                — Agent1/Agent2 system prompts
     engine_v4/              — Ops-driven UI assembly engine (engine.go, ops.go, presets_*.go, binding.go, ...)
 
-project/frontend/           — React 19 + Vite 7 chat widget (Shadow DOM, IIFE bundle)
+project_v5/                 — V5 chat engine + frontend (in build, NOT deployed)
+  backend/                  — Go 1.24, hexagonal
+    cmd/server/             — Entry point, DI, graceful shutdown
+    internal/
+      domain/               — Preset, Component, SessionState, Delta, Span, Tool, ...
+      ports/                — LLMPort, CatalogPort, StatePort, PresetPort, ComponentPort
+      adapters/             — Postgres (pgx), Anthropic
+      engine/               — v9 scene-graph port (document, ops, components, replicate, binding, tree_map)
+        presets/            — Embedded JSON seeds + SystemPresetRegistry
+      usecases/             — pipeline_execute, agent1_execute, agent2_execute
+      handlers/             — pipeline, session, middleware (cors, logging, tenant)
+      tools/                — visual_assembly, catalog_search, state_filter, history_lookup
+      prompts/              — Agent1/Agent2 system prompts
+      config/               — env loading
+  frontend/                 — Vite 7 + React 19, IIFE bundle, Shadow DOM
+    src/
+      renderer/             — SceneGraphRenderer + NodeRenderer + nodes/{Frame,Group,Text,Image,Ref}
+      renderer/format.js    — currency/stars/percent/etc
+      renderer/wrapper.js   — badge/tag/button/etc
+      api/                  — V5 backend client
+      chat/                 — ChatPanel + MessageList
+    tests/                  — vitest jsdom smoke + 3 fixtures
+
+project/frontend/           — V4 chat widget (React 19 + Vite 7, Shadow DOM)
   entities/                 — atom/, widget/, formation/, message/
   features/                 — chat/, catalog/, navigation/, overlay/, actions/
   shared/                   — api/, theme/, hooks/, config/
@@ -78,10 +101,10 @@ scripts/                    — start.sh, stop.sh, start_admin.sh, stop_admin.sh
 
 | Service | Path | Port |
 |--------|------|------|
-| V4 Chat backend | `project_v4/backend/` | 8082 |
-| V5 Chat backend (in build) | `project_v5/backend/` | 8082 (same; not deployed yet) |
-| Chat widget V4 (dev) | `project/frontend/` | 5173 |
-| Chat widget V5 (in build) | `project_v5/frontend/` | 5173 (same; not deployed yet) |
+| V4 Chat backend (PRODUCTION) | `project_v4/backend/` | 8082 |
+| V5 Chat backend (in build, local) | `project_v5/backend/` | 8084 (avoids V4 clash; PORT env) |
+| Chat widget V4 | `project/frontend/` | 5173 |
+| Chat widget V5 (in build) | `project_v5/frontend/` | 5173 (when V4 widget not running) |
 | Admin backend | `project_admin/backend/` | 8081 |
 | Admin frontend | `project_admin/frontend/` | 5174 |
 | Curator | `curator/` | 8082 (separate Railway service) |
@@ -110,7 +133,56 @@ scripts/                    — start.sh, stop.sh, start_admin.sh, stop_admin.sh
 
 3. **Frontend** renders the Formation JSON via `FormationRenderer` → `WidgetRenderer` → `AtomV2Renderer`.
 
-## V4 Engine (current — `feature/engine-v4` branch deploys to v4-engine-production.up.railway.app)
+## V5 Engine (in build — `v5` branch, NOT deployed)
+
+V5 is the next-generation chat engine: v9 scene-graph foundation + V4
+strengths ported on top (binding, state with delta-stream, system
+preset registry). Lives in `project_v5/`.
+
+**Status as of 2026-05-03**: chunks 1-10 closed (engine, state, binding,
+components, replicate, ops applier, Anthropic adapter, prompt-builders
+for both agents, HTTP server, postgres adapters with transactions /
+retries, span tracer with parent linkage and structured attrs, Agent1
++ Agent2 + pipeline orchestrator, tool surface unblock for the three
+V4-compatible call shapes, 7 system presets via in-process registry +
+DB-miss fallback, tree_map computation, scene-graph frontend renderer
+at `project_v5/frontend/`). NOT covered yet: P0-C interaction loop
+(actions / drill-down / navigation / session restore), P1 deploy +
+smoke comparison vs V4. Detailed status: `docs/v5-engine-plan.md`.
+
+**Local dev** (V4 holds 8082 in this monorepo, so V5 runs on 8084):
+
+```sh
+# Backend (port 8084)
+export $(grep -v '^#' project_v5/.env | xargs)
+cd project_v5/backend && go run ./cmd/server
+# project_v5/.env is committed sans secrets; populate by mirroring
+# project_v4/.env's DATABASE_URL / ANTHROPIC_API_KEY / OPENAI_API_KEY
+# / TENANT_SLUG / LLM_MODEL.
+
+# Frontend (Vite dev on 5173, talks to backend on 8084)
+cd project_v5/frontend && npm install && npm run dev
+# Open http://localhost:5173 — type prompts, watch [v5-renderer] +
+# [v5-action] in devtools.
+
+# Tests
+cd project_v5/backend && go test ./...
+cd project_v5/frontend && npm test
+# Live HTTP smoke (costs ~$0.05 per run):
+ANTHROPIC_API_KEY=... TEST_DATABASE_URL=... \
+  go test -tags="integration live" -v -count=1 \
+  ./internal/handlers/... -run TestHTTPLiveSmoke
+```
+
+**Reading order for context**:
+- `docs/v5-engine-plan.md` — strategic direction + 25-item remaining
+  list with priorities + status table
+- `docs/v5-known-gaps.md` — registry of bugs ported as-is + deferred
+  items + risks
+- `docs/Updates/v5/README.md` — index of session logs (chunks 1-10)
+- `docs/Updates/v5/plans/chunk-N-*.md` — frozen plan per chunk
+
+## V4 Engine (current production — `feature/engine-v4` branch deploys to v4-engine-production.up.railway.app)
 
 Ops-driven engine — Agent2 builds and modifies the UI by emitting ops (insert/update/delete/move/replace) on a widget tree. Lives in `project_v4/backend/internal/engine_v4/`.
 

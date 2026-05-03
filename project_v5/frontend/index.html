@@ -20,7 +20,8 @@
       // no data-* attrs so we set them on window.
       window.__KEEPSTAR_V5_WIDGET__ = {
         tenant: 'hey-babes-cosmetics',
-        api: 'http://localhost:8082/api/v1',
+        // V4 backend holds 8082 in this dev env; V5 runs on 8084.
+        api: 'http://localhost:8084/api/v1',
       }
     </script>
     <script type="module" src="/src/widget.jsx"></script>

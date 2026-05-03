@@ -33,7 +33,10 @@ const ALL_CSS = [widgetCss].join('\n')
       /* invalid URL; fall through */
     }
   }
-  if (!apiBaseUrl) apiBaseUrl = devConfig.api || 'http://localhost:8082/api/v1'
+  // 8084 is the dev fallback to avoid clashing with V4 (which holds 8082
+  // in this monorepo). Production deploys override via data-api or
+  // script.src origin.
+  if (!apiBaseUrl) apiBaseUrl = devConfig.api || 'http://localhost:8084/api/v1'
 
   function mount() {
     const host = document.createElement('div')

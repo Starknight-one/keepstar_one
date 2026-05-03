@@ -49,4 +49,23 @@ describes what actually happened (commit sha, files changed, gaps).
 ## See also
 
 - High-level plan: `../../v5-engine-plan.md`
+- Known-gaps registry: `../../v5-known-gaps.md`
 - V4 reference logs: `../feature-engine-v4_*.md`
+
+## Index of session logs (newest first)
+
+| Log | Chunk | Plan | What it shipped |
+|---|---|---|---|
+| `v5_2026-05-03_15-08_chunk-10.md` | 10 | `plans/chunk-10-frontend-renderer.md` | V5 frontend renderer at `project_v5/frontend/` (Vite + React 19 + Shadow DOM, 13/13 vitest jsdom). |
+| `v5_2026-05-03_14-59_chunk-9.md` | 9  | `plans/chunk-9-tool-surface-and-system-presets.md` | Tool surface unblock (preset optional, multi-widget compose, modify-mode), 7 system presets via in-process registry, tree_map computation + injection. Live HTTP smoke 4-turn green. |
+| `v5_2026-05-02_21-31.md` | 8  | `plans/chunk-8-trace-upgrade.md` | Span model upgrade — id / parent_id / status / structured attrs (LLM tokens + cost, postgres rows + tenant). |
+| `v5_2026-05-02_21-07.md` | 7  | `plans/chunk-7-agent1.md` | Agent1: catalog_search / state_filter / history_lookup; Agent1 prompt; pipeline orchestrator (Agent1 → Agent2). |
+| `v5_2026-05-02_20-13.md` | 6c+6d | `plans/chunk-6cd-http-cleanup.md` | HTTP server, handlers, DI, ops applier, tx wrap on zoneWriteWithDelta, retry on 23505, tracer port. |
+| `v5_2026-05-02_19-51.md` | 6b | `plans/chunk-6b-agent2.md` | Tool registry, visual_assembly tool, Agent2 prompt-builder + first end-to-end Agent2 turn. |
+| `v5_2026-05-02_19-26.md` | 6a | `plans/chunk-6a-anthropic-adapter.md` | LLMPort + Anthropic adapter (`ChatWithToolsCached`) + count_tokens. |
+| `v5_2026-05-02_19-02.md` | 5.5 | `plans/chunk-5_5-hygiene.md` | Nested-ref reusable strip, image-fill `url`, format/wrapper props, first cache-aware token measurement. |
+| `v5_2026-05-02_17-50.md` | 5  | `plans/chunk-5-micropresets.md` | v9 RefNode components, two presets sharing two reusable subtrees. |
+| `v5_2026-05-02_17-28.md` | 4  | `plans/chunk-4-first-preset.md` | First product_card preset end-to-end + replicate fan-out + image binding. |
+| `v5_2026-05-02_16-53.md` | 3  | `plans/chunk-3-binding.md` | Per-instance scene-graph binding, slot ↔ field, ProductToMap. |
+| `v5_2026-05-02_16-00.md` | 2  | `plans/chunk-2-state-delta.md` | Sectional state + append-only delta-stream + reconstruct + rollback. |
+| `v5_2026-05-02_15-26.md` | 1  | `plans/chunk-1-engine-port.md` | v9 → Go engine port (scene-graph + ops + components + variables). |
