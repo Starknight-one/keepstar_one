@@ -81,7 +81,7 @@ the system seed JSONs, the tool schema (mode + layout + columns), the
 prompt (rebuild bias + new params doc), and the renderer (kw-grid class
 + size clamps).
 
-## Cross-tenant chat / trace inspection in Curator (no UI yet)
+## Cross-tenant chat / trace inspection in Curator (no UI yet) — CLOSED in chunk 13
 
 Today the only way to look at what a real session did is:
 
@@ -107,11 +107,14 @@ fresh internal admin from scratch.
 
 Concretely, this gap has three layers:
 
-| Layer | What's missing | What lands | Closes in chunk |
-|---|---|---|---|
-| **DB persistence — trace + cost metadata** | Chunk-8 `Span` shape (id / parent_id / status / attrs with tokens, cost, rows, tenant_id) lives only in `pipelineResponse.spans[]`. Nothing writes it to Neon. Conversation + visual_assembly inputs ARE persisted via `v5_chat_session_deltas` (action.params), but spans / tokens / cost are not — so per-chat cost rollups are impossible today. | New table `v5_chat_session_traces`: one row per pipeline turn with FK to session, `request_id`, `agent1_ms` / `agent2_ms` / `total_ms`, `tokens_input` / `tokens_output` / `cache_read` / `cost_usd`, full `spans` JSONB. Written from the pipeline handler at the same point that `out.Spans` is built. | Future chunk («observability persistence») — backend-only, ~2-3 hours. |
-| **Curator backend — read-side endpoints** | Curator backend (`curator/backend/`) talks to its own Postgres tables but has no read access to V5's `v5_chat_*` tables. Need a thin internal API: list sessions across tenants, list turns of a session, fetch one turn's spans. | New routes in Curator backend: `GET /api/chats?tenant=&active=&q=` (list with filters), `GET /api/chats/:sessionId` (turn-by-turn timeline), `GET /api/chats/:sessionId/turns/:turnId/spans` (waterfall data for one turn). MergeProxy → admin-internal-key style; respect Curator's existing auth. | Same chunk as the DB persistence above (writer + reader together). |
-| **Curator frontend — `/chats` page + detail view** | Curator's `App.jsx` route table (login / tenants / master / candidates / junk / audit) has no chats entry. | New `pages/ChatsPage.jsx` listing rows: tenant slug, session id (short), started_at / last_activity_at, **active flag** (last activity within ~30 min ⇒ active, else closed), turn count, **total cost USD** rolled up from per-turn rows. Click row → `pages/ChatDetailPage.jsx`: full conversation timeline (user msgs + Agent2 tool calls + rendered Document preview if cheap enough), per-turn span waterfall (chunk 8 shape: id / parent_id / duration_ms / attrs), aggregate token + cost numbers. New menu item «Chats» in the sidebar between «Tenants» and «Master». | Chunk after the persistence one — frontend-only, ~3-4 hours. |
+All three layers below are CLOSED in chunk 13. Strike-through preserved
+for history.
+
+| Layer | What landed | Closed in |
+|---|---|---|
+| ~~**DB persistence — trace + cost metadata**~~ | New table `v5_chat_session_traces` with FK to `v5_chat_sessions`, columns for request_id / tenant_id / latency_ms / agent1_ms / agent2_ms / tokens_* / cost_usd / status, full `spans` JSONB. Written from `handler_pipeline.go` after `Pipeline.Execute` returns via best-effort async goroutine (covers both success and error paths). Idempotent on `(session_id, request_id)`. | **Chunk 13** |
+| ~~**Curator backend — read-side endpoints**~~ | 3 new routes — `GET /curator/chats?tenant=&status=&q=&limit=&offset=`, `GET /curator/chats/:sessionId` (timeline), `GET /curator/chats/:sessionId/turns/:requestId` (full spans). Reads `v5_chat_*` directly from shared Neon via curator-backend's pgxpool. Wrapped under existing session auth middleware. No proxy to admin-backend. | **Chunk 13** |
+| ~~**Curator frontend — `/chats` page + detail view**~~ | New `pages/ChatsPage.jsx` (filter row: tenant / status / q-search; table with tenant_slug / session / started / last_activity / turn_count / total_tokens / total_cost / status badge / latest_query; load-more pagination). New `pages/ChatDetailPage.jsx` (header card with aggregates; per-turn timeline; lazy-loaded SpansWaterfall — text-table «Gantt» with depth indent + attrs JSON dump). New sidebar section «Tracing» с NavLink на /chats. | **Chunk 13** |
 
 Vlad flagged this as the canonical home for the kind of detailed trace
 analysis we just did manually. Without it, every iteration of the

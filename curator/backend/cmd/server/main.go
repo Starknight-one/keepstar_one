@@ -109,6 +109,21 @@ func main() {
 	protected.HandleFunc("/curator/master/products", h.ListMasterProducts)
 	protected.HandleFunc("/curator/master/products/", h.GetMasterProduct)
 
+	// V5 chat / trace inspection (chunk 13). Reads v5_chat_sessions +
+	// v5_chat_session_traces from the shared Neon DB.
+	//   GET /curator/chats                                 — list (filters)
+	//   GET /curator/chats/{sessionId}                     — timeline
+	//   GET /curator/chats/{sessionId}/turns/{requestId}   — turn detail (spans)
+	protected.HandleFunc("/curator/chats", h.ListChats)
+	protected.HandleFunc("/curator/chats/", func(w http.ResponseWriter, r *http.Request) {
+		// Two patterns share the prefix; dispatch on /turns/ presence.
+		if strings.Contains(r.URL.Path, "/turns/") {
+			h.GetChatTurn(w, r)
+			return
+		}
+		h.GetChatTimeline(w, r)
+	})
+
 	mux.Handle("/curator/me", auth(protected))
 	mux.Handle("/curator/candidates/", auth(protected))
 	mux.Handle("/curator/candidates/attributes", auth(protected))
@@ -121,6 +136,8 @@ func main() {
 	mux.Handle("/curator/master/products", auth(protected))
 	mux.Handle("/curator/master/products/", auth(protected))
 	mux.Handle("/curator/merge-reports/", auth(protected))
+	mux.Handle("/curator/chats", auth(protected))
+	mux.Handle("/curator/chats/", auth(protected))
 
 	// SPA fallback for the curator frontend (./static).
 	staticDir := firstNonEmpty(os.Getenv("CURATOR_STATIC_DIR"), "./static")

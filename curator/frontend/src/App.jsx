@@ -10,6 +10,8 @@ import TenantDetailPage from './pages/TenantDetailPage.jsx'
 import MasterCatalogPage from './pages/MasterCatalogPage.jsx'
 import MasterDetailPage from './pages/MasterDetailPage.jsx'
 import MergeReportPage from './pages/MergeReportPage.jsx'
+import ChatsPage from './pages/ChatsPage.jsx'
+import ChatDetailPage from './pages/ChatDetailPage.jsx'
 
 function Layout({ user, onLogout, children }) {
   return (
@@ -27,6 +29,9 @@ function Layout({ user, onLogout, children }) {
 
           <div className="nav-section">Activity</div>
           <NavLink to="/audit" className={({ isActive }) => isActive ? 'active' : ''}>Audit</NavLink>
+
+          <div className="nav-section">Tracing</div>
+          <NavLink to="/chats" className={({ isActive }) => isActive ? 'active' : ''}>Chat Sessions</NavLink>
         </nav>
         <div className="footer">
           <div>{user?.email}</div>
@@ -81,6 +86,8 @@ export default function App() {
         <Route path="/candidates" element={<CandidatesPage />} />
         <Route path="/junk" element={<JunkPage />} />
         <Route path="/audit" element={<AuditPage />} />
+        <Route path="/chats" element={<ChatsPage />} />
+        <Route path="/chats/:sessionId" element={<ChatDetailPage />} />
         <Route path="/login" element={<Navigate to="/tenants" replace />} />
         <Route path="*" element={<Navigate to="/tenants" replace />} />
       </Routes>

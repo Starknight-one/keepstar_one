@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/usecases"
 )
 
@@ -15,15 +19,20 @@ import (
 //
 // The handler extracts tenant from middleware-stamped context and hands
 // everything off to PipelineExecute, which runs Agent1 (data) → Agent2
-// (render) and returns a merged response.
+// (render) and returns a merged response. After Execute returns, the
+// handler fires a best-effort goroutine that persists the trace
+// (chunk 13) into v5_chat_session_traces so Curator UI can read it.
 type PipelineHandler struct {
 	pipeline *usecases.PipelineExecute
+	tracer   ports.TracePort // optional; nil disables persistence
+	log      *slog.Logger
 }
 
-// NewPipelineHandler constructs the handler. pipeline is the only dep —
-// agents, state, presets, components, LLM, tools all live behind it.
-func NewPipelineHandler(pipeline *usecases.PipelineExecute) *PipelineHandler {
-	return &PipelineHandler{pipeline: pipeline}
+// NewPipelineHandler constructs the handler. tracer is optional —
+// nil disables trace persistence (used by tests that don't need it).
+// log is required so the async persist goroutine can log failures.
+func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePort, log *slog.Logger) *PipelineHandler {
+	return &PipelineHandler{pipeline: pipeline, tracer: tracer, log: log}
 }
 
 type pipelineRequest struct {
@@ -80,6 +89,9 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		UserQuery:  req.Query,
 	})
 	if err != nil {
+		// Persist the failed turn too — operators need to see error
+		// traces in Curator (the dominant debugging signal).
+		h.persistTrace(r.Context(), req, tenant, nil, err)
 		http.Error(w, "pipeline failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -97,4 +109,74 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		out.Spans = sc.Spans()
 	}
 	writeJSON(w, http.StatusOK, out)
+
+	// Trace persistence — fire after the response is on the wire so
+	// the user never waits on this. Caller's request context may be
+	// cancelled after writeJSON returns, so the goroutine carries its
+	// own derived ctx with a generous timeout.
+	h.persistTrace(r.Context(), req, tenant, resp, nil)
+}
+
+// persistTrace assembles a TraceRow from the in-memory span collector
+// + pipeline response and fires a best-effort INSERT in the
+// background. Never propagates errors back to the caller — the user
+// already got the pipeline response.
+func (h *PipelineHandler) persistTrace(
+	ctx context.Context,
+	req pipelineRequest,
+	tenant *domain.Tenant,
+	resp *usecases.PipelineExecuteResponse,
+	pipelineErr error,
+) {
+	if h.tracer == nil {
+		return
+	}
+	sc := domain.SpanFromContext(ctx)
+	if sc == nil {
+		return
+	}
+	rid := domain.RequestIDFromContext(ctx)
+	if rid == "" {
+		return
+	}
+	spans := sc.Spans()
+
+	row := domain.TraceRow{
+		SessionID: req.SessionID,
+		RequestID: rid,
+		TenantID:  tenant.ID,
+		UserQuery: req.Query,
+		Spans:     spans,
+		SpanCount: len(spans),
+		Status:    "ok",
+	}
+	if resp != nil {
+		row.LatencyMs = resp.LatencyMs
+		row.Agent1Ms = resp.Agent1Ms
+		row.Agent2Ms = resp.Agent2Ms
+		row.TokensInput = int64(resp.Usage.InputTokens)
+		row.TokensOutput = int64(resp.Usage.OutputTokens)
+		row.TokensCacheRead = int64(resp.Usage.CacheReadInputTokens)
+		row.TokensCacheCreation = int64(resp.Usage.CacheCreationInputTokens)
+		row.CostUSD = resp.Usage.CostUSD
+	}
+	if pipelineErr != nil {
+		row.Status = "error"
+		row.ErrorMessage = pipelineErr.Error()
+	}
+
+	go func() {
+		// Detached ctx — caller's request ctx may already be cancelled
+		// by the time this goroutine actually runs.
+		bg, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		defer func() {
+			if rcv := recover(); rcv != nil {
+				h.log.Error("trace persist panic", "request_id", rid, "panic", rcv)
+			}
+		}()
+		if err := h.tracer.SaveTrace(bg, row); err != nil {
+			h.log.Warn("trace persist failed", "request_id", rid, "err", err)
+		}
+	}()
 }

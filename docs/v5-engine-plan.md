@@ -10,9 +10,10 @@
 
 ## Snapshot — where we are now
 
-**Chunks 1-12 closed.** Backend (chunks 1-9, 11, 12) + frontend (chunks 10, 11, 12)
-cover the full P0-A (tool surface), P0-B (render path), P0-C (interaction loop),
-and the chunk-12 render-quality polish block. V5 can now:
+**Chunks 1-13 closed.** Backend (chunks 1-9, 11, 12, 13) + frontend (chunks 10, 11,
+12) + Curator (chunk 13) cover the full P0-A (tool surface), P0-B (render path),
+P0-C (interaction loop), chunk-12 render-quality polish, and chunk-13
+cross-tenant chats / trace inspection. V5 can now:
 
 - accept all three V4-compatible tool call shapes (preset / freestyle /
   multi-widget compose / ops-only modify), with parent-name aliasing
@@ -34,6 +35,10 @@ and the chunk-12 render-quality polish block. V5 can now:
   schema carries a REQUIRED `mode: rebuild|modify` enum (V4-style)
   so the LLM cannot accidentally modify-ops its way out of stale state
   on rebuild asks
+- persist per-turn traces (spans + tokens + cost) in Neon
+  (`v5_chat_session_traces`) so the dedicated Curator UI surfaces
+  cross-tenant chat sessions, per-turn timelines, and span waterfalls.
+  Best-effort async persist — pipeline never blocks on it
 
 End-to-end exercised by a live HTTP smoke test against Neon + Haiku
 (5 pipeline turns: search → system-fallback detail → multi-widget
@@ -42,12 +47,11 @@ POST /actions/like, /navigation/expand, /navigation/back).
 
 **What's still NOT shippable for prod**:
 
-1. **Cross-tenant chat inspection in Curator** — chunk 13. Until then
-   per-session diagnostics are limited to live `/tmp/v5-logs/backend.log`
-   tail + ad-hoc Neon queries against `v5_chat_session_deltas`.
-2. **Not deployed.** Everything still runs locally (V5 backend on :8084
-   in dev to avoid clashing with V4 on :8082). See P1 items.
-3. **No measured comparison vs V4.** No real-prompt smoke at scale,
+1. **Not deployed.** V5 backend still runs locally (`:8084` in dev to
+   avoid clashing with V4 on `:8082`). Curator already deploys to
+   Railway and consumes the trace table from chunk 13 — V5 backend
+   itself is the next deploy. See P1 items.
+2. **No measured comparison vs V4.** No real-prompt smoke at scale,
    no token/latency parity numbers from production region. See P1.
 
 Everything else (search quality parity, layout constraints, observability
@@ -75,6 +79,7 @@ in P1 / P2 / Deferred sections.
 | 9 — tool surface + presets + tree_map | `aad071a` | `visual_assembly` `preset` optional; freestyle / multi-widget compose / modify shapes; parent aliases (root/formation/""); 7 system presets via in-process registry (DB miss → fallback); BUILDING + COMPOSING sections in Agent2 prompt; `tree_map` computation + `<formation_tree>` injection in modify-mode; pair-aware history trim fix; live 4-turn HTTP smoke green |
 | 10 — frontend renderer | `e9589b7` | New `project_v5/frontend/` (Vite + React 19 + Shadow DOM, IIFE 206KB / 64KB gz). SceneGraphRenderer → Frame/Group/Text/Image/Ref. format.js (currency/stars/percent/etc) + wrapper.js (badge/tag/button/etc; buttons render `<button>` with no-op onClick logging). 13/13 vitest jsdom smoke. |
 | 11 — actions + nav + prefetch | `2e3df77` | Closed P0-C interaction loop. `domain.UserActionKind` (9-kind closed vocab), `engine.InjectDefaultActions` pass after BindData (auto-injects like + cart_add on entity-bound subtrees), POST `/api/v1/actions` (backend handles like/unlike/cart_add/cart_remove), POST `/api/v1/navigation/{expand,back}` with snapshot stack restore, hardcoded `presets.SystemAdjacency` map, `usecases.PrefetchBuilder` ships 1-level prefetch payload (`{adjacentTemplate, entities}`) on every pipeline response. Frontend `actionDispatch.js` + `fillTemplate.js` + `RenderContext` + clickable replicate clones (Frame.jsx) + back button. Agent2 tool-filter fix (only visual_assembly, mirroring Agent1 prefix-filter). 32/32 vitest, 5-turn live HTTP smoke + actions + nav green. |
+| 13 — curator chats UI | <pending> | Per-turn trace persistence (`v5_chat_session_traces`) + Curator UI for cross-tenant inspection. V5 side: TraceAdapter (idempotent INSERT on `(session_id, request_id)`), best-effort async persist hook in pipeline handler (covers success and error paths), boot-time migration. Curator side: 3 read endpoints (list / timeline / turn detail) reading shared Neon directly; ChatsPage + ChatDetailPage + sidebar «Tracing» section. Live smoke verifies trace persists. Railway-ready with first commit. |
 | 12 — render polish | `d3394e7` | Closed render-quality gaps from first manual test. REQUIRED `mode: rebuild\|modify` enum back on `visual_assembly` schema (defeats modify-bias — LLM picks per turn, V4-style). Card seeds wrapped in grid frame; `Frame.jsx` reads `layout.wrap` + `width/maxWidth/minWidth` → CSS flex-wrap + inline style. New `tests/frame-layout.test.jsx` (6 tests). Agent2 prompt: new MODE section + DECISION RULES updated + every example carries mode. Live HTTP smoke green: turn 4 lands `mode=modify` (тweak), turns 1-3+5 land `mode=rebuild`. 38/38 vitest. |
 
 Tree clean. Last commit `2e3df77`. Live HTTP smoke (chunk-11 five-turn

@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	anthropicAdapter "keepstar_v5/internal/adapters/anthropic"
 	"keepstar_v5/internal/adapters/postgres"
@@ -63,6 +64,9 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	if err := pg.RunComponentMigrations(ctx); err != nil {
 		t.Fatalf("RunComponentMigrations: %v", err)
 	}
+	if err := pg.RunTraceMigrations(ctx); err != nil {
+		t.Fatalf("RunTraceMigrations: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	catalog := postgres.NewCatalogAdapter(pg)
@@ -85,8 +89,9 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	prefetchBuilder := usecases.NewPrefetchBuilder(presetPort, componentPort, log)
 	pipeline := usecases.NewPipelineExecute(agent1, agent2, statePort, prefetchBuilder, log)
 
+	tracePort := postgres.NewTraceAdapter(pg)
 	sessionH := handlers.NewSessionHandler(statePort, pg.Pool())
-	pipelineH := handlers.NewPipelineHandler(pipeline)
+	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
 	router := handlers.RegisterRoutes(log, catalog, "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH)
@@ -477,6 +482,29 @@ func TestHTTPLiveSmoke(t *testing.T) {
 		t.Errorf("/navigation/back: expected empty stack, got size=%d canGoBack=%v",
 			navBackResp.StackSize, navBackResp.CanGoBack)
 	}
+
+	// === Chunk 13 — trace persistence ========================================
+	//
+	// Trace persist runs in a background goroutine fired post-response.
+	// Give it a moment to land before counting.
+	time.Sleep(500 * time.Millisecond)
+
+	// Count traces persisted for the chunk-11 fresh session — should
+	// be at least 1 (turn 5 rebuild). Use direct SQL via the pool.
+	var traceCount int
+	if err := pg.Pool().QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM v5_chat_session_traces WHERE session_id = $1::uuid`,
+		navSession.SessionID).Scan(&traceCount); err != nil {
+		t.Errorf("count traces (chunk-11 session): %v", err)
+	}
+	if traceCount < 1 {
+		t.Errorf("expected ≥1 persisted trace for chunk-11 session, got %d", traceCount)
+	}
+	t.Logf("chunk-13 traces persisted (chunk-11 session): %d", traceCount)
+
+	// Cleanup traces too — ON DELETE CASCADE on session FK handles this
+	// implicitly when session row is deleted, but the chunk-9 t.Cleanup
+	// is already in place. Just verify the cascade for hygiene.
 
 	// GET /api/v1/session/{id}
 	resp, err = http.Get(srv.URL + "/api/v1/session/" + sessResp.SessionID)

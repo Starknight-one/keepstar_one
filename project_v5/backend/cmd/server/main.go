@@ -51,6 +51,7 @@ func main() {
 		{"state", pgClient.RunStateMigrations},
 		{"preset", pgClient.RunPresetMigrations},
 		{"component", pgClient.RunComponentMigrations},
+		{"trace", pgClient.RunTraceMigrations},
 	} {
 		if err := mig.run(bootCtx); err != nil {
 			log.Error("migration failed", "name", mig.name, "err", err)
@@ -69,6 +70,7 @@ func main() {
 	presetPort := postgres.NewPresetAdapterWithSystem(pgClient, systemPresetRegistry)
 	componentPort := postgres.NewComponentAdapter(pgClient)
 	fdPort := postgres.NewFieldDefinitionAdapter(pgClient)
+	tracePort := postgres.NewTraceAdapter(pgClient)
 
 	// LLM client.
 	llm := anthropicAdapter.NewClient(cfg.AnthropicAPIKey, cfg.LLMModel)
@@ -91,7 +93,7 @@ func main() {
 
 	// Handlers + routing.
 	sessionH := handlers.NewSessionHandler(statePort, pgClient.Pool())
-	pipelineH := handlers.NewPipelineHandler(pipeline)
+	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
 	router := handlers.RegisterRoutes(log, catalogPort, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH)

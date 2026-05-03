@@ -262,3 +262,76 @@ main { flex: 1; padding: 28px 36px; }
 }
 .pim-key { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: #888; margin-bottom: 4px; }
 .pim-val { font-size: 13px; color: #ddd; word-break: break-word; }
+
+/* Chunk 13 — Chat sessions inspection. */
+.subtitle { color: #888; font-size: 13px; margin-top: -8px; margin-bottom: 16px; }
+
+.chats-filters {
+  display: flex; gap: 8px; margin-bottom: 12px;
+}
+.chats-filters input,
+.chats-filters select {
+  padding: 6px 10px; border: 1px solid #2a2a35; background: #0e0e15;
+  color: #ddd; border-radius: 4px; font-size: 13px;
+}
+.chats-filters input { flex: 1; min-width: 200px; }
+
+.chats-meta { color: #888; font-size: 12px; margin-bottom: 8px; }
+
+.chats { width: 100%; border-collapse: collapse; font-size: 13px; }
+.chats th, .chats td {
+  padding: 8px 10px; border-bottom: 1px solid #1f1f28; text-align: left;
+}
+.chats th { color: #999; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
+.chats .num { text-align: right; font-variant-numeric: tabular-nums; }
+.chats tr.has-errors { background: rgba(239, 68, 68, 0.08); }
+.chats .tenant-name { color: #888; font-size: 12px; }
+.chats .latest-query { color: #aaa; font-size: 12px; max-width: 280px; }
+
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.4px;
+  margin-right: 4px;
+}
+.badge-active { background: #14532d; color: #86efac; }
+.badge-closed { background: #1f1f28; color: #888; }
+.badge-error  { background: #7f1d1d; color: #fecaca; }
+.badge-ok     { background: #14532d; color: #86efac; }
+
+.load-more { margin-top: 16px; text-align: center; }
+.load-more button {
+  padding: 8px 16px; background: #1f1f28; color: #ddd;
+  border: 1px solid #2a2a35; border-radius: 4px; cursor: pointer;
+}
+.load-more button:hover:not(:disabled) { background: #2a2a35; }
+
+.chat-header {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px; margin-bottom: 16px; padding: 12px;
+  background: #16161f; border: 1px solid #25252e; border-radius: 6px;
+}
+.chat-header strong { color: #aaa; font-weight: 500; margin-right: 6px; }
+
+.chat-turns { width: 100%; border-collapse: collapse; font-size: 13px; }
+.chat-turns th, .chat-turns td {
+  padding: 6px 8px; border-bottom: 1px solid #1f1f28; text-align: left;
+}
+.chat-turns th { color: #999; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
+.chat-turns .num { text-align: right; font-variant-numeric: tabular-nums; }
+.chat-turns tr.has-errors { background: rgba(239, 68, 68, 0.08); }
+.chat-turns tr.span-row td { background: #0e0e15; padding: 12px; }
+
+.link-btn {
+  background: none; border: none; color: #c4b5fd; cursor: pointer;
+  font-size: 12px; padding: 0; text-decoration: underline;
+}
+
+.spans-waterfall { font-size: 12px; }
+.spans-table { width: 100%; border-collapse: collapse; }
+.spans-table th, .spans-table td {
+  padding: 4px 8px; border-bottom: 1px solid #1f1f28; vertical-align: top;
+}
+.spans-table th { color: #888; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+.spans-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.spans-table tr.span-error { background: rgba(239, 68, 68, 0.06); }
+.span-attrs code { font-size: 11px; color: #aaa; word-break: break-all; }
