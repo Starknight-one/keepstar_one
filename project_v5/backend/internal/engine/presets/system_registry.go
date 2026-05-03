@@ -71,3 +71,53 @@ func (r *SystemPresetRegistry) List() []string {
 	sort.Strings(out)
 	return out
 }
+
+// SystemComponentRegistry is the in-process fallback for reusable
+// components. Mirrors SystemPresetRegistry: validate-on-first-use,
+// cache validated bytes, treat malformed JSON as "not found".
+//
+// Used by ComponentAdapter when a tenant has not authored the named
+// component in v5_components — without this, refs in system presets
+// (price-rating-root, brand-badge-root) stay unresolved and rendered
+// cards collapse to title+image only.
+type SystemComponentRegistry struct {
+	cache sync.Map // name → []byte
+}
+
+// NewSystemComponentRegistry returns a ready-to-use registry. Cheap
+// constructor — does not parse anything until Get is called.
+func NewSystemComponentRegistry() *SystemComponentRegistry {
+	return &SystemComponentRegistry{}
+}
+
+// Get returns the embedded JSON bytes for the named system component
+// and a presence flag. Same validate-on-first-hit semantics as
+// SystemPresetRegistry.Get.
+func (r *SystemComponentRegistry) Get(name string) ([]byte, bool) {
+	if cached, ok := r.cache.Load(name); ok {
+		return cached.([]byte), true
+	}
+	raw, ok := SystemComponentSeeds[name]
+	if !ok {
+		return nil, false
+	}
+	var probe map[string]any
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, false
+	}
+	r.cache.Store(name, raw)
+	return raw, true
+}
+
+// List returns every system component name in sorted order. Used by
+// the postgres adapter's ListPublishedComponents to union DB + registry
+// (so Materialise(preset, components) sees every reusable referenced
+// by the system presets).
+func (r *SystemComponentRegistry) List() []string {
+	out := make([]string, 0, len(SystemComponentSeeds))
+	for name := range SystemComponentSeeds {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}

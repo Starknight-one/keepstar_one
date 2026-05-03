@@ -9,17 +9,36 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/engine/presets"
 )
 
 // ComponentAdapter implements ports.ComponentPort against v5_components +
 // v5_component_versions. Mirrors PresetAdapter shape — read-only until the
 // canvas-microservice chunk adds the write side.
+//
+// systemRegistry is optional: when non-nil and the DB has no row for
+// the requested component (or for ListPublishedComponents — not in the
+// returned set yet), the adapter falls back to the registry to serve
+// the embedded system component. Mirrors PresetAdapter.systemRegistry
+// — used for reusable subtrees that the system presets reference
+// (price-rating-root, brand-badge-root).
 type ComponentAdapter struct {
-	client *Client
+	client         *Client
+	systemRegistry *presets.SystemComponentRegistry
 }
 
+// NewComponentAdapter returns an adapter without system fallback.
+// Tests use this to keep DB-only behaviour explicit.
 func NewComponentAdapter(client *Client) *ComponentAdapter {
 	return &ComponentAdapter{client: client}
+}
+
+// NewComponentAdapterWithSystem constructs an adapter wired to a system
+// component registry. Production main.go uses this so cards rendered
+// from system presets can find their reusable subtrees even before any
+// tenant has authored them.
+func NewComponentAdapterWithSystem(client *Client, registry *presets.SystemComponentRegistry) *ComponentAdapter {
+	return &ComponentAdapter{client: client, systemRegistry: registry}
 }
 
 const componentSelect = `
@@ -51,11 +70,43 @@ func (a *ComponentAdapter) GetPublishedComponent(ctx context.Context, tenantSlug
 	comp, err := scanComponent(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if sys := a.systemComponentFallback(name); sys != nil {
+				return sys, nil
+			}
 			return nil, domain.ErrComponentNotFound
 		}
 		return nil, fmt.Errorf("query component: %w", err)
 	}
 	return comp, nil
+}
+
+// systemComponentFallback wraps the named system-registry payload (if
+// any) as a domain.Component. Mirrors PresetAdapter.systemPresetFallback
+// — gives a synthetic identity (id=system:<name>, tenantID=system) so
+// downstream observers can distinguish defaults from authored versions.
+func (a *ComponentAdapter) systemComponentFallback(name string) *domain.Component {
+	if a.systemRegistry == nil {
+		return nil
+	}
+	body, ok := a.systemRegistry.Get(name)
+	if !ok {
+		return nil
+	}
+	now := time.Now().UTC()
+	return &domain.Component{
+		ID:           "system:" + name,
+		TenantID:     "system",
+		Name:         name,
+		Category:     "system",
+		Description:  "system-default component",
+		Version:      0,
+		Status:       domain.ComponentStatusPublished,
+		DocumentJSON: json.RawMessage(append([]byte(nil), body...)),
+		PublishedAt:  &now,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		IsSystem:     true,
+	}
 }
 
 func (a *ComponentAdapter) ListPublishedComponents(ctx context.Context, tenantSlugOrID string) ([]domain.Component, error) {
@@ -84,15 +135,29 @@ func (a *ComponentAdapter) ListPublishedComponents(ctx context.Context, tenantSl
 	defer rows.Close()
 
 	var out []domain.Component
+	dbHave := map[string]bool{}
 	for rows.Next() {
 		comp, err := scanComponent(rows)
 		if err != nil {
 			return nil, err
 		}
+		dbHave[comp.Name] = true
 		out = append(out, *comp)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iter components: %w", err)
+	}
+	// Union with system registry — DB rows already win because we skip
+	// any registry name the DB returned. Mirrors PresetAdapter union.
+	if a.systemRegistry != nil {
+		for _, name := range a.systemRegistry.List() {
+			if dbHave[name] {
+				continue
+			}
+			if sys := a.systemComponentFallback(name); sys != nil {
+				out = append(out, *sys)
+			}
+		}
 	}
 	sortComponentsByName(out)
 	return out, nil

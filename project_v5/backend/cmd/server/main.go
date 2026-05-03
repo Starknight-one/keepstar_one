@@ -65,10 +65,11 @@ func main() {
 	// empty_not_found, ...) resolves via the embedded JSON shipped with
 	// the binary. DB rows always win.
 	systemPresetRegistry := presets.NewSystemPresetRegistry()
+	systemComponentRegistry := presets.NewSystemComponentRegistry()
 	catalogPort := postgres.NewCatalogAdapter(pgClient)
 	statePort := postgres.NewStateAdapter(pgClient, log)
 	presetPort := postgres.NewPresetAdapterWithSystem(pgClient, systemPresetRegistry)
-	componentPort := postgres.NewComponentAdapter(pgClient)
+	componentPort := postgres.NewComponentAdapterWithSystem(pgClient, systemComponentRegistry)
 	fdPort := postgres.NewFieldDefinitionAdapter(pgClient)
 	tracePort := postgres.NewTraceAdapter(pgClient)
 

@@ -101,3 +101,18 @@ var SystemPresetDefaultReplicate = map[string]bool{
 	"empty_not_found":           false,
 	"error_generic":             false,
 }
+
+// SystemComponentSeeds maps component name → embedded JSON. Mirrors
+// SystemPresetSeeds but for the reusable subtrees referenced by presets
+// via RefNode (e.g. product_card → ref{ref:"price-rating-root"}).
+//
+// Without this registry, fresh tenants see refs unresolved (engine has
+// nothing to inline) and the rendered card collapses to title+image
+// without price/rating/brand surfaces. The component name is the
+// `name` field consumed by ComponentPort + the matching top-level node
+// id inside the JSON (FindNodeByID resolves `ref` against the
+// document tree).
+var SystemComponentSeeds = map[string][]byte{
+	"price-rating-root": ComponentPriceRatingJSON,
+	"brand-badge-root":  ComponentBrandBadgeJSON,
+}

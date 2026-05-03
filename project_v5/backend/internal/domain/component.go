@@ -36,4 +36,9 @@ type Component struct {
 	PublishedAt  *time.Time      `json:"publishedAt,omitempty"`
 	CreatedAt    time.Time       `json:"createdAt"`
 	UpdatedAt    time.Time       `json:"updatedAt"`
+	// IsSystem marks records served from the in-process system component
+	// registry (SystemComponentRegistry) rather than v5_components. Mirror
+	// of Preset.IsSystem; lets observers (tracing, future canvas) tell
+	// defaults from tenant-authored versions.
+	IsSystem bool `json:"isSystem,omitempty"`
 }
