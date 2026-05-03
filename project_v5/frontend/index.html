@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keepstar V5 — dev</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; padding: 40px; }
+      h1 { font-weight: 600; }
+      p { color: #555; max-width: 60ch; }
+    </style>
+  </head>
+  <body>
+    <h1>Keepstar V5 — dev host</h1>
+    <p>The chat widget mounts at the bottom right. Open devtools to see
+       <code>[v5-renderer]</code> + <code>[v5-action]</code> logs.</p>
+    <script>
+      // Dev config — overrides for the widget IIFE entry. Vite dev server
+      // serves widget.jsx directly; in this dev mode the script tag has
+      // no data-* attrs so we set them on window.
+      window.__KEEPSTAR_V5_WIDGET__ = {
+        tenant: 'hey-babes-cosmetics',
+        api: 'http://localhost:8082/api/v1',
+      }
+    </script>
+    <script type="module" src="/src/widget.jsx"></script>
+  </body>
+</html>

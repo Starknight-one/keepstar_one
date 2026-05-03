@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keepstar V5 — embed test</title>
+  </head>
+  <body>
+    <h1>Embed test</h1>
+    <p>This page mimics how a merchant embeds the V5 widget on their site.
+       Tag below loads <code>widget.js</code> as a script with
+       <code>data-tenant</code> + <code>data-api</code>.</p>
+
+    <!-- Production-style embed. Build first: `npm run build` to
+         populate dist/widget.js, then serve this file. -->
+    <script src="../dist/widget.js"
+            data-tenant="hey-babes-cosmetics"
+            data-api="http://localhost:8082/api/v1"></script>
+  </body>
+</html>

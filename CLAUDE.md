@@ -79,7 +79,9 @@ scripts/                    — start.sh, stop.sh, start_admin.sh, stop_admin.sh
 | Service | Path | Port |
 |--------|------|------|
 | V4 Chat backend | `project_v4/backend/` | 8082 |
-| Chat widget (dev) | `project/frontend/` | 5173 |
+| V5 Chat backend (in build) | `project_v5/backend/` | 8082 (same; not deployed yet) |
+| Chat widget V4 (dev) | `project/frontend/` | 5173 |
+| Chat widget V5 (in build) | `project_v5/frontend/` | 5173 (same; not deployed yet) |
 | Admin backend | `project_admin/backend/` | 8081 |
 | Admin frontend | `project_admin/frontend/` | 5174 |
 | Curator | `curator/` | 8082 (separate Railway service) |

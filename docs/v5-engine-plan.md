@@ -104,7 +104,7 @@ fresh build, ops-only → modify").
 
 ### P0-B — Render path: user sees nothing without these
 
-**4. Frontend renderer for scene-graph.** ❌
+**4. Frontend renderer for scene-graph.** ✅
 The chat widget (`project/frontend/`) today renders V4 Formation via
 `FormationRenderer` → `WidgetRenderer` → `AtomV2Renderer`. V5 emits a v9
 scene-graph (Frame / Text / Image / Ref nodes, arbitrary nesting). Need a
@@ -113,7 +113,7 @@ default is browser-side Yoga-WASM for layout; sub-decision: use Yoga or
 fall back to flexbox-via-CSS for the MVP and add Yoga later. Flexbox-CSS is
 the faster path for today.
 
-**5. Format + wrapper rendering on the frontend.** ❌
+**5. Format + wrapper rendering on the frontend.** ✅
 Backend stores `format` (currency/stars/percent/...) and `wrapper`
 (badge/tag/button/...) as pass-through strings on leaf nodes. The actual
 "4.5 → ★ 4.5" + "wrap in badge" step is the renderer's job (see

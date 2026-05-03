@@ -1,0 +1,63 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "detail",
+      "layout": {"direction": "column", "gap": "lg"},
+      "children": [
+        {
+          "type": "image",
+          "id": "hero-img",
+          "fills": [{"url": "https://picsum.photos/seed/detail/1200/675", "mode": "fill"}],
+          "mediaStyle": {"aspectRatio": "16:9", "objectFit": "cover"}
+        },
+        {
+          "type": "frame",
+          "id": "body",
+          "layout": {"direction": "column", "gap": "md"},
+          "children": [
+            {
+              "type": "text",
+              "id": "title",
+              "content": "Glow Serum 30ml",
+              "textStyle": {"fontSize": "2xl", "fontWeight": "bold"}
+            },
+            {
+              "type": "frame",
+              "id": "price-row",
+              "layout": {"direction": "row", "gap": "md", "align": "center"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "price",
+                  "content": 24.5,
+                  "format": "currency",
+                  "textStyle": {"fontSize": "xl", "fontWeight": "semibold"}
+                },
+                {
+                  "type": "text",
+                  "id": "rating",
+                  "content": 4.5,
+                  "format": "stars"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "description",
+              "content": "Lightweight serum that gives the skin a healthy radiant glow. Suitable for all skin types.",
+              "textStyle": {"fontSize": "md", "lineClamp": 8}
+            },
+            {
+              "type": "text",
+              "id": "cta",
+              "content": "Add to cart",
+              "wrapper": "button"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

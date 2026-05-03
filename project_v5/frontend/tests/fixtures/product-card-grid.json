@@ -1,0 +1,91 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "card-1",
+      "__templateOrigin": "card",
+      "layout": {"direction": "column", "gap": "sm"},
+      "children": [
+        {
+          "type": "image",
+          "id": "img-1",
+          "fills": [{"url": "https://picsum.photos/seed/p1/400/300", "mode": "fill"}],
+          "mediaStyle": {"aspectRatio": "4:3", "objectFit": "cover"}
+        },
+        {
+          "type": "text",
+          "id": "title-1",
+          "content": "Glow Serum 30ml",
+          "fieldBinding": "name",
+          "__bound": true,
+          "textStyle": {"fontSize": "lg", "fontWeight": "bold"}
+        },
+        {
+          "type": "text",
+          "id": "price-1",
+          "content": 24.5,
+          "fieldBinding": "priceFormatted",
+          "format": "currency"
+        },
+        {
+          "type": "text",
+          "id": "brand-1",
+          "content": "Hey Babes",
+          "fieldBinding": "brand",
+          "wrapper": "badge",
+          "__resolvedFrom": "brand-badge-root"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "card-2",
+      "__templateOrigin": "card",
+      "layout": {"direction": "column", "gap": "sm"},
+      "children": [
+        {
+          "type": "image",
+          "id": "img-2",
+          "fills": [{"url": "https://picsum.photos/seed/p2/400/300", "mode": "fill"}],
+          "mediaStyle": {"aspectRatio": "4:3", "objectFit": "cover"}
+        },
+        {
+          "type": "text",
+          "id": "title-2",
+          "content": "Hydration Mist",
+          "fieldBinding": "name",
+          "textStyle": {"fontSize": "lg", "fontWeight": "bold"}
+        },
+        {
+          "type": "text",
+          "id": "price-2",
+          "content": 18,
+          "fieldBinding": "priceFormatted",
+          "format": "currency"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "card-3",
+      "__templateOrigin": "card",
+      "layout": {"direction": "column", "gap": "sm"},
+      "children": [
+        {
+          "type": "text",
+          "id": "title-3",
+          "content": "Lavender Hand Cream",
+          "fieldBinding": "name"
+        },
+        {
+          "type": "text",
+          "id": "rating-3",
+          "content": 4.5,
+          "fieldBinding": "rating",
+          "format": "stars-compact"
+        }
+      ]
+    }
+  ]
+}
