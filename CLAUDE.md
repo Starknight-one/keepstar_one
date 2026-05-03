@@ -139,16 +139,28 @@ V5 is the next-generation chat engine: v9 scene-graph foundation + V4
 strengths ported on top (binding, state with delta-stream, system
 preset registry). Lives in `project_v5/`.
 
-**Status as of 2026-05-03**: chunks 1-10 closed (engine, state, binding,
-components, replicate, ops applier, Anthropic adapter, prompt-builders
-for both agents, HTTP server, postgres adapters with transactions /
-retries, span tracer with parent linkage and structured attrs, Agent1
-+ Agent2 + pipeline orchestrator, tool surface unblock for the three
-V4-compatible call shapes, 7 system presets via in-process registry +
-DB-miss fallback, tree_map computation, scene-graph frontend renderer
-at `project_v5/frontend/`). NOT covered yet: P0-C interaction loop
-(actions / drill-down / navigation / session restore), P1 deploy +
-smoke comparison vs V4. Detailed status: `docs/v5-engine-plan.md`.
+**Status as of 2026-05-03**: chunks 1-11 closed. P0-A (tool surface),
+P0-B (render path), and P0-C (interaction loop) all green:
+- engine, state, binding, components, replicate, ops applier
+- Anthropic adapter, prompt-builders for both agents, HTTP server,
+  postgres adapters with transactions / retries
+- span tracer with parent linkage and structured attrs
+- Agent1 + Agent2 + pipeline orchestrator, tool surface unblock for
+  three V4-compatible call shapes; 7 system presets via in-process
+  registry + DB-miss fallback; tree_map computation
+- scene-graph frontend renderer at `project_v5/frontend/`
+- closed action vocabulary (9 kinds) + auto-injection of default
+  like/cart_add buttons via `engine.InjectDefaultActions`
+- POST `/api/v1/actions` for backend kinds + POST
+  `/api/v1/navigation/{expand,back}` with snapshot stack restore
+- hardcoded `presets.SystemAdjacency` map + 1-level prefetch payload
+  on every pipeline response
+- frontend `actionDispatch` + `RenderContext` + clickable cards +
+  back button
+
+NOT covered yet: chunk 12 (render-quality polish — 4 gaps from first
+manual test), chunk 13 (Curator chats UI), P1 deploy + smoke comparison
+vs V4. Detailed status: `docs/v5-engine-plan.md`.
 
 **Local dev** (V4 holds 8082 in this monorepo, so V5 runs on 8084):
 

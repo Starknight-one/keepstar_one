@@ -26,8 +26,10 @@ import (
 
 	anthropicAdapter "keepstar_v5/internal/adapters/anthropic"
 	"keepstar_v5/internal/adapters/postgres"
+	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/handlers"
+	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/tools"
 	"keepstar_v5/internal/usecases"
 )
@@ -80,11 +82,14 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	agent1Cache := usecases.NewAgent1PromptCache(catalog)
 	agent1 := usecases.NewAgent1Execute(llm, statePort, catalog, registry, agent1Cache, log)
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
-	pipeline := usecases.NewPipelineExecute(agent1, agent2, log)
+	prefetchBuilder := usecases.NewPrefetchBuilder(presetPort, componentPort, log)
+	pipeline := usecases.NewPipelineExecute(agent1, agent2, statePort, prefetchBuilder, log)
 
 	sessionH := handlers.NewSessionHandler(statePort, pg.Pool())
 	pipelineH := handlers.NewPipelineHandler(pipeline)
-	router := handlers.RegisterRoutes(log, catalog, "hey-babes-cosmetics", sessionH, pipelineH)
+	actionH := handlers.NewActionHandler(statePort)
+	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
+	router := handlers.RegisterRoutes(log, catalog, "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH)
 
 	srv := httptest.NewServer(router)
 	defer srv.Close()
@@ -309,6 +314,153 @@ func TestHTTPLiveSmoke(t *testing.T) {
 		t.Errorf("turn 4: agent2.tree_map.build span did not fire (modify-mode tree_map missing)")
 	}
 
+	// === Chunk 11 — actions + navigation =====================================
+	//
+	// Use a FRESH session so the rebuild prompt isn't biased toward
+	// modify-mode by the chunk-9 turns (turn 4 left a tree_map that
+	// nudges Agent2 to keep modifying). A fresh session guarantees an
+	// empty conversation and thus a from-scratch product_card render
+	// that exercises the prefetch + adjacency code path.
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/api/v1/session/init", nil)
+	req.Header.Set("X-Tenant-Slug", "hey-babes-cosmetics")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /session/init (chunk-11 session): %v", err)
+	}
+	var navSession struct {
+		SessionID string `json:"sessionId"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&navSession)
+	resp.Body.Close()
+	if navSession.SessionID == "" {
+		t.Fatalf("chunk-11 session init returned empty sessionId")
+	}
+	t.Cleanup(func() {
+		_, _ = pg.Pool().Exec(context.Background(),
+			`DELETE FROM v5_chat_sessions WHERE id = $1::uuid`, navSession.SessionID)
+	})
+	t.Logf("chunk-11 session: %s", navSession.SessionID)
+
+	turn5 := postPipeline(t, srv.URL, navSession.SessionID,
+		"Search for any 3 products and render them as a grid using the product_card preset")
+	if turn5.errored() {
+		t.Fatalf("turn 5 (rebuild card grid): tool errored: %s", turn5.summary())
+	}
+	products := turn5.firstProducts(t, statePort, navSession.SessionID)
+	if len(products) == 0 {
+		t.Fatalf("turn 5: state has no products to drive action / nav tests")
+	}
+	firstID := products[0].ID
+
+	// Pipeline response should now carry the prefetch payload (preset
+	// product_card has product_detail as drill target via SystemAdjacency).
+	if turn5.parsed.Prefetch == nil {
+		// Dump the tool calls + the document's __presetInUse marker
+		// for diagnosis. The orchestrator only builds prefetch when
+		// __presetInUse is non-empty AND adjacency has a drill target.
+		presetInUse, _ := turn5.parsed.Document["__presetInUse"].(string)
+		callDump, _ := json.Marshal(turn5.parsed.ToolCalls)
+		t.Errorf("turn 5: expected prefetch payload, got nil — presetInUse=%q toolCalls=%s",
+			presetInUse, string(callDump))
+	} else {
+		if _, ok := turn5.parsed.Prefetch.AdjacentTemplate["product"]; !ok {
+			t.Errorf("turn 5: prefetch.adjacentTemplate[product] missing")
+		}
+		if got := len(turn5.parsed.Prefetch.Entities["product"]); got == 0 {
+			t.Errorf("turn 5: prefetch.entities[product] is empty")
+		}
+	}
+
+	// POST /api/v1/actions — like the first product, expect 200 + LikedIds.
+	actionBody := []byte(`{"sessionId":"` + navSession.SessionID + `","kind":"like","entity":{"type":"product","id":"` + firstID + `"}}`)
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/api/v1/actions", bytes.NewReader(actionBody))
+	req.Header.Set("X-Tenant-Slug", "hey-babes-cosmetics")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /actions: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("/actions status %d: %s", resp.StatusCode, body)
+	}
+	var actResp struct {
+		Success bool `json:"success"`
+		Actions struct {
+			LikedIds []string `json:"likedIds"`
+		} `json:"actions"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&actResp)
+	resp.Body.Close()
+	if !actResp.Success || !containsString(actResp.Actions.LikedIds, firstID) {
+		t.Errorf("/actions: like did not record; resp=%+v", actResp)
+	}
+
+	// POST /api/v1/navigation/expand — drill into product_detail for the
+	// first product. Expect Document, viewMode=detail, stackSize=1.
+	navBody := []byte(`{"sessionId":"` + navSession.SessionID + `","entityType":"product","entityId":"` + firstID + `"}`)
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/api/v1/navigation/expand", bytes.NewReader(navBody))
+	req.Header.Set("X-Tenant-Slug", "hey-babes-cosmetics")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /navigation/expand: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("/navigation/expand status %d: %s", resp.StatusCode, body)
+	}
+	var navExpResp struct {
+		Success     bool                   `json:"success"`
+		Document    map[string]interface{} `json:"document"`
+		ViewMode    string                 `json:"viewMode"`
+		StackSize   int                    `json:"stackSize"`
+		CanGoBack   bool                   `json:"canGoBack"`
+		PresetInUse string                 `json:"presetInUse"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&navExpResp)
+	resp.Body.Close()
+	if !navExpResp.Success {
+		t.Errorf("/navigation/expand: success=false")
+	}
+	if navExpResp.Document == nil {
+		t.Errorf("/navigation/expand: document missing")
+	}
+	if navExpResp.PresetInUse == "" {
+		t.Errorf("/navigation/expand: presetInUse missing")
+	}
+	if !navExpResp.CanGoBack {
+		t.Errorf("/navigation/expand: canGoBack=false; expected true after first push")
+	}
+
+	// POST /api/v1/navigation/back — pop, restore prior template.
+	backBody := []byte(`{"sessionId":"` + navSession.SessionID + `"}`)
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/api/v1/navigation/back", bytes.NewReader(backBody))
+	req.Header.Set("X-Tenant-Slug", "hey-babes-cosmetics")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /navigation/back: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("/navigation/back status %d: %s", resp.StatusCode, body)
+	}
+	var navBackResp struct {
+		Success   bool `json:"success"`
+		StackSize int  `json:"stackSize"`
+		CanGoBack bool `json:"canGoBack"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&navBackResp)
+	resp.Body.Close()
+	if !navBackResp.Success {
+		t.Errorf("/navigation/back: success=false")
+	}
+	if navBackResp.StackSize != 0 || navBackResp.CanGoBack {
+		t.Errorf("/navigation/back: expected empty stack, got size=%d canGoBack=%v",
+			navBackResp.StackSize, navBackResp.CanGoBack)
+	}
+
 	// GET /api/v1/session/{id}
 	resp, err = http.Get(srv.URL + "/api/v1/session/" + sessResp.SessionID)
 	if err != nil {
@@ -330,11 +482,12 @@ type pipelineTurnResult struct {
 }
 
 type pipelineHTTPResponse struct {
-	ToolCalls []map[string]any       `json:"toolCalls"`
-	Usage     map[string]any         `json:"usage"`
-	LatencyMs int64                  `json:"latencyMs"`
-	Document  map[string]interface{} `json:"document"`
-	Spans     []map[string]any       `json:"spans"`
+	ToolCalls []map[string]any          `json:"toolCalls"`
+	Usage     map[string]any            `json:"usage"`
+	LatencyMs int64                     `json:"latencyMs"`
+	Document  map[string]interface{}    `json:"document"`
+	Spans     []map[string]any          `json:"spans"`
+	Prefetch  *usecases.PrefetchPayload `json:"prefetch,omitempty"`
 }
 
 func postPipeline(t *testing.T, baseURL, sessionID, query string) *pipelineTurnResult {
@@ -461,4 +614,27 @@ func keys(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// firstProducts loads the products zone from state; chunk-11 helpers
+// use it to pick a stable entity ID for the action / nav turns.
+func (r *pipelineTurnResult) firstProducts(t *testing.T, statePort ports.StatePort, sessionID string) []domain.Product {
+	t.Helper()
+	state, err := statePort.GetState(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	return state.Current.Data.Products
+}
+
+// containsString reports whether s contains v. Mirrors the helper in
+// handler_action.go but kept local to the _test package to avoid
+// exporting it.
+func containsString(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

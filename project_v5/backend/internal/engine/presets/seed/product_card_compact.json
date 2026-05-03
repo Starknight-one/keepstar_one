@@ -27,6 +27,12 @@
           "format": "currency",
           "slot": "price",
           "textStyle": {"fontSize": "sm", "fontWeight": "bold"}
+        },
+        {
+          "type": "frame",
+          "id": "actions",
+          "layout": {"direction": "row", "gap": "xs"},
+          "children": []
         }
       ]
     }

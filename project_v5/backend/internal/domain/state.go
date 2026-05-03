@@ -2,6 +2,13 @@ package domain
 
 import "time"
 
+// TemplatePresetInUseKey is the synthetic top-level key visual_assembly
+// stamps onto the marshaled Document map when the preset path runs.
+// The pipeline orchestrator reads it back to look up the drill-target
+// preset in SystemAdjacency for the prefetch payload. Empty / absent
+// for freestyle / modify call shapes (no preset).
+const TemplatePresetInUseKey = "__presetInUse"
+
 // CartItem is one entry in the user's cart zone.
 type CartItem struct {
 	EntityType EntityType `json:"entityType"`
@@ -56,12 +63,20 @@ type EntityRef struct {
 }
 
 // ViewSnapshot captures a view state for back-navigation replay.
+//
+// Template stores the rendered scene-graph Document at the moment the
+// snapshot was taken so /navigation/back can restore it without a
+// re-render through Agent2. Mirrors V4's ViewSnapshot.Template
+// behaviour. PresetInUse mirrors the active StateMeta.PresetInUse so
+// the prefetch lookup after restoration uses the prior preset.
 type ViewSnapshot struct {
-	Mode      ViewMode    `json:"mode"`
-	Focused   *EntityRef  `json:"focused,omitempty"`
-	Refs      []EntityRef `json:"refs"`
-	Step      int         `json:"step"`
-	CreatedAt time.Time   `json:"created_at"`
+	Mode        ViewMode               `json:"mode"`
+	Focused     *EntityRef             `json:"focused,omitempty"`
+	Refs        []EntityRef            `json:"refs"`
+	Step        int                    `json:"step"`
+	Template    map[string]interface{} `json:"template,omitempty"`
+	PresetInUse string                 `json:"preset_in_use,omitempty"`
+	CreatedAt   time.Time              `json:"created_at"`
 }
 
 // ViewState is the current view configuration.

@@ -123,6 +123,20 @@ frontend after. Persistence is also the foundation for the deferred
 `/debug/traces` waterfall UI (currently scoped as chunk-12 inside V5
 itself) — these two surfaces should share the same span schema.
 
+## Locked-in design principles
+
+| Principle | What it means | Where it manifests |
+|---|---|---|
+| **Shop-layer ≠ chat-layer** | The shop (catalog + actions + navigation graph) is stationary backend knowledge. The chat layer (LLM) only picks visual shape — it never picks an action kind, never picks a drill target, never decides where a click goes. Action handlers + adjacency map live in backend code; LLM physically cannot break or reroute them. | Closed action vocabulary (`domain.UserActionKind` — 9 kinds) chosen by the runtime dispatcher, not the model. `presets.SystemAdjacency` map drives drill targets — also chosen by the runtime, not the model. Auto-injection of like + cart_add via `engine.InjectDefaultActions` happens after `BindData` regardless of what the LLM emitted. The model decides preset/ops/replicate (visual shape); everything click-related is shop-layer state. |
+
+This separation MUST stay clean as the engine grows. Any time the LLM
+would pick an action kind or a navigation target by inference, push
+back and re-route the decision into the shop layer. Reasoning: card →
+detail is a SHOP fact regardless of how the chat reshapes the visual
+output — Vlad's framing «по сути мы же просто делаем магазин, который
+решейпится по запросу пользователя в чат, но логика магазина то
+остаётся».
+
 ## Risks worth re-checking
 
 | Risk | Trigger | Mitigation today |

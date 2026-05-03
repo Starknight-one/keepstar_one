@@ -18,10 +18,13 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //
 // Endpoint catalog:
 //
-//	GET  /healthz                — health probe
-//	POST /api/v1/session/init    — create session
-//	GET  /api/v1/session/{id}    — read session state (debug)
-//	POST /api/v1/pipeline        — run Agent2 turn
+//	GET  /healthz                            — health probe
+//	POST /api/v1/session/init                — create session
+//	GET  /api/v1/session/{id}                — read session state (debug)
+//	POST /api/v1/pipeline                    — run Agent2 turn
+//	POST /api/v1/actions                     — like / unlike / cart_add / cart_remove
+//	POST /api/v1/navigation/expand           — drill into detail preset
+//	POST /api/v1/navigation/back             — pop view stack, restore prior template
 //
 // Middleware chain (outermost to innermost):
 //
@@ -41,12 +44,17 @@ func RegisterRoutes(
 	defaultTenantSlug string,
 	session *SessionHandler,
 	pipeline *PipelineHandler,
+	action *ActionHandler,
+	navigation *NavigationHandler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", HealthHandler)
 	mux.HandleFunc("POST /api/v1/session/init", session.Init)
 	mux.HandleFunc("GET /api/v1/session/", session.Get)
 	mux.HandleFunc("POST /api/v1/pipeline", pipeline.Pipeline)
+	mux.HandleFunc("POST /api/v1/actions", action.Action)
+	mux.HandleFunc("POST /api/v1/navigation/expand", navigation.Expand)
+	mux.HandleFunc("POST /api/v1/navigation/back", navigation.Back)
 
 	withTenant := WithTenant(catalog, defaultTenantSlug)
 	withLogging := WithLogging(log)

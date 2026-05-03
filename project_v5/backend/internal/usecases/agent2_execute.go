@@ -144,7 +144,19 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	}
 	messages = append(messages, domain.LLMMessage{Role: "user", Content: userContent})
 
-	tools := uc.toolRegistry.GetDefinitions()
+	// Filter the shared registry to Agent2's only tool. Without this,
+	// Agent2 can see catalog_search / state_filter / history_lookup
+	// (registered for Agent1) and occasionally picks one — leaving
+	// the rendering step a no-op. V4 keeps a separate Agent2-only
+	// registry; V5 uses one shared registry + per-agent filter (same
+	// model as Agent1Execute).
+	allDefs := uc.toolRegistry.GetDefinitions()
+	tools := make([]domain.ToolDefinition, 0, 1)
+	for _, d := range allDefs {
+		if d.Name == "visual_assembly" {
+			tools = append(tools, d)
+		}
+	}
 	cfg := ports.CacheConfig{
 		CacheTools:        true,
 		CacheSystem:       true,

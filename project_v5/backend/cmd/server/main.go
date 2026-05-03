@@ -86,12 +86,15 @@ func main() {
 	agent1Cache := usecases.NewAgent1PromptCache(catalogPort)
 	agent1 := usecases.NewAgent1Execute(llm, statePort, catalogPort, registry, agent1Cache, log)
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
-	pipeline := usecases.NewPipelineExecute(agent1, agent2, log)
+	prefetchBuilder := usecases.NewPrefetchBuilder(presetPort, componentPort, log)
+	pipeline := usecases.NewPipelineExecute(agent1, agent2, statePort, prefetchBuilder, log)
 
 	// Handlers + routing.
 	sessionH := handlers.NewSessionHandler(statePort, pgClient.Pool())
 	pipelineH := handlers.NewPipelineHandler(pipeline)
-	router := handlers.RegisterRoutes(log, catalogPort, cfg.TenantSlug, sessionH, pipelineH)
+	actionH := handlers.NewActionHandler(statePort)
+	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
+	router := handlers.RegisterRoutes(log, catalogPort, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

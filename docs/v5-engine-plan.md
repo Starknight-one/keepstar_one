@@ -10,8 +10,9 @@
 
 ## Snapshot — where we are now
 
-**Chunks 1-10 closed.** Backend (chunks 1-9) + frontend (chunk 10) cover
-the full P0-A (tool surface) and P0-B (render path) blocks. V5 can now:
+**Chunks 1-11 closed.** Backend (chunks 1-9, 11) + frontend (chunks 10, 11) cover
+the full P0-A (tool surface), P0-B (render path), and P0-C (interaction loop)
+blocks. V5 can now:
 
 - accept all three V4-compatible tool call shapes (preset / freestyle /
   multi-widget compose / ops-only modify), with parent-name aliasing
@@ -20,16 +21,24 @@ the full P0-A (tool surface) and P0-B (render path) blocks. V5 can now:
 - compute a compact `tree_map` and inject it into Agent2 in modify-mode
 - render any scene-graph the backend emits via a Vite + React 19 +
   Shadow DOM bundle at `project_v5/frontend/`
+- close the interaction loop end-to-end: closed action vocab (9 kinds)
+  with `like`/`cart_add` auto-injected on entity-bound subtrees,
+  POST /actions for backend kinds, POST /navigation/{expand,back}
+  with one-level prefetch payload on every pipeline response,
+  frontend dispatcher + clickable cards + back button
 
 End-to-end exercised by a live HTTP smoke test against Neon + Haiku
-(4 turns: search → system-fallback detail → multi-widget compose →
-ops-only modify).
+(5 pipeline turns: search → system-fallback detail → multi-widget
+compose → ops-only modify → fresh-session preset rebuild — plus
+POST /actions/like, /navigation/expand, /navigation/back).
 
 **What's still NOT shippable for prod**:
 
-1. **No interaction loop.** Buttons render but onClick is a no-op. No
-   drill-down, no back navigation, no actions endpoint. See P0-C items
-   below — Vlad has a design discussion planned before we start it.
+1. **Visual quality of cards is bad.** 4 render-quality gaps from the
+   first manual test on 2026-05-03 still open (no grid layout, tenant
+   field name mismatch heroImage/priceFormatted vs images/price, no
+   size attr on cards, Agent2 modify-bias). See chunk 12 in
+   `docs/v5-known-gaps.md`.
 2. **Not deployed.** Everything still runs locally (V5 backend on :8084
    in dev to avoid clashing with V4 on :8082). See P1 items.
 3. **No measured comparison vs V4.** No real-prompt smoke at scale,
@@ -59,10 +68,10 @@ in P1 / P2 / Deferred sections.
 | 8 — trace upgrade | `58571d2`, `0b0376f`, `aa40504` | `Span.id` / `parent_id` / `status` / `attrs`; LLM spans carry tokens + cost; postgres spans carry rows + tenant; `request_id` flows through ctx |
 | 9 — tool surface + presets + tree_map | `aad071a` | `visual_assembly` `preset` optional; freestyle / multi-widget compose / modify shapes; parent aliases (root/formation/""); 7 system presets via in-process registry (DB miss → fallback); BUILDING + COMPOSING sections in Agent2 prompt; `tree_map` computation + `<formation_tree>` injection in modify-mode; pair-aware history trim fix; live 4-turn HTTP smoke green |
 | 10 — frontend renderer | `e9589b7` | New `project_v5/frontend/` (Vite + React 19 + Shadow DOM, IIFE 206KB / 64KB gz). SceneGraphRenderer → Frame/Group/Text/Image/Ref. format.js (currency/stars/percent/etc) + wrapper.js (badge/tag/button/etc; buttons render `<button>` with no-op onClick logging). 13/13 vitest jsdom smoke. |
+| 11 — actions + nav + prefetch | <pending> | Closed P0-C interaction loop. `domain.UserActionKind` (9-kind closed vocab), `engine.InjectDefaultActions` pass after BindData (auto-injects like + cart_add on entity-bound subtrees), POST `/api/v1/actions` (backend handles like/unlike/cart_add/cart_remove), POST `/api/v1/navigation/{expand,back}` with snapshot stack restore, hardcoded `presets.SystemAdjacency` map, `usecases.PrefetchBuilder` ships 1-level prefetch payload (`{adjacentTemplate, entities}`) on every pipeline response. Frontend `actionDispatch.js` + `fillTemplate.js` + `RenderContext` + clickable replicate clones (Frame.jsx) + back button. Agent2 tool-filter fix (only visual_assembly, mirroring Agent1 prefix-filter). 32/32 vitest, 5-turn live HTTP smoke + actions + nav green. |
 
-Tree clean. Last commit `e9589b7`. Live HTTP smoke (chunk-9 four-turn run):
-~30 s total, 4 turns × ~5-9 s each, all assertions pass; tree_map size
-600-1500 bytes (~150-400 tokens) per turn.
+Tree clean. Last commit <pending>. Live HTTP smoke (chunk-11 five-turn
++ actions + nav run): ~47 s total, all assertions pass.
 
 **Local dev**: V5 backend on `:8084` (V4 holds `:8082`), V5 frontend on
 `:5173`. Backend reads `project_v5/.env` (PORT + DB + keys mirrored from
@@ -150,37 +159,42 @@ microservice can override per-tenant.
 
 ### P0-C — Interaction loop: user can't do anything without these
 
-**7. Auto-inject default actions on entity widgets.** ❌
-V4 has `engine_v4/default_ops.go` `DefaultWidgetActions` — for any widget
-bound to an entity (product / service), engine auto-adds LIKE / UNLIKE /
-CART_ADD action atoms. V5 doesn't. Port the concept: an engine pass after
-`BindData` that adds action nodes to every entity-bound subtree, idempotent.
+**7. Auto-inject default actions on entity widgets.** ✅ (chunk 11)
+`engine.InjectDefaultActions` walks Document, finds replicate clones +
+single-entity detail subtrees, locates an empty `actions` frame and
+appends like (♥) + cart_add (+) buttons bound to the resolved entity.
+Idempotent — a populated `actions` frame is left alone (LLM-explicit
+actions win). System seeds carry the empty `actions` frame as a hook.
 
-**8. `POST /api/v1/actions` endpoint.** ❌
-Click on LIKE / CART button on the frontend → POST to backend → write a
-delta `Source: SourceUser, ActorID: "user_click"`, update `state.actions`
-zone (likes set, cart map). V4 has this; V5 has the delta model + state
-zone but no HTTP handler. Wire it.
+**8. `POST /api/v1/actions` endpoint.** ✅ (chunk 11)
+Wired in `handler_action.go`. Closed vocab in `domain.UserActionKind`
+(9 kinds). Like/unlike/cart_add/cart_remove mutate
+`state.Actions` via the existing `UpdateActions` zone-write (delta with
+`Source: SourceUser, ActorID: "user"`). Other 5 kinds reject with 400
+("client-handled"). `?sync=true` skips body for V4-style fire-and-forget.
 
-**9. Drill-down to detail without round-trip (transition graph + prefetch).** ❌
-V4 ships `adjacentTemplates` in the pipeline response so the frontend can
-expand a card to detail with no backend call (`fillFormation` on the
-frontend swaps the template instantly). For each rendered preset, backend
-knows "which presets are reachable from here" (e.g. card → detail). Port:
-  - adjacency map per preset (e.g. `product_card` → `[product_detail]`);
-  - on every pipeline response, include prefetched scene-graphs for
-    immediate-next presets bound to currently-loaded data.
+**9. Drill-down to detail without round-trip (transition graph + prefetch).** ✅ (chunk 11)
+`presets.SystemAdjacency` is a hardcoded Go map (`product_card*` →
+`product_detail*`); lifts to `v5_presets.metadata` JSONB when the
+canvas microservice ships. `usecases.PrefetchBuilder` runs after
+Agent2, materialises the drill-target preset against ONE entity (no
+replicate, no BindData — frontend binds on click), and ships
+`{adjacentTemplate: {product: doc}, entities: {product: [...]}}` on
+the pipeline response. Frontend `fillTemplate` + `actionDispatch`
+fill template on click for instant drill.
 
-**10. Back navigation.** ❌
-V4 has `POST /api/v1/navigation/back` that pops `state.viewStack`. V5 has
-the viewStack zone in state but the handler is a stub (chunk 6c shipped
-the route but not the logic — verify by reading `handler_navigation.go`).
-Wire it.
+**10. Back navigation.** ✅ (chunk 11)
+`POST /api/v1/navigation/back` pops the view stack and restores
+`view + template` from `ViewSnapshot.{Mode, Focused, Template,
+PresetInUse}`. Snapshot stores the rendered template directly so
+restore is a single zone-write — no Agent2 re-render.
 
-**11. `POST /api/v1/navigation/expand` (drill-down handler).** ❌
-The "user clicked the card → show detail" backend call. Used as fallback
-when prefetch (item 9) doesn't have the destination cached. V4 has it; V5
-has the route stub.
+**11. `POST /api/v1/navigation/expand` (drill-down handler).** ✅ (chunk 11)
+Wired in `handler_navigation.go`. Pushes a snapshot, materialises the
+drill-target preset (Materialise → ResolveAndInline → BindData →
+InjectDefaultActions), updates view + template zones, returns the
+rendered Document. Used as the fallback when prefetch (item 9) is
+absent or the entity isn't in the prefetch entities list.
 
 **12. Session endpoints (`POST /session/init`, `GET /session/{id}`).** 🟡
 Chunk 6c shipped the routes but I didn't verify they're fully implemented

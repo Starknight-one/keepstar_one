@@ -56,6 +56,7 @@ describes what actually happened (commit sha, files changed, gaps).
 
 | Log | Chunk | Plan | What it shipped |
 |---|---|---|---|
+| `v5_2026-05-03_13-56_chunk-11.md` | 11 | `plans/chunk-11-actions-and-navigation.md` | Closed action vocab (9 kinds), engine InjectDefaultActions pass, POST /actions, POST /navigation/{expand,back}, hardcoded SystemAdjacency, 1-level prefetch payload, frontend dispatcher + RenderContext + clickable cards + back button. Agent2 tool-filter fix. Live HTTP smoke green (5 turns + actions + nav). |
 | `v5_2026-05-03_15-08_chunk-10.md` | 10 | `plans/chunk-10-frontend-renderer.md` | V5 frontend renderer at `project_v5/frontend/` (Vite + React 19 + Shadow DOM, 13/13 vitest jsdom). |
 | `v5_2026-05-03_14-59_chunk-9.md` | 9  | `plans/chunk-9-tool-surface-and-system-presets.md` | Tool surface unblock (preset optional, multi-widget compose, modify-mode), 7 system presets via in-process registry, tree_map computation + injection. Live HTTP smoke 4-turn green. |
 | `v5_2026-05-02_21-31.md` | 8  | `plans/chunk-8-trace-upgrade.md` | Span model upgrade — id / parent_id / status / structured attrs (LLM tokens + cost, postgres rows + tenant). |

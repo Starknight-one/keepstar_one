@@ -39,6 +39,13 @@ type pipelineResponse struct {
 	// Per-agent latency breakdown for client-side debugging.
 	Agent1Ms int64 `json:"agent1Ms"`
 	Agent2Ms int64 `json:"agent2Ms"`
+	// Prefetch is the 1-level navigation prefetch built by the
+	// orchestrator (one template per entity type + the raw entity
+	// list). Frontend binds the template with the chosen entity on
+	// drill click for an instant-feeling navigation. Omitted when
+	// the active preset has no registered drill target or the data
+	// zone is empty.
+	Prefetch *usecases.PrefetchPayload `json:"prefetch,omitempty"`
 	// Spans is the request waterfall captured by SpanCollector — useful
 	// for client-side debugging until the /debug/traces UI ships. Empty
 	// (omitted) when the logging middleware didn't attach a collector.
@@ -84,6 +91,7 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		LatencyMs: resp.LatencyMs,
 		Agent1Ms:  resp.Agent1Ms,
 		Agent2Ms:  resp.Agent2Ms,
+		Prefetch:  resp.Prefetch,
 	}
 	if sc := domain.SpanFromContext(r.Context()); sc != nil {
 		out.Spans = sc.Spans()

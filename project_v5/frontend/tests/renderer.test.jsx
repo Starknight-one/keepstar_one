@@ -60,14 +60,14 @@ describe('SceneGraphRenderer — product detail', () => {
     expect(btn?.textContent).toBe('Add to cart')
   })
 
-  it('button click logs a no-op TODO marker (P0-C will wire actions)', () => {
+  it('button without an action prop logs a diagnostic and does not throw', () => {
     const { container } = render(<SceneGraphRenderer document={productDetail} />)
     const btn = container.querySelector('button.kw-button')
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
     fireEvent.click(btn)
     expect(spy).toHaveBeenCalledWith(
-      '[v5-action]',
-      expect.objectContaining({ wrapper: 'button', hint: expect.stringContaining('TODO') }),
+      '[v5-action] button without action prop',
+      expect.any(Object),
     )
     spy.mockRestore()
   })

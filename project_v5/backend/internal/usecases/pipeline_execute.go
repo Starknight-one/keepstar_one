@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/ports"
 )
 
 // PipelineExecuteRequest is the per-call input the HTTP handler hands to the
@@ -29,6 +30,12 @@ type PipelineExecuteResponse struct {
 	// Per-stage breakdown for client-side debugging until /debug/traces UI ships.
 	Agent1Ms int64
 	Agent2Ms int64
+
+	// Prefetch is the 1-level navigation prefetch (adjacent template +
+	// entities) for instant drill-down on the frontend. Nil when the
+	// active preset has no registered drill target or the data zone is
+	// empty. See PrefetchBuilder for the build rules.
+	Prefetch *PrefetchPayload
 }
 
 // PipelineExecute is the two-agent orchestrator. Agent1 fetches/filters data
@@ -36,15 +43,31 @@ type PipelineExecuteResponse struct {
 // state.Current.Template). A short microcontext signal — generated from
 // Agent1's tool name + product count — is forwarded to Agent2 so it knows
 // what changed and whether to re-render.
+//
+// After Agent2 returns, the orchestrator builds a 1-level navigation
+// prefetch via PrefetchBuilder so the frontend can drill into a detail
+// preset on click without a /navigation/expand round-trip. Prefetch is
+// optional — nil when the active preset has no registered drill target.
 type PipelineExecute struct {
-	agent1 *Agent1Execute
-	agent2 *Agent2Execute
-	log    *slog.Logger
+	agent1   *Agent1Execute
+	agent2   *Agent2Execute
+	prefetch *PrefetchBuilder
+	state    ports.StatePort
+	log      *slog.Logger
 }
 
-// NewPipelineExecute wires the orchestrator. Both agents are required.
-func NewPipelineExecute(agent1 *Agent1Execute, agent2 *Agent2Execute, log *slog.Logger) *PipelineExecute {
-	return &PipelineExecute{agent1: agent1, agent2: agent2, log: log}
+// NewPipelineExecute wires the orchestrator. agent1 + agent2 are
+// required; prefetch + state are optional (nil disables the prefetch
+// payload). state is needed only when prefetch is non-nil — to read
+// the products zone after Agent2 runs.
+func NewPipelineExecute(agent1 *Agent1Execute, agent2 *Agent2Execute, state ports.StatePort, prefetch *PrefetchBuilder, log *slog.Logger) *PipelineExecute {
+	return &PipelineExecute{
+		agent1:   agent1,
+		agent2:   agent2,
+		prefetch: prefetch,
+		state:    state,
+		log:      log,
+	}
 }
 
 // Execute runs Agent1 → Agent2 sequentially. Returns aggregated usage,
@@ -117,14 +140,40 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		Model:                    a2.Usage.Model, // both agents use same model
 	}
 
-	return &PipelineExecuteResponse{
+	resp := &PipelineExecuteResponse{
 		Document:  a2.Document,
 		ToolCalls: toolCalls,
 		Usage:     usage,
 		LatencyMs: time.Since(start).Milliseconds(),
 		Agent1Ms:  a1.LatencyMs,
 		Agent2Ms:  a2.LatencyMs,
-	}, nil
+	}
+
+	// Prefetch — best effort; failures log at debug and ship a nil
+	// prefetch so the frontend falls back to a /navigation/expand
+	// round-trip on drill clicks.
+	if uc.prefetch != nil && uc.state != nil {
+		sourcePreset := readPresetInUse(a2.Document)
+		if sourcePreset != "" {
+			state, err := uc.state.GetState(ctx, req.SessionID)
+			if err == nil {
+				resp.Prefetch = uc.prefetch.Build(ctx, req.TenantSlug, sourcePreset, state.Current.Data.Products)
+			}
+		}
+	}
+
+	return resp, nil
+}
+
+// readPresetInUse extracts the synthetic top-level marker
+// visual_assembly stamps on the marshaled Document map. Empty when
+// Agent2 ran the freestyle / modify path (no preset to drill into).
+func readPresetInUse(doc map[string]interface{}) string {
+	if doc == nil {
+		return ""
+	}
+	v, _ := doc[domain.TemplatePresetInUseKey].(string)
+	return v
 }
 
 // composeMicrocontext maps Agent1's tool result into a one-line signal

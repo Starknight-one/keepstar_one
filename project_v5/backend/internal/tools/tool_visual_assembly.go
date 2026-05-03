@@ -252,10 +252,22 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 	resolveStats = engine.ResolveAndInline(merged)
 	bindRes := engine.BindData(merged, data)
 
+	// 4.6 Inject default user-actions (like + cart_add) into any empty
+	// "actions" frame inside an entity-bound subtree. Skipped when the
+	// data slice is empty (no entities to bind to). LLM-populated
+	// actions frames pass through untouched (idempotent guard inside).
+	injected := engine.InjectDefaultActions(merged, domain.EntityTypeProduct, data)
+
 	// 5. Marshal the Document and write it to state.current.template.
 	templateMap, err := docToMap(merged)
 	if err != nil {
 		return nil, fmt.Errorf("marshal document: %w", err)
+	}
+	// Stamp the active preset on the marshaled map so the pipeline
+	// orchestrator can look up the matching drill-target preset for
+	// the prefetch payload. Empty for freestyle / modify (no preset).
+	if presetName != "" {
+		templateMap[domain.TemplatePresetInUseKey] = presetName
 	}
 	deltaInfo := domain.DeltaInfo{
 		TurnID:    toolCtx.TurnID,
@@ -271,8 +283,8 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 	}
 
 	summary := fmt.Sprintf(
-		"OK mode=%s preset=%s system=%v replicate=%d resolved_refs=%d failed_refs=%d bound=%d missing=%d",
-		mode, presetName, isSystem, replicate, resolveStats.Resolved, len(resolveStats.Failed), len(bindRes.Bound), len(bindRes.Missing),
+		"OK mode=%s preset=%s system=%v replicate=%d resolved_refs=%d failed_refs=%d bound=%d missing=%d actions=%d",
+		mode, presetName, isSystem, replicate, resolveStats.Resolved, len(resolveStats.Failed), len(bindRes.Bound), len(bindRes.Missing), injected,
 	)
 	return &domain.ToolResult{Content: summary}, nil
 }

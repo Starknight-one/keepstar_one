@@ -52,6 +52,12 @@
               "fieldBinding": "description",
               "slot": "description",
               "textStyle": {"fontSize": "md", "lineClamp": 10}
+            },
+            {
+              "type": "frame",
+              "id": "actions",
+              "layout": {"direction": "row", "gap": "md"},
+              "children": []
             }
           ]
         }

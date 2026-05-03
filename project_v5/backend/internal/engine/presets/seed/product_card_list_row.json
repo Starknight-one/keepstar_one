@@ -49,6 +49,12 @@
               "type": "ref",
               "id": "row-brand",
               "ref": "brand-badge-root"
+            },
+            {
+              "type": "frame",
+              "id": "actions",
+              "layout": {"direction": "row", "gap": "sm"},
+              "children": []
             }
           ]
         }

@@ -301,3 +301,33 @@
   border-radius: var(--kw-radius);
   font-size: var(--kw-fs-sm);
 }
+
+/* Chunk 11 — back button + clickable card. */
+.kw-back {
+  align-self: flex-start;
+  background: none;
+  color: var(--kw-blue);
+  border: 1px solid var(--kw-blue);
+  border-radius: var(--kw-radius);
+  font-family: inherit;
+  font-size: var(--kw-fs-sm);
+  font-weight: var(--kw-fw-medium);
+  padding: 6px 12px;
+  cursor: pointer;
+  margin-bottom: var(--kw-gap-md);
+}
+
+.kw-back:hover {
+  background: var(--kw-blue);
+  color: white;
+}
+
+.kw-frame--clickable {
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.kw-frame--clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(91, 164, 217, 0.18);
+}
