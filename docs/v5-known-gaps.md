@@ -48,6 +48,36 @@ the chunk where it gets closed.
 | Latency baseline / Railway deploy | All chunk-7 / chunk-8 latency numbers were measured locally (`httptest.NewServer` from macOS hitting US-east Neon + Anthropic). Local roundtrips ≈ 100-300ms × many = ~1.5-2s overhead per turn that disappears on Railway. We don't have actual production-region numbers. | Chunk 8 was about getting trace-level visibility right; deploy comes next. | Next chunk — deploy V5 to Railway + record baseline latency (turn 1 cold cache vs turn 2 warm cache). |
 | `tree_map` injected on every turn that has a current Document | Chunk 9 builds the tree_map and prepends it as `<formation_tree>` to every Agent2 user message when state.Current.Template is non-empty. When the LLM is about to call a known preset, the tree_map is duplicative — the preset's shape is already implicit in the system prompt — so the per-turn input-token cost (~150-400 tokens for a typical view) is paid for nothing. Vlad flagged this; first measurement says it's well under «20k token» fear levels but still wasted on preset-only turns. | Chunk 9 prioritised correctness; the optimisation requires either tool-input prediction (skip tree_map when Agent2 is likely to use a preset) or a follow-up minimal-tree_map mode. | Future chunk — measure cost impact across realistic conversations; if material, add a "skip tree_map when preset_in_use is system-default" heuristic or split modify-mode into a separate tool. |
 
+## Render-quality gaps surfaced by first manual test (2026-05-03)
+
+Vlad opened the V5 widget locally for the first time after chunks 9 + 10
+shipped and reported «тот ещё пиздец, скорее всего пресеты херовые».
+Backend log (`/tmp/v5-logs/backend.log`, session
+`083f7bd3-5d25-4cda-bcba-15b8b3f86985`) captured three turns:
+
+| Turn | Mode | What Agent2 emitted | Vlad's complaint |
+|---|---|---|---|
+| 1 | preset=product_card replicate=3 (system fallback) | 3 product_card clones | «фотки во весь экран и название» |
+| 2 | mode=modify ops=3 | three ops on top of turn-1 tree | «попросил сделать грид, получил кривой грид только с названиями» |
+| 3 | mode=modify ops=14 | fourteen ops on top of turn-2 tree | «попросил лендинг, получил доп описание под ними как кусок лендинга» |
+
+Diagnosis: not «one bad preset», but four overlapping architectural
+gaps. None of them were caught in chunk-9 live tests because the live
+test only asserted spans / tool calls, not visual quality.
+
+| Gap | Symptom | Root cause | Closes in chunk |
+|---|---|---|---|
+| **No grid-layout mechanism on the formation root** | Top-level frames stack vertically, each occupying the full `kw-display-inner` width (max 1200 px). Replicate=3 → three full-width blocks one above the other instead of a 3-column grid. This is the «фотки во весь экран» complaint. | V4 carries `formation.layout = "grid"` + `formation.columns = N` and the V4 `FormationRenderer` honours it. V5 has no such concept — the engine `Document.Children` is just a list, the `SceneGraphRenderer` walks it as a flex column. The `visual_assembly` tool exposes no `layout` / `columns` parameter (V4 had both). | Chunk 11 (P0-B render polish) — pick one of: (a) add `layout` + `columns` params to `visual_assembly` and have the tool wrap replicate output in a grid frame; (b) add a `kw-grid` class on the renderer side and emit it when `Document` carries a top-level `layout: "grid"` hint; (c) bake a wrapper frame into every system card preset (`{type:"frame", layout:{direction:"row", wrap:true, gap:"md"}}` with cards as children — but that doesn't survive replicate fan-out cleanly). |
+| **Tenant field mapping mismatch — system presets reference v9-style names, real catalog uses v4-style names** | «Кривой грид только с названиями» — images and prices don't render because their `fieldBinding` doesn't resolve. Only `name` and `brand` happen to match the v4 catalog field names so they survive. | V5 system presets in `internal/engine/presets/seed/*.json` bind to `heroImage` / `priceFormatted` (v9-canvas naming convention). The actual `domain.Product` exposed by `engine.ProductToMap` (and the underlying `catalog.products` table from V4) uses `images` (array) and `price` (number). No translation layer. V4 had the same hardcoded coupling but the names matched the schema; V5's pretty-renamed seeds don't. | Chunk 11 — two paths: (a) rename the system seeds to v4 field names (`images` / `price` etc.) — fast, hides the architectural gap; (b) introduce a `FieldAlias` map per tenant (or a fallback chain in `BindData`: try `priceFormatted`, then `price`) — proper but bigger. Recommendation: (a) for today, (b) when canvas microservice ships and tenants edit field names on their own. |
+| **No `size` (small/medium/large) on cards** | Even if grid-layout lands, cards have no width hint — they fill whatever the grid cell gives them, with no aspect-ratio sanity. | V4 `widget.size` was both a layout hint (medium card → ~300 px wide) and a constraint trigger (`tiny` → strip images). V5 dropped the concept; the engine has no `size` attribute, the renderer has no width clamps. | Chunk 11 — add a `size` attribute on top-level frames; renderer translates to `min-width / max-width` constraints. Or rely entirely on grid `columns` parameter and CSS `grid-template-columns: repeat(N, 1fr)` — sizing falls out of the column count. |
+| **Agent2 modify-bias once a tree_map exists** | Turns 2 + 3 went to `mode=modify` even though the user clearly asked for a different composition («сделай грид», «сделай лендинг» both imply rebuild, not edit). | V5 `visual_assembly` makes `mode` implicit: preset → fresh build, ops only → modify. When `state.Current.Template` is non-empty, the orchestrator injects a `tree_map` into the user prompt; Agent2 sees real ids, decides «I have a tree, I'll edit it» and emits ops-only — even when the prompt rules say «data_change present → fresh build with a preset». V4 had an explicit `mode: "rebuild" \| "modify"` parameter the LLM had to choose every turn, which forced the decision into the tool surface rather than leaving it to inference. | Chunk 11 — three options: (1) restore an explicit `mode` parameter in `visual_assembly`; (2) strengthen the prompt's DECISION RULES with a stronger «when in doubt, rebuild» heuristic + concrete examples for «show me a grid» / «make a landing» triggers; (3) suppress tree_map injection when the user query semantically implies new composition (would need an upstream classifier — too heavy). Recommend (1) — it worked in V4, the cost is one extra parameter. |
+
+These four ride together: fix any one in isolation and the visual still
+looks broken. Render polish ought to be one cohesive chunk that touches
+the system seed JSONs, the tool schema (mode + layout + columns), the
+prompt (rebuild bias + new params doc), and the renderer (kw-grid class
++ size clamps).
+
 ## Risks worth re-checking
 
 | Risk | Trigger | Mitigation today |
