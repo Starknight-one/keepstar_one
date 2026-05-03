@@ -10,13 +10,13 @@
 
 ## Snapshot — where we are now
 
-**Chunks 1-15 closed.** Backend (chunks 1-9, 11, 12, 13) + frontend (chunks 10, 11,
-12) + Curator (chunk 13) + Railway deploy (chunk 14) + V4-vs-V5 smoke
-(chunk 15) cover the full P0-A (tool surface), P0-B (render path), P0-C
-(interaction loop), render-quality polish, cross-tenant trace inspection,
-deploy infrastructure, and prod-region performance baseline. **V5
-backend lives at `https://v5-engine-production.up.railway.app` (US
-region)** (items 14-17 closed). V5 can now:
+**Chunks 1-15 closed (+ 15.5 hotfix).** Backend (1-9, 11, 12, 13) +
+frontend (10, 11, 12) + Curator (13) + Railway deploy (14) + V4-vs-V5
+smoke (15) + SystemComponentRegistry hotfix (15.5) cover the full
+P0-A/B/C, render polish, trace inspection, deploy infra, prod-region
+performance baseline, and component-resolution bugfix. **V5 backend
+lives at `https://v5-engine-production.up.railway.app` (US region)**
+(items 14-17 closed). V5 can now:
 
 - accept all three V4-compatible tool call shapes (preset / freestyle /
   multi-widget compose / ops-only modify), with parent-name aliasing
@@ -50,10 +50,23 @@ POST /actions/like, /navigation/expand, /navigation/back).
 
 **What's still NOT shippable for prod**:
 
-1. **Frontend swap behind flag not done.** V4 widget still owns the
-   embed. V5 backend is ready (US region, performance competitive with
-   V4); chunk 16 will route real chat traffic through V5 behind a flag
-   for select tenants. This is the swap moment.
+1. **Visual quality gaps vs V4** — surfaced by Vlad's manual test on
+   prod widget (2026-05-03 19:55, see `v5-known-gaps.md` section
+   «Manual-test gaps after chunk 15.5»). 6 independent gaps:
+   - A1: Greeting handling («Привет» → empty_not_found instead of
+     greeting card)
+   - A2: Modify-vs-rebuild misclassification («другая категория»
+     promпт не fires catalog_search)
+   - A3: Hardcoded replicate=3 → no pagination → V5 shows 3, V4 shows
+     23 with «12 из 23» counter
+   - A4: Back button absent in widget (backend `/navigation/back` is
+     wired since chunk 11, frontend doesn't render the button)
+   - A5: Skip Agent2 on Agent1 no-op — V4 already does, V5 always
+     fires both → unnecessary ~1s + $0.001 per no-op turn
+   - A6: Layout density — cards narrower than V4 grid
+2. **Frontend swap behind flag not done.** V4 widget still owns the
+   embed. After A1-A6 closed, chunk 16 will route real chat traffic
+   through V5 for select tenants. This is the swap moment.
 
 Everything else (search quality parity, layout constraints, observability
 UI, tenant canvas, internal hardening) is real but secondary — addressed
@@ -82,6 +95,7 @@ in P1 / P2 / Deferred sections.
 | 11 — actions + nav + prefetch | `2e3df77` | Closed P0-C interaction loop. `domain.UserActionKind` (9-kind closed vocab), `engine.InjectDefaultActions` pass after BindData (auto-injects like + cart_add on entity-bound subtrees), POST `/api/v1/actions` (backend handles like/unlike/cart_add/cart_remove), POST `/api/v1/navigation/{expand,back}` with snapshot stack restore, hardcoded `presets.SystemAdjacency` map, `usecases.PrefetchBuilder` ships 1-level prefetch payload (`{adjacentTemplate, entities}`) on every pipeline response. Frontend `actionDispatch.js` + `fillTemplate.js` + `RenderContext` + clickable replicate clones (Frame.jsx) + back button. Agent2 tool-filter fix (only visual_assembly, mirroring Agent1 prefix-filter). 32/32 vitest, 5-turn live HTTP smoke + actions + nav green. |
 | 13 — curator chats UI | `ed2f29c` | Per-turn trace persistence (`v5_chat_session_traces`) + Curator UI for cross-tenant inspection. V5 side: TraceAdapter (idempotent INSERT on `(session_id, request_id)`), best-effort async persist hook in pipeline handler (covers success and error paths), boot-time migration. Curator side: 3 read endpoints (list / timeline / turn detail) reading shared Neon directly; ChatsPage + ChatDetailPage + sidebar «Tracing» section. Live smoke verifies trace persists. Railway-ready with first commit. |
 | 12 — render polish | `d3394e7` | Closed render-quality gaps from first manual test. REQUIRED `mode: rebuild\|modify` enum back on `visual_assembly` schema (defeats modify-bias — LLM picks per turn, V4-style). Card seeds wrapped in grid frame; `Frame.jsx` reads `layout.wrap` + `width/maxWidth/minWidth` → CSS flex-wrap + inline style. New `tests/frame-layout.test.jsx` (6 tests). Agent2 prompt: new MODE section + DECISION RULES updated + every example carries mode. Live HTTP smoke green: turn 4 lands `mode=modify` (тweak), turns 1-3+5 land `mode=rebuild`. 38/38 vitest. |
+| 15.5 — component registry hotfix | `bcb47b5` | Chunk-9 oversight: SystemPresetRegistry shipped, components didn't. New `presets.SystemComponentSeeds` (price-rating-root + brand-badge-root) + `SystemComponentRegistry` (mirror SystemPresetRegistry) + `domain.Component.IsSystem` flag + `NewComponentAdapterWithSystem` + main.go wiring. Refs in system presets now resolve → cards render with full price+rating+brand visible (verified live: «тонер» turn returns 3 cards with «1 890 ₽» / «Dear, Klairs» / image fills). Surfaced 6 quality gaps vs V4 logged separately for follow-up chunks. |
 | 14 — railway deploy | `83dd355` | V5 backend live at `https://v5-engine-production.up.railway.app`. New `project_v5/Dockerfile` (3-stage, mirrors V4: vite build → go build → alpine runtime). New `/readyz` (DB-ping readiness probe, 1s timeout). Static fileserver on `GET /` so `widget.js` lands same-origin (V5 widget.jsx auto-detects `apiBaseUrl` from script.src.origin → embed-anywhere works without `data-api`). Railway service `v5-engine` in `selfless-tranquility/production`, env vars mirrored from local `.env`, shared Neon (creates `v5_*` tables, no V4 conflict). Live smoke green: healthz/readyz/widget.js + 1 pipeline turn (`product_card` preset replicate=3, 17 spans, cache_read=7546 tokens, $0.006/turn, 7.2s first-turn cold). |
 
 Tree clean. Last commit `2e3df77`. Live HTTP smoke (chunk-11 five-turn
@@ -357,6 +371,35 @@ legacy `Start` API. Migrate piecemeal when their traces become useful.
 What to do with users mid-conversation in V4 when we swap. Today's swap
 path (P0-C item 13) uses a flag, so existing V4 sessions keep flowing
 through V4 until they expire. No active-migration logic needed.
+
+---
+
+## Order of attack — next session (post-2026-05-03 manual test)
+
+After chunk 15.5 V5 prod renders cards correctly (refs resolve, prices/
+brands visible). Vlad's manual test surfaced 6 quality gaps vs V4 —
+detailed in `v5-known-gaps.md` section «Manual-test gaps after chunk
+15.5». Suggested order:
+
+1. **A1 — Greeting handling.** Add greeting system preset OR Agent2
+   rule to use text_explainer for conversational intent. ~1h.
+2. **A2 — Modify-vs-rebuild misclassification.** Port V4 Agent1 rules
+   for «когда нужен catalog_search vs state_filter». ~1-2h.
+3. **A3 — Replicate count + pagination.** Untangle replicate=3 default
+   in Agent2 prompt; add page state + frontend pagination UI. ~2-3h
+   (cross-cutting backend + frontend).
+4. **A5 — Skip Agent2 on Agent1 no-op.** Vlad's earlier point. ~1h.
+5. **A4 — Back button visibility in widget.** Frontend render condition
+   on viewStack depth. ~30min.
+6. **A6 — Layout density.** Tweak system preset widths / responsive
+   columns. ~1h.
+
+After A1-A4 closed → V5 visually competitive with V4 → chunk 16
+(frontend route swap behind flag) becomes tactical.
+
+P1/P2 items (vector search, constraints, services entity) remain
+deferred until A1-A6 close, unless tenant-specific need surfaces
+earlier.
 
 ---
 

@@ -139,10 +139,11 @@ V5 is the next-generation chat engine: v9 scene-graph foundation + V4
 strengths ported on top (binding, state with delta-stream, system
 preset registry). Lives in `project_v5/`.
 
-**Status as of 2026-05-03**: chunks 1-15 closed. P0-A (tool surface),
-P0-B (render path), P0-C (interaction loop), chunk-12 render polish,
-chunk-13 cross-tenant trace inspection, chunk-14 Railway deploy, and
-chunk-15 V4-vs-V5 prod smoke all green. **V5 backend live at
+**Status as of 2026-05-03**: chunks 1-15 closed (+ 15.5 hotfix). P0-A
+(tool surface), P0-B (render path), P0-C (interaction loop), chunk-12
+render polish, chunk-13 cross-tenant trace inspection, chunk-14 Railway
+deploy, chunk-15 V4-vs-V5 prod smoke, chunk-15.5 SystemComponentRegistry
+hotfix all green. **V5 backend live at
 `https://v5-engine-production.up.railway.app` (US region)**:
 - engine, state, binding, components, replicate, ops applier
 - Anthropic adapter, prompt-builders for both agents, HTTP server,
@@ -187,8 +188,24 @@ chunk-15 V4-vs-V5 prod smoke all green. **V5 backend live at
   (empty_not_found, composed frames), V4 dumps 50-widget grids OR
   shows 0 widgets on greeting/compose.
 
-NOT covered yet: chunk 16 (frontend route swap behind flag — V4 widget
-still owns embed). Detailed status: `docs/v5-engine-plan.md`.
+- chunk 15.5 (hotfix): `SystemComponentRegistry` mirror of preset
+  registry, closes chunk-9 oversight where refs in system presets
+  (`price-rating-root`, `brand-badge-root`) had no fallback source —
+  Materialise got [] components → refs unresolved → cards collapsed
+  to title+image. Now cards on prod render with full price + rating
+  + brand visible.
+
+NOT covered yet (in priority order — see `docs/v5-engine-plan.md`
+«Order of attack — next session» + `docs/v5-known-gaps.md` «Manual-test
+gaps after chunk 15.5»):
+- A1 greeting handling (V5 emits empty_not_found on «Привет»)
+- A2 modify-vs-rebuild misclassification («другая категория» promпт
+  не fires catalog_search if state non-empty)
+- A3 replicate count + pagination (V5 hardcoded 3, V4 shows all + pages)
+- A4 back button absent in widget
+- A5 skip Agent2 on Agent1 no-op (~1s + $0.001 saving per turn)
+- A6 layout density (cards narrower than V4)
+- chunk 16: frontend route swap behind flag (after A1-A4 closed).
 
 **Local dev** (V4 holds 8082 in this monorepo, so V5 runs on 8084):
 

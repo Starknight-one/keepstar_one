@@ -129,6 +129,26 @@ frontend after. Persistence is also the foundation for the deferred
 `/debug/traces` waterfall UI (currently scoped as chunk-12 inside V5
 itself) — these two surfaces should share the same span schema.
 
+## Manual-test gaps after chunk 15.5 — surfaced 2026-05-03
+
+Vlad открыл prod V5 widget после chunk 15.5 hotfix
+(`SystemComponentRegistry` — refs теперь резолвятся). Cards теперь
+эмитятся с image + name + price + rating + brand. Но 6 заметных gap'ов
+vs V4 при сравнении side-by-side:
+
+| Gap | Symptom | Hypothesis | Fix scope |
+|---|---|---|---|
+| **A1. Greeting handling** | «Привет» → V5 рендерит `empty_not_found` preset. V4 рендерит greeting card («Привет! Чем могу помочь?») | Agent2 prompt не имеет greeting preset; падает на `empty_not_found` как ближайший «нет данных» fallback. Либо нужен `greeting` system preset, либо Agent2 должен возвращать text_explainer для conversational intent | Add greeting system preset + Agent2 prompt rules для conversational промптов |
+| **A2. Modify-vs-rebuild misclassification** | «Так а крема какие есть?» (после показа тонера) → V5 в modify-mode тыкает existing tree, НЕ вызывает catalog_search. Должен был rebuild со свежими данными | Agent1 NLU rules — нет жёсткого правила «другая категория → catalog_search». V4 имеет такие правила в системном промпте | Port V4 Agent1 rules «когда нужен catalog_search vs state_filter» |
+| **A3. Default replicate count + pagination** | V5 эмитит 3 карточки жёстко на любой search. V4 показывает все matched (e.g. 23 крема) + пагинирует «12 из 23» | Agent2 system prompt диктует replicate=3 как safe default. Backend не имеет pagination concept в frontend prefetch | Untangle replicate limit (Agent2 prompt) + add page state to engine + frontend pagination UI |
+| **A4. Back button absent in widget** | `/api/v1/navigation/back` зашипилось в chunk 11, но виджет НЕ рендерит «← Back» кнопку условно на viewStack.depth > 0 | Frontend `WidgetApp.jsx` / `ChatPanel.jsx` не подписан на viewStack из ответа pipeline | Frontend wiring — show back button when `state.viewStack.length > 0` |
+| **A5. Skip Agent2 on Agent1 no-op (Vlad's earlier pt)** | V5 всегда зовёт Agent2 LLM, даже когда Agent1 ничего не нашёл / не изменил. V4 скипает Agent2 на «no data change». Стоит ~1s + ~$0.001 на каждый турн где Agent2 не нужен | Pipeline orchestrator не имеет early-exit branching | Port V4 mechanism: if Agent1 returns no tool_call OR `_internal_state_filter` returned identical set OR catalog_search returned same entity ids → skip Agent2, reuse `state.template` |
+| **A6. Layout density / card width** | V5 cards visibly narrower than V4. V4 grid 3 колонки полной ширины, V5 cards rfl сжаты | `product_card.json` имеет жёстко `width: 280` на card frame; V4 имеет dynamic columns based on viewport | Tweak system preset widths or add responsive columns logic в Frame.jsx |
+
+Все шесть гэпов independent — закрываются отдельными чанками. Закрытие
+A1-A4 = критично для visual parity с V4, A5-A6 = optimization /
+polish.
+
 ## Locked-in design principles
 
 | Principle | What it means | Where it manifests |
