@@ -30,13 +30,34 @@ type ProductFilter struct {
 	Texture       string
 }
 
+// VectorFilter narrows VectorSearch before cosine ranking. Mirrors V4's
+// shape so prompts and tool inputs translate one-for-one. Fields map to
+// columns on master_products / categories — same predicates as ProductFilter
+// minus the price range (vector search ranks by semantic distance, not price).
+type VectorFilter struct {
+	Brand         string
+	CategoryName  string
+	ProductForm   string
+	SkinType      string
+	Concern       string
+	KeyIngredient string
+	TargetArea    string
+	RoutineStep   string
+	Texture       string
+}
+
 // CatalogPort exposes read access to the shared catalog.* schema (owned by
-// project_admin). V5 only reads; admin/curator own the write side. Vector
-// search and write methods deferred to later chunks.
+// project_admin). V5 only reads; admin/curator own the write side.
 type CatalogPort interface {
 	GetTenantBySlug(ctx context.Context, slug string) (*domain.Tenant, error)
 	ListProducts(ctx context.Context, tenantID string, filter ProductFilter) ([]domain.Product, int, error)
 	GetProduct(ctx context.Context, tenantID string, productID string) (*domain.Product, error)
+
+	// VectorSearch finds products by pgvector cosine distance against
+	// master_products.embedding. filter may be nil for unfiltered search.
+	// Caller supplies the embedding (typically via EmbeddingPort). Used by
+	// catalog_search for the semantic side of hybrid retrieval.
+	VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int, filter *VectorFilter) ([]domain.Product, error)
 
 	// BuildCatalogDigest assembles a per-tenant compact summary of the catalog
 	// (categories, shared filters, top brands, top ingredients) for inlining

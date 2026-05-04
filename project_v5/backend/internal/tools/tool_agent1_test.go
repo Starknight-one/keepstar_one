@@ -133,6 +133,14 @@ func (c *agent1CatalogPort) BuildCatalogDigest(_ context.Context, _ string) (*do
 	return &domain.CatalogDigest{TotalProducts: len(c.products)}, nil
 }
 
+// VectorSearch returns the same products as ListProducts so existing tests
+// see hybrid behaviour without mocking embedding pools. Tests that need to
+// vary keyword vs vector outcomes can wrap this fake with a per-test
+// override before calling Execute.
+func (c *agent1CatalogPort) VectorSearch(_ context.Context, _ string, _ []float32, _ int, _ *ports.VectorFilter) ([]domain.Product, error) {
+	return c.products, nil
+}
+
 // ─── catalog_search ──────────────────────────────────────────────────────
 
 func TestCatalogSearchHappyPath(t *testing.T) {
@@ -144,7 +152,7 @@ func TestCatalogSearchHappyPath(t *testing.T) {
 			{ID: "p2", Name: "Snail Cream", Brand: "COSRX", Price: 350000},
 		},
 	}
-	tool := NewCatalogSearchTool(state, cat)
+	tool := NewCatalogSearchTool(state, cat, nil)
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "acme"},
 		map[string]interface{}{
@@ -194,7 +202,7 @@ func TestCatalogSearchEmptyResultPreservesState(t *testing.T) {
 		tenant:   &domain.Tenant{ID: "tnt-1", Slug: "acme"},
 		products: []domain.Product{},
 	}
-	tool := NewCatalogSearchTool(state, cat)
+	tool := NewCatalogSearchTool(state, cat, nil)
 	res, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "acme"},
 		map[string]interface{}{"vector_query": "xyz"},
@@ -225,7 +233,7 @@ func TestCatalogSearchBrandStrippedFromSearch(t *testing.T) {
 		tenant:   &domain.Tenant{ID: "tnt-1", Slug: "acme"},
 		products: []domain.Product{{ID: "p1", Name: "X", Brand: "COSRX"}},
 	}
-	tool := NewCatalogSearchTool(state, cat)
+	tool := NewCatalogSearchTool(state, cat, nil)
 	_, err := tool.Execute(context.Background(),
 		domain.ToolContext{SessionID: "sess-1", TenantSlug: "acme"},
 		map[string]interface{}{

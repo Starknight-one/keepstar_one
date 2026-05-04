@@ -47,6 +47,7 @@ Examples:
 7. After getting "ok"/"empty", stop. Do not call more tools.
 8. <state> block = current data on screen:
    - loaded_products > 0 → data exists, maybe no search needed
+   - rendered = the products the user can see RIGHT NOW. Use these to ground references like "the first one", "the COSRX one", "the one with the snake on the photo". Match by id/name/brand or, when needed, look at the image URLs.
    - If user asks about fields already displayed → style request, DO NOT call tool
    - If user asks for DIFFERENT data → call catalog_search
 9. <catalog> block = available filter values:
@@ -56,37 +57,82 @@ Examples:
    - Broad request ("для сухой кожи", "подарок") → do NOT set category, use vector_query + relevant filters
 `
 
-// BuildAgent1ContextPrompt enriches the user query with state context.
-// If no data is loaded and no actions are recorded, returns the raw query
-// (the LLM has no <state> block to reason about). Otherwise wraps a JSON
-// summary in a <state> envelope before the query.
+// RenderedItem is the per-product entry shipped in the <state> block. Carries
+// only what's actually visible on the user's screen so Agent1 can resolve
+// natural-language references without re-searching. Empty fields are dropped
+// at marshal time via omitempty so an unrated product doesn't waste tokens
+// on `"rating":0`.
+type RenderedItem struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name,omitempty"`
+	Brand          string   `json:"brand,omitempty"`
+	Price          int      `json:"price,omitempty"`
+	Rating         float64  `json:"rating,omitempty"`
+	Images         []string `json:"images,omitempty"`
+	MarketingClaim string   `json:"marketing_claim,omitempty"`
+}
+
+// BuildAgent1ContextPrompt enriches the user query with the «what's loaded
+// and what's rendered» state. Returns the raw query when there is nothing
+// to advertise (cold session — fewer tokens, identical semantics).
 //
-// V5 drops V4's `current_display` field — V5 stores a scene-graph Document
-// map at state.Current.Template, not a typed RenderConfig. The other fields
-// (loaded_products, available_fields, liked/cart counts) port verbatim.
-func BuildAgent1ContextPrompt(meta domain.StateMeta, actions *domain.StateActions, userQuery string) string {
-	hasData := meta.ProductCount > 0 || meta.ServiceCount > 0
-	hasActions := actions != nil && (len(actions.LikedIds) > 0 || len(actions.CartItems) > 0)
-	if !hasData && !hasActions {
+// What lands in <state>:
+//   - loaded_products: total count of products available in state (search
+//     pool, not just visible).
+//   - rendered: per-card subset of products currently on screen. Derived
+//     by the caller from engine.RenderedDataIndices(state.Current.Template)
+//     and indexed back into state.Current.Data.Products. Omitted when the
+//     template has no replicate clones (text_explainer, error states, fresh
+//     session).
+//
+// V4's `liked_count` / `liked_ids` / `cart_count` and the `available_fields`
+// schema list are intentionally absent — the visible cards already convey
+// fields, and likes/cart proved noise in practice.
+func BuildAgent1ContextPrompt(meta domain.StateMeta, rendered []RenderedItem, userQuery string) string {
+	hasData := meta.ProductCount > 0
+	hasRendered := len(rendered) > 0
+	if !hasData && !hasRendered {
 		return userQuery
 	}
 
-	stateInfo := map[string]interface{}{
-		"loaded_products":  meta.ProductCount,
-		"loaded_services":  meta.ServiceCount,
-		"available_fields": meta.Fields,
+	stateInfo := map[string]interface{}{}
+	if meta.ProductCount > 0 {
+		stateInfo["loaded_products"] = meta.ProductCount
 	}
-
-	if actions != nil {
-		if len(actions.LikedIds) > 0 {
-			stateInfo["liked_count"] = len(actions.LikedIds)
-			stateInfo["liked_ids"] = actions.LikedIds
-		}
-		if len(actions.CartItems) > 0 {
-			stateInfo["cart_count"] = len(actions.CartItems)
-		}
+	if hasRendered {
+		stateInfo["rendered"] = rendered
 	}
 
 	jsonBytes, _ := json.Marshal(stateInfo)
 	return fmt.Sprintf("<state>\n%s\n</state>\n\n%s", string(jsonBytes), userQuery)
+}
+
+// BuildRenderedSubset projects state.Current.Data.Products[indices...] into
+// the compact RenderedItem shape Agent1 sees. Indices outside the products
+// slice are silently skipped (defensive — out-of-band template/data
+// mismatches shouldn't crash Agent1 prep).
+func BuildRenderedSubset(products []domain.Product, indices []int) []RenderedItem {
+	if len(products) == 0 || len(indices) == 0 {
+		return nil
+	}
+	out := make([]RenderedItem, 0, len(indices))
+	for _, idx := range indices {
+		if idx < 0 || idx >= len(products) {
+			continue
+		}
+		p := products[idx]
+		out = append(out, RenderedItem{
+			ID:             p.ID,
+			Name:           p.Name,
+			Brand:          p.Brand,
+			Price:          p.Price,
+			Rating:         p.Rating,
+			Images:         p.Images,
+			MarketingClaim: p.MarketingClaim,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

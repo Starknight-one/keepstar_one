@@ -64,6 +64,9 @@ func (c *fakeCatalog) GetProduct(_ context.Context, _, _ string) (*domain.Produc
 func (c *fakeCatalog) BuildCatalogDigest(_ context.Context, _ string) (*domain.CatalogDigest, error) {
 	return c.digest, nil
 }
+func (c *fakeCatalog) VectorSearch(_ context.Context, _ string, _ []float32, _ int, _ *ports.VectorFilter) ([]domain.Product, error) {
+	return c.products, nil
+}
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 
@@ -85,7 +88,7 @@ func setupAgent1(t *testing.T, products []domain.Product, llmResp *domain.LLMRes
 		digest:   &domain.CatalogDigest{TotalProducts: 100},
 	}
 	registry := tools.NewRegistry()
-	registry.Register(tools.NewCatalogSearchTool(state, cat))
+	registry.Register(tools.NewCatalogSearchTool(state, cat, nil))
 	registry.Register(tools.NewStateFilterTool(state))
 	registry.Register(tools.NewHistoryLookupTool(state))
 
@@ -187,7 +190,7 @@ func TestAgent1LLMCallsCatalogSearch(t *testing.T) {
 			tenant:   &domain.Tenant{ID: "tnt-1", Slug: "acme"},
 			products: []domain.Product{{ID: "p1", Name: "Hyaluronic Serum"}},
 		}
-		r.Register(tools.NewCatalogSearchTool(state, cat))
+		r.Register(tools.NewCatalogSearchTool(state, cat, nil))
 		return r
 	}()
 

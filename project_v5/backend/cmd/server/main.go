@@ -15,10 +15,12 @@ import (
 	"time"
 
 	anthropicAdapter "keepstar_v5/internal/adapters/anthropic"
+	"keepstar_v5/internal/adapters/openai"
 	"keepstar_v5/internal/adapters/postgres"
 	"keepstar_v5/internal/config"
 	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/handlers"
+	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/tools"
 	"keepstar_v5/internal/usecases"
 )
@@ -76,12 +78,22 @@ func main() {
 	// LLM client.
 	llm := anthropicAdapter.NewClient(cfg.AnthropicAPIKey, cfg.LLMModel)
 
+	// Embedding client. Optional — empty OPENAI_API_KEY → nil port →
+	// catalog_search degrades to keyword-only (mirrors V4 behaviour).
+	var embeddingPort ports.EmbeddingPort
+	if cfg.OpenAIAPIKey != "" {
+		embeddingPort = openai.NewEmbeddingClient(cfg.OpenAIAPIKey, "", 0)
+		log.Info("embedding client configured", "model", "text-embedding-3-small", "dims", 384)
+	} else {
+		log.Warn("OPENAI_API_KEY not set — catalog_search will run keyword-only")
+	}
+
 	// Tools + use cases. The registry is shared across both agents — Agent1
 	// filters by name prefix ("catalog_" / "_internal_") at call time so it
 	// never sees Agent2's visual_assembly, and vice versa.
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort))
-	registry.Register(tools.NewCatalogSearchTool(statePort, catalogPort))
+	registry.Register(tools.NewCatalogSearchTool(statePort, catalogPort, embeddingPort))
 	registry.Register(tools.NewStateFilterTool(statePort))
 	registry.Register(tools.NewHistoryLookupTool(statePort))
 

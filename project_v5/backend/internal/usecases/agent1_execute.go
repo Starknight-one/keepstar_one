@@ -7,7 +7,10 @@ import (
 	"regexp"
 	"time"
 
+	"encoding/json"
+
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/prompts"
 	"keepstar_v5/internal/tools"
@@ -165,9 +168,14 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	// ── LLM path ──
 	_, promptSpan := withSpan(ctx, "agent1.prompt")
 	systemPrompt := uc.promptCache.GetOrBuild(ctx, req.TenantSlug)
+	rendered := buildRenderedSubsetFromState(state)
+	promptSpan.SetAttrs(map[string]any{
+		"rendered_count":  len(rendered),
+		"loaded_products": state.Current.Meta.ProductCount,
+	})
 	promptSpan.End()
 
-	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, &state.Actions, req.UserQuery)
+	enrichedQuery := prompts.BuildAgent1ContextPrompt(state.Current.Meta, rendered, req.UserQuery)
 
 	// Conversation history is append-only; no trim. V4 relies on caching
 	// rather than truncation, and V5 prefix sizes match.
@@ -310,4 +318,34 @@ func hasAnyPrefix(s string, prefixes ...string) bool {
 		}
 	}
 	return false
+}
+
+// buildRenderedSubsetFromState extracts the products currently visible to
+// the user (those bound to top-level replicate clones in
+// state.Current.Template) and projects them into the compact RenderedItem
+// shape Agent1 sees. Returns nil when:
+//   - the template has no replicates (text_explainer / fresh session) — the
+//     <state> block then omits the `rendered` key entirely; or
+//   - data.Products is empty — nothing to project.
+//
+// state.Current.Template is stored as map[string]interface{} (JSON
+// round-tripped). We re-marshal into engine.Document to reuse the typed
+// walker — same pattern as agent2_execute.buildFormationTreeBlock.
+func buildRenderedSubsetFromState(state *domain.SessionState) []prompts.RenderedItem {
+	if state == nil || len(state.Current.Template) == 0 || len(state.Current.Data.Products) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(state.Current.Template)
+	if err != nil {
+		return nil
+	}
+	var doc engine.Document
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil
+	}
+	indices := engine.RenderedDataIndices(&doc)
+	if len(indices) == 0 {
+		return nil
+	}
+	return prompts.BuildRenderedSubset(state.Current.Data.Products, indices)
 }

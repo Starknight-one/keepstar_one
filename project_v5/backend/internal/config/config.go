@@ -15,6 +15,9 @@ import (
 //   - DatabaseURL:     Postgres URL (Neon-flavoured); REQUIRED
 //   - AnthropicAPIKey: Anthropic API key; REQUIRED for the LLM call
 //   - LLMModel:        e.g. "claude-haiku-4-5" (default)
+//   - OpenAIAPIKey:    OpenAI API key for embeddings (catalog_search
+//                      vector half). Optional — when blank, catalog_search
+//                      degrades to keyword-only (V4-style fallback).
 //   - TenantSlug:      fallback tenant when X-Tenant-Slug header absent
 //   - LogLevel:        slog level — "debug" | "info" | "warn" | "error"
 //   - StaticDir:       optional dir served on `GET /` (e.g. ./static for
@@ -24,6 +27,7 @@ type Config struct {
 	DatabaseURL     string
 	AnthropicAPIKey string
 	LLMModel        string
+	OpenAIAPIKey    string
 	TenantSlug      string
 	LogLevel        slog.Level
 	StaticDir       string
@@ -37,6 +41,7 @@ func Load() (*Config, error) {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		LLMModel:        envOr("LLM_MODEL", "claude-haiku-4-5"),
+		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
 		TenantSlug:      envOr("TENANT_SLUG", "hey-babes-cosmetics"),
 		LogLevel:        parseLogLevel(envOr("LOG_LEVEL", "info")),
 		StaticDir:       envOr("STATIC_DIR", "./static"),
