@@ -11,102 +11,187 @@ overview:
             data-tenant="<slug>"></script>
   framework: "React 19, Vite 7"
   isolation: "Shadow DOM (mode: open)"
-  served_by: "project_v5 backend's static fileserver (GET /); widget.js served same-origin"
-  api_url_detection: "widget.jsx auto-detects apiBaseUrl from script.src.origin — no data-api needed when served same-origin"
+  served_by: "project_v5 backend static fileserver (GET /); widget.js served same-origin"
+  api_url_detection: |
+    Priority order in widget.jsx:
+      1. data-api attribute on the embed <script>
+      2. script.src.origin (skipped if port=5173 or URL contains /src/ — dev Vite case)
+      3. window.__KEEPSTAR_V5_WIDGET__.api (local dev override)
+      4. localhost:8084 fallback (avoids clash with V4 which holds 8082)
+    Appends /api/v1 to the resolved origin.
   data_contract: "Renders Document (v9 scene graph) produced by engine-v5 pipeline"
 
 entry_points:
   bootstrap:
     file: "src/widget.jsx"
-    purpose: "IIFE entry. Reads data-tenant from script tag, derives apiBaseUrl from script.src.origin, attaches Shadow DOM, mounts WidgetApp"
+    purpose: |
+      IIFE entry. Reads data-tenant from script tag, resolves apiBaseUrl
+      (4-step priority — see api_url_detection). Attaches Shadow DOM, injects
+      Google Inter font link + concatenated CSS as <style>, mounts WidgetApp.
   root_component:
     file: "src/WidgetApp.jsx"
-    purpose: "Root React component. Manages chat-open state, provides RenderContext, renders ChatPanel + scene-graph area"
+    purpose: |
+      Root component. State owned:
+        sessionId       — created via /session/init on mount
+        messages        — chat history for ChatPanel
+        doc             — current scene-graph Document (setDoc)
+        isLoading       — pipeline in-flight flag
+        canGoBack       — true after drill; false after new pipeline turn or back
+        prefetchRef     — useRef (not useState) to avoid re-renders on each turn;
+                          updated to resp.prefetch on every pipeline response
+      Provides RenderContext.Provider (renderCtx). Renders kw-back button when
+      canGoBack=true. Drill via renderCtx.onUpdateDocument flips canGoBack=true;
+      back via handleBack flips it false.
   chat:
     path: "src/chat/"
     files:
-      - "ChatPanel.jsx — orchestrates message list, input, loading state, onUpdateDocument callback"
+      - "ChatPanel.jsx — message list, text input, loading state, onSend callback"
       - "MessageList.jsx — renders chat message history"
   api:
     path: "src/api/"
-    purpose: "V5 backend client — POST /pipeline, session management, navigation, actions"
+    files:
+      - "client.js — POST /session/init, POST /pipeline; sends X-Tenant-Slug header"
+      - "actions.js — POST /actions (like/cart), POST /navigation/expand, POST /navigation/back"
+
+pipeline_response_shape:
+  consumed_in: "src/WidgetApp.jsx handleSend"
+  fields:
+    document: "Scene-graph Document; set as doc state"
+    prefetch: "{ adjacentTemplate: {entityType: Document}, entities: {entityType: Entity[]} }"
+    spans: "array of span objects for debug logging (agent2.llm span carries tokens.input + cost_usd)"
+    toolCalls: "array; last visual_assembly call drives ackText shown in chat"
+    latencyMs: "total pipeline latency"
+    agent1Ms: "agent1 leg latency"
+    agent2Ms: "agent2 leg latency"
 
 renderer:
-  overview: "Type-dispatched scene-graph walker. SceneGraphRenderer → NodeRenderer → node components."
+  overview: "Type-dispatched scene-graph walker: SceneGraphRenderer → NodeRenderer → node components."
   path: "src/renderer/"
 
   scene_graph_renderer:
     file: "src/renderer/SceneGraphRenderer.jsx"
-    purpose: "Top-level Document walker. Filters reusable component definitions, logs debug summary, wraps output in RendererErrorBoundary."
+    purpose: "Top-level Document walker. Filters reusable defs, logs debug summary."
     null_guard: "Returns null if !document || !Array.isArray(document.children)"
-    reusable_filter: "children.filter(c => !c?.reusable) — component defs live at root for resolver but must not render"
-    error_boundary: "Wrapped in <RendererErrorBoundary resetKey={document}> — resets on new document object"
+    reusable_filter: "children.filter(c => !c?.reusable) — component defs at doc root for resolver; must not render"
+    debug_log: "console.debug('[v5-renderer] document', {nodeCount, topLevelCount, topLevelTypes})"
+    error_boundary: "Output wrapped in <RendererErrorBoundary resetKey={document}>"
 
   error_boundary:
     file: "src/renderer/RendererErrorBoundary.jsx"
+    added: "chunk 16 / commit 7d11f8f (2026-05-11)"
     type: "React class ErrorBoundary"
-    on_error: "console.error + returns null — widget area blank until next valid document"
-    auto_reset: "getDerivedStateFromProps resets hasError when resetKey (document reference) changes"
+    on_error: "console.error '[v5-renderer] node render error' + returns null — widget area blank until next valid document"
+    auto_reset: "getDerivedStateFromProps resets hasError when resetKey (document object reference) changes"
+    invariant: "Every new pipeline response creates a new document object, so the boundary resets between turns."
 
   node_renderer:
     file: "src/renderer/NodeRenderer.jsx"
-    purpose: "Type dispatcher — switch on node.type → Frame/Group/Text/Image/Ref component"
+    purpose: "Type dispatcher — switch on node.type"
+    dispatch:
+      frame: "Frame component"
+      group: "Group component"
+      text:  "Text component"
+      image: "Image component"
+      ref:   "Ref component"
     null_guard: "Returns null if !node || typeof node !== 'object'"
-    unknown_type: "console.warn + return null (no crash)"
+    unknown_type: "console.warn '[v5-renderer] unknown node type' + return null (no crash)"
 
   node_components:
     Frame:
       file: "src/renderer/nodes/Frame.jsx"
       purpose: "Flexbox container. Handles drill_detail click for replicate clones."
-      sizing: "sizingStyle(node) — width/minWidth/maxWidth (number→px, string→passthrough)"
-      drill: "computeDrillProps(node, ctx) — fires drill_detail action if __templateOrigin + prefetch entity found"
-      children_guard: "Array.isArray(node.children) ? node.children : []"
+      layout_props: "layout.{direction, gap, align, justify, wrap} → data-* attributes"
+      sizing: "sizingStyle(node): width/minWidth/maxWidth — number→px, string→passthrough; returns undefined when unset"
+      drill: |
+        computeDrillProps(node, ctx):
+          1. Check node.__templateOrigin (stamped by engine fanOut on clone roots)
+          2. inferEntityType(ctx) — reads first key of ctx.prefetch.entities (defaults 'product')
+          3. Look up ctx.prefetch.adjacentTemplate[entityType] — null → no drill
+          4. resolveEntityIdFromClone: uses node.dataIndex → entities[idx].id
+          Returns {onClick, onKeyDown} handlers firing drill_detail action.
+          Inner buttons stopPropagation to prevent bubble to frame click.
+      css_classes: "kw-frame (always) + kw-frame--clickable (when drillable)"
     Group:
       file: "src/renderer/nodes/Group.jsx"
-      purpose: "Plain column wrapper (16 LOC)"
+      purpose: "Vertical stack wrapper (16 LOC). Renders as kw-frame data-direction=column."
     Text:
       file: "src/renderer/nodes/Text.jsx"
-      purpose: "Leaf: node.content → formatValue(format) → wrapText(wrapper) → JSX"
+      purpose: "Leaf: node.content → formatValue(format) → wrapText(wrapper) → JSX <p>"
+      text_style: "node.textStyle.{fontSize→data-fontsize, fontWeight→data-fontweight, lineClamp→data-lineclamp + CSS var --clamp, color→inline, lineHeight→inline}"
       null_content: "formatValue(null, ...) → '' (handled in format.js)"
     Image:
       file: "src/renderer/nodes/Image.jsx"
-      purpose: "Lazy-loaded image. URL resolution: fills[0].url → node.content (http string) → content[0] (array) → null (omit)"
+      purpose: "Lazy-loaded image. URL resolution priority:"
+      url_resolution:
+        - "fills[0].url (string) — set by backend BindData / fillTemplate"
+        - "node.content (string starting with http) — fallback atom shape"
+        - "node.content[0] (first element if content is array) — multi-URL product field"
+        - "null → return null (omit element)"
+      media_style: "node.mediaStyle.{aspectRatio→data-aspect, objectFit→data-fit (default 'cover')}"
     Ref:
       file: "src/renderer/nodes/Ref.jsx"
-      purpose: "Fallback for unresolved refs (backend ResolveAndInline pre-inlines; this is a safety net)"
+      purpose: |
+        Backend ResolveAndInline pre-inlines refs before sending document.
+        If a ref survives to frontend (component not found), renders children
+        as kw-frame column if any; returns null if no children.
 
   utilities:
     format_js:
       file: "src/renderer/format.js"
       entry: "formatValue(content, format)"
-      formats: ["currency", "stars", "stars-compact", "stars-text", "percent", "number", "date", "text"]
+      formats:
+        currency: "12.99 → '$12.99' (Intl.NumberFormat USD; pre-formatted strings with $€£¥₽ pass through)"
+        stars: "4.5 → '★★★★½ 4.5' (full+half+empty stars)"
+        stars-compact: "4.5 → '★ 4.5'"
+        stars-text: "4.5 → '4.5/5'"
+        percent: "12.5 → '12.5%'"
+        number: "1234 → '1234' (passthrough, locale-agnostic)"
+        date: "ISO string → 'Sep 14, 2025' (Intl.DateTimeFormat en-US)"
+        text: "default — String(content) as-is"
       null_guard: "content null/undefined/'' → returns ''"
-      error_recovery: "try-catch in formatCurrencyNumber + formatDate with fallbacks"
+      error_recovery: "try-catch in formatCurrencyNumber + formatDate with string fallbacks"
+
     wrapper_js:
       file: "src/renderer/wrapper.js"
       entry: "wrapText(content, wrapper, node)"
       wrappers:
-        button: "<button> — dispatches node.action on click"
-        link: "<a> — opens node.action.params.url"
-        visual_only: ["badge", "tag", "pill", "alert → <span> with CSS class"]
-        none: "passthrough"
+        button: "<button> — dispatches node.action via dispatchAction; stopPropagation prevents frame drill bubble. No action → diagnostic console.log (no crash)."
+        link: "<a> — href from node.action.params.url; onClick preventDefault + dispatchAction."
+        badge: "<span class='kw-badge'>"
+        tag: "<span class='kw-tag'>"
+        pill: "<span class='kw-pill'>"
+        alert: "<span class='kw-alert'>"
+        none: "passthrough (content as-is)"
+
     action_dispatch:
       file: "src/renderer/actionDispatch.js"
-      entry: "dispatchAction(action, ctx)"
+      entry: "dispatchAction(action, ctx) — async, callers usually don't await (fire-and-forget)"
       action_kinds:
-        backend: ["like", "unlike", "cart_add", "cart_remove", "drill_detail", "back"]
-        frontend: ["external_link", "search", "open_category"]
-      drill_logic: "prefetch hit → fillTemplate (instant) + background /navigation/expand; cache miss → cold /navigation/expand"
+        backend_sync: ["like", "unlike", "cart_add", "cart_remove → POST /actions"]
+        navigation: ["drill_detail → expand (prefetch instant path or cold /navigation/expand)", "back → POST /navigation/back"]
+        frontend_only: ["external_link → window.open noopener+noreferrer", "search → ctx.onSearch(query)", "open_category → ctx.onSearch('show category <cid>')"]
+      drill_logic: |
+        Optimistic path (prefetch hit):
+          template = prefetch.adjacentTemplate[entity.type]
+          entity   = prefetch.entities[entity.type].find(id)
+          filled   = fillTemplate(template, entity) → onUpdateDocument(filled) synchronously
+          Background: expandView() fired but failures ignored (UI already updated).
+        Cold path (no prefetch): await expandView() → onUpdateDocument(resp.document)
       error_handling: "try-catch in dispatchBackendAction, dispatchDrill, dispatchBack — logs + re-throws"
+      no_sessionId_guard: "dispatchBackendAction returns null + warns if !sessionId"
+
     fill_template:
       file: "src/renderer/fillTemplate.js"
-      entry: "fillTemplate(template, entity)"
-      purpose: "Instant drill-down: fill a template Document with one entity's data without round-trip"
-      binding:
-        text: "node.fieldBinding → node.content"
-        image: "node.fieldBinding → node.fills[0].url"
-        other: "node.fieldBinding → node.value"
-      clone: "structuredClone(template) to avoid cache mutation"
+      entry: "fillTemplate(template, entity) → Document"
+      purpose: "Instant drill-down: fill prefetch template with one entity's data without round-trip. Port of V4 fillFormation."
+      binding_rules:
+        text_node: "node.fieldBinding → node.content = entity[fieldBinding]"
+        image_node: "node.fieldBinding → node.fills[0] = {type:'image', url:entity[fieldBinding], mode:'fill'} (array value → takes [0])"
+        other_nodes: "node.fieldBinding → node.value = entity[fieldBinding]"
+      skip_guard: "node.__resolvedFrom → skip (component subtrees already bound at template build time)"
+      clone: "structuredClone(template) — never mutates prefetch cache"
+      flat_keys_only: "fieldBinding must be a flat entity key; nested path like 'attributes.skin_type' → entity[key] = undefined (silently skips)"
+
     render_context:
       file: "src/renderer/RenderContext.js"
       shape: |
@@ -114,42 +199,72 @@ renderer:
           apiBaseUrl: string,
           tenantSlug: string | null,
           sessionId: string | null,
-          prefetch: { adjacentTemplate: {[entityType]: Document}, entities: {[entityType]: [Entity]} },
-          onUpdateDocument: (doc) => void,
-          onSearch: (query) => void
+          prefetch: {
+            adjacentTemplate: { [entityType: string]: Document },
+            entities: { [entityType: string]: Entity[] }
+          },
+          onUpdateDocument: (doc: Document) => void,
+          onSearch: (query: string) => void
         }
-      default: "All fields have safe no-op defaults"
+      default: "All fields have safe no-ops so missing-provider tests don't throw"
+      note: "WidgetApp provides two flavours: renderCtx (drill → canGoBack=true) and a ctx variant for handleBack (back → canGoBack=false)"
 
 build:
   config: "project_v5/frontend/vite.config.js"
   format: "iife"
+  name: "KeepstarV5Widget"
   output: "dist/widget.js"
   dev_port: 5173
+  css_strategy: "shadowDomCss Vite plugin suppresses .css imports in components; widget.jsx imports widget.css?inline and injects as <style> into shadow root"
+  test_config: "vitest jsdom, globals=true, setupFiles=['./tests/setup.js']"
   served_same_origin: "Dockerfile copies dist/ → /app/static in V5 backend; GET / serves widget.js"
-  api_url: "Auto-detected from script.src.origin in production; falls back to localhost:8084 in dev"
 
 tests:
   path: "project_v5/frontend/tests/"
-  framework: "vitest + jsdom"
-  coverage: "SceneGraphRenderer smoke tests (renderer.test.jsx) + 3 fixture tests; 38 tests total"
+  framework: "vitest + jsdom + @testing-library/react"
+  files:
+    - "renderer.test.jsx — SceneGraphRenderer smoke (4 describe blocks, 13 tests)"
+    - "actionDispatch.test.js — dispatchAction all kinds including drill instant/cold + back"
+    - "fillTemplate.test.js — binding rules, structuredClone isolation"
+    - "frame-layout.test.jsx — Frame sizing + drill props"
+    - "wrapper-button-click.test.jsx — button/link dispatch, stopPropagation"
+  fixtures: "tests/fixtures/{product-card-grid.json, product-detail.json, empty-not-found.json}"
+  total: "5 test files, 38 tests"
   run: "cd project_v5/frontend && npm test"
 
 invariants:
-  - "RendererErrorBoundary resets on new document reference — every new pipeline response creates a new document object, ensuring the boundary resets between turns."
-  - "Reusable component definitions (node.reusable=true) MUST be filtered before render — they live at document root for the resolver but should never reach the screen."
-  - "fillTemplate uses structuredClone — never mutates the prefetch cache. Mutating cache = subsequent drills see wrong data."
-  - "dispatchAction is async (fetch calls) but click handlers don't await — drill instant path fires onUpdateDocument synchronously before background sync."
-  - "widget.js is served same-origin from V5 backend — apiBaseUrl auto-detection from script.src.origin only works when the script is fetched from the backend domain."
+  - "RendererErrorBoundary resets on new document reference — every pipeline response creates a new document object, ensuring boundary resets between turns."
+  - "Reusable component definitions (node.reusable=true) MUST be filtered before render — they live at document root for the resolver but should never reach screen."
+  - "fillTemplate uses structuredClone — never mutates the prefetch cache. Cache mutation = subsequent drills see stale data."
+  - "dispatchAction is async but click handlers don't await — drill instant path fires onUpdateDocument synchronously before background expandView."
+  - "widget.js served same-origin from V5 backend — apiBaseUrl auto-detection via script.src.origin only works when the script originates from the backend domain."
+  - "prefetchRef is a useRef (not useState) in WidgetApp — updated each turn without triggering a re-render."
 
 gotchas:
-  - "Back button is not yet implemented in V5 widget (known gap A4). navigation/back API exists on backend; frontend handler is missing."
-  - "RendererErrorBoundary returns null on error — widget area blanks until next valid document. 'Last valid state' pattern (show previous document) would require lifting lastValidDocument to WidgetApp level."
-  - "fillTemplate binding is one-level — node.fieldBinding = 'attributes.skin_type' (nested path) returns undefined silently. Backend fieldBinding names should be flat."
-  - "Frame.jsx drill logic reads prefetch.adjacentTemplate[entityType] — if entity type in the node doesn't match the prefetch key, drill falls back to cold path (no instant preview)."
-  - "No session cache (localStorage) in V5 yet — F5 resets chat state. This is a known gap from V4 feature parity."
-  - "widget.jsx auto-detects apiBaseUrl from script.src.origin — in local dev (file:// or non-8084 port), falls back to hardcoded localhost:8084."
+  - "RendererErrorBoundary returns null on error — widget area blanks until next valid document. Showing the previous document would require lifting lastValidDocument to WidgetApp level (not implemented)."
+  - "fillTemplate binding is flat-key only — node.fieldBinding='attributes.skin_type' returns undefined silently. Backend fieldBinding names must be top-level entity keys."
+  - "Frame.jsx drill logic reads prefetch.adjacentTemplate[entityType] — if the entity type in the node doesn't match the prefetch key, drill falls back to cold path (no instant preview)."
+  - "inferEntityType in Frame.jsx takes the FIRST key of prefetch.entities — only works correctly when exactly one entity type is present in the prefetch payload."
+  - "No session cache (localStorage) in V5 — F5 resets chat state. This is a known gap from V4 feature parity."
+  - "widget.jsx devConfig: window.__KEEPSTAR_V5_WIDGET__ = {tenant, api} is the local-dev override hook. Not documented in embed guide; used in manual testing only."
+  - "Back button (A4) is IMPLEMENTED in WidgetApp.jsx (canGoBack + handleBack + .kw-back) — docs/v5-known-gaps.md entry for A4 is stale."
+
+cross_layer_drift:
+  fill_template_vs_engine_binding:
+    frontend_rule: "text node → node.content; image node → node.fills[0].url; other → node.value"
+    backend_rule: "binding.go bindTargetForNode: NodeTypeText→content, NodeTypeImage→fills[0].url (key='url'), other→value"
+    status: "aligned — same rules"
+  action_kinds_vs_inject_actions:
+    frontend: "like, unlike, cart_add, cart_remove, drill_detail, back, external_link, search, open_category (9 kinds)"
+    backend: "inject_actions.go InjectDefaultActions injects like + cart_add button atoms after BindData"
+    status: "aligned — frontend handles all 9 backend-defined kinds"
+  node_property_keys:
+    frame: "layout.{direction,gap,align,justify,wrap}, width/minWidth/maxWidth, id, __templateOrigin, dataIndex"
+    text: "content, format, wrapper, textStyle.{fontSize,fontWeight,lineClamp,color,lineHeight}, id, action, fieldBinding"
+    image: "fills[0].{type,url,mode}, content (URL string fallback), mediaStyle.{aspectRatio,objectFit}, alt, id, fieldBinding"
+    backend_image_fill_key: "attrFillImageURL='url' (value_fill.go); frontend reads fills[0].url — aligned"
 
 related_experts:
-  - "engine-v5 — owns the Document + node property shape this renderer consumes. New node types or property key renames cascade to NodeRenderer dispatch + node components."
-  - "pipeline-agents — POST /api/v1/pipeline returns {document, adjacentTemplates, entities, treeMap}. Shape changes cascade to RenderContext and fillTemplate."
-  - "catalog — field definitions drive fieldBinding keys in node trees; fillTemplate.js binding and format.js format values must match catalog field types."
+  - "engine-v5 — owns Document + node property shape this renderer consumes. New node types or property renames cascade to NodeRenderer dispatch + node components."
+  - "pipeline-agents — POST /api/v1/pipeline returns {document, prefetch, spans, toolCalls, latencyMs, agent1Ms, agent2Ms}. Shape changes cascade to WidgetApp + RenderContext."
+  - "catalog — field definitions drive fieldBinding keys; fillTemplate.js flat-key binding + format.js format values must match catalog field types."

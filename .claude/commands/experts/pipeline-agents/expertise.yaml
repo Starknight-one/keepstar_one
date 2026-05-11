@@ -13,8 +13,8 @@ overview:
       Agent2 (Render)     → visual_assembly tool → engine-v5 scene-graph
     Plus span tracing, prompt caching, state snapshots, prefetch payload.
   contract:
-    input:  "POST /api/v1/pipeline {session_id, query, tenant_slug}"
-    output: "{ document, adjacentTemplates, entities, traceId, treeMap, warnings }"
+    input:  "POST /api/v1/pipeline {sessionId, query}"
+    output: "{ document, toolCalls, usage, latencyMs, agent1Ms, agent2Ms, prefetch?, spans? }"
   ports:
     local: "8084"
     prod:  "v5-engine-production.up.railway.app (US region, Railway)"
@@ -22,20 +22,34 @@ overview:
 orchestration:
   entry_point:
     file: "internal/usecases/pipeline_execute.go"
-    type: "PipelineExecuteUseCase"
-    method: "Execute(ctx, req) (*PipelineExecuteResponse, error)"
+    type: "PipelineExecute"
+    method: "Execute(ctx, PipelineExecuteRequest) (*PipelineExecuteResponse, error)"
+  request_fields: ["SessionID", "TenantSlug", "UserQuery", "TurnID"]
+  response_fields: ["Document", "ToolCalls", "Usage", "LatencyMs", "Agent1Ms", "Agent2Ms", "Prefetch"]
   pipeline_steps:
-    - "0. SpanCollector init — every step adds a span; persisted to v5_chat_session_traces"
-    - "1. Ensure session — GetSession or create; TenantID threaded from req.TenantSlug"
-    - "2. TurnID — req.TurnID or new uuid; groups Agent1+Agent2 deltas"
-    - "3. Agent1.Execute — NLU+data; calls catalog_search/state_filter/history_lookup; writes state"
-    - "4. Agent2.Execute — render; calls visual_assembly → engine-v5 → Document + TreeMap"
-    - "5. Prefetch — build adjacentTemplates (1 detail template per entity type) + entities for instant drill"
-    - "6. Build response — document + adjacentTemplates + entities + treeMap + trace"
-    - "7. recordTrace — persist to v5_chat_session_traces (best-effort async)"
+    - "1. Agent1.Execute — NLU+data; deterministic guard or LLM; writes state.Current.Data"
+    - "2. composeMicrocontext(a1) — maps ToolName+ProductsFound to one-line signal for Agent2"
+    - "3. Agent2.Execute — render; calls visual_assembly → engine-v5 → Document + TreeMap"
+    - "4. Prefetch build — if active preset has registered drill target: build adjacentTemplates + entities for instant drill"
+    - "5. Aggregate ToolCalls (Agent1 tool if called, all Agent2 calls), sum Usage across agents"
+    - "6. Return aggregated response"
+  microcontext_signals:
+    catalog_search: "\"new_search: N items found\""
+    _internal_state_filter: "\"filtered: N items\""
+    _internal_history_lookup: "\"history: deltas inspected\""
+    no_tool: "\"no_data_change\""
+  prefetch:
+    file: "internal/usecases/prefetch.go"
+    trigger: "readPresetInUse(a2.Document) extracts domain.TemplatePresetInUseKey stamped by visual_assembly"
+    nil_when: "active preset has no registered drill target OR data zone is empty"
+  trace_persistence:
+    location: "internal/handlers/handler_pipeline.go:persistTrace"
+    table: "v5_chat_session_traces"
+    timing: "best-effort goroutine AFTER response is written (never blocks turn)"
+    also_persists: "error turns (pipelineErr path)"
   related_files:
-    - "internal/usecases/prefetch.go — builds adjacentTemplates + entities for prefetch payload"
-    - "internal/usecases/span_helper.go — span construction helpers"
+    - "internal/usecases/prefetch.go"
+    - "internal/usecases/span_helper.go — withSpan(ctx, name) → (ctx, SpanHandle)"
     - "internal/usecases/state_reconstruct.go — reconstruct state from delta history"
     - "internal/usecases/state_rollback.go — rollback state on failed pipeline turn"
 
@@ -45,123 +59,219 @@ agent1:
   tools_provided: ["catalog_search", "state_filter", "history_lookup"]
   system_prompt:
     file: "internal/prompts/agent1_prompt.go"
+    const: "Agent1SystemPrompt"
     purpose: "NLU guidance: intent classification, tool selection, query enrichment"
-  output: "state.current.data + state.current.meta written via state port"
+    catalog_block: "Agent1PromptCache appends <catalog> digest block per tenant"
+  deterministic_guard:
+    condition: "ProductCount > 0 AND filterTriggers.MatchString(query) AND NOT styleFieldNames.MatchString(query)"
+    action: "bypass LLM, call _internal_state_filter directly"
+    result_field: "Bypassed=true, StopReason=\"deterministic_guard\""
+    fallthrough: "on tool error, falls through to LLM path"
+  rendered_subset:
+    function: "buildRenderedSubsetFromState(state) → []prompts.RenderedItem"
+    purpose: "projects products currently visible on screen via engine.RenderedDataIndices"
+    type: "prompts.RenderedItem{ID,Name,Brand,Price,Rating,Images,MarketingClaim}"
+    sent_in: "<state> block as \"rendered\" key — omitted when template empty or no products"
+  cache_config:
+    CacheTools: false  # Agent1 tool defs below Haiku 2048-token per-block min
+    CacheSystem: true
+    CacheConversation: "len(messages) > 1"
+    ToolChoice: "auto"  # Agent1 may legitimately skip tool call
+  tool_filter: "prefix catalog_* OR _internal_* from shared registry"
+  output: "Agent1ExecuteResponse{ToolName, ToolInput, ToolResult, ProductsFound, Usage, LatencyMs, LLMCallMs, ToolExecuteMs, StopReason, EnrichedQuery, Bypassed}"
+  history: "appends user / assistant:tool_use / user:tool_result to ConversationHistory; bypassed path appends user only"
+  retry: "runToolWithRetry — on Go-error retries once with empty input"
+
+agent1_prompt_cache:
+  file: "internal/usecases/agent1_prompt_cache.go"
+  type: "Agent1PromptCache (sync.Map per tenant slug)"
+  methods:
+    - "GetOrBuild(ctx, tenantSlug) string — fail-open: returns base prompt on any catalog error"
+    - "Invalidate(tenantSlug) — drops entry"
+  build_steps:
+    - "GetTenantBySlug → tenant.ID"
+    - "BuildCatalogDigest(tenant.ID) → digest.ToPromptText()"
+    - "Agent1SystemPrompt + <catalog> + digestText"
+  fail_open: "error from GetTenantBySlug or BuildCatalogDigest → returns base Agent1SystemPrompt"
 
 agent2:
   file: "internal/usecases/agent2_execute.go"
   tools_provided: ["visual_assembly"]
   system_prompt:
     file: "internal/prompts/agent2_prompt.go"
-    type: "var (not const) — built by buildAgent2SystemPrompt() at startup"
+    type: "var Agent2SystemPrompt (not const) — built by buildAgent2SystemPrompt() at package init"
     structure: "agent2PromptPart1 + presets.SystemPresetsBlock + agent2PromptPart2"
-    preset_auto_gen: "SystemPresetsBlock generated from engine/presets/SystemPresetSeeds + SystemPresetDescriptions — adding a preset + description is sufficient, no manual prompt edit"
-    mode_section: "REQUIRED rebuild|modify enum; modify hint: 1-5 ops typical, more → rebuild"
-    sections: ["HOW IT WORKS", "MODE (rebuild/modify)", "PRESETS (auto-generated)", "REPLICATE", "OPS VOCABULARY", "FIELD BINDING", "FORMAT+WRAPPER", "BUILDING", "COMPOSING", "MODIFYING EXISTING", "TREE_MAP", "DECISION RULES", "ANTI-PATTERNS"]
-  prompt_assembly:
-    file: "internal/prompts/fields_block.go"
-    functions:
-      - "FormatFieldsBlock(ctx, fdPort, tenantSlugOrID, entityType, sampleLimit) — per-tenant <fields> XML block"
-      - "AssembleSystemPrompt(base, fieldsBlock string) — joins base + fieldsBlock"
-    todo: "<tenant_design_context> block (tenant-published presets) documented as 'later' in code comment"
+    preset_auto_gen: "SystemPresetsBlock generated from engine/presets/SystemPresetSeeds keys + SystemPresetDescriptions — adding seed + description is sufficient, no manual prompt edit"
+    cache_budget: "system + visual_assembly tool def must clear ≥ 4500 tokens for stable Haiku cache_read; run `go test -tags=tokens` to verify"
+    sections: ["HOW IT WORKS", "MODE (rebuild/modify)", "PRESETS (auto-generated)", "REPLICATE", "OPS VOCABULARY", "FIELD BINDING", "FORMAT+WRAPPER", "BUILDING FROM SCRATCH", "COMPOSING", "MODIFYING EXISTING", "TREE_MAP", "DECISION RULES", "ANTI-PATTERNS"]
+  history_trim: "last 4 messages (historyLimit=4 = 2 prior turns × 2 messages each); pair-aware: backs up past orphan tool_result blocks"
+  tree_map_injection: "buildFormationTreeBlock(ctx, state.Current.Template) → <formation_tree> JSON prepended to user message; empty when template nil"
+  microcontext_injection: "<microcontext>signal</microcontext>\n{query} prepended when Microcontext non-empty"
+  cache_config:
+    CacheTools: true   # visual_assembly tool def is large — primary cache point
+    CacheSystem: true
+    CacheConversation: "len(messages) > 1"
+    ToolChoice: "any"  # Agent2 must always call visual_assembly
+  tool_filter: "only visual_assembly from shared registry (prevents Agent2 calling catalog_search accidentally)"
+  history_store: "AppendAgent2History — separate from ConversationHistory (Agent1's store)"
+  output: "Agent2ExecuteResponse{Document, ToolCalls, Usage, LatencyMs}"
+  retry: "runToolWithRetry — on Go-error retries once with empty input"
+
+agent2_prompt_assembly:
+  file: "internal/prompts/fields_block.go"
+  functions:
+    - "FormatFieldsBlock(ctx, fdPort, tenantSlugOrID, entityType, sampleLimit) → <fields> XML block"
+    - "AssembleSystemPrompt(base, fieldsBlock string) → joined prompt"
   prompt_cache:
     file: "internal/usecases/prompt_cache.go"
-    type: "PromptCache struct (sync.Map per tenant)"
+    type: "PromptCache (sync.Map per tenant slug)"
     methods:
-      - "GetOrBuild(ctx, tenantSlugOrID, sampleLimit) — returns cached or builds + caches"
-      - "Invalidate(tenantSlugOrID) — drops entry; called when tenant_design_context version bumps"
+      - "GetOrBuild(ctx, tenantSlugOrID, sampleLimit=3) (string, error) — builds + caches on miss"
+      - "Invalidate(tenantSlugOrID) — drops entry; call on tenant config change"
     cache_key: "tenant slug (or UUID)"
-    note: "Agent2SystemPrompt is a var initialized at startup — PromptCache wraps the per-tenant fields block assembly only; the base prompt (including preset block) is assembled once globally"
+    note: "Agent2SystemPrompt global var is built once at startup; PromptCache wraps per-tenant <fields> block only"
 
-prompts:
-  agent1_file: "internal/prompts/agent1_prompt.go"
-  agent2_file: "internal/prompts/agent2_prompt.go"
-  fields_block_file: "internal/prompts/fields_block.go"
-  cache_invariant: "Tool definitions sorted by name in tool registry — Anthropic cache hashes byte-for-byte; map iteration randomness breaks cache_read"
+presets_block:
+  file: "internal/engine/presets/prompt.go"
+  vars:
+    - "SystemPresetDescriptions map[string]string — name → one-line description"
+    - "SystemPresetsBlock string — generated at init from SystemPresetSeeds keys + descriptions"
+  current_presets:
+    - "product_card — standard product card for grids of 2–4 items"
+    - "product_card_compact — small product card for dense grids (5+ items)"
+    - "product_card_horizontal — image left, info right (carousels, single feature)"
+    - "product_card_list_row — wide row for list layouts"
+    - "product_detail — full product detail (vertical, 16:9 hero)"
+    - "product_detail_horizontal — product detail with image-left layout"
+    - "text_explainer — literal-text widget (title + body) for LLM explanations"
+    - "empty_not_found — empty state"
+    - "error_generic — error state"
+  add_new_preset: "Add seed JSON to SystemPresetSeeds (presets.go) AND add description to SystemPresetDescriptions — prompt auto-updates"
 
 tools:
-  registry: "internal/tools/ — tool executors implement Definition() + Execute()"
+  registry:
+    file: "internal/tools/tool_registry.go"
+    interface: "Tool { Definition() ToolDefinition; Execute(ctx, ToolContext, input) (*ToolResult, error) }"
+    GetDefinitions: "sorted by name — REQUIRED for byte-stable Anthropic prompt cache hash"
+    Register: "last-wins (safe for test overrides)"
   registered_tools:
     catalog_search:
       file: "internal/tools/tool_catalog_search.go"
-      purpose: "Hybrid catalog search — SQL keyword + pgvector cosine + RRF merge"
-      fallback: "embedding failure → SQL-only search"
+      purpose: "Hybrid catalog search — SQL keyword ILIKE + pgvector cosine + RRF merge (chunk 16 port from V4)"
+      constructor: "NewCatalogSearchTool(statePort, catalogPort, embeddingPort) — embeddingPort nil → keyword-only fallback"
+      rrf_fn: "rrfMerge(keyword, vector, limit, hasFilters) — keyword weight 1.5× (2.0× with filters), k=60, stable tie-break by ID"
+      fallback: "embedding failure → SQL-only"
+      caller: "Agent1 (catalog_* prefix filter)"
     state_filter:
       file: "internal/tools/tool_state_filter.go"
+      registered_as: "_internal_state_filter"
       purpose: "Filter already-loaded state.data without DB call"
+      caller: "Agent1 (_internal_* prefix filter) + deterministic guard bypass"
     history_lookup:
       file: "internal/tools/tool_history_lookup.go"
+      registered_as: "_internal_history_lookup"
       purpose: "Search conversation history for past queries/answers"
+      caller: "Agent1 (_internal_* prefix filter)"
     visual_assembly:
       file: "internal/tools/tool_visual_assembly.go"
-      purpose: "Agent2's sole tool. Validates ops + preset, runs engine-v5 pipeline, writes Document to state.template"
-      mode: "REQUIRED enum: rebuild | modify (no default)"
+      purpose: "Agent2's sole tool. Validates mode, runs engine-v5 pipeline, writes Document to state.template"
+      mode: "REQUIRED enum: rebuild | modify (no default; missing → ToolResult IsError)"
+      engine_pipeline: "Materialise → ApplyOps → ExpandReplicates → ResolveAndInline → BindData → InjectDefaultActions → UpdateTemplate"
       call_shapes:
-        - "(a) preset name ± ops — most common"
-        - "(b) ops only — freestyle rebuild or modify tweak"
-        - "(c) multi-widget compose — multiple top-level frame inserts in one rebuild call"
+        - "(a) preset ± ops — Materialise preset + components, then ApplyOps"
+        - "(b) rebuild + ops only — engine.NewDocument(), then ApplyOps (freestyle)"
+        - "(c) modify + ops — load state.Current.Template, ops target tree_map ids"
+      failure_modes:
+        - "mode missing/invalid → ToolResult IsError"
+        - "rebuild + no preset + no ops → ToolResult IsError"
+        - "modify + no ops → ToolResult IsError"
+        - "modify on empty Template → ToolResult IsError (LLM should pick rebuild)"
+        - "preset/component not found → ToolResult IsError"
+        - "state retrieval/write fails → Go error (transport failure)"
+      preset_stamp: "templateMap[domain.TemplatePresetInUseKey] = presetName for orchestrator drill-target lookup"
+      freestyle_refs: "if ops-only and documentHasRefs → loads components on demand and appends as reusable:true children"
+  data_normalize:
+    file: "internal/tools/data_normalize.go"
+    functions:
+      - "NormalizeProduct(*domain.Product) — trims whitespace, dedupes slices, filters empty image URLs"
+    note: "Called before products reach LLM context; no NormalizeService (V5 is product-only)"
 
 llm_adapters:
   anthropic:
     path: "internal/adapters/anthropic/"
+    files: ["client.go", "chat.go", "cost.go"]
     env: "ANTHROPIC_API_KEY, LLM_MODEL (default claude-haiku-4-5-20251001)"
-    cache_strategy: "System prompt + tool definitions cached; second-to-last message cache point covers conversation history"
-    span_instrumentation: "Emits {stage}.llm, {stage}.llm.ttfb, {stage}.llm.body spans"
+    cache_breakpoints:
+      CacheSystem: "ephemeral on the system block"
+      CacheTools: "ephemeral on the LAST tool in the sorted array"
+      CacheConversation: "ephemeral on the SECOND-TO-LAST message's content blocks"
+    span_instrumentation: "Emits {stage}.llm spans with model/tokens/cost/stop_reason attrs"
     slow_warn: "Logs [WARN] if TTFB > 10s"
+    token_threshold: "≥ 4500 tokens for stable Haiku cache_read; test with `go test -tags=tokens`"
   openai:
     path: "internal/adapters/openai/"
-    purpose: "EmbeddingPort for catalog vector search"
+    purpose: "EmbeddingPort for catalog vector search (catalog_search hybrid path)"
     env: "OPENAI_API_KEY, EMBEDDING_MODEL (default text-embedding-3-small)"
 
 state_and_trace:
   state_port:
     path: "internal/adapters/postgres/"
-    tables: "chat_session_state, chat_session_deltas"
-    methods: ["GetState", "SaveState", "AppendDelta", "GetDeltas"]
+    tables: "v5_chat_sessions, v5_chat_session_deltas, v5_session_state"
+    key_methods: ["GetState", "SaveState", "AppendConversation", "AppendAgent2History", "UpdateTemplate", "UpdateData"]
+    history_split: "Agent1 uses ConversationHistory; Agent2 uses Agent2History (separate append methods)"
   trace:
     table: "v5_chat_session_traces"
-    purpose: "Per-turn trace persistence for Curator UI (ChatsPage + ChatDetailPage)"
-    writer: "best-effort async — pipeline continues even if trace write fails"
-    reader: "curator/ service reads shared Neon DB directly"
+    schema: "id, session_id (FK), request_id, tenant_id, user_query, spans JSONB, span_count, latency_ms, agent1_ms, agent2_ms, tokens_input/output/cache_read/cache_creation, cost_usd NUMERIC(10,6), status VARCHAR(20), error_message, created_at; UNIQUE(session_id, request_id)"
+    writer: "handler_pipeline.go:persistTrace — best-effort async goroutine with 10s context; persists both ok and error turns"
+    reader: "curator/ service reads shared Neon DB directly via curator-backend's pgxpool"
+    migration: "internal/adapters/postgres/migrations_trace.go:RunTraceMigrations"
   retention:
-    conversation_trim: "20 messages max (trimConversationHistory)"
+    agent2_history_trim: "4 messages max per LLM call (2 prior turns × 2 messages)"
+    agent1_conversation: "no trim — full history; caching covers cost"
 
 handlers:
-  pipeline:  "internal/handlers/handler_pipeline.go — POST /api/v1/pipeline"
-  session:   "internal/handlers/handler_session.go — POST /session/init, GET /session/{id}"
-  navigation: "internal/handlers/handler_navigation.go — POST /navigation/expand, /navigation/back"
-  action:    "internal/handlers/handler_action.go — POST /api/v1/actions (like/cart)"
-  readyz:    "internal/handlers/handler_readyz.go — GET /readyz (pgxpool.Ping; used by Railway health check)"
-  routes:    "internal/handlers/routes.go"
-  middleware: ["middleware_cors.go", "middleware_logging.go", "middleware_tenant.go"]
+  pipeline:    "internal/handlers/handler_pipeline.go — POST /api/v1/pipeline"
+  session:     "internal/handlers/handler_session.go — POST /session/init, GET /session/{id}"
+  navigation:  "internal/handlers/handler_navigation.go — POST /navigation/expand, /navigation/back"
+  action:      "internal/handlers/handler_action.go — POST /api/v1/actions (like/cart)"
+  readyz:      "internal/handlers/handler_readyz.go — GET /readyz (pgxpool.Ping)"
+  routes:      "internal/handlers/routes.go"
+  middleware:  ["middleware_cors.go", "middleware_logging.go (attaches SpanCollector + RequestID)", "middleware_tenant.go"]
+  pipeline_response: "document + toolCalls + usage + latencyMs + agent1Ms + agent2Ms + prefetch? + spans?"
 
 invariants:
-  - "Tool definitions MUST be sorted by name in registry — Anthropic caches the tool array byte-for-byte; unsorted = 0% cache_read."
-  - "visual_assembly is the ONLY entry into engine-v5. Direct engine calls bypass tenant preset resolution and tracing."
+  - "Tool definitions MUST be sorted by name in Registry.GetDefinitions() — Anthropic caches the tool array byte-for-byte; unsorted = 0% cache_read."
+  - "visual_assembly is the ONLY entry into engine-v5. Direct engine calls bypass tenant preset resolution, data binding, and InjectDefaultActions."
   - "Agent2SystemPrompt is a var (not const) — built once at startup by buildAgent2SystemPrompt(). Changing engine/presets/ auto-propagates without prompt rewrite."
-  - "TurnID groups deltas — same turn's Agent1+Agent2 writes share TurnID for delta replay."
-  - "Span collector lives in ctx — propagate via domain.WithSpanCollector / SpanFromContext; lose ctx = lose spans."
-  - "PromptCache key is tenant slug/UUID — adding tenant_design_context block will require Invalidate() call on tenant config change."
+  - "Agent2 uses CacheTools=true, Agent1 uses CacheTools=false — Agent1's 3 tool defs are below Haiku's per-block 2048-token minimum."
+  - "Agent2 history (AppendAgent2History) is separate from Agent1/user ConversationHistory (AppendConversation) — different state fields, different trim rules."
+  - "Trace persistence fires AFTER response is written — never blocks the turn; curator may see gaps on crash."
+  - "RenderedDataIndices + BuildRenderedSubset feed the <state>.rendered block in Agent1 context — shows what's on screen so Agent1 can resolve natural-language references."
+  - "persistTrace persists both success and error turns — error path receives nil resp + non-nil pipelineErr."
 
 gotchas:
-  - "V5 was deployed in Singapore region initially while Anthropic API + Neon are us-east — caused ~75% of observed 8s p50 latency. After US migration: 1881-2423ms warm, 3446ms cold. Region matters."
-  - "V5 catalog_search was keyword-only ILIKE until chunk 16 — hybrid (pgvector+RRF) ported from V4. Chunk 16 closed this gap."
-  - "Agent2 modify-mode over-emission (A2 gap): Agent2 fires modify even when state has data from a different category, skipping catalog_search. 1-5 ops hint added to MODE section as mitigation."
-  - "Anthropic prompt caching needs ≥4096 tokens for Haiku — below threshold, cache writes succeed but reads never hit. Padding via tool definitions ensures threshold is met."
-  - "v5_chat_session_traces writes are best-effort async — a failed write doesn't fail the turn; curator may see gaps in trace view."
+  - "V5 was deployed in Singapore region initially while Anthropic API + Neon are us-east — caused ~75% of observed 8s p50 latency. After US migration: 1881-2423ms warm, 3446ms cold."
+  - "Agent1 CacheTools deliberately OFF — V5 Agent1 tool defs (3 tools × small schemas) sum below Haiku's 2048-token per-block minimum. Enabling it produces invalid breakpoints silently skipped by Anthropic."
+  - "Agent2 modify-bias (A2 gap): Agent2 fires modify even when state has data from a different category, skipping catalog_search. 1-5 ops hint added to MODE section as mitigation."
+  - "Anthropic prompt caching needs ≥ 4500 tokens stable (V4-prod threshold, not the documented 2048 Haiku min). V5 system+tools measured at 3001 tokens in chunk 5.5; Agent2 prompt growth in chunks 9-16 should now clear this — verify with `-tags=tokens` test."
+  - "Agent2 history trim is pair-aware — if the cutoff would leave an orphan tool_result (no preceding assistant tool_use), backs up 1 position. Orphan tool_result blocks cause Anthropic API 400 errors."
   - "state_rollback.go exists for failed pipeline turns — if Agent2 fails after Agent1 writes state, rollback restores pre-turn state to avoid stale data on retry."
+  - "NormalizeProduct dedupes tags/skinType/concern/keyIngredients and filters empty image URLs — must be called before products enter state to avoid LLM anchoring on phantom signals."
 
 active_known_gaps:
   tracker: "docs/v5-known-gaps.md"
   items:
-    A1: "Greeting handling — V5 emits empty_not_found on 'Привет'"
-    A2: "modify-vs-rebuild misclassification — 'другая категория' doesn't fire catalog_search if state non-empty"
-    A3: "replicate count + pagination — V5 hardcoded 3, V4 shows all + pages"
-    A4: "back button absent in widget"
-    A5: "skip Agent2 on Agent1 no-op (~1s + $0.001 saving per turn)"
+    A1: "Greeting handling — V5 emits empty_not_found on 'Привет'; needs greeting system preset + Agent2 prompt rules"
+    A2: "Modify-vs-rebuild misclassification — 'другая категория' doesn't fire catalog_search if state non-empty; Agent1 needs stricter category-change rules"
+    A3: "Default replicate count hardcoded 3; V4 shows all matched + paginates; needs page state in engine + frontend pagination UI"
+    A4: "Back button — CLOSED. WidgetApp.jsx canGoBack + handleBack + .kw-back button (renders when canGoBack=true). /api/v1/navigation/back wired via dispatchAction kind='back'. docs/v5-known-gaps.md A4 entry is stale."
+    A5: "Skip Agent2 on Agent1 no-op — pipeline always calls Agent2 LLM even when Agent1 found nothing / identical set; ~1s + $0.001 waste per no-change turn"
+    A6: "Layout density — V5 cards narrower than V4; system preset width=280 is rigid vs V4's viewport-responsive columns"
+    deferred: "tree_map injected on every turn with non-empty Document — ~150-400 tokens wasted on preset-only turns; future optimisation"
+    deferred2: "catalog digest cached in-process forever (no DB column, no background refresh); no /admin/invalidate-cache yet"
 
 related_experts:
   - "engine-v5 — owns the visual_assembly tool's execution target; op vocabulary + preset names in prompt MUST match engine contract."
-  - "catalog — postgres_catalog is data source for catalog_search; field_definitions feed Agent2 FIELDS prompt block."
-  - "widget — consumes pipeline response (document + adjacentTemplates + entities). Shape changes cascade to frontend renderer."
-  - "curator — reads v5_chat_session_traces for cross-tenant inspection; curator ChatsPage/ChatDetailPage depend on trace schema."
+  - "catalog — CatalogPort is data source for catalog_search; FieldDefinitionPort feeds Agent2 <fields> block; BuildCatalogDigest feeds Agent1 <catalog> block."
+  - "widget — consumes pipeline response (document + prefetch + spans). Shape changes cascade to frontend renderer."
+  - "curator — reads v5_chat_session_traces for cross-tenant inspection; ChatsPage/ChatDetailPage depend on trace schema columns."
