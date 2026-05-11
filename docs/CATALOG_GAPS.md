@@ -3,6 +3,8 @@
 > Single source of truth для известных пробелов каталога после Phase D3 + live smoke (2026-04-29). Собрано из: разрозненных update logs, "Что НЕ входит" из pivot doc, "Out of scope" из плана `async-tumbling-wall.md`, кода (TODO маркеры), live smoke на dev-store.
 >
 > **Update 2026-04-29 (вечерняя сессия):** D1, A1, A2 закрыты. Добавлен async discovery в curator UI (fire-and-forget + spinner + polling). Pgxpool tuning под Neon autosuspend. Cleanup-tenant-stale теперь чистит и tenant_categories. HTML-unescape для vendor names в discovery. lookupPath теперь умеет `metafields.<ns>.<key>` форму. Live e2e: 3 dev-store proposals applied, vertical='furniture'/'footwear' стампится корректно, tier2 заполняется реальными значениями metafields. Подробности — `docs/Updates/main-catalog-finalize-flow_2026-04-29_05-30.md`.
+>
+> **Update 2026-05-11 (ре-валидация по живой БД + коду):** A4 ✅ (transforms применяются — `merge_apply.go:applyTransform` units/lowercase/shorten/split, commit `4e1c8d1`). G1 ✅ (V4 `postgres_catalog.go` и V5 `postgres_catalog.go`+`postgres_catalog_vector.go` оба читают `mp.tier2`, commit `8a3357d`). Остальные blockers (E1, A6, B-секция, C-секция, M7 миграция данных) — без изменений с 2026-05-07. Живые цифры БД совпали с аудитом 2026-05-07 → каталог не двигался 12 дней. Текущий снапшот: `docs/catalog-audit-2026-05-07.md`.
 
 ## Severity legend
 
@@ -18,7 +20,7 @@
 | A1 | ✅ | ~~`proposed_master.tier2 = {}` всегда — discovery prompt пишет `master_cosmetics.X`~~ — fixed `30a59e6` (legacy block убран из системного промпта + sticky test). Дополнительно `8fd8e33` научил `lookupPath` форме `metafields.<ns>.<key>` (Sonnet её эмитит чаще чем bracket-форму) — иначе tier2 оставался пустым даже при чистом промпте |
 | A2 | ✅ | ~~`proposed_master.vertical = 'unknown'` для всех new_master~~ — fixed `30a59e6` (`BrandMappingTarget.Vertical` поле + propose_brand_mapping требует vertical для create_new + `resolveVertical` rewrite без хардкода cosmetics). Hot-fix `8fd8e33` — `html.UnescapeString` для vendor (Sonnet иногда эмитит `Stone &amp; Steel`, lowercase-key не матчился к listing'у `Stone & Steel`) |
 | A3 | 🟡 | `proposed_master.variant.gtins = []` — gtinsFromListing читает raw_attributes.variants[].barcode; на тестовых dev-store products barcode пустой, в реальных каталогах должно работать |
-| A4 | 🟠 | Tier-2 transforms (`ml_from_string`, `units.weight` и т.д.) в `extractTier2` не применяются — данные пишутся 1:1 |
+| A4 | ✅ | ~~Tier-2 transforms (`ml_from_string`, `units.weight` и т.д.) в `extractTier2` не применяются~~ — fixed `4e1c8d1` (`merge_apply.go:applyTransform` поддерживает `units.{weight,volume,length,count}`, `lowercase`, `shorten:N`, `split:delim`; unknown transforms — pass-through) |
 | A5 | 🟡 | `ValidateArtifact` scoring coverage только на FieldMapping; не учитывает новые BrandMapping / JunkRules / MatchStrategyConfig (D1). Discovery agent забыл brand_mapping для vendor → coverage этого не зафиксирует |
 | A6 | 🟠 | False-negative coverage: system fields (`id`, `createdAt`, `updatedAt`) считаются unmapped → status `needs_human_review` спускается с 73% до 56% впустую |
 | A7 | 🟢 | Cost guard: нет rate-limit на discovery — курратор может в loop'е жать Re-run → каждый раз $0.40 |
@@ -83,7 +85,7 @@
 
 | # | Sev | Issue |
 |---|---|---|
-| G1 | 🔴 | V4 чат не использует `master_products.tier2 JSONB` — рендеринг чата под новые поля **отложен явно**. После apply master_product получает tier2 атрибуты, но виджет в чате их не покажет до этой работы |
+| G1 | ✅ | ~~V4 чат не использует `master_products.tier2 JSONB`~~ — fixed `8a3357d` (V4 `postgres_catalog.go:177/455/733`) + V5 mirror (`postgres_catalog.go:92`, `postgres_catalog_vector.go:144`). Оба движка читают `mp.tier2` через `COALESCE(mp.tier2, '{}'::jsonb)` |
 | G2 | 🟠 | Embedding-based search не работает для new verticals (furniture/footwear/lighting) — embeddings ещё не seed'ятся для new master_products (см. B3) |
 
 ## H. Refactor / quality
