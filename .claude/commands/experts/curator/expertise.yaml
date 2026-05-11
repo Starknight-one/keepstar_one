@@ -18,33 +18,39 @@ overview:
   deployment: "Single binary multi-stage Dockerfile (mirrors project_admin pattern). One Railway service: Curator → curator-production-46d7.up.railway.app, branch main, rootDir /curator, port 8082."
 
 architecture:
-  pattern: "Hexagonal lite — single adapter package, single handlers package, thin domain types"
+  pattern: "Hexagonal lite — single adapter package (postgres.go + v5_chats.go), single handlers package, thin domain types"
   backend_structure:
-    cmd_server: "curator/backend/cmd/server/main.go (185 LOC) — DI bootstrap, route mux, CORS, SPA fallback"
+    cmd_server: "curator/backend/cmd/server/main.go (202 LOC) — DI bootstrap, route mux, CORS, SPA fallback"
     cmd_seed: "curator/backend/cmd/seed-curator/main.go (49 LOC) — bootstrap default curator user"
-    domain: "curator/backend/internal/domain/types.go (147 LOC) — read-shape types only, mirrors admin canonical types"
-    adapters: "curator/backend/internal/adapters/postgres.go (876 LOC) — SINGLE Client struct, ~25 methods spanning auth + curation queues + tenants + master catalog"
+    domain: "curator/backend/internal/domain/types.go (147 LOC) — read-shape types for catalog domain only. NOTE: v5 chat/trace types live in the adapters package (v5_chats.go), not here — a deliberate exception for read-only cross-DB inspection."
+    adapters_postgres: "curator/backend/internal/adapters/postgres.go (876 LOC) — primary Client struct, ~25 methods spanning auth + curation queues + tenants + master catalog"
+    adapters_v5_chats: "curator/backend/internal/adapters/v5_chats.go (302 LOC) — V5 chat/trace read methods (Client.ListChats / GetChatTimeline / GetChatTurn). Reads tables OWNED by V5: v5_chat_sessions, v5_chat_session_traces. Curator never writes them."
     handlers: "curator/backend/internal/handlers/handlers.go (284 LOC) — auth + queues + tenants + master catalog HTTP handlers"
     handler_merge: "curator/backend/internal/handlers/handler_merge.go (204 LOC) — MergeProxy: thin reverse-proxy to admin-backend for merge run/discover/reports"
+    handler_chats: "curator/backend/internal/handlers/handler_chats.go (88 LOC) — V5 chat inspection: ListChats / GetChatTimeline / GetChatTurn. Pure read; no proxy."
     session: "curator/backend/internal/session/middleware.go (94 LOC) — Bearer or HttpOnly Cookie auth, opaque tokens"
   frontend_structure:
     framework: "React 19 + Vite 7 + React Router 7"
-    entry: "curator/frontend/src/main.jsx, App.jsx (89 LOC)"
+    entry: "curator/frontend/src/main.jsx, App.jsx (96 LOC)"
     pages:
       - "LoginPage — POST /curator/auth/login, sets cookie + receives token"
       - "TenantsPage — GET /curator/tenants (operator dashboard)"
-      - "TenantDetailPage — GET /curator/tenants/{id} (346 LOC, biggest page)"
+      - "TenantDetailPage — GET /curator/tenants/{id} (346 LOC)"
       - "MasterCatalogPage / MasterDetailPage — master catalog browse"
       - "CandidatesPage — attribute + category candidates"
       - "JunkPage — junk classification queue"
       - "AuditPage — audit log read-only"
       - "MergeReportPage — merge report viewer (424 LOC, biggest)"
-    api_client: "curator/frontend/src/api.js (40 LOC) — fetch wrapper, no hard redirect on 401 (App.jsx handles via setUser(null))"
-    styling: "curator/frontend/src/app.css (264 LOC) + styles/{tokens, merge}.css; design tokens via CSS variables"
+      - "ChatsPage (155 LOC) — cross-tenant V5 chat session list with filters (tenant, status, q) + aggregates (cost/tokens/turn count)"
+      - "ChatDetailPage (207 LOC) — session timeline + spans waterfall for one V5 chat turn"
+    sidebar_sections: "Operations (Tenants, Master Catalog) > Curation queues (Candidates, Junk) > Activity (Audit) > Tracing (Chat Sessions)"
+    api_client: "curator/frontend/src/api.js (58 LOC) — fetch wrapper, no hard redirect on 401 (App.jsx handles via setUser(null))"
+    styling: "curator/frontend/src/app.css (337 LOC) + styles/{tokens, merge}.css; design tokens via CSS variables"
 
 domain_types:
   file: "curator/backend/internal/domain/types.go"
   philosophy: "Read-shape only. Curator does NOT own canonical catalog domain — admin owns it. Keep types here narrow, JSON-exact for the operator UI."
+  v5_chat_types_location: "ChatRow, ListChatsFilter, TurnSummary, ChatTimeline, TurnDetail live in adapters/v5_chats.go (NOT domain/types.go) — explicit exception: V5 owns the data shape, Curator just renders it."
   types:
     - "CuratorUser {ID, Email, Role, CreatedAt}"
     - "AttributeCandidate {ID, Key, Vertical, SeenInTenants, SampleValues, ProposedType, AgentMeta, Status, PromotedToColumn, CreatedAt}"
@@ -90,6 +96,11 @@ http_routes:
     master_catalog:
       - "GET /curator/master/products?vertical=...&search=...&limit=...&offset=... → {rows: MasterProductSummary[], total: int}"
       - "GET /curator/master/products/{id} → MasterProductDetail"
+    chats:
+      - "GET /curator/chats?tenant=&status=&q=&limit=&offset= → {sessions: ChatRow[], total, hasMore} — cross-tenant V5 session list with filters; status='active' if updated_at within last 30min, else 'closed'"
+      - "GET /curator/chats/{sessionId} → ChatTimeline {session, turns[], totalCostUsd, totalTokens} — session header + ordered turns (oldest first)"
+      - "GET /curator/chats/{sessionId}/turns/{requestId} → TurnDetail {turn, spans[]} — full spans JSONB for waterfall view"
+      - "Dispatch in main.go: /curator/chats/ prefix routes to GetChatTurn if path contains '/turns/', else GetChatTimeline (single mux entry, two handlers)"
   spa_fallback:
     pattern: "Any path that doesn't resolve to a static file under CURATOR_STATIC_DIR (default ./static) → serve index.html"
     rationale: "Standard SPA deep-link support so /tenants/abc/merge-reports/xyz works after page refresh"
@@ -134,8 +145,9 @@ merge_proxy:
     polling: "Frontend polls /curator/tenants/{id}/schema to detect when discovered_at advances → run finished"
 
 adapter_methods:
-  file: "curator/backend/internal/adapters/postgres.go"
-  size_loc: 876
+  files:
+    - "curator/backend/internal/adapters/postgres.go (876 LOC)"
+    - "curator/backend/internal/adapters/v5_chats.go (302 LOC)"
   groups:
     auth:
       - "CreateUser(ctx, email, password) — bcrypt hashed; returns user ID"
@@ -162,6 +174,12 @@ adapter_methods:
     master_catalog:
       - "ListMasterProducts(ctx, vertical, search, limit, offset) → ([]row, total)"
       - "GetMasterProduct(ctx, id) → MasterProductDetail (with variants + linked listings)"
+    v5_chats:
+      file: "v5_chats.go"
+      methods:
+        - "ListChats(ctx, ListChatsFilter) → ([]ChatRow, total) — dynamic WHERE; aggregates from v5_chat_session_traces (turn_count, total_cost, total_tokens, has_errors, last_trace_at); latest user_query via DISTINCT ON; LEFT JOIN catalog.tenants for slug/name; status derived by 30-min cutoff on s.updated_at"
+        - "GetChatTimeline(ctx, sessionID) → ChatTimeline — header from v5_chat_sessions; turns ordered ASC; populates session aggregates from accumulator"
+        - "GetChatTurn(ctx, sessionID, requestID) → TurnDetail — full row + spans JSONB unmarshalled to []json.RawMessage for waterfall"
   utility:
     - "verticalKeys() — list of allowed verticals (whitelist for filters)"
     - "validIdent(s) — SQL identifier safety check (used by PromoteAttribute for column name)"
@@ -181,7 +199,7 @@ frontend:
     - "Logged-in / → Navigate('/tenants')"
     - "Logged-in /* (unknown) → Navigate('/tenants')"
   api_client:
-    file: "src/api.js (40 LOC)"
+    file: "src/api.js (58 LOC)"
     methods: "api.get(path), api.post(path, body), etc."
     base_url: "VITE_CURATOR_API env or relative"
     cookie_handling: "credentials: 'include' on every fetch (required for cross-origin dev with curator_session cookie)"
@@ -223,6 +241,10 @@ gotchas:
   - "Curator has no tests (`*_test.go` count: 0). Adding tests is a known gap; for now any change relies on integration testing against live admin/v4 stack."
   - "verticalKeys() whitelist must include any new vertical before it can be used in candidate/master filters — silent empty results if missing."
   - "TenantProductRow.Name uses COALESCE(display_name, original_name, name) — listing rename via admin's editing UI changes display_name only; original is retained."
+  - "V5 chat tables (v5_chat_sessions, v5_chat_session_traces) are READ-ONLY from Curator. V5 backend writes them best-effort async; missing turns aren't a Curator bug — could be V5 trace writer dropped them."
+  - "ChatRow.Status is computed in code, not a DB column: time.Since(LastActivityAt) <= 30min → 'active'. The same 30-min cutoff is duplicated in the SQL WHERE for status filter — if you change one, change both (adapters/v5_chats.go ListChats)."
+  - "/curator/chats/ prefix dispatcher in main.go branches on '/turns/' substring. Adding a new sub-resource (e.g. /curator/chats/{id}/spans) means adding another branch — the StripPrefix mux trick used elsewhere isn't applied here."
+  - "v5_chats.go uses fmt.Sprintf to build the WHERE clause. Cutoff interval is a hardcoded '30 minutes' string, not user input — no injection risk. Status filter values 'active'/'closed' come from URL but go through a switch, never into SQL directly."
 
 related_experts:
   - "admin — owns canonical catalog domain types, MergeApplyUseCase, discovery agent, candidate generation. Curator UI is a thin operator surface over admin's data + endpoints."
@@ -235,7 +257,10 @@ active_workstreams:
     - "M11 — standalone service split (2026-04-26)"
     - "Phase D3 — merge proxy + MergeReportPage (2026-04-28)"
     - "Curator-driven pivot — Этап 1 tenants dashboard (2026-04-27)"
+    - "V5 chunk-13 — cross-tenant chat/trace inspection (2026-05-03): /curator/chats list + detail, ChatsPage + ChatDetailPage, sidebar 'Tracing' section"
   hot_files:
-    - "adapters/postgres.go (876 LOC) — single-file adapter, candidate for split when adding more queues (split by domain group: auth.go, candidates.go, tenants.go, master.go)"
+    - "adapters/postgres.go (876 LOC) — primary adapter, candidate for split when adding more queues (split by domain group: auth.go, candidates.go, tenants.go, master.go). v5_chats.go was the first such carve-out."
     - "frontend MergeReportPage.jsx (424 LOC) — large detail page; split if more report types added"
     - "frontend TenantDetailPage.jsx (346 LOC) — operator workspace; growth signal"
+    - "adapters/v5_chats.go (302 LOC) — V5 chat read methods; SQL grew quickly with three queries + dynamic WHERE; watch for further filter additions (tenant, status, search)"
+    - "frontend ChatDetailPage.jsx (207 LOC) — spans waterfall renderer; visual complexity may warrant a Span subcomponent if more views (gantt, table) are added"

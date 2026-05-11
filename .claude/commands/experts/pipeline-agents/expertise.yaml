@@ -1,250 +1,167 @@
 # Pipeline-Agents Expertise
-# Two-agent chat pipeline (Agent1 = NLU/data, Agent2 = render). Owns
-# pipeline_execute orchestration, system prompts, tool registry, LLM
-# adapters, span tracing, and prompt caching.
+# V5 two-agent chat pipeline. Agent1 (NLU/data) + Agent2 (render). Owns
+# pipeline_execute orchestration, prompts, tools, anthropic adapter,
+# span tracing, prompt caching, state/session, HTTP handlers.
 
 overview:
   layer: "chat-pipeline"
-  path: "project_v4/backend/internal/{usecases, prompts, tools, adapters/anthropic, adapters/openai}/"
-  go_module: "keepstar_v4"
+  path: "project_v5/backend/internal/{usecases,prompts,tools,adapters/anthropic,adapters/openai}/"
+  go_module: "keepstar_v5"
   purpose: |
     Orchestrates the chat pipeline per turn:
       Agent1 (NLU + data) → catalog_search / state_filter / history_lookup
-      Agent2 (Render)     → visual_assembly tool → engine-v4 ops
-    Plus span tracing, prompt caching, tenant catalog digest injection,
-    state snapshots between agents.
+      Agent2 (Render)     → visual_assembly tool → engine-v5 scene-graph
+    Plus span tracing, prompt caching, state snapshots, prefetch payload.
   contract:
-    input: "PipelineExecuteRequest {SessionID, Query, TenantSlug, TurnID}"
-    output: "PipelineExecuteResponse {Formation, AdjacentTemplates, Entities, TraceID, ...}"
-  served_via: "POST /api/v1/pipeline (handler_pipeline.go) and POST /api/v1/chat (handler_chat.go)"
+    input:  "POST /api/v1/pipeline {session_id, query, tenant_slug}"
+    output: "{ document, adjacentTemplates, entities, traceId, treeMap, warnings }"
+  ports:
+    local: "8084"
+    prod:  "v5-engine-production.up.railway.app (US region, Railway)"
 
 orchestration:
   entry_point:
     file: "internal/usecases/pipeline_execute.go"
     type: "PipelineExecuteUseCase"
-    method: "Execute(ctx, req PipelineExecuteRequest) (*PipelineExecuteResponse, error)"
-    size_loc: 532
+    method: "Execute(ctx, req) (*PipelineExecuteResponse, error)"
   pipeline_steps:
-    - "0. SpanCollector init — every step adds a span via sc.Start(name); waterfall persisted to trace"
-    - "1. Ensure session — cachePort.GetSession; if ErrSessionNotFound → create with TenantID=req.TenantSlug (admin sessions list filters by it)"
-    - "2. TurnID — req.TurnID or new uuid; threaded into Agent1 + Agent2 for delta grouping"
-    - "3. Agent1.Execute — NLU+data; resolves intent; calls one of catalog_search/state_filter/history_lookup; writes deltas to state"
-    - "4. Mid-state snapshot — ProductCount, ServiceCount, Fields, Aliases, HasTemplate, DeltaCount + per-turn delta details into trace"
-    - "5. Agent2.Execute — render; calls visual_assembly tool → engine-v4 → formation + treeMap"
-    - "6. Build response — formation + adjacentTemplates (1 detail template per entity type) + entities (raw data for instant expand) + trace"
-    - "7. recordTrace — persist to pipeline_traces table via TracePort.Record"
-  trace_shape:
-    type: "domain.PipelineTrace"
-    fields: ["ID", "SessionID", "Query", "Timestamp", "TurnID", "Agent1 (AgentTrace)", "Agent2 (AgentTrace)", "Spans", "TotalMs", "Error?"]
-    waterfall: "Spans rendered as waterfall in admin /debug/traces dashboard"
+    - "0. SpanCollector init — every step adds a span; persisted to v5_chat_session_traces"
+    - "1. Ensure session — GetSession or create; TenantID threaded from req.TenantSlug"
+    - "2. TurnID — req.TurnID or new uuid; groups Agent1+Agent2 deltas"
+    - "3. Agent1.Execute — NLU+data; calls catalog_search/state_filter/history_lookup; writes state"
+    - "4. Agent2.Execute — render; calls visual_assembly → engine-v5 → Document + TreeMap"
+    - "5. Prefetch — build adjacentTemplates (1 detail template per entity type) + entities for instant drill"
+    - "6. Build response — document + adjacentTemplates + entities + treeMap + trace"
+    - "7. recordTrace — persist to v5_chat_session_traces (best-effort async)"
+  related_files:
+    - "internal/usecases/prefetch.go — builds adjacentTemplates + entities for prefetch payload"
+    - "internal/usecases/span_helper.go — span construction helpers"
+    - "internal/usecases/state_reconstruct.go — reconstruct state from delta history"
+    - "internal/usecases/state_rollback.go — rollback state on failed pipeline turn"
 
 agent1:
   file: "internal/usecases/agent1_execute.go"
-  use_case: "Agent1ExecuteUseCase"
-  request_fields: ["SessionID", "Query", "TenantSlug", "TurnID"]
-  response_fields: ["LatencyMs", "LLMCallMs", "ToolExecuteMs", "Usage (Model, Input/Output/Cache tokens, CostUSD)", "StopReason", "SystemPrompt", "SystemPromptChars", "EnrichedQuery", "MessageCount", "ToolDefCount", "ToolName", "ToolInput", "ToolResult", "ToolMetadata", "RawReasoning"]
+  prompt_cache_file: "internal/usecases/agent1_prompt_cache.go"
+  tools_provided: ["catalog_search", "state_filter", "history_lookup"]
   system_prompt:
-    file: "internal/prompts/prompt_analyze_query.go"
-    digest_injection: "buildSystemPromptWithDigest(ctx, tenantSlug) — memoized per tenant in sync.Map"
-    digest_purpose: "Inline catalog metadata (categories, brands, price ranges, attribute cardinality) so Agent1 picks the right tool args without an extra LLM round-trip"
-    cache_control: "Single cache breakpoint at end of system block — covers [tools + system] in one cache point. Total >4096 tokens for Haiku minimum."
-  tool_choice: "auto — Agent1 picks tool from getAgent1Tools()"
-  tools_provided:
-    - "catalog_search — keyword + vector + RRF merge; populates state.data.products/services with delta append"
-    - "state_filter — filters already-loaded data without new DB hit (e.g. 'show only liked')"
-    - "history_lookup — searches conversation history for past queries/answers"
-  no_response_text: "Agent1 doesn't generate user-visible text. Only enriched_query + tool calls. If StopReason=='end_turn' without tool use → goes to Agent2 with empty data (rare, treated as 'chat-only' branch — see PRE_LAUNCH_TASKS 1.1)"
+    file: "internal/prompts/agent1_prompt.go"
+    purpose: "NLU guidance: intent classification, tool selection, query enrichment"
+  output: "state.current.data + state.current.meta written via state port"
 
 agent2:
   file: "internal/usecases/agent2_execute.go"
-  use_case: "Agent2ExecuteUseCase"
-  size_loc: 768
-  request_fields: ["SessionID", "Query", "TenantSlug", "TurnID"]
-  response_fields: ["LatencyMs", "LLMCallMs", "ToolExecuteMs", "Usage", "StopReason", "SystemPrompt", "SystemPromptChars", "Formation", "AdjacentTemplates", "Entities", "TreeMap", "Warnings"]
+  tools_provided: ["visual_assembly"]
   system_prompt:
-    file: "internal/prompts/prompt_compose_widgets.go"
-    sections:
-      - "ROLE — composer for visual chat responses"
-      - "CONTRACT — visual_assembly tool shape (ops, preset, replicate, layout/columns/size)"
-      - "STATE_META — current state from Agent1 (ProductCount, ServiceCount, Fields, Aliases) — dynamic, NOT cached"
-      - "FIELDS — tenant field_definitions (name → label mapping) — dynamic"
-      - "DESIGN_CONTEXT — KeepstarCanvas tenant overrides (presets + components + design tokens) — dynamic"
-      - "PRESETS — global engine_v4 registry summary"
-      - "COMPOSING — examples for multi-widget composition (hero+grid, comparison, etc.)"
-      - "RULES — invariants (don't auto-replicate, fieldName binds, etc.)"
-    cache_strategy:
-      static_block: "ROLE + CONTRACT + COMPOSING + RULES + PRESETS — cache_control on the boundary between this and dynamic"
-      dynamic_block: "STATE_META + FIELDS + DESIGN_CONTEXT — varies per turn/tenant"
-      cache_entry_struct: "promptCacheEntry — caches the static block per-tenant in sync.Map"
-  tools_provided:
-    - "visual_assembly — sole render tool; calls engine_v4.Engine.Execute"
-  state_loading:
-    field_labels: "loadFieldLabels(ctx, tenantSlug, state) — reads field_definitions table for current tenant"
-    design_context: "engine_v4.DesignContextSnapshot via tenant_preset_loader — published canvas presets + components + design tokens"
-  helpers:
-    - "formatFieldsBlock(fields, samples) — XML-style <fields> block for prompt"
-    - "formatDesignContextBlock(snap) — XML-style <design_context> block"
-    - "compactPresetBinds(p) — short fieldName list per preset for prompt brevity"
-    - "sortPresetsByName / sortComponentsByName / sortedCategoryKeys — stable order for cache hits"
-    - "groupTokensByCategory — group tokens (color, spacing, etc.) for prompt"
-    - "escapeXMLInline — XML-safe text inside attrs"
+    file: "internal/prompts/agent2_prompt.go"
+    type: "var (not const) — built by buildAgent2SystemPrompt() at startup"
+    structure: "agent2PromptPart1 + presets.SystemPresetsBlock + agent2PromptPart2"
+    preset_auto_gen: "SystemPresetsBlock generated from engine/presets/SystemPresetSeeds + SystemPresetDescriptions — adding a preset + description is sufficient, no manual prompt edit"
+    mode_section: "REQUIRED rebuild|modify enum; modify hint: 1-5 ops typical, more → rebuild"
+    sections: ["HOW IT WORKS", "MODE (rebuild/modify)", "PRESETS (auto-generated)", "REPLICATE", "OPS VOCABULARY", "FIELD BINDING", "FORMAT+WRAPPER", "BUILDING", "COMPOSING", "MODIFYING EXISTING", "TREE_MAP", "DECISION RULES", "ANTI-PATTERNS"]
+  prompt_assembly:
+    file: "internal/prompts/fields_block.go"
+    functions:
+      - "FormatFieldsBlock(ctx, fdPort, tenantSlugOrID, entityType, sampleLimit) — per-tenant <fields> XML block"
+      - "AssembleSystemPrompt(base, fieldsBlock string) — joins base + fieldsBlock"
+    todo: "<tenant_design_context> block (tenant-published presets) documented as 'later' in code comment"
+  prompt_cache:
+    file: "internal/usecases/prompt_cache.go"
+    type: "PromptCache struct (sync.Map per tenant)"
+    methods:
+      - "GetOrBuild(ctx, tenantSlugOrID, sampleLimit) — returns cached or builds + caches"
+      - "Invalidate(tenantSlugOrID) — drops entry; called when tenant_design_context version bumps"
+    cache_key: "tenant slug (or UUID)"
+    note: "Agent2SystemPrompt is a var initialized at startup — PromptCache wraps the per-tenant fields block assembly only; the base prompt (including preset block) is assembled once globally"
 
 prompts:
-  agent1_file: "internal/prompts/prompt_analyze_query.go"
-  agent2_file: "internal/prompts/prompt_compose_widgets.go"
-  invariants:
-    - "Stable byte-for-byte order in static blocks — Anthropic cache hashes byte-for-byte; map iteration randomness breaks cache_read"
-    - "Tool definitions sorted by name in tools/Registry.GetDefinitions — same reason"
-    - "XML-style sections (<fields>, <design_context>) — model parses better than markdown for structured data"
+  agent1_file: "internal/prompts/agent1_prompt.go"
+  agent2_file: "internal/prompts/agent2_prompt.go"
+  fields_block_file: "internal/prompts/fields_block.go"
+  cache_invariant: "Tool definitions sorted by name in tool registry — Anthropic cache hashes byte-for-byte; map iteration randomness breaks cache_read"
 
 tools:
-  registry_file: "internal/tools/tool_registry.go"
-  registry_struct: "Registry {tools map[string]ToolExecutor, statePort, catalogPort, embeddingPort}"
-  tool_executor_iface: "Definition() ToolDefinition; Execute(ctx, ToolContext, input) (*ToolResult, error)"
-  tool_context: "{SessionID, TurnID, ActorID, TenantSlug, UserQuery}"
+  registry: "internal/tools/ — tool executors implement Definition() + Execute()"
   registered_tools:
     catalog_search:
       file: "internal/tools/tool_catalog_search.go"
-      size_loc: 660
       purpose: "Hybrid catalog search — SQL keyword + pgvector cosine + RRF merge"
-      writes: "state.data.products / state.data.services (delta append)"
-      filters: "category, brand, price range, attribute filters"
-      vector_fallback: "If embedding fails (OpenAI down) → SQL-only search"
-      tenant_aware: "Uses ToolContext.TenantSlug to scope catalog rows"
+      fallback: "embedding failure → SQL-only search"
     state_filter:
       file: "internal/tools/tool_state_filter.go"
-      purpose: "Filter already-loaded state.data without DB call (e.g. 'show liked', 'price < 1000')"
-      writes: "Replaces visible subset; original data preserved"
+      purpose: "Filter already-loaded state.data without DB call"
     history_lookup:
       file: "internal/tools/tool_history_lookup.go"
-      purpose: "Search conversation_history for past user queries/answers"
-      writes: "Adds historical context to state.meta.history"
+      purpose: "Search conversation history for past queries/answers"
     visual_assembly:
       file: "internal/tools/tool_visual_assembly.go"
-      size_loc: 901
-      purpose: "Agent2's sole tool. Validates ops + preset args, calls engine_v4.Engine.Execute, writes formation to state.template"
-      preset_resolver: "Threads tenant_preset_loader.ResolverFor(tenantSlug) into ExecuteInput.PresetResolver"
-      validation: "Pre-execute: schema check on ops shape (Type, Target, Props), preset name lookup; post-execute: warnings collected, normalized for response"
-    search_products:
-      file: "internal/tools/tool_search_products.go"
-      status: "DEPRECATED — preceded catalog_search, kept for back-compat with old prompts; will be removed when no prompts reference it"
-  data_normalize:
-    file: "internal/tools/data_normalize.go"
-    purpose: "Common helpers: extract numeric prices, normalize tag arrays, coerce types — shared across tools"
+      purpose: "Agent2's sole tool. Validates ops + preset, runs engine-v5 pipeline, writes Document to state.template"
+      mode: "REQUIRED enum: rebuild | modify (no default)"
+      call_shapes:
+        - "(a) preset name ± ops — most common"
+        - "(b) ops only — freestyle rebuild or modify tweak"
+        - "(c) multi-widget compose — multiple top-level frame inserts in one rebuild call"
 
 llm_adapters:
   anthropic:
-    file: "internal/adapters/anthropic/anthropic_client.go"
-    size_loc: 648
-    methods:
-      - "Chat(ctx, message) — bare text completion (rare; debug)"
-      - "ChatWithUsage(ctx, sysPrompt, userMsg) — text + token usage"
-      - "ChatWithTools(ctx, sysPrompt, msgs, tools) — tool-calling, no caching"
-      - "ChatWithToolsCached(ctx, sysPrompt, msgs, tools, cacheConfig) — full prompt caching, ToolChoice support"
-    cache_types_file: "internal/adapters/anthropic/cache_types.go"
-    cache_points:
-      - "Last tool definition (cache_control)"
-      - "System prompt block (cache_control)"
-      - "Second-to-last message (cache_control) — covers conversation history up to current turn"
-    cache_helpers:
-      mark_message: "markMessageCacheControl — uses contentBlockFullCache to preserve all fields (id, name, input)"
-      convert: "convertToAnthropicMessage(msg) — maps domain.LLMMessage to anthropic shape"
-    tool_choice:
-      types: "toolChoiceConfig {Type, Name}"
-      values: "auto / any / tool:<name>"
-      use: "ChatWithToolsCached threads via CacheConfig.ToolChoice"
-    span_instrumentation:
-      pattern: "Both ChatWithTools and ChatWithToolsCached emit spans via domain.SpanFromContext / StageFromContext"
-      spans:
-        - "{stage}.llm — total LLM call time (detail: '{reqKB}KB→{respKB}KB')"
-        - "{stage}.llm.ttfb — time-to-first-byte via httptrace.GotFirstResponseByte"
-        - "{stage}.llm.body — response body read time"
-      slow_warning: "Logs [WARN] if TTFB > 10s (ChatWithToolsCached only)"
-    api:
-      url: "POST https://api.anthropic.com/v1/messages"
-      version: "2023-06-01"
-      env: "ANTHROPIC_API_KEY, LLM_MODEL (default claude-haiku-4-5-20251001)"
-      pricing:
-        haiku: "$1/$5 per 1M tokens (input/output)"
-        sonnet: "$3/$15 per 1M tokens"
-        cache_write: "1.25x base"
-        cache_read: "0.1x base"
+    path: "internal/adapters/anthropic/"
+    env: "ANTHROPIC_API_KEY, LLM_MODEL (default claude-haiku-4-5-20251001)"
+    cache_strategy: "System prompt + tool definitions cached; second-to-last message cache point covers conversation history"
+    span_instrumentation: "Emits {stage}.llm, {stage}.llm.ttfb, {stage}.llm.body spans"
+    slow_warn: "Logs [WARN] if TTFB > 10s"
   openai:
-    file: "internal/adapters/openai/embedding_client.go"
+    path: "internal/adapters/openai/"
     purpose: "EmbeddingPort for catalog vector search"
-    api: "POST https://api.openai.com/v1/embeddings"
-    env: "OPENAI_API_KEY, EMBEDDING_MODEL (default text-embedding-3-small), EMBEDDING_DIMS (default 384)"
-    use: "tool_catalog_search batches user query → embedding → pgvector cosine on master_products.embedding"
+    env: "OPENAI_API_KEY, EMBEDDING_MODEL (default text-embedding-3-small)"
 
 state_and_trace:
   state_port:
-    file: "internal/adapters/postgres/postgres_state.go"
-    size_loc: 620
-    methods: ["GetState", "SaveState", "AppendDelta", "GetDeltas", "DeleteSession"]
-    table: "chat_session_state — JSONB columns for current_data/current_meta/current_template/view/conversation_history"
-    delta_table: "chat_session_deltas — append-only history (turn_id, source, actor, type, action, result)"
-  trace_port:
-    file: "internal/adapters/postgres/postgres_trace.go"
-    method: "Record(trace) — persists pipeline_traces row + WATERFALL printout to console"
-    list_get: "List, Get — for /debug/traces dashboard"
-  cache_port:
-    file: "internal/adapters/postgres/postgres_cache.go"
-    purpose: "Session storage (chat_sessions table). FK source for state."
-    methods: ["GetSession", "SaveSession", "DeleteSession"]
+    path: "internal/adapters/postgres/"
+    tables: "chat_session_state, chat_session_deltas"
+    methods: ["GetState", "SaveState", "AppendDelta", "GetDeltas"]
+  trace:
+    table: "v5_chat_session_traces"
+    purpose: "Per-turn trace persistence for Curator UI (ChatsPage + ChatDetailPage)"
+    writer: "best-effort async — pipeline continues even if trace write fails"
+    reader: "curator/ service reads shared Neon DB directly"
   retention:
-    file: "internal/adapters/postgres/retention.go"
-    config: "TraceMaxAge=48h, DeadSessionMaxAge=1h, ConversationMaxMsgs=20, CleanupInterval=30min"
-    cleanup_tasks:
-      - "cleanupTraces — DELETE traces older than 48h"
-      - "cleanupDeadSessions — DELETE all session data for closed sessions older than 1h (FK-safe order)"
-      - "trimConversationHistory — keep last 20 messages in JSONB array"
+    conversation_trim: "20 messages max (trimConversationHistory)"
 
 handlers:
-  pipeline: "internal/handlers/handler_pipeline.go — POST /api/v1/pipeline (main entry)"
-  chat: "internal/handlers/handler_chat.go — POST /api/v1/chat (alias / legacy)"
+  pipeline:  "internal/handlers/handler_pipeline.go — POST /api/v1/pipeline"
+  session:   "internal/handlers/handler_session.go — POST /session/init, GET /session/{id}"
   navigation: "internal/handlers/handler_navigation.go — POST /navigation/expand, /navigation/back"
-  action: "internal/handlers/handler_action.go — POST /actions (like/cart sync)"
-  session: "internal/handlers/handler_session.go — POST /session/init, GET /session/{id}, DELETE /session/{id}/kill"
-  testbench: "internal/handlers/handler_testbench.go — POST /testbench (visual_assembly without LLM)"
-  trace: "internal/handlers/handler_trace.go (644 LOC) — GET /debug/traces, /debug/traces/{id}"
-  debug: "internal/handlers/handler_debug.go (728 LOC) — admin debug surface (state inspector, span explorer)"
+  action:    "internal/handlers/handler_action.go — POST /api/v1/actions (like/cart)"
+  readyz:    "internal/handlers/handler_readyz.go — GET /readyz (pgxpool.Ping; used by Railway health check)"
+  routes:    "internal/handlers/routes.go"
+  middleware: ["middleware_cors.go", "middleware_logging.go", "middleware_tenant.go"]
 
 invariants:
-  - "Agent1 → state writes (data + meta) → Agent2 reads state. Agent1 NEVER produces user-visible text — text path is Agent2 freestyle (PRE_LAUNCH_TASKS 1.1)."
-  - "Tool definitions sorted by name in registry — Anthropic cache hashes the tool array byte-for-byte; map iteration randomness breaks cache_read."
-  - "Session creation in pipeline_execute carries TenantID — without it admin sessions list shows blank tenant."
-  - "TurnID groups deltas — same turn's Agent1+Agent2 writes share TurnID; client uses turn_id for delta replay."
-  - "Engine.Execute is called ONLY through visual_assembly tool — direct calls bypass Agent2 trace + tenant preset resolution."
-  - "Span collector lives in ctx — propagated via domain.WithSpanCollector / SpanFromContext. Lose ctx = lose spans."
-  - "Cache breakpoints are byte-position-sensitive — moving a section without updating the cache point invalidates the entire static block."
+  - "Tool definitions MUST be sorted by name in registry — Anthropic caches the tool array byte-for-byte; unsorted = 0% cache_read."
+  - "visual_assembly is the ONLY entry into engine-v5. Direct engine calls bypass tenant preset resolution and tracing."
+  - "Agent2SystemPrompt is a var (not const) — built once at startup by buildAgent2SystemPrompt(). Changing engine/presets/ auto-propagates without prompt rewrite."
+  - "TurnID groups deltas — same turn's Agent1+Agent2 writes share TurnID for delta replay."
+  - "Span collector lives in ctx — propagate via domain.WithSpanCollector / SpanFromContext; lose ctx = lose spans."
+  - "PromptCache key is tenant slug/UUID — adding tenant_design_context block will require Invalidate() call on tenant config change."
 
 gotchas:
-  - "Empty tool result is NOT an error — Agent1 may legitimately return empty (e.g. catalog_search with too-narrow filters). StopReason='end_turn' without tool call also valid (chat-only branch)."
-  - "Anthropic prompt caching needs >=4096 tokens for Haiku — under the threshold, cache writes succeed but reads NEVER hit (silent cost increase). Padding tools (~5500 tokens) ensure threshold is met."
-  - "ChatWithTools (uncached) and ChatWithToolsCached are SEPARATE methods — accidentally calling Cached without cache_control markers = cache write penalty (1.25x) with no read benefit."
-  - "EnrichedQuery in Agent1Response is the LLM's interpretation, NOT the user input. Logging the raw user query separately is on the trace as Query."
-  - "Span detail format '{reqKB}KB→{respKB}KB' is parsed by the trace UI — changing it breaks the dashboard."
-  - "Tenant catalog digest is memoized via sync.Map keyed by tenantSlug — change to digest schema (e.g. add new digest field) requires explicit cache invalidation; otherwise prod serves stale digest."
-  - "DesignContextSnapshot drift — if engine_v4 changes the Snapshot struct, formatDesignContextBlock silently drops new fields. Self-improve must re-read both."
-  - "search_products tool is deprecated but still in registry — old prompts may call it. Removing requires audit of all prompts referencing it."
-  - "tool_visual_assembly does its own validation BEFORE calling engine_v4.Execute — surface errors come from here for malformed ops; engine errors come from engine_v4.ApplyOps."
-  - "Conversation history > 20 messages → silently trimmed by retention.trimConversationHistory. Long-running sessions lose early context."
+  - "V5 was deployed in Singapore region initially while Anthropic API + Neon are us-east — caused ~75% of observed 8s p50 latency. After US migration: 1881-2423ms warm, 3446ms cold. Region matters."
+  - "V5 catalog_search was keyword-only ILIKE until chunk 16 — hybrid (pgvector+RRF) ported from V4. Chunk 16 closed this gap."
+  - "Agent2 modify-mode over-emission (A2 gap): Agent2 fires modify even when state has data from a different category, skipping catalog_search. 1-5 ops hint added to MODE section as mitigation."
+  - "Anthropic prompt caching needs ≥4096 tokens for Haiku — below threshold, cache writes succeed but reads never hit. Padding via tool definitions ensures threshold is met."
+  - "v5_chat_session_traces writes are best-effort async — a failed write doesn't fail the turn; curator may see gaps in trace view."
+  - "state_rollback.go exists for failed pipeline turns — if Agent2 fails after Agent1 writes state, rollback restores pre-turn state to avoid stale data on retry."
 
-env_vars:
-  required: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY (for embeddings)", "DATABASE_URL", "TENANT_SLUG"]
-  optional: ["LLM_MODEL (default claude-haiku-4-5-20251001)", "EMBEDDING_MODEL (default text-embedding-3-small)", "EMBEDDING_DIMS (default 384)"]
+active_known_gaps:
+  tracker: "docs/v5-known-gaps.md"
+  items:
+    A1: "Greeting handling — V5 emits empty_not_found on 'Привет'"
+    A2: "modify-vs-rebuild misclassification — 'другая категория' doesn't fire catalog_search if state non-empty"
+    A3: "replicate count + pagination — V5 hardcoded 3, V4 shows all + pages"
+    A4: "back button absent in widget"
+    A5: "skip Agent2 on Agent1 no-op (~1s + $0.001 saving per turn)"
 
 related_experts:
-  - "engine-v4 — receives ops via visual_assembly tool; produces formation + treeMap consumed by Agent2 for next-turn context. Drift in op shape silently breaks rendering."
-  - "catalog — postgres_catalog (V4 read-side) is the data source for catalog_search tool; field_definitions table feeds Agent2 FIELDS prompt block."
-  - "widget — consumes the response.formation + adjacentTemplates + entities. Field rename in Agent2 output cascades to widget's apiClient + ChatPanel."
-  - "admin — KeepstarCanvas (canvas_*_adapter) is the source of DESIGN_CONTEXT for Agent2 prompt; tenant overrides flow into pipeline-agents via tenant_preset_loader."
-
-active_workstreams:
-  tracker: "docs/PRE_LAUNCH_TASKS.md (sections 1.x = Agent1, 2.x = Agent2, 5.x = trace)"
-  hot_files:
-    - "agent2_execute.go (768 LOC) — multiple concerns (prompt build + execute + helpers); split candidate after pattern stabilizes"
-    - "tool_catalog_search.go (660 LOC) — hybrid search (SQL + vector + RRF) + filters; split candidate"
-    - "anthropic_client.go (648 LOC) — request shapes + caching variants + span instrumentation"
-    - "handler_debug.go (728 LOC) — debug routes; split when V5 trace UI lands"
-    - "handler_trace.go (644 LOC) — trace API"
+  - "engine-v5 — owns the visual_assembly tool's execution target; op vocabulary + preset names in prompt MUST match engine contract."
+  - "catalog — postgres_catalog is data source for catalog_search; field_definitions feed Agent2 FIELDS prompt block."
+  - "widget — consumes pipeline response (document + adjacentTemplates + entities). Shape changes cascade to frontend renderer."
+  - "curator — reads v5_chat_session_traces for cross-tenant inspection; curator ChatsPage/ChatDetailPage depend on trace schema."

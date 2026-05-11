@@ -1,75 +1,64 @@
 # pipeline-agents Self-Improve
 
-Update the pipeline-agents expertise from current code in
-`project_v4/backend/internal/{usecases,prompts,tools,adapters/anthropic,adapters/openai}/`.
+Update pipeline-agents expertise from current code in
+`project_v5/backend/internal/{usecases,prompts,tools,adapters/anthropic,adapters/openai}/`.
 
 ## Variables
 
 USE_DIFF: $ARGUMENTS (true | false, default: false)
 EXPERTISE: .claude/commands/experts/pipeline-agents/expertise.yaml
-CODE_ROOT: project_v4/backend/internal/
+CODE_ROOT: project_v5/backend/internal/
 LINE_LIMIT: 500
 
 ## Instructions
 
 - Scan code, update YAML, keep under LINE_LIMIT.
-- Preserve overview (two-agent contract, span/trace model, cache strategy) unless code actually changed them.
-- Refresh anything tied to specific names (tool names, system prompt sections, anthropic methods, span names).
+- Preserve overview (two-agent contract, span/trace model, cache strategy) unless code changed.
+- Refresh anything tied to specific names (tool names, prompt sections, anthropic methods, span names).
 
 ## Workflow
 
 ### Step 1 — Read current expertise
-Note which sections already exist so you only update, not duplicate.
+Note which sections exist so you only update, not duplicate.
 
 ### Step 2 — Choose scope
-- USE_DIFF=true → run `git diff HEAD~10 -- project_v4/backend/internal/usecases project_v4/backend/internal/prompts project_v4/backend/internal/tools project_v4/backend/internal/adapters/anthropic project_v4/backend/internal/adapters/openai --name-only` and focus on changed files.
+- USE_DIFF=true → `git diff HEAD~10 -- project_v5/backend/internal/usecases project_v5/backend/internal/prompts project_v5/backend/internal/tools project_v5/backend/internal/adapters/anthropic --name-only`
 - USE_DIFF=false → scan all files in CODE_ROOT.
 
-### Step 3 — Refresh facts (high-drift surfaces)
+### Step 3 — Refresh facts
 
-**Pipeline Execute steps in `usecases/pipeline_execute.go`** — re-read the Execute method. Update `orchestration.pipeline_steps`. New step (e.g. moderation, intent classification) must be inserted in correct order.
+**Pipeline steps** — re-read `usecases/pipeline_execute.go` Execute method. Update `orchestration.pipeline_steps`. New step must be inserted in correct order.
 
-**Agent1ExecuteResponse fields** — `awk '/^type Agent1ExecuteResponse struct/,/^}/' usecases/agent1_execute.go`. Update `agent1.response_fields`. Same for Agent2.
+**Agent1/Agent2 response fields** — awk struct defs from `agent1_execute.go`, `agent2_execute.go`. Update response_fields.
 
-**Tool registry contents** — re-read `tools/tool_registry.go NewRegistry()`. Update `tools.registered_tools`. Watch for new tools added (e.g. checkout, content_filter).
+**Tool registry** — re-read `tools/` directory. Update `tools.registered_tools`. Watch for new tools.
 
-**System prompt sections in `prompts/prompt_compose_widgets.go`** — `grep -nE "^const|^var.*string|<[a-z_]+>" prompts/prompt_compose_widgets.go`. Update `agent2.system_prompt.sections`. Section reorder = cache invalidation; flag in gotchas.
+**Agent2 prompt structure** — read `prompts/agent2_prompt.go`. Verify it's still a `var` (not `const`). Check `buildAgent2SystemPrompt()` injection — confirm `agent2PromptPart1 + presets.SystemPresetsBlock + agent2PromptPart2` pattern holds. Update `agent2.system_prompt.sections` if sections reordered.
 
-**Cache breakpoints in `adapters/anthropic/anthropic_client.go ChatWithToolsCached`** — search for `cache_control` placements. Update `llm_adapters.anthropic.cache_points`. Adding/removing a breakpoint changes cost/latency profile.
+**SystemPresetsBlock** — read `engine/presets/prompt.go`. Update `agent2.prompt_assembly` note if the generation function changes.
 
-**Span names** — `grep -nE 'sc\.Start\("|StageFromContext\("' project_v4/backend/internal/`. Update `llm_adapters.anthropic.span_instrumentation.spans`. Span names are parsed by trace UI — silent UI break if renamed.
+**PromptCache** — re-read `usecases/prompt_cache.go`. Update `agent2.prompt_cache` if methods change.
 
-**Field labels and design context loading in `usecases/agent2_execute.go`** — re-read `loadFieldLabels` and `formatDesignContextBlock`. If new field is added to DesignContextSnapshot in engine_v4, the formatter MUST be updated or it silently drops the field from the prompt.
+**Cache breakpoints in anthropic adapter** — search for `cache_control` in `adapters/anthropic/`. Update `llm_adapters.anthropic.cache_strategy`.
 
-**Retention config in `adapters/postgres/retention.go`** — re-read RetentionConfig defaults. Update `state_and_trace.retention.config`. Changes affect long-session behavior silently.
+**New usecases files** — `ls project_v5/backend/internal/usecases/*.go`. Note any new files (prefetch, state_reconstruct, state_rollback, span_helper have been added before). Update `orchestration.related_files`.
+
+**Trace table name** — verify `v5_chat_session_traces` is still the trace table. Update if renamed.
+
+**Known gaps** — re-read `docs/v5-known-gaps.md`. Update `active_known_gaps.items` — close items that are fixed, add new ones.
 
 ### Step 4 — Cross-layer drift checks
 
-These are the silent-failure surfaces:
-
-- **Tool definition order** — `tools/Registry.GetDefinitions()` MUST sort by name. If sort.Slice line is removed, prompt cache_read drops to 0% silently (only cost increase visible).
-- **Engine.Execute call site** — only `tools/tool_visual_assembly.go` should call it. Direct calls from elsewhere bypass tenant preset resolution. Run `grep -rn "engine.Execute\|eng.Execute" project_v4/backend/internal/` to verify.
-- **Tenant digest cache invalidation** — `agent1_execute.go buildSystemPromptWithDigest` memoizes per tenant via `sync.Map`. If digest schema changes, the cache must be cleared or new fields silently invisible to Agent1.
-- **Conversation history trim** — retention.trimConversationHistory(20) is silent; long sessions lose early context. Verify the threshold matches what Agent1 system prompt expects to see.
-- **Anthropic API version 2023-06-01** — pinned in client. Major version bump (e.g. 2024-xx) requires tracking new content block types in cache_types.go.
+- **visual_assembly tool → engine-v5** — only `tools/tool_visual_assembly.go` should call engine functions. Run `grep -rn "Materialise\|ApplyOps\|ExpandReplicates" project_v5/backend/internal/` to verify no rogue callers.
+- **Agent2SystemPrompt preset catalog** — list `engine/presets/presets.go SystemPresetSeeds` keys. Confirm `engine/presets/prompt.go SystemPresetDescriptions` covers all seeds. If a seed has no description entry, it appears in the prompt with empty description — flag in gotchas.
+- **Tool definitions order** — `tools/Registry.GetDefinitions()` must sort by name. Cache-busting if removed.
+- **v5_chat_session_traces schema** — if curator side reads specific columns, schema changes cascade. Cross-check with `curator/` adapter code.
 
 ### Step 5 — Refresh gotchas
 
-Add a new gotcha when:
-- A non-obvious behavior surprised you while answering a question.
-- A recent commit fixed a bug whose root cause was hidden behavior.
+`git log --since='4 weeks' -- project_v5/backend/internal/usecases project_v5/backend/internal/prompts project_v5/backend/internal/tools`.
 
-Inspiration: `git log --since='4 weeks' -- project_v4/backend/internal/usecases project_v4/backend/internal/prompts project_v4/backend/internal/tools`.
-
-### Step 6 — Refresh hot files
-
-Re-run: `find project_v4/backend/internal -name "*.go" ! -name "*_test.go" -exec wc -l {} \; | sort -nr | head -10`. Update `active_workstreams.hot_files`.
-
-### Step 7 — Cross-check engine-v4 surface
-
-The `agent2_contract` section here mirrors what's in engine-v4 expertise. If engine-v4 changed (new op type, new preset shape, new TreeMap shape), update `agent2.system_prompt` accordingly — Agent2's output IS engine-v4's input.
-
-### Step 8 — Report
+### Step 6 — Report
 
 ```
 pipeline-agents expertise updated
@@ -85,9 +74,9 @@ Lines: N / 500
 ## Constraints
 
 - DO NOT exceed LINE_LIMIT.
-- DO NOT cite the legacy `project/backend/internal/` code — that pipeline was deleted 2026-04-29.
-- DO NOT expand engine-v4 internals here — keep the engine-v4 expert as the source of truth for engine_v4 package.
-- DO update tool argument schemas if they change in tool_registry — these are user-facing (Agent emits exactly what's in the tool definition).
+- DO NOT cite V4 code (`project_v4/`).
+- DO NOT expand engine-v5 internals — keep engine-v5 expert as source of truth for engine package.
+- DO update tool argument schemas if they change — Agent2 emits exactly what's in the tool definition.
 
 ## Output
 

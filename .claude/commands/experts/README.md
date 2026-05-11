@@ -16,9 +16,9 @@ across all domains — that pattern was the previous design and didn't work).
 | Expert | Owns |
 |---|---|
 | `catalog` | Cross-cutting domain. Write side: `project_admin/` (harvester, discovery agent, mapping artifact, merge_apply, Shopify integration). Read side: `project_v4/.../postgres_catalog.go`. |
-| `engine-v4` | Ops-driven UI assembly engine: `project_v4/backend/internal/engine_v4/`. Op types, presets, binding, constraints, TreeMap. |
-| `pipeline-agents` | V4 chat orchestration: pipeline_execute, Agent1/Agent2, prompts, tools, anthropic adapter, span tracing, prompt caching. |
-| `widget` | Embeddable chat widget: `project/frontend/`. Shadow DOM, FormationRenderer, fillFormation (instant expand), sessionCache. |
+| `engine-v5` | V5 scene-graph engine: `project_v5/backend/internal/engine/`. Node types (map[string]any, 14 types), ops (5 types), pipeline steps, presets, binding, TreeMap. |
+| `pipeline-agents` | V5 chat orchestration: `project_v5/backend/internal/`. pipeline_execute, Agent1/Agent2, prompts, tools, anthropic adapter, span tracing, prompt caching. |
+| `widget` | V5 embeddable chat widget: `project_v5/frontend/`. Shadow DOM, SceneGraphRenderer, NodeRenderer, fillTemplate (instant drill), RenderContext, action dispatch. |
 | `admin` | Auth + billing + KeepstarCanvas + admin SPA in `project_admin/` (catalog usecases excluded — those are owned by `catalog`). |
 | `curator` | Standalone service: `curator/`. Operator dashboard for catalog curation. Proxies merge to admin via MergeProxy. |
 
@@ -91,7 +91,7 @@ file usually means the script aborted before that line.
 │   │   ├── _meta.yaml            ← single source of truth: domain → file globs
 │   │   ├── _templates/           ← scaffolding for new experts
 │   │   ├── catalog/{expertise.yaml, question.md, self-improve.md}
-│   │   ├── engine-v4/...
+│   │   ├── engine-v5/...
 │   │   ├── pipeline-agents/...
 │   │   ├── widget/...
 │   │   ├── admin/...

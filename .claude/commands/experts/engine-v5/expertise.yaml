@@ -1,0 +1,178 @@
+# Engine V5 Expertise
+# V5 scene-graph engine — the runtime that Agent2's visual_assembly tool drives.
+# Nodes are untyped property bags; ops mutate the document; preset + component
+# registry seeds the initial tree; binding fills fieldBinding slots from data.
+
+overview:
+  layer: "engine"
+  path: "project_v5/backend/internal/engine/"
+  go_module: "keepstar_v5"
+  imports: "keepstar_v5/internal/domain (only)"
+  purpose: |
+    Apply declarative ops (insert/update/delete/move/override) onto a v9
+    scene-graph Document. Pipeline: materialise a preset + apply ops → expand
+    replicates → inline Ref components → bind field data → inject default actions
+    → stamp IDs → build tree_map for Agent2's next turn.
+  key_difference_from_v4: |
+    V4 operates on typed Formation+Widget+Atom structs. V5 uses a generic
+    property-bag Node (map[string]any) — every property is duck-typed, no
+    required fields, type discrimination via "type" key. Constraints system
+    (A1/A2/W8/C1/C3) and GroupID/sections are absent; scene-graph gives more
+    flexibility at the cost of stricter Agent2 prompt discipline.
+
+node_system:
+  type: "Node = map[string]any"
+  type_key: "\"type\" string field, accessed via NodeType(n)"
+  id_key: "\"id\" string field, accessed via NodeID(n)"
+  node_types_file: "engine/node_types.go"
+  types:
+    containers: ["frame", "group"]
+    shapes: ["rectangle", "ellipse", "line", "polygon", "path"]
+    content: ["text", "image"]
+    meta: ["note", "prompt", "context"]
+    special: ["icon_font", "ref"]
+  v5_additions:
+    image: "V5 adds 'image' type — atom-level image hint. binding routes resolved URL to fills[0].image. Frontend maps to Rectangle with image fill."
+  helpers:
+    NodeType: "returns n[\"type\"] as string or \"\""
+    NodeID: "returns n[\"id\"] as string or \"\""
+    HasChildren: "true for frame and group"
+    HasGraphics: "true if fill or stroke key present"
+
+ops:
+  file: "engine/apply_ops.go"
+  types: ["insert", "update", "delete", "move", "override"]
+  note: "V5 has OVERRIDE instead of V4's REPLACE. No 'replace' op."
+  op_shape: "{ op, target?, parent?, ref?, index?, props? }"
+  ref_system: |
+    ref field on an insert op registers the new node under a local name.
+    Subsequent ops reference it via "$ref" in parent or target.
+    Scoped to one visual_assembly call — not persisted.
+  individual_op_files:
+    - "engine/op_insert.go"
+    - "engine/op_update.go"
+    - "engine/op_delete.go"
+    - "engine/op_move.go"
+    - "engine/op_override.go"
+  apply_entry: "ApplyOps(doc *Document, ops []Op) error — fail-fast semantics"
+
+document:
+  file: "engine/document.go"
+  type: "Document struct"
+  children: "[]Node — flat top-level children including reusable component defs"
+  reusable_flag: "node[\"reusable\"] = true marks component definitions; filtered out by frontend renderer"
+  version: "string; bumped on each engine write for cache keying"
+  scene_graph_file: "engine/scene_graph.go — Document walking helpers (FindNode, WalkNodes, etc.)"
+
+pipeline_steps:
+  entry: "visual_assembly tool calls engine functions in sequence; no single Engine.Execute wrapper"
+  order:
+    - "1. Materialise(preset, components) — pulls preset Document + referenced component Documents from registry"
+    - "2. ApplyOps(doc, ops) — preset + user ops merged; runs after materialise so ops can target preset node ids"
+    - "3. ExpandReplicates(doc, count) — clones replicate-marked frame subtrees (count from visual_assembly.replicate param)"
+    - "4. ResolveAndInline(doc, components) — expands every Ref node into deep-cloned component subtree"
+    - "5. BindData(doc, data) — fills nodes with fieldBinding from data[i] using inherited dataIndex"
+    - "6. InjectDefaultActions(doc) — appends like + cart_add action nodes to entity-bound frames"
+    - "7. StampIDs(doc) — deterministic id stamping (node id collisions after replication fixed here)"
+    - "8. BuildTreeMap(doc, data) — compact {preset_in_use, instances, components, data_count} for Agent2 context"
+
+materialise:
+  file: "engine/materialise.go"
+  purpose: "Deep-clone preset Document + resolve component refs into the tree. Source of truth for the initial shape."
+  fallback: "Registry miss → returns empty Document (not an error); Agent2 must use ops-only path"
+
+replicate:
+  file: "engine/replicate.go"
+  replicate_flag: "node[\"replicate\"] = true on a frame marks it as the clone template"
+  dataIndex: "Each clone receives node[\"dataIndex\"] = i for BindData routing"
+  count: "visual_assembly 'replicate' param; 0 = no clones (empty state); omit = preset default from SystemPresetDefaultReplicate"
+
+binding:
+  file: "engine/binding.go"
+  fieldBinding: "node[\"fieldBinding\"] = \"fieldName\" — engine reads data[dataIndex][fieldName] and writes to node[\"content\"] or fills[0].image"
+  binding_to_map: "engine/binding_to_map.go — converts binding result to the node's property map"
+  variable_resolver: "engine/variable_resolver.go — resolves CSS var() references in node props before binding"
+
+component_system:
+  resolver_file: "engine/component_resolver.go"
+  resolve_inline_file: "engine/resolve_inline.go"
+  purpose: "Ref nodes carry componentId; ResolveAndInline replaces each Ref with a deep clone of its component Document"
+  registry_source: "SystemComponentRegistry (2 seeds: price-rating-root, brand-badge-root)"
+  gotcha: "Component-internal node ids are SHARED across replicate clones after inline. Never target them in modify ops — mutates every clone."
+
+tree_map:
+  file: "engine/tree_map.go"
+  purpose: "Compact JSON summary of the rendered Document for Agent2's next turn (modify mode context)"
+  shape: |
+    {
+      preset_in_use: string,
+      instances: { count, ids[], shape: { atoms: [{id, field?, ref?, slot?}] } },
+      components: [{id, atoms:[{field, format?}]}],
+      data_count: int
+    }
+  key_rule: "bound atoms collapse to {id, field}; Ref slots expose {id, ref, slot}; component internals listed in components[] for READ ONLY"
+
+presets:
+  registry_file: "engine/presets/system_registry.go"
+  type: "SystemPresetRegistry (sync.Map, validate-on-first-hit)"
+  seeds_file: "engine/presets/presets.go"
+  seed_dir: "engine/presets/seed/ (11 embedded JSON files)"
+  system_presets:
+    product: ["product_card", "product_card_compact", "product_card_horizontal", "product_card_list_row", "product_detail", "product_detail_horizontal"]
+    system: ["text_explainer", "empty_not_found", "error_generic"]
+  system_components: ["price-rating-root", "brand-badge-root"]
+  default_replicate:
+    "true (replicate by default)": ["product_card", "product_card_compact", "product_card_horizontal", "product_card_list_row"]
+    "false": ["product_detail", "product_detail_horizontal", "text_explainer", "empty_not_found", "error_generic"]
+  prompt_block:
+    file: "engine/presets/prompt.go"
+    var: "SystemPresetsBlock string — built at startup from seeds+descriptions; injected into Agent2SystemPrompt"
+    description_map: "SystemPresetDescriptions map[string]string — single source of truth for descriptions in Agent2 prompt"
+    invariant: "Adding a new preset requires: seed JSON in presets/seed/, entry in SystemPresetSeeds, entry in SystemPresetDescriptions. Prompt auto-updates."
+  component_registry: "SystemComponentRegistry (engine/presets/system_registry.go) — mirrors PresetRegistry pattern; closed chunk-15.5 oversight"
+  db_adapter: "adapters/postgres/postgres_preset.go — DB-first with registry fallback for fresh tenants"
+
+value_types:
+  purpose: "Typed helpers for complex node properties — parse, normalize, merge"
+  files:
+    - "engine/value_color.go — RGBA / hex / named color parsing"
+    - "engine/value_effect.go — shadow, blur effects"
+    - "engine/value_fill.go — fills array (solid, gradient, image)"
+    - "engine/value_layout.go — direction/gap/align/justify/wrap"
+    - "engine/value_position.go — x/y/anchor positioning"
+    - "engine/value_stroke.go — stroke color/width/style"
+    - "engine/value_text_style.go — fontSize/fontWeight/color/lineHeight/lineClamp"
+
+inject_actions:
+  file: "engine/inject_actions.go"
+  purpose: "InjectDefaultActions appends like + cart_add action nodes to entity-bound frames after bind"
+  action_kinds: ["like", "unlike", "cart_add", "cart_remove", "drill_detail", "back", "external_link", "search", "open_category"]
+  trigger: "Frame with entityRef + zero actions → injected"
+
+rendered:
+  file: "engine/rendered.go"
+  purpose: "RenderedScene — output type from the full pipeline; carries Document + TreeMap + Warnings"
+
+id_generator:
+  file: "engine/id_generator.go"
+  purpose: "Deterministic id generation for replicate clones (id collision prevention post-expansion)"
+
+invariants:
+  - "Node is map[string]any — all property access must type-assert; no struct field safety net."
+  - "'image' node type is a V5 extension to v9 vocabulary — backend binding routes to fills[0].image; frontend maps to Rectangle with image fill at draw time."
+  - "Component-internal node ids are SHARED after ResolveAndInline. Agent2 must never target them in modify ops — update cascades to every clone."
+  - "Replicate count from visual_assembly.replicate > len(data) is silently clamped — engine won't crash but fewer clones appear than requested."
+  - "SystemPresetsBlock is a package-level var initialized at startup — imports engine/presets from prompts package (keepstar_v5 import path). No circular deps because prompts doesn't import engine."
+  - "ApplyOps runs after Materialise — ops can safely target preset node ids (they exist at that point)."
+
+gotchas:
+  - "SystemComponentRegistry was absent until chunk 15.5 — refs in system presets (price-rating-root, brand-badge-root) resolved to [] components → cards rendered with no price/rating. Fix: SystemComponentRegistry mirrors PresetRegistry with seed fallback."
+  - "Empty Materialise result is NOT an error — registry miss returns empty Document and ops run on it. If Agent2 references preset node ids that don't exist (no preset materialized), ops silently no-op."
+  - "Ref nodes whose componentId isn't in registry are left as-is after ResolveAndInline (no error). Frontend Ref.jsx renders children if present, else nothing — silent blank slot."
+  - "variable_resolver runs BEFORE binding — CSS vars in node props get resolved first; fieldBinding sees the resolved value, not the var reference."
+  - "V4's 'replace' op does not exist in V5 — it's 'override'. Prompts carrying V4 op vocabulary silently no-op the replace op."
+
+related_experts:
+  - "pipeline-agents — visual_assembly tool owns the call into engine pipeline; prompt sections (MODE, PRESETS) mirror engine contracts. Drift in op vocabulary here silently breaks Agent2 output."
+  - "widget — SceneGraphRenderer is the downstream consumer of engine output. Node property shape (type, content, fills, format, wrapper, textStyle, layout) must be consistent end-to-end."
+  - "catalog — BindData reads data[i] from state.current.data populated by catalog_search tool; fieldBinding names must match catalog field definitions."

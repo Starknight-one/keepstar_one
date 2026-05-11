@@ -30,37 +30,35 @@ experts:
       - "project_v4/backend/internal/usecases/catalog_list_*.go"
       - "project_v4/backend/internal/handlers/handler_catalog.go"
 
-  engine-v4:
+  engine-v5:
     globs:
-      - "project_v4/backend/internal/engine_v4/**/*.go"
-      - "project_v4/backend/internal/tools/tool_visual_assembly*.go"
-      - "project_v4/backend/internal/adapters/postgres/canvas_*_adapter.go"
+      - "project_v5/backend/internal/engine/**/*.go"
+      - "project_v5/backend/internal/tools/tool_visual_assembly*.go"
+      - "project_v5/backend/internal/domain/node_types.go"
+      - "project_v5/backend/internal/domain/atom_role.go"
 
   pipeline-agents:
     globs:
-      - "project_v4/backend/internal/usecases/pipeline_*.go"
-      - "project_v4/backend/internal/usecases/agent1_*.go"
-      - "project_v4/backend/internal/usecases/agent2_*.go"
-      - "project_v4/backend/internal/usecases/{action_,chat_send,navigation_,state_,template_apply}*.go"
-      - "project_v4/backend/internal/prompts/**/*.go"
-      - "project_v4/backend/internal/tools/tool_catalog_search*.go"
-      - "project_v4/backend/internal/tools/tool_history_lookup*.go"
-      - "project_v4/backend/internal/tools/tool_state_filter*.go"
-      - "project_v4/backend/internal/tools/tool_search_products*.go"
-      - "project_v4/backend/internal/tools/tool_registry*.go"
-      - "project_v4/backend/internal/tools/data_normalize*.go"
-      - "project_v4/backend/internal/adapters/anthropic/**/*.go"
-      - "project_v4/backend/internal/adapters/openai/**/*.go"
-      - "project_v4/backend/internal/handlers/handler_{chat,pipeline,navigation,action,session,testbench,trace,debug}*.go"
-      - "project_v4/backend/internal/adapters/postgres/{postgres_state,postgres_trace,postgres_events,postgres_logs,postgres_cache,retention}*.go"
+      - "project_v5/backend/internal/usecases/pipeline_*.go"
+      - "project_v5/backend/internal/usecases/agent1_*.go"
+      - "project_v5/backend/internal/usecases/agent2_*.go"
+      - "project_v5/backend/internal/usecases/{prefetch,span_helper,state_reconstruct,state_rollback,prompt_cache}*.go"
+      - "project_v5/backend/internal/prompts/**/*.go"
+      - "project_v5/backend/internal/tools/tool_catalog_search*.go"
+      - "project_v5/backend/internal/tools/tool_history_lookup*.go"
+      - "project_v5/backend/internal/tools/tool_state_filter*.go"
+      - "project_v5/backend/internal/tools/tool_registry*.go"
+      - "project_v5/backend/internal/adapters/anthropic/**/*.go"
+      - "project_v5/backend/internal/handlers/handler_{pipeline,session,readyz}*.go"
+      - "project_v5/backend/internal/adapters/postgres/{postgres_state,postgres_trace}*.go"
 
   widget:
     globs:
-      - "project/frontend/src/**/*.jsx"
-      - "project/frontend/src/**/*.js"
-      - "project/frontend/src/**/*.css"
-      - "project/frontend/vite.config.js"
-      - "project/frontend/package.json"
+      - "project_v5/frontend/src/**/*.jsx"
+      - "project_v5/frontend/src/**/*.js"
+      - "project_v5/frontend/src/**/*.css"
+      - "project_v5/frontend/vite.config.js"
+      - "project_v5/frontend/package.json"
 
   admin:
     globs:
