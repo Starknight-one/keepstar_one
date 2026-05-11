@@ -1,4 +1,5 @@
 import NodeRenderer from './NodeRenderer'
+import RendererErrorBoundary from './RendererErrorBoundary'
 
 // SceneGraphRenderer — top-level walker for a V5 engine.Document.
 // Receives the parsed Document (`{version, children: [Node]}`) and
@@ -26,11 +27,13 @@ export default function SceneGraphRenderer({ document }) {
   })
 
   return (
-    <div className="kw-display-inner">
-      {renderable.map((node, i) => (
-        <NodeRenderer key={node.id || i} node={node} />
-      ))}
-    </div>
+    <RendererErrorBoundary resetKey={document}>
+      <div className="kw-display-inner">
+        {renderable.map((node, i) => (
+          <NodeRenderer key={node.id || i} node={node} />
+        ))}
+      </div>
+    </RendererErrorBoundary>
   )
 }
 

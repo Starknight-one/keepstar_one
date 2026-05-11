@@ -1,32 +1,28 @@
 package prompts
 
-// Agent2SystemPrompt is V5's static base body for the Agent2 system
-// prompt. It teaches the LLM how to call visual_assembly: the
-// scene-graph mental model, the preset+replicate API, the ops vocabulary,
-// the field-binding playbook, decision rules, and anti-patterns.
+import "keepstar_v5/internal/engine/presets"
+
+// Agent2SystemPrompt is assembled at startup: the static prompt body with
+// the PRESETS catalog section generated from the live system preset registry.
+// Adding a preset seed + a description to engine/presets automatically
+// updates what Agent2 sees — no manual prompt edit needed.
 //
 // Cache-prefix budget: this string + the visual_assembly tool definition
 // must clear ≥ 4500 tokens to qualify for stable Anthropic prompt-cache
 // hits (Vlad's V4-prod threshold; the documented Haiku minimum is 2048,
 // but real-world stable behaviour wants more headroom).
 //
-// Sections present (mirroring V4 with V5-specific syntax):
-//   - HOW IT WORKS
-//   - MODE (chunk 12 — REQUIRED rebuild|modify decision)
-//   - PRESETS (catalog, hardcoded for chunk 6b)
-//   - REPLICATE
-//   - OPS VOCABULARY
-//   - FIELD BINDING
-//   - FORMAT + WRAPPER
-//   - BUILDING examples
-//   - MODIFYING EXISTING
-//   - TREE_MAP shape
-//   - DECISION RULES
-//   - ANTI-PATTERNS
-//
 // Run `go test -tags=tokens` after any edit to verify the cacheable prefix
 // stays above 4500.
-const Agent2SystemPrompt = `You are Agent 2 — a UI builder for an e-commerce chat assistant. You build and modify the visible scene graph by calling visual_assembly. Never output text. Never explain. Just call the tool.
+var Agent2SystemPrompt = buildAgent2SystemPrompt()
+
+func buildAgent2SystemPrompt() string {
+	return agent2PromptPart1 + presets.SystemPresetsBlock + agent2PromptPart2
+}
+
+// agent2PromptPart1 contains everything up to and including the PRESETS
+// section header. The preset catalog list is injected after this part.
+const agent2PromptPart1 = `You are Agent 2 — a UI builder for an e-commerce chat assistant. You build and modify the visible scene graph by calling visual_assembly. Never output text. Never explain. Just call the tool.
 
 ## HOW IT WORKS
 
@@ -66,6 +62,9 @@ The tool requires a "mode" parameter. No default. Pick based on user intent:
       • formation_tree present + the request is about changing what is
         already on screen, not about replacing it
 
+  A typical modify patch is 1–5 ops. If you need more, use rebuild — it is
+  cleaner and avoids partial-state bugs.
+
 When in doubt: if the user could have said «оставь что есть, но ...» or
 «keep what's on screen but ...» — it's "modify". If they said «покажи»
 / «сделай» / «render» / «show me» and it implies different content —
@@ -80,20 +79,11 @@ Presets are top-level templates a tenant has published. Components are reusable 
 
 Catalog of starter preset names you can use today:
 
-  product_card              — standard product card for grids of 2–4 items
-  product_card_compact      — small product card for dense grids (5+ items)
-  product_card_horizontal   — image left, info right (carousels, single feature)
-  product_card_list_row     — wide row for list layouts
-  product_detail            — full product detail (vertical, 16:9 hero)
-  product_detail_horizontal — product detail with image-left layout
-  text_explainer            — literal-text widget (title + body) for LLM explanations
-  empty_not_found           — empty state ("nothing found")
-  error_generic             — error state
-  catalog_category_card     — catalog group / category card
-  liked_grid                — grid of liked products (nav view)
-  cart_grid                 — grid of cart items (no totals yet)
+`
 
-When a tenant publishes additional presets they appear above this catalog in the <tenant_design_context> block. Pass any preset name verbatim. If you're not sure a preset exists, default to product_card or product_detail — both are guaranteed to exist for every tenant.
+// agent2PromptPart2 starts after the preset catalog list and contains the
+// rest of the prompt (replicate, ops, field binding, examples, rules).
+const agent2PromptPart2 = `When a tenant publishes additional presets they appear above this catalog in the <tenant_design_context> block. Pass any preset name verbatim. If you're not sure a preset exists, default to product_card or product_detail — both are guaranteed to exist for every tenant.
 
 Each preset has a default replicate behaviour baked in. Pass replicate explicitly when you want a different count (e.g. user asks for "3 products" → replicate: 3).
 
