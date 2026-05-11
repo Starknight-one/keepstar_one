@@ -9,21 +9,22 @@
 .logo-wrap {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .logo-icon {
-  width: 28px;
-  height: 28px;
-  background: linear-gradient(180deg, #5BC4F0 0%, #FFFFFF 45%, #FF8C42 100%);
-  border-radius: 6px;
+  width: 26px;
+  height: 42px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .logo-text {
-  color: #1A1A1A;
+  color: var(--deep-space);
   font-size: 20px;
   font-weight: 500;
   font-family: 'Inter', sans-serif;
+  letter-spacing: -0.03em;
 }
 
 .nav-links {
@@ -33,30 +34,34 @@
 }
 
 .nav-links a {
-  color: #5F6368;
+  color: var(--muted);
   font-size: 15px;
   transition: color 0.2s;
   font-weight: 400;
 }
 
 .nav-links a:hover {
-  color: #1A1A1A;
+  color: var(--deep-space);
 }
 
 .btn-get-started {
-  padding: 12px 28px;
-  background: #1A1A1A;
+  padding: 12px 24px;
+  background: var(--sky-deep);
   color: #fff;
-  border-radius: 100px;
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
   border: none;
   font-size: 14px;
   font-weight: 500;
   font-family: 'Inter', sans-serif;
   cursor: pointer;
-  transition: transform 0.2s, background 0.2s;
+  transition: background 0.15s, transform 0.15s;
 }
 
 .btn-get-started:hover {
-  background: #333;
+  background: #0C447C;
   transform: translateY(-1px);
+}
+
+.btn-get-started:active {
+  transform: scale(0.98);
 }

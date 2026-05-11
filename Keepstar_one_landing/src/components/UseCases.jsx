@@ -1,28 +1,27 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ShoppingBag, Sparkles, Store } from 'lucide-react';
-import Confetti from './Confetti';
 import './UseCases.css';
 
 const cases = [
   {
     icon: ShoppingBag,
-    color: '#4285F4',
-    bg: '#D2E3FC',
+    color: '#185FA5',
+    bg: 'rgba(91, 163, 208, 0.12)',
     title: 'E-Commerce Stores',
     desc: 'Turn product browsing into guided conversations. Every visitor gets personalized product recommendations, comparisons, and details — assembled dynamically from your catalog.',
   },
   {
     icon: Sparkles,
-    color: '#EA4335',
-    bg: '#FCE8E6',
+    color: '#185FA5',
+    bg: 'rgba(245, 160, 74, 0.12)',
     title: 'Beauty & Cosmetics',
     desc: 'Help shoppers find the right products by skin type, concern, or ingredient preference. AI surfaces relevant items from thousands of SKUs in seconds.',
   },
   {
     icon: Store,
-    color: '#34A853',
-    bg: '#CEEAD6',
+    color: '#185FA5',
+    bg: 'rgba(11, 27, 46, 0.06)',
     title: 'Marketplaces',
     desc: 'Replace overwhelming category pages with smart, conversational discovery. Guide buyers from intent to purchase across multi-vendor catalogs.',
   },
@@ -30,13 +29,12 @@ const cases = [
 
 export default function UseCases() {
   return (
-    <section id="use-cases" className="use-cases-section container" style={{ position: 'relative', overflow: 'hidden' }}>
-      <Confetti seed={35} count={8} opacity={0.3} />
+    <section id="use-cases" className="use-cases-section container">
       <div className="use-cases-header">
         <div className="use-cases-badge">Use Cases</div>
         <h2 className="use-cases-title">Built for stores that want to sell more</h2>
         <p className="use-cases-subtitle">
-          See how Keepstar One works across different industries and business models.
+          See how Keepstar works across different industries and business models.
         </p>
       </div>
 

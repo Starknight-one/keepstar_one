@@ -18,25 +18,28 @@
 }
 
 .badge {
-  background: var(--border-light);
-  color: #1A1A1A;
-  padding: 8px 16px;
-  border-radius: 30px;
-  font-size: 14px;
-  font-weight: 500;
+  background: rgba(91, 163, 208, 0.1);
+  color: var(--sky-deep);
+  padding: 6px 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   display: inline-block;
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
 }
 
 .hero-headline {
   font-size: 76px;
-  color: #1A1A1A;
+  color: var(--deep-space);
   line-height: 1.05;
   letter-spacing: -3px;
 }
 
 .hero-subhead {
   font-size: 18px;
-  color: #5F6368;
+  color: var(--muted);
   line-height: 1.7;
 }
 
@@ -48,49 +51,41 @@
 
 .btn-hero {
   padding: 16px 32px;
-  border-radius: 100px;
   font-size: 16px;
   font-weight: 500;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: background 0.15s, transform 0.15s;
   font-family: 'Inter', sans-serif;
   text-decoration: none;
   display: inline-block;
+  border: none;
 }
 
-.btn-hero:hover {
-  transform: translateY(-2px);
+.btn-hero:active {
+  transform: scale(0.98);
 }
 
 .btn-hero-primary {
-  background: #1A1A1A;
+  background: var(--sky-deep);
   color: #fff;
-  border: none;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.1);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+}
+
+.btn-hero-primary:hover {
+  background: #0C447C;
+  transform: translateY(-2px);
 }
 
 .btn-hero-secondary {
   background: transparent;
-  color: #1A1A1A;
-  border: 1px solid #E2E8F0;
+  color: var(--sky-deep);
+  border: 1px solid var(--sky-deep);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
 }
 
 .btn-hero-secondary:hover {
-  border-color: #1A1A1A;
-}
-
-/* Floating Shapes Colors */
-.bg-blue { background: #4285F4; opacity: 0.6; }
-.bg-red { background: #EA4335; opacity: 0.6; }
-.bg-yellow { background: #FBBC04; opacity: 0.7; }
-.bg-green { background: #34A853; opacity: 0.6; }
-
-.shape-ellipse {
-  border-radius: 50%;
-}
-
-.shape-rect {
-  border-radius: 2px;
+  background: rgba(91, 163, 208, 0.08);
+  transform: translateY(-2px);
 }
 
 @media (max-width: 768px) {

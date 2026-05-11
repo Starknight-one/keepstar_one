@@ -9,14 +9,17 @@
 }
 
 .pricing-badge {
-  background: var(--border-light);
-  color: var(--foreground);
-  padding: 8px 16px;
-  border-radius: 30px;
-  font-size: 14px;
-  font-weight: 500;
+  background: rgba(91, 163, 208, 0.1);
+  color: var(--sky-deep);
+  padding: 6px 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   display: inline-block;
   margin-bottom: 24px;
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
 }
 
 .pricing-title {
@@ -40,8 +43,8 @@
 
 .pricing-card {
   background: #fff;
-  border: 1px solid var(--border-light);
-  border-radius: 20px;
+  border: 1px solid var(--border);
+  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
   padding: 40px 32px;
   display: flex;
   flex-direction: column;
@@ -54,9 +57,9 @@
 }
 
 .pricing-card.featured {
-  background: var(--foreground);
-  border-color: var(--foreground);
-  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  background: var(--sky-deep);
+  border-color: var(--sky-deep);
+  box-shadow: 0 20px 60px rgba(24,95,165,0.25);
   transform: scale(1.02);
 }
 
@@ -73,20 +76,21 @@
 }
 
 .pricing-card.featured .feature-icon {
-  color: var(--google-green);
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .popular-badge {
-  background: var(--google-blue);
+  background: rgba(255, 255, 255, 0.18);
   color: #fff;
-  padding: 6px 14px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: 4px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   display: inline-block;
   margin-bottom: 16px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
 }
 
 .plan-name {
@@ -141,42 +145,57 @@
 }
 
 .feature-icon {
-  color: var(--google-green);
+  color: #3B6D11;
   flex-shrink: 0;
 }
 
 .btn-pricing {
   width: 100%;
   padding: 14px 24px;
-  border-radius: 100px;
-  font-size: 16px;
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+  font-size: 15px;
   font-weight: 500;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: background 0.15s, transform 0.15s;
   font-family: 'Inter', sans-serif;
   text-align: center;
   border: none;
 }
 
 .btn-pricing:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
+}
+
+.btn-pricing:active {
+  transform: scale(0.98);
 }
 
 .btn-pricing-primary {
   background: #fff;
-  color: var(--foreground);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.1);
+  color: var(--deep-space);
+}
+
+.btn-pricing-primary:hover {
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .btn-pricing-secondary {
   background: transparent;
-  color: var(--foreground);
-  border: 1px solid var(--border-light);
+  color: var(--sky-deep);
+  border: 1px solid var(--sky-deep);
+}
+
+.btn-pricing-secondary:hover {
+  background: rgba(91, 163, 208, 0.08);
 }
 
 .pricing-card.featured .btn-pricing-secondary {
-  border-color: rgba(255,255,255,0.2);
+  border-color: rgba(255, 255, 255, 0.4);
   color: #fff;
+}
+
+.pricing-card.featured .btn-pricing-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Billing toggle */
@@ -254,11 +273,11 @@
 
 .feature-highlight {
   font-weight: 600;
-  color: var(--google-blue) !important;
+  color: var(--sky-deep) !important;
 }
 
 .pricing-card.featured .feature-highlight {
-  color: #93C5FD !important;
+  color: var(--sky-light) !important;
 }
 
 .plan-price-custom {
