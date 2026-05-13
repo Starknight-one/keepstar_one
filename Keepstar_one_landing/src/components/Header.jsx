@@ -20,7 +20,7 @@ export default function Header({ onDemo }) {
   return (
     <header className="header container">
       <Link to="/" className="logo-wrap">
-        <div className="logo-icon"></div>
+        <img src="/logo-mark-e.svg" alt="Keepstar" className="logo-icon" />
         <span className="logo-text">Keepstar One</span>
       </Link>
 

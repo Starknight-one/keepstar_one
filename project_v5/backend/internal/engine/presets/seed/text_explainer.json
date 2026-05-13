@@ -1,0 +1,24 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "explainer",
+      "layout": {"direction": "column", "gap": "sm"},
+      "children": [
+        {
+          "type": "text",
+          "id": "headline",
+          "content": "",
+          "textStyle": {"fontSize": "xl", "fontWeight": "bold"}
+        },
+        {
+          "type": "text",
+          "id": "body",
+          "content": "",
+          "textStyle": {"fontSize": "md", "lineClamp": 12}
+        }
+      ]
+    }
+  ]
+}

@@ -28,6 +28,24 @@ export const api = {
   delete: (p) => request('DELETE', p),
 }
 
+// V5 chat / trace inspection (chunk 13). Curator reads
+// v5_chat_sessions + v5_chat_session_traces directly from the shared
+// Neon DB.
+export const chatsApi = {
+  list: ({ tenant = '', status = '', q = '', limit = 50, offset = 0 } = {}) => {
+    const params = new URLSearchParams()
+    if (tenant) params.set('tenant', tenant)
+    if (status) params.set('status', status)
+    if (q) params.set('q', q)
+    if (limit) params.set('limit', String(limit))
+    if (offset) params.set('offset', String(offset))
+    const qs = params.toString()
+    return api.get(`/curator/chats${qs ? '?' + qs : ''}`)
+  },
+  timeline: (sessionId) => api.get(`/curator/chats/${sessionId}`),
+  turn: (sessionId, requestId) => api.get(`/curator/chats/${sessionId}/turns/${requestId}`),
+}
+
 // Merge agent (Phase D3 backend, Phase 4 UI). All endpoints proxy through
 // curator-backend → admin-backend internal API.
 export const mergeApi = {

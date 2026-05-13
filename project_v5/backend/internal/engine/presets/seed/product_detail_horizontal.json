@@ -1,0 +1,68 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "detail",
+      "maxWidth": 960,
+      "layout": {"direction": "row", "gap": "xl", "align": "start"},
+      "children": [
+        {
+          "type": "image",
+          "id": "hero-img",
+          "fieldBinding": "heroImage",
+          "slot": "hero",
+          "mediaStyle": {"aspectRatio": "1:1"}
+        },
+        {
+          "type": "frame",
+          "id": "body",
+          "layout": {"direction": "column", "gap": "md"},
+          "children": [
+            {
+              "type": "text",
+              "id": "title",
+              "fieldBinding": "name",
+              "slot": "title",
+              "textStyle": {"fontSize": "2xl", "fontWeight": "bold"}
+            },
+            {
+              "type": "frame",
+              "id": "price-row",
+              "layout": {"direction": "row", "gap": "md", "align": "center"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "price",
+                  "fieldBinding": "priceFormatted",
+                  "format": "currency",
+                  "slot": "price",
+                  "textStyle": {"fontSize": "xl", "fontWeight": "semibold"}
+                },
+                {
+                  "type": "text",
+                  "id": "rating",
+                  "fieldBinding": "rating",
+                  "format": "stars"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "description",
+              "fieldBinding": "description",
+              "slot": "description",
+              "textStyle": {"fontSize": "md", "lineClamp": 10}
+            },
+            {
+              "type": "frame",
+              "id": "actions",
+              "layout": {"direction": "row", "gap": "md"},
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

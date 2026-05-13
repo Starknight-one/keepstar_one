@@ -1,0 +1,24 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "empty",
+      "layout": {"direction": "column", "gap": "sm", "align": "center"},
+      "children": [
+        {
+          "type": "text",
+          "id": "headline",
+          "content": "Nothing matched",
+          "textStyle": {"fontSize": "xl", "fontWeight": "semibold"}
+        },
+        {
+          "type": "text",
+          "id": "subtext",
+          "content": "Try removing some filters or rephrasing your query.",
+          "textStyle": {"fontSize": "md"}
+        }
+      ]
+    }
+  ]
+}

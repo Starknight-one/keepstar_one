@@ -1,247 +1,153 @@
-# Keepstar One Ultra — Project Context
+# Keepstar One Ultra
 
-> **IMPORTANT**: Information in this file may be stale. Before implementing any task, ALWAYS re-read the relevant source files and check the current state of the code. Don't blindly trust what's described below — these notes give you the big picture, but the details may have moved.
+> Project context kept thin. Anything domain-specific (catalog, engine,
+> pipeline, widget, admin, curator) lives in the experts — they
+> self-update from code (see `.claude/commands/experts/README.md`).
+> This file holds: what the project is, how to navigate, project-specific
+> working rules.
 
 ## What this is
 
-AI-powered SaaS B2B2C chat widget for e-commerce. The user types in chat — instead of text replies, the bot generates interactive widgets: product cards, galleries, comparisons, detail views. Everything is composed dynamically on the backend through a two-agent LLM pipeline.
+AI-powered SaaS B2B2C chat widget for e-commerce. The user types in
+chat — the bot answers with interactive widgets (product cards,
+galleries, comparisons, detail views) composed dynamically by a
+two-agent LLM pipeline. The merchant embeds a single `<script>` tag
+and gets an AI assistant with visual answers, no in-house dev work.
 
-**Key value prop**: a merchant embeds a single `<script>` tag on their site and gets an AI assistant with visual answers, with no in-house dev work.
+V5 is the production chat engine (`project_v5/`, live at
+`v5-engine-production.up.railway.app`). V4 (`project_v4/`) is being
+phased out — touch only when the question is V4-specific.
 
-## Architecture (high level)
+## Routing — ask the expert first
 
-```
-User → Chat Widget (React, Shadow DOM)
-            ↓ REST API
-       V4 Chat Backend (Go, port 8082)
-            ↓
-   ┌────────────────────────────┐
-   │  Agent 1 (NLU/Data)        │  ← catalog_search, state_filter, history_lookup
-   │  Agent 2 (Render)          │  ← visual_assembly tool → engine_v4
-   └────────────────────────────┘
-            ↓
-   Formation JSON → Frontend renders
-```
-
-**Backend-first**: the frontend is a "dumb renderer" of JSON. All logic, layout, and constraints live on the backend.
-
-## Three-level widget hierarchy
-
-```
-Formation (mode: grid, list, single, carousel, comparison, table, composed)
-  └── Widget (card / row / block of atoms)
-      └── Atom (6 types: text, number, image, icon, video, audio)
-           ├── subtype (currency, rating, url, date, ...)
-           ├── display/wrapper (h1, badge, tag, price, button, ...)
-           ├── format (currency, stars, percent, date, ...)
-           └── slot (hero, title, price, primary, secondary, badge, ...)
-```
-
-## Project layout
-
-```
-project_v4/backend/         — Go 1.24, hexagonal — V4 chat engine (PRODUCTION)
-  cmd/server/               — Entry point, DI, graceful shutdown
-  internal/
-    domain/                 — Atom, Widget, Formation, Preset, Span, Trace, Tool
-    ports/                  — Interfaces (LLM, Catalog, State, Trace, Embedding)
-    adapters/               — Postgres (pgx), Anthropic, OpenAI
-    usecases/               — pipeline_execute, agent1_execute, agent2_execute, navigation, state
-    handlers/               — HTTP routes (pipeline, chat, navigation, testbench, debug)
-    tools/                  — Tool executors (catalog_search, state_filter, history_lookup, visual_assembly)
-    prompts/                — Agent1/Agent2 system prompts
-    engine_v4/              — Ops-driven UI assembly engine (engine.go, ops.go, presets_*.go, binding.go, ...)
-
-project/frontend/           — React 19 + Vite 7 chat widget (Shadow DOM, IIFE bundle)
-  entities/                 — atom/, widget/, formation/, message/
-  features/                 — chat/, catalog/, navigation/, overlay/, actions/
-  shared/                   — api/, theme/, hooks/, config/
-
-project_admin/              — Catalog management, auth, billing, KeepstarCanvas
-  backend/                  — Go, hexagonal (auth, billing, canvas, catalog write side, Shopify)
-  frontend/                 — React admin SPA (catalog UI, canvas editor, settings, traces)
-
-curator/                    — Standalone Go service for catalog curation
-  backend/                  — single binary; auth, candidates queue, junk, audit, tenants, master catalog
-  frontend/                 — React + React Router 7 operator dashboard
-
-Keepstar_one_landing/       — Public landing site (keepstar.one) + blog admin
-docs/                       — Specs, dev logs, audits
-ADW/                        — SDLC orchestrator + dev-inspector
-AI_docs/                    — Manifesto, architecture rules, agent principles
-scripts/                    — start.sh, stop.sh, start_admin.sh, stop_admin.sh, start_all.sh, stop_all.sh
-```
-
-> **Legacy `project/backend/` was deleted on 2026-04-29.** V4 is the only chat backend. Anything referencing the old V1/V2 engine is stale.
-
-## Dev servers & tools
-
-| Service | Path | Port |
-|--------|------|------|
-| V4 Chat backend | `project_v4/backend/` | 8082 |
-| Chat widget (dev) | `project/frontend/` | 5173 |
-| Admin backend | `project_admin/backend/` | 8081 |
-| Admin frontend | `project_admin/frontend/` | 5174 |
-| Curator | `curator/` | 8082 (separate Railway service) |
-| Dev Inspector | `ADW/dev-inspector/` | 3457 |
-
-- **Run everything**: `scripts/start_all.sh`
-- **psql**: `/opt/homebrew/Cellar/libpq/18.1_1/bin/psql` or `/opt/homebrew/Cellar/postgresql@15/15.15_1/bin/psql`
-- **Config**: `project_v4/.env` (DATABASE_URL, ANTHROPIC_API_KEY, OPENAI_API_KEY, TENANT_SLUG, LLM_MODEL)
-- **DB**: Neon PostgreSQL (serverless, AWS). Schemas: `catalog`, `admin`, `logs` + `chat_*` tables in public.
-- **Tests**: `cd project_v4/backend && go test ./...`
-
-## Two-agent pipeline
-
-1. **Agent 1** (NLU + data) — analyses the query, calls one of:
-   - `catalog_search` — hybrid search (SQL keyword + pgvector + RRF merge)
-   - `state_filter` — filter already-loaded data without a DB hit
-   - `history_lookup` — search the conversation history
-   - Writes results to `state.data` + `state.meta`.
-
-2. **Agent 2** (render) — calls the `visual_assembly` tool:
-   - Reads `state.meta` (count, fields, entity type)
-   - Picks a preset, layout, columns, size
-   - Emits `ops` (insert/update/delete/move/replace) on the formation tree
-   - Constraints normalise (badge length, tag length, tiny-size strips images, group-scoped C1/C3)
-   - Result lands in `state.template["formation"]`
-
-3. **Frontend** renders the Formation JSON via `FormationRenderer` → `WidgetRenderer` → `AtomV2Renderer`.
-
-## V4 Engine (current — `feature/engine-v4` branch deploys to v4-engine-production.up.railway.app)
-
-Ops-driven engine — Agent2 builds and modifies the UI by emitting ops (insert/update/delete/move/replace) on a widget tree. Lives in `project_v4/backend/internal/engine_v4/`.
-
-**Main tool — `visual_assembly`**, parameters:
-- `ops` — array of ops on the formation tree
-- `preset` — named preset (12 in the global registry). Concatenated with `ops` in one batch so user override-ops can reference `$ref` slots exposed by the preset (`$w` / `$root` / `$info` / `$meta`).
-- `replicate` — explicit replicate flag (B3). Inherited from `preset.DefaultReplicate` if omitted.
-- `limit` — cap on data items used for replication
-- `layout` — grid / list / single / carousel, plus `columns`, `size`
-
-**Execute pipeline** (`engine.go`):
-1. Init formation (or load `Input.Formation`)
-2. Apply formation-level settings (Layout → Mode, Columns → Grid.Cols, Size → all top-level widgets)
-3. `ApplyOps` — preset + user ops in one batch
-4. Limit data → handle Replicate flag (legacy bridge for single-widget; per-widget `ReplicateConfig` for multi-widget compositions)
-4a. `expandReplicatedWidgets` — clone templates per data item with shared GroupID
-4b. `autoDetectEntityRefs` — for single non-replicated entity widgets
-4.5. Inject `DefaultWidgetActions` (like, add_to_cart) for entity-bound widgets
-5. `BindData` — atoms with `FieldName` get values from `data[i]`
-6. `ApplyConstraints` — per-atom (A1/A2) → per-widget (W8) → group cross-widget (C1/C3)
-6.5. `groupIntoSections` — collapse consecutive same-GroupID widgets into sections; single-section rollback for legacy flat flows
-7. `StampTreeIDs` — deterministic IDs (`w-s0-w0`, `a-s0-w0-name`, ...)
-8. `BuildTreeMap` — compact context for Agent2's next turn
-
-**12 presets** (`engine_v4/presets_*.go`):
-- product (6): `product_card`, `product_card_compact`, `product_card_horizontal`, `product_card_list_row`, `product_detail`, `product_detail_horizontal`
-- system (3): `text_explainer`, `empty_not_found`, `error_generic`
-- nav (3): `catalog_category_card`, `liked_grid`, `cart_grid`
-
-Presets currently hardcode cosmetics fieldNames (images/name/price/rating/brand/...). Wave B7 will switch to role-based slot resolution via `catalog.field_definitions`.
-
-**Tracker**: `docs/PRE_LAUNCH_TASKS.md` (waves B2/B3/B4/B7/E1/E2/A2/AD1/UX1/...).
-**Session dev logs**: `docs/Updates/<branch>_<YYYY-MM-DD>_<HH-MM>.md` — every session leaves a log with context, changes, tests, commit hash, known gaps.
-
-## Data model (key entities)
-
-- **SessionState**: `current` (data + meta + template), `view`, `viewStack`, `conversationHistory`, `step`
-- **Delta**: source / actor / trigger / type + action / result (append-only history)
-- **Atom**: type + subtype + display + format + value + slot + meta + fieldName
-- **Preset**: Name, Description, Category, Refs[], DefaultLayout, DefaultColumns, DefaultSize, DefaultReplicate, Build()
-- **Formation**: mode + grid + widgets[] + sections[] + pagination
-- **Widget**: id + size + atoms[] + entityRef + ReplicateConfig + Actions
-
-## API endpoints (V4 backend, port 8082)
-
-- `POST /api/v1/pipeline` — main entry: query → Agent1 → Agent2 → Formation
-- `POST /api/v1/chat` — alias / legacy entry
-- `POST /api/v1/navigation/expand` — drill-down to detail
-- `POST /api/v1/navigation/back` — navigate back
-- `POST /api/v1/session/init` — create session
-- `GET /api/v1/session/{id}` — restore session
-- `POST /api/v1/actions` — like / cart sync
-- `POST /api/v1/testbench` — visual_assembly without LLM
-- `GET /debug/traces/` — pipeline waterfall traces
-- `GET /debug/session/` — session inspector
-
-## LLM & cost
-
-- **Model**: Claude Haiku 4.5 (default; configurable via `LLM_MODEL`)
-- **Embeddings**: OpenAI text-embedding-3-small (384 dim)
-- **Prompt caching**: system + tools + conversation cached (5-min ephemeral TTL)
-- **Haiku price**: $1 input / $5 output per 1M tokens; cache write 1.25×, cache read 0.1×
-- **Cache invariants**: tool definitions sorted by name (byte-stable order); per-tenant catalog digest memoised in sync.Map; conversation trim at 20 messages
-
-## Frontend (chat widget)
-
-- **Deploy**: single IIFE bundle `widget.js`, embedded via `<script data-tenant="slug" data-api="url" src="https://v4-engine-production.up.railway.app/widget.js">`
-- **Shadow DOM**: full style isolation from the host page (mode: open). All CSS imported as `?inline` and injected into shadow root.
-- **Instant expand**: `adjacentTemplates` + `fillFormation()` — drill-down to detail with no round-trip; mirrors backend `productFieldGetter`/`serviceFieldGetter`.
-- **Session cache**: localStorage, 30-min TTL, restored on F5
-- **Theme**: CSS Variables (marketplace theme, purple primary `#8B5CF6`)
-
-## Admin panel
-
-- **Catalog**: browse, search, edit products, master/listings split, master_variants
-- **Import**: JSON / CSV / Shopify OAuth → harvester → discovery (LLM ~$0.40, 8-min budget) → mapping artifact → merge_apply → curator approval
-- **Enrichment**: Claude Haiku extracts PIM attrs (skin_type, concern, ingredients, ...)
-- **Widget**: embed-code generator (uses `WIDGET_BASE_URL` env)
-- **KeepstarCanvas**: per-tenant preset / component / design-token overrides; published presets read by V4 via `tenant_preset_loader`
-- **Crawler**: `cmd/crawler/` — scrapes JSON-LD from e-commerce sites
-- **Sample data**: 967 heybabescosmetics products in `project_admin/Crawler_results/`
-
-## Plan mode → mandatory update log
-
-If a session used plan mode (ExitPlanMode was called and the plan approved), the **final action of the session** must be an update log in `docs/Updates/`.
-
-Filename format: `<branch-name>_<YYYY-MM-DD>_<HH-MM>.md` (e.g. `feature-engine-v4_2026-04-07_14-30.md`). Date and time = moment of commit. The file must contain:
-- Header: branch, date (UTC), commit sha, parent commit
-- Context: why the change was made, what gap/task it closes
-- Approach: what changed and why this way
-- Files changed: a table
-- Verification: how it was checked locally + what to watch in prod
-- Known gaps / caveats: what is NOT closed, deferred nuances
-
-This rule applies whenever plan mode was used, regardless of size. Even a small change → still a log. Format is established; see recent files in `docs/Updates/` for the template.
-
-## Experts — when to use them
-
-The codebase is covered by **6 vertical experts**. Each owns one business domain across all hexagonal layers. They give grounded answers with `file:line` refs faster than ad-hoc grep, plus they auto-route to other experts when an answer crosses domains.
-
-**Routing — pick an expert FIRST, then read code only if the expert points you there:**
-
-| User question is about… | Use this expert |
+| Question is about… | Ask |
 |---|---|
-| Catalog ingest, harvester, discovery agent, mapping artifact, merge_apply, match cascade, tier1/tier2 attributes, catalog migrations, Shopify integration, V4 chat read of catalog, master_products / master_variants / listings | `/experts:catalog:question` |
-| Engine ops (insert/update/delete/move/replace), presets, formation tree, atom binding, constraints, TreeMap, $ref bindings, replicate / GroupID, sections, tree IDs | `/experts:engine-v4:question` |
-| Pipeline orchestration, Agent1 NLU, Agent2 rendering, system prompts, tool registry, prompt caching, span tracing, anthropic client, OpenAI embeddings, conversation history, retention | `/experts:pipeline-agents:question` |
-| Chat widget, Shadow DOM, FormationRenderer modes, AtomV2Renderer, fillFormation (instant expand), sessionCache, ChatPanel, navigation history, cart/liked views, embed `<script>`, IIFE bundle | `/experts:widget:question` |
-| Auth (email/password, magic link, 2FA, Google OAuth, telegram, invitations, sessions), billing, KeepstarCanvas (DRAFT/PUBLISHED), middleware (auth/api-key/internal-key), admin SPA, Resend mailer | `/experts:admin:question` |
-| Curator standalone service, MergeProxy → admin internal endpoints, candidates queue, junk classification, audit log, tenants dashboard, master catalog browse, PromoteAttribute (ALTER TABLE) | `/experts:curator:question` |
+| Catalog ingest, harvester, discovery agent, mapping artifact, merge_apply, Shopify integration, master_products / master_variants / master_cosmetics, V4 chat catalog read | `/experts:catalog:question` |
+| V5 scene-graph engine: 14 node types, 5 ops, presets, binding, TreeMap, `$ref` resolution | `/experts:engine-v5:question` |
+| V5 pipeline: Agent1/Agent2, prompts, tools, prompt caching, span tracing, anthropic adapter | `/experts:pipeline-agents:question` |
+| V5 widget frontend: Shadow DOM, SceneGraphRenderer, NodeRenderer, action dispatch, fillTemplate | `/experts:widget:question` |
+| Auth, billing, KeepstarCanvas, admin SPA, Resend/Google/Telegram/TOTP adapters | `/experts:admin:question` |
+| Curator service: candidate queues, junk, audit, tenants dashboard, master catalog browse, MergeProxy | `/experts:curator:question` |
 
-**Default behaviour**: when a user asks a question about ANY of the above areas, your first action should be the matching `/experts:<X>:question`, NOT a grep / Read. The expert will tell you which file to read if it doesn't already know.
+Reach for an expert BEFORE grep / Read. The expert returns `file:line`
+refs and routes to a related expert when the answer crosses domains.
 
-**When to call self-improve manually:**
-- After a big refactor in one domain → `/experts:<X>:self-improve true`
-- Before a heavy session in a domain (so context is fresh) → same
-- Multiple domains touched at once → `/sync-experts --auto` (selective by diff) or `/sync-experts --all`
+## Experts cycle (act → learn → reuse)
 
-**Auto-sync at session close:**
-- A `SessionEnd` hook spawns a headless `claude --print "/sync-experts --auto"` in a fresh context
-- It diffs your work since `origin/main` + working tree, maps changed files to affected experts via `_meta.yaml`, refreshes only those
-- Log: `.claude/.last_sync.log`. Lock: `.claude/.sync.lock.d/` (atomic mkdir).
-- Skips when repo is fully clean or `reason == "clear"`
+- After every session close, a `SessionEnd` hook spawns a headless
+  `claude --print "/sync-experts --auto"` that diffs work since
+  `origin/main`, maps changed files to experts via `_meta.yaml`, and
+  refreshes only affected `expertise.yaml` files.
+- Manual refresh: `/experts:<name>:self-improve true` or
+  `/sync-experts --all`.
+- Full system docs: `.claude/commands/experts/README.md`.
 
-**Full system docs**: `.claude/commands/experts/README.md` (architecture, file layout, how to add a new expert).
+## Dev essentials
 
-## Documentation
+| Service | Path | Local port | Prod |
+|---|---|---|---|
+| V5 chat backend (production) | `project_v5/backend/` | 8084 | `v5-engine-production.up.railway.app` |
+| V5 widget | `project_v5/frontend/` | 5173 | served by V5 backend |
+| Admin backend | `project_admin/backend/` | 8081 | `admin-production-4ae4.up.railway.app` |
+| Admin frontend | `project_admin/frontend/` | 5174 | (served by admin) |
+| Curator | `curator/` | 8082 (separate) | `curator-production-46d7.up.railway.app` |
 
-- `.claude/commands/experts/README.md` — expert system (what / how / adding new ones)
-- `docs/Updates/` — V4 session dev logs (most recent state, by date)
-- `docs/PRE_LAUNCH_TASKS.md` — pre-release task tracker (waves B2/B3/B4/B7/AD1/...)
-- `docs/CATALOG_GAPS.md` — live catalog gap tracker
-- `docs/LAUNCH_ROADMAP.md` — launch roadmap (phases 1-7)
-- `docs/archive/` — old specs (ARCHITECTURE, VISUAL_ASSEMBLY_ENGINE, LAYOUT_ENGINE_SPEC, GLOSSARY, SPEC_TWO_AGENT_PIPELINE, etc.)
+- Run everything: `scripts/start_all.sh` (stop: `stop_all.sh`).
+- `psql`: `/opt/homebrew/Cellar/libpq/18.1_1/bin/psql`.
+- DB: shared Neon Postgres. `DATABASE_URL` in `project_v4/.env` works for all services.
+- Tests: `go test ./...` in each backend; `npm test` in each frontend.
+
+## Project-specific rules
+
+1. **Plan-mode → mandatory update log.** If `ExitPlanMode` was called
+   and the plan approved, the final action of the session is
+   `docs/Updates/<branch>_<YYYY-MM-DD>_<HH-MM>.md` with: context,
+   approach, files changed, verification, known gaps. Even small
+   changes — still a log.
+2. **Time estimates in minutes, not sessions.** Concrete coding tasks
+   are measured in minutes. «Session / hour» framing inflates ~10×.
+3. **Theme — no purple.** Brand is light blue `#5BA4D9` + orange
+   `#F0924A`. Strong aversion to purple anywhere.
+4. **User-facing text in English only.** Every rendered string on
+   landing/product/modals is English regardless of chat language.
+   Dev docs (CLAUDE.md, READMEs, expert YAMLs) also English. Chat
+   conversation with Vlad — Russian.
+5. **Trackers:** `docs/CATALOG_GAPS.md` (catalog pre-launch gaps,
+   live), `docs/v5-known-gaps.md` (V5 A-series gaps),
+   `docs/PRE_LAUNCH_TASKS.md` (everything else).
+
+## Working rules
+
+Bias: caution over speed on non-trivial work. Use judgment on trivial tasks.
+
+### 1. Think before coding
+State assumptions explicitly. If uncertain, ask rather than guess.
+Present multiple interpretations when ambiguity exists. Push back when
+a simpler approach exists. Stop when confused — name what's unclear.
+
+### 2. Simplicity first
+Minimum code that solves the problem. Nothing speculative. No features
+beyond what was asked. No abstractions for single-use code. Test: would
+a senior engineer say this is overcomplicated? If yes, simplify.
+
+### 3. Surgical changes
+Touch only what you must. Clean up only your own mess. Don't "improve"
+adjacent code, comments, or formatting. Don't refactor what isn't
+broken. Match existing style.
+
+### 4. Goal-driven execution
+Define success criteria. Loop until verified. Don't blindly follow
+steps — define success and iterate.
+
+### 5. Use the model only for judgment calls
+Use LLM for: classification, drafting, summarization, extraction.
+NOT for: routing, retries, deterministic transforms. If code can
+answer, code answers.
+
+### 6. Surface conflicts, don't average them
+If two patterns contradict, pick one (more recent / more tested).
+Explain why. Flag the other for cleanup. Don't blend conflicting
+patterns.
+
+### 7. Read before you write
+Before adding code, read exports, immediate callers, shared utilities.
+«Looks orthogonal» is dangerous. If unsure why code is structured
+a way, ask.
+
+### 8. Tests verify intent, not just behavior
+Tests must encode WHY behavior matters, not just WHAT. A test that
+can't fail when business logic changes is wrong.
+
+### 9. Checkpoint after every significant step
+Summarize what was done, what's verified, what's left. Don't continue
+from a state you can't describe back. If you lose track, stop and
+restate.
+
+### 10. Match the codebase's conventions, even if you disagree
+Conformance > taste inside the codebase. If you genuinely think a
+convention is harmful, surface it. Don't fork silently.
+
+### 11. Fail loud
+«Completed» is wrong if anything was skipped silently. «Tests pass»
+is wrong if any were skipped. Default to surfacing uncertainty, not
+hiding it.
+
+### 12. Stale notes — verify, don't trust
+This file, expert YAMLs, and `docs/` are point-in-time. Before acting
+on a claim about code (`file.go:123 does X`), check the current state.
+If a memory/expert says something specific exists, grep before
+recommending it.
+
+---
+
+*Working rules adapted from a CLAUDE.md template by @Mnilax.*
+
+## Pointers
+
+- `.claude/commands/experts/README.md` — expert system architecture
+- `docs/Updates/` — session logs (chronological)
+- `docs/catalog-audit-2026-05-07.md` — current catalog state snapshot
+- `docs/v5-engine-plan.md` — V5 strategic plan + remaining work
+- `docs/v5-known-gaps.md` — V5 A-series gap registry
 - `AI_docs/Manifesto.md` — product vision
 - `AI_docs/ARCHITECTURE_RULES.md` — architectural principles

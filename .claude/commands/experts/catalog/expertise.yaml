@@ -10,9 +10,9 @@ overview:
     go_module: "keepstar-admin"
     purpose: "Ingest from sources (Shopify/CSV/manual), discover schema via LLM, build mapping artifact, link listings to master, manage candidates queue"
   read_side:
-    path: "project_v4/backend/internal/adapters/postgres/postgres_catalog.go"
-    go_module: "keepstar_v4"
-    purpose: "Serve catalog reads to chat pipeline (ListProducts, VectorSearch, GetMasterProduct, GenerateCatalogDigest)"
+    path: "project_v5/backend/internal/adapters/postgres/postgres_catalog.go (+ postgres_catalog_vector.go)"
+    go_module: "keepstar-v5"
+    purpose: "Serve catalog reads to V5 chat pipeline (ListProducts, VectorSearch, GetMasterProduct, BuildCatalogDigest)"
   curator_side:
     path: "curator/backend/internal/adapters/postgres.go"
     purpose: "Read-only browse + candidate promotion (ALTER TABLE for tier1 promotion). See `curator` expert."
@@ -115,31 +115,6 @@ write_side_pipeline:
     6_curator_approval:
       ownership: "Curator service — see `curator` expert"
       flow: "Operator sees MergeProposal[] in MergeReportPage, approves/rejects per-listing, applies via curator-frontend → curator-backend → MergeProxy → admin's MergeApplyUseCase.Apply"
-
-read_side_v4:
-  file: "project_v4/backend/internal/adapters/postgres/postgres_catalog.go"
-  size_loc: 1639
-  type: "CatalogAdapter (implements CatalogPort + EmbeddingTargetPort + CatalogDigestPort)"
-  read_methods:
-    - "GetTenantBySlug(ctx, slug) — dispatch by slug header"
-    - "GetCategories(ctx) — full category tree"
-    - "GetMasterProduct(ctx, id) — master+listings join; tier2 attributes inlined"
-    - "ListProducts(ctx, tenantID, filter) — keyword + filter (category/brand/price/attrs); ProductFilter conditions AND-combined; multi-word search splits to OR-of-words ILIKE"
-    - "GetProduct(ctx, tenantID, productID) — single listing"
-    - "VectorSearch(ctx, tenantID, embedding, limit, filter) — pgvector cosine on master_products.embedding; optional VectorFilter for brand/category pre-filter"
-    - "GetStock(ctx, tenantID, productID)"
-    - "ListServices / GetService / VectorSearchServices — services parallel"
-  embedding_methods:
-    - "SeedEmbedding(masterProductID, embedding) — write 384-dim vector"
-    - "GetMasterProductsWithoutEmbedding(ctx) — for batch backfill cron"
-    - "SeedServiceEmbedding / GetMasterServicesWithoutEmbedding"
-  digest:
-    methods: ["GenerateCatalogDigest(tenantID)", "SaveCatalogDigest(tenantID, digest)", "GetCatalogDigest(tenantID)"]
-    purpose: "Pre-aggregated catalog summary (categories list, brands list, price ranges, attribute cardinality) used by Agent1 system prompt"
-    storage: "tenants.catalog_digest JSONB column"
-  tier2_in_reads:
-    behavior: "GetMasterProduct + ListProducts + VectorSearch include tier2 JSONB inline (recent — 2026-04-29 commit 8a3357d, B7 prep)"
-    fallback: "If tier2 NULL or missing key → falls back to product.attributes (legacy tier1 path)"
 
 shopify_integration:
   file: "project_admin/backend/internal/adapters/shopify/client.go"
@@ -248,8 +223,8 @@ gotchas:
 
 related_experts:
   - "admin — owns the write-side handlers, auth, billing. Catalog is the single biggest concern in admin but admin has more (auth, settings, billing). See `admin` expert."
-  - "pipeline-agents — V4 chat consumes catalog via catalog_search tool; tenant catalog digest is read by Agent1 system prompt. Field renames cascade."
-  - "engine-v4 — formation atoms bound to catalog field names (price, brand, name); tier2 fields are the B7 future for role-based binding via field_definitions."
+  - "pipeline-agents — chat consumes catalog via catalog_search tool; tenant catalog digest is read by Agent1 system prompt. Field renames cascade."
+  - "engine-v5 — scene-graph atoms bound to catalog field names via fieldBinding; tier2 fields flow through master_products → atom.fieldBinding."
   - "curator — read-only browse + candidate promotion. Cross-domain SQL identifier safety (validIdent) is curator's responsibility."
 
 active_workstreams:

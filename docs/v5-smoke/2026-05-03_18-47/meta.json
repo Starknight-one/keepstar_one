@@ -1,0 +1,10 @@
+{
+  "v5_url": "https://v5-engine-production.up.railway.app",
+  "v4_url": "https://v4-engine-production.up.railway.app",
+  "tenant": "hey-babes-cosmetics",
+  "started_at": "2026-05-03T18:47:03Z",
+  "prompts_file": "scripts/v5-smoke-prompts.json",
+  "limit": 0,
+  "v5_session_id": "63ebbebb-224e-4f90-a737-1bbaa15a0782",
+  "v4_session_id": "6e31783a-5dfd-4ec2-a299-72b1e6504f22"
+}

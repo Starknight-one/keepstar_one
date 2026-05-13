@@ -27,9 +27,8 @@ node_modules/
 
 # Build
 dist/
-project/backend/server
-project/backend/bin/
-project/backend/bootstrap
+project_v5/backend/server
+project_v5/backend/bin/
 project_admin/backend/server
 project_admin/backend/crawler
 project_admin/backend/dump-bulk-jsonl
@@ -43,6 +42,9 @@ project_admin/backend/run-merge-apply
 project_admin/backend/bulk-dump-*.jsonl
 curator/backend/server
 project_admin/Crawler_results/
-project_v4/backend/bin/
-project_v4/backend/data/
-project_v4/backend/server
+
+# V5 smoke per-prompt JSON dumps — kept locally for review, not in git.
+# summary.md / prompts.json / meta.json ARE committed. The pattern is
+# p<NN>.* (p01.v5.json, p23.v4.trace.json) — using [0-9] to keep
+# prompts.json itself committed.
+docs/v5-smoke/**/p[0-9]*.json

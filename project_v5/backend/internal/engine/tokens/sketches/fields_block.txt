@@ -1,0 +1,17 @@
+<fields entity="product">
+images         image/url       label="Images"          samples=["https://cdn.example/p1.jpg","https://cdn.example/p2.jpg"]
+name           text/string     label="Name"            samples=["Glow Serum","Hydration Mist","Volumizing Mascara"]
+description    text/string     label="Description"     samples=["A lightweight serum...","Daily mist for...","Lash-volumizing formula..."]
+brand          text/string     label="Brand"           samples=["Acme","HeyBabes","NudeLab"]
+price          number/currency label="Price" unit="USD" samples=[29.99,18.50,42.00]
+priceFormatted text/string     label="Price (display)" samples=["$29.99","$18.50","$42.00"]
+rating         number/float    label="Rating"          samples=[4.5,4.7,4.2]
+stockQuantity  number/int      label="Stock"           samples=[120,45,8]
+sku            text/string     label="SKU"             samples=["GS-001","HM-014","VM-220"]
+category       text/string     label="Category"        samples=["serum","mist","mascara"]
+tags           text/array      label="Tags"            samples=[["new","vegan"],["bestseller"],["organic"]]
+size           text/string     label="Size"            samples=["30ml","100ml","8g"]
+skinType       text/array      label="Skin type"       samples=[["dry","sensitive"],["all"],["oily"]]
+concern        text/array      label="Concern"         samples=[["dryness"],["dehydration"],["volume"]]
+keyIngredients text/array      label="Key ingredients" samples=[["hyaluronic acid"],["aloe","chamomile"],["castor oil"]]
+</fields>

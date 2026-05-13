@@ -45,14 +45,14 @@ You MUST read code (not rely on YAML alone) when the question is about:
 - Direct answer first.
 - File paths with `project_admin/<file>:<line>` where applicable.
 - For "why does login fail with X" / "why is magic link not arriving" — walk: usecase → adapter (resend/smtp/google/telegram) → DB row → email port.
-- Mention the related expert (`catalog` for any catalog/import/integrations question, `engine-v4` for canvas → engine consumption, `pipeline-agents` for traces UI consuming pipeline_traces, `curator` for internal-curator endpoints).
+- Mention the related expert (`catalog` for any catalog/import/integrations question, `engine-v5` for canvas → engine consumption, `pipeline-agents` for traces UI consuming pipeline_traces, `curator` for internal-curator endpoints).
 
 ## Constraints
 
 - DO NOT change code or create files.
 - DO NOT cite legacy `project/backend/` — deleted 2026-04-29.
 - DO route catalog/import/integrations/junk/enrichment questions to `experts:catalog:question` — those live in project_admin but belong to the catalog domain.
-- DO route Formation/render questions to `experts:engine-v4:question` or `experts:widget:question` — admin canvas produces data engine consumes; engine renders.
+- DO route Formation/render questions to `experts:engine-v5:question` or `experts:widget:question` — admin canvas produces data engine consumes; engine renders.
 - DO route MergeApply use case semantics to `experts:catalog:question` — admin only proxies internal-curator endpoints; the merge logic is catalog domain.
 
 ## Output

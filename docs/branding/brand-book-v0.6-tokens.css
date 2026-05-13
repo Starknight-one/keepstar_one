@@ -1,0 +1,53 @@
+/*
+ * Keepstar Brand Book v0.6 — extracted reference
+ * Source: commit cafa5d7 (Keepstar_one_landing/src/index.css)
+ * Date saved: 2026-05-13
+ *
+ * This file is NOT loaded by any app. It is a preserved reference of the
+ * brand palette + notched-corner utilities introduced by brand book v0.6,
+ * kept here so the tokens are not lost when the landing was rolled back
+ * to its pre-brand-book state.
+ *
+ * To apply: copy the :root block into the consuming app's global CSS,
+ * then use the var names below. Notch utilities are drop-in classes.
+ */
+
+:root {
+  /* Brand tokens — Keepstar v0.6 */
+  --deep-space: #0B1B2E;
+  --sky: #5BA3D0;
+  --sky-deep: #185FA5;
+  --sky-light: #85B7EB;
+  --horizon: #F5A04A;
+  --ignite: #E85D2F;
+  --bg: #FFFFFF;
+  --bg-soft: #FAFAF8;
+  --muted: #5F5E5A;
+  --border: rgba(11, 27, 46, 0.1);
+  --border-strong: rgba(11, 27, 46, 0.18);
+}
+
+/* Notched corners — brand signature */
+.notch-sm {
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
+}
+.notch-md {
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+}
+.notch-lg {
+  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+}
+
+/* Scanlines */
+.scanline-sky {
+  height: 1px;
+  background: repeating-linear-gradient(90deg, #5BA3D0 0, #5BA3D0 3px, transparent 3px, transparent 6px);
+  opacity: 0.5;
+}
+.scanline-muted {
+  height: 1px;
+  background: repeating-linear-gradient(90deg, #5F5E5A 0, #5F5E5A 3px, transparent 3px, transparent 6px);
+  opacity: 0.3;
+}
+
+/* Fonts used by brand book v0.6: Inter (body), JetBrains Mono (mono accents). */

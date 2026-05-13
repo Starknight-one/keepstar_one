@@ -1,0 +1,33 @@
+{
+  "name": "visual_assembly",
+  "description": "Build or modify a scene-graph Document. Pick a published preset by name, set replicate count for fan-out across data, optionally layer ops on top. Engine runs Materialise → ExpandReplicates → ResolveAndInline → BindData and writes the result to current.template. Reply only by calling this tool — never output text.",
+  "input_schema": {
+    "type": "object",
+    "required": ["preset"],
+    "properties": {
+      "preset": {
+        "type": "string",
+        "description": "Published preset name for this tenant. See the PRESETS section of the system prompt for the catalog. Required."
+      },
+      "replicate": {
+        "type": "integer",
+        "description": "How many clones to fan out for the replicate-marked subtree (one per data record from state.current.data). 0 or omitted = no fan-out (single instance). Use the count of products you want to show."
+      },
+      "ops": {
+        "type": "array",
+        "description": "Operations to layer on top of the preset (insert/update/delete/move/override). Target nodes by id from the tree_map. Each op object: {op, target?, parent?, ref?, props?}. Optional — leave empty for preset-only rendering.",
+        "items": {
+          "type": "object",
+          "required": ["op"],
+          "properties": {
+            "op":     {"type": "string", "enum": ["insert", "update", "delete", "move", "override"]},
+            "target": {"type": "string", "description": "Node id to operate on (from tree_map.instances[].atoms[].id)."},
+            "parent": {"type": "string", "description": "Parent id for insert / move ops."},
+            "ref":    {"type": "string", "description": "Local binding name for chaining ops (referenced as $ref in subsequent ops)."},
+            "props":  {"type": "object", "description": "Properties to set on the node. Merged in update ops. Common keys: type, fieldBinding, content, format, wrapper, textStyle, layout, slot."}
+          }
+        }
+      }
+    }
+  }
+}

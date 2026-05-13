@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keepstar V5 — embed test</title>
+  </head>
+  <body>
+    <h1>Embed test</h1>
+    <p>This page mimics how a merchant embeds the V5 widget on their site.
+       The script tag below loads <code>widget.js</code> from the same
+       origin and lets <code>widget.jsx</code> auto-derive the API base
+       URL from <code>script.src.origin</code>. Drop in <code>data-api</code>
+       to override (e.g. when serving this HTML from a 3rd-party host).</p>
+
+    <script src="/widget.js"
+            data-tenant="hey-babes-cosmetics"></script>
+  </body>
+</html>

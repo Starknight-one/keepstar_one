@@ -23,7 +23,7 @@ export default function Footer() {
       <div className="footer-top">
         <div className="footer-brand">
           <Link to="/" className="logo-wrap">
-            <div className="logo-icon"></div>
+            <img src="/logo-mark-e.svg" alt="Keepstar" className="logo-icon" />
             <span className="logo-text">Keepstar One</span>
           </Link>
           <p className="footer-brand-desc">
