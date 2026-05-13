@@ -1,21 +1,20 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import AuthShell from '../layout/AuthShell.jsx'
 import PillButton from '../layout/PillButton.jsx'
 import { useAuth } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
-import { useTelegramWidget } from '../hooks/useTelegramWidget.js'
 
 export default function SignInPage() {
-  const { login, adoptSession } = useAuth()
+  const { login } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [flags, setFlags] = useState({ google: false, email: false, telegram: { enabled: false, bot_username: '' } })
+  const [flags, setFlags] = useState({ google: false, email: false, telegram: { enabled: false } })
   const [googleLoading, setGoogleLoading] = useState(false)
-  const telegramRef = useRef(null)
+  const [telegramLoading, setTelegramLoading] = useState(false)
 
   useEffect(() => {
     authApi.config().then(setFlags).catch(() => {})
@@ -33,23 +32,17 @@ export default function SignInPage() {
     }
   }
 
-  const handleTelegramAuth = useCallback(async (tgUser) => {
+  async function handleTelegram() {
     setError('')
+    setTelegramLoading(true)
     try {
-      const data = await authApi.telegramCallback(tgUser)
-      adoptSession(data)
-      navigate('/auth/pick-workspace')
+      const { url } = await authApi.telegramStart()
+      window.location.href = url
     } catch (err) {
-      setError(err.message || 'Telegram sign-in failed')
+      setError(err.message || 'Failed to start Telegram sign-in')
+      setTelegramLoading(false)
     }
-  }, [adoptSession, navigate])
-
-  useTelegramWidget({
-    containerRef: telegramRef,
-    botUsername: flags.telegram.bot_username,
-    onAuth: handleTelegramAuth,
-    enabled: !!flags.telegram.enabled,
-  })
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -83,7 +76,9 @@ export default function SignInPage() {
               </PillButton>
             )}
             {flags.telegram.enabled && (
-              <div ref={telegramRef} className="auth-telegram-widget" />
+              <PillButton variant="telegram" block onClick={handleTelegram} disabled={telegramLoading}>
+                {telegramLoading ? 'Redirecting\u2026' : 'Continue with Telegram'}
+              </PillButton>
             )}
           </div>
           <div className="auth-divider">or</div>

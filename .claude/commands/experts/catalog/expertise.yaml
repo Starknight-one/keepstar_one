@@ -21,7 +21,7 @@ overview:
 schema:
   schemas: ["catalog.*"]
   core_tables:
-    catalog_tenants: "tenants {id, slug, name, type, settings JSONB, created_at, updated_at}"
+    catalog_tenants: "tenants {id, slug, name, type, settings JSONB, created_at, updated_at, deleted_at TIMESTAMPTZ NULL} — soft-delete added 2026-05-13; NULL=active, non-null=deleted orphan"
     catalog_categories: "categories {id, name, slug, parent_id (self-ref), created_at}"
     catalog_master_products: |
       master_products {id, sku UNIQUE, name, description, brand, category_id,
@@ -54,6 +54,7 @@ schema:
     - "B-tree on products.tenant_id"
     - "B-tree on products.master_product_id"
     - "Unique on master_products.sku"
+    - "Partial B-tree idx_catalog_tenants_deleted_at ON tenants(deleted_at) WHERE deleted_at IS NOT NULL (2026-05-13)"
   pgvector:
     extension: "CREATE EXTENSION IF NOT EXISTS vector"
     dim: 384
@@ -132,6 +133,9 @@ shopify_integration:
     - "MetafieldDefinitions — schema discovery"
     - "NavigationMenu — for category extraction"
     - "ShopReferences — references for canonicalizing product variants"
+  oauth_callback:
+    complete_oauth: "CompleteOAuth(ctx, shop, code, state, q) → (integration, flowKind, pendingToken, error) — 4 return values since 2026-05-13; pendingToken non-empty when shop has no owner email (shop_pending_link flow)"
+    pending_link_redirect: "When pendingToken != '' → /auth/install-complete?shop=...&pending_link=<token>; otherwise /auth/install-complete?shop=..."
   bulk:
     - "RunBulkProductsQuery — async GraphQL bulk operation; fetches FULL catalog as JSONL"
     - "GetCurrentBulkOperation — poll status (CREATED/RUNNING/COMPLETED/FAILED)"
@@ -169,9 +173,16 @@ usecases_inventory:
     - "merge_apply_d3.go — Phase D3 enhancements (deduplication, batch reporting)"
   enrichment:
     - "enrichment.go (509) — LLM-driven master product enrichment (PIM fields, descriptions)"
+  auth_dedup_2026_05_13:
+    - "auth_magic_link.go: IssuePendingShopLink(ctx, tenantID, shopDomain) → token — creates shop_pending_link challenge (24h TTL) for shops with no owner email"
+    - "auth_magic_link.go: ConsumePendingShopLink(ctx, code, userID) → tenantID — single-use; attaches orphan tenant to authenticated user"
+    - "auth_magic_link.go: ProvisionShopOwner → calls SoftDeleteEmptyOrphanTenants to clean up blank auto-provisioned workspaces after email-merge"
   basic_crud:
     - "products.go — listing CRUD"
     - "stock.go — stock_quantity updates"
+  user_tenants_repo:
+    - "ListForUser(ctx, userID) — now filters AND t.deleted_at IS NULL"
+    - "SoftDeleteEmptyOrphanTenants(ctx, userID, preserveTenantID) → []deletedIDs — atomically finds owner tenants with zero rows in (tenant_integrations, products, tenant_presets, tenant_components, tenant_design_tokens) and soft-deletes them + removes memberships in a single TX (MVCC-safe)"
 
 http_routes:
   ingest_admin:
@@ -193,6 +204,8 @@ http_routes:
     - "GET  /admin/api/internal/curator/tenants/{id}/merge-reports — list reports"
     - "GET  /admin/api/internal/curator/merge-reports/{id} — single report"
     - "Auth: X-Internal-Key + X-Curator-User (set by curator MergeProxy)"
+  auth_shopify_pending:
+    - "POST /admin/api/auth/shop-pending-link/consume (auth-required) → {tenant_id} — consume shop_pending_link token; attaches orphan Shopify tenant to signed-in user (2026-05-13)"
   public_v1:
     - "GET /api/v1/products?... — public catalog API for tenants (X-API-Key auth)"
     - "GET /api/v1/categories"
@@ -201,6 +214,7 @@ http_routes:
     - "GET /api/v1/catalog/* — V4 catalog handler (handler_catalog.go) consumed by Agent1's catalog_search tool"
 
 invariants:
+  - "catalog.tenants soft-delete (2026-05-13): deleted_at IS NULL = active. ALL queries joining or filtering catalog.tenants must include this predicate. GetTenantByID and ListForUser already updated; raw SQL added without it exposes deleted orphan workspaces."
   - "Schema in catalog.* is owned by admin migrations — V4 is a READER. New tables/columns added via project_admin migrations only."
   - "products.master_product_id is NULLable — un-linked listings exist legitimately (pre-merge state)."
   - "VectorSearch HNSW index requires non-NULL embedding — listings without embedding are invisible to vector search (SQL keyword still works)."
@@ -220,6 +234,9 @@ gotchas:
   - "Shopify bulk operation is async — RunBulkProductsQuery returns immediately, harvester polls GetCurrentBulkOperation until COMPLETED. State machine: CREATED → RUNNING → COMPLETED|FAILED|CANCELED."
   - "raw_payload JSONB on products is the source-of-truth for ingest — re-running harvester re-parses raw_payload. Don't drop it after harvest; it's the rollback surface."
   - "Tier1 promotion (curator's PromoteAttribute) is irreversible at the schema level — column added stays. Dismissing a promoted candidate doesn't drop the column."
+  - "SoftDeleteEmptyOrphanTenants conservative heuristic: empty = zero rows in ALL 5 tables (tenant_integrations, products, tenant_presets, tenant_components, tenant_design_tokens). If a user visited canvas without saving, the tenant survives. Runs in a single TX for MVCC safety."
+  - "auth_challenges.kind constraint renamed to auth_challenges_kind_check_v2 (migration 2026-05-13) — adds 'shop_pending_link'. Old constraint name auth_challenges_kind_check dropped. Inserting the old kind CHECK name in any migration will conflict."
+  - "CompleteOAuth (shopify_v2.go) now returns 4 values: (integration, flowKind, pendingToken, error). Any call site that destructured 3 values will fail to compile."
 
 related_experts:
   - "admin — owns the write-side handlers, auth, billing. Catalog is the single biggest concern in admin but admin has more (auth, settings, billing). See `admin` expert."
@@ -230,16 +247,19 @@ related_experts:
 active_workstreams:
   tracker: "docs/CATALOG_GAPS.md (live source of truth for phase 1 catalog finalize) + docs/PRE_LAUNCH_TASKS.md"
   recent_milestones:
+    - "Auth dedup / orphan cleanup (2026-05-13): catalog.tenants.deleted_at soft-delete, SoftDeleteEmptyOrphanTenants, shop_pending_link challenge kind, CompleteOAuth 4-return-value"
     - "B7 prep — V4 chat reads master_products.tier2 (2026-04-29, commit 8a3357d)"
     - "extractTier2 transforms (2026-04-29, commit 4e1c8d1)"
     - "M1-M12 admin catalog implementation (2026-04-26)"
     - "Phase D3 merge dedup + reports (2026-04-28)"
     - "Curator-driven pivot Этап 0-3 (2026-04-27)"
   hot_files:
-    - "project_v4/.../postgres_catalog.go (1639 LOC) — V4 read-side; split candidate (search/master/digest/embedding) per experts_plan_2026-04-29.md"
     - "project_admin/.../shopify/client.go (1302 LOC) — Shopify API; split candidate (products/orders/webhooks/oauth)"
     - "project_admin/.../catalog_adapter.go (1293 LOC) — admin write-side DB; split candidate (master/listings/categories/proposals)"
+    - "project_admin/.../usecases/shopify_v2.go (801 LOC) — Shopify v2 install/connect flow incl. CompleteOAuth, pending-link logic"
     - "project_admin/.../merge_apply.go (804 LOC)"
+    - "project_admin/.../catalog_migrations.go (752 LOC)"
     - "project_admin/.../harvester_lite.go (736 LOC)"
-    - "project_admin/.../discovery_tools.go (726 LOC), catalog_migrations.go (726 LOC)"
+    - "project_admin/.../discovery_tools.go (726 LOC)"
+    - "project_v5/.../postgres_catalog.go (705 LOC) — V5 read-side; BuildCatalogDigest + mergeProductWithMaster added 2026-05-13"
     - "project_admin/.../discovery_agent.go (685 LOC)"

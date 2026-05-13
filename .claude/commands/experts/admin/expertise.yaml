@@ -24,7 +24,7 @@ overview:
 architecture:
   pattern: "Hexagonal — proper ports + adapters, multiple usecase packages, ~30 handlers"
   backend_structure:
-    cmd_server: "project_admin/backend/cmd/server/main.go (798 LOC) — DI bootstrap, all routes"
+    cmd_server: "project_admin/backend/cmd/server/main.go (832 LOC) — DI bootstrap, all routes"
     cmd_crawler: "project_admin/backend/cmd/crawler/main.go (608 LOC) — JSON-LD scraper for catalog seed (catalog expert covers details)"
     domain: "project_admin/backend/internal/domain/ — AdminUser, Tenant, Membership, Invitation, Session, Challenge, MagicLink, Invoice, Preferences, TenantPreset, TenantComponent, DesignToken, BillingOverview, AuditEntry"
     ports: "project_admin/backend/internal/ports/ — AuthPort, SessionsPort, BillingPort, CanvasPort, AdminCatalogPort, etc."
@@ -58,13 +58,19 @@ auth:
       file: "internal/usecases/auth_google.go"
       adapter: "internal/adapters/google/ — Google OAuth2 client"
       flow: "Redirect → Google consent → callback with code → exchange for ID token → upsert user (link by email)"
+      auto_merge: "findOrCreate step 2 (2026-05-13): when google_sub not found but email exists, links sub + sets AuthResponse.LinkedFromEmail=user.Email. Frontend (OAuthLoadingPage) detects non-empty linked_from_email and redirects to /auth/pick-workspace?welcome_back=1&email=... for a 'Welcome back' banner."
     magic_link:
       file: "internal/usecases/auth_magic_link.go (MagicLinkUseCase)"
       methods:
         - "Issue(ctx, userID, email) — generate code, persist challenge row, send via email port (Resend/SMTP)"
-        - "ProvisionShopOwner(ctx, tenantID, email) — first-touch flow (Shopify install → owner email): create user if needed, attach to tenant, send magic link"
+        - "ProvisionShopOwner(ctx, tenantID, email) — first-touch flow (Shopify install → owner email): create user if needed, attach to tenant, send magic link. Now also calls SoftDeleteEmptyOrphanTenants to prune blank auto-provisioned workspaces (best-effort, never aborts install). Called async in a goroutine inside the install hook so OAuth callback latency is unaffected."
         - "Consume(ctx, code, ua, ip) → (TokenPair, AdminUser) — validates code, issues tokens"
-      tables: ["admin.challenges (with type='magic_link')"]
+        - "IssuePendingShopLink(ctx, tenantID, shopDomain) → token (2026-05-13) — creates shop_pending_link challenge (24h TTL) when shop has no owner email; meta carries tenant_id + shop_domain"
+        - "ConsumePendingShopLink(ctx, code, userID) → tenantID (2026-05-13) — single-use; validates token, grants membership, returns tenant_id for workspace switch"
+      tables: ["admin.challenges (with kind='magic_link' or kind='shop_pending_link')"]
+      challenge_kinds:
+        - "email_verify, password_reset, totp_setup, email_2fa, magic_link — existing"
+        - "shop_pending_link (2026-05-13) — ChallengeShopPendingLink in ports/challenge_port.go; CHECK constraint auth_challenges_kind_check_v2"
     password_reset:
       file: "internal/usecases/auth_password_reset.go"
       flow: "Email → challenge code → email link → submit new password → bcrypt hash → UPDATE"
@@ -87,6 +93,7 @@ auth:
       file: "internal/usecases/auth_tenants.go"
       ports: "UserTenantsPort (memberships)"
       methods: ["List user's tenants", "Switch active tenant", "Membership roles (owner/admin/operator)"]
+      soft_delete: "UserTenantsPort.SoftDeleteEmptyOrphanTenants(ctx, userID, preserveTenantID) → []deletedIDs — atomic TX; deletes owner tenants with zero rows across 5 content tables (tenant_integrations, products, tenant_presets, tenant_components, tenant_design_tokens). Called from ProvisionShopOwner after email-merge."
 
 middleware:
   files: ["middleware_auth.go", "middleware_auth_pre2fa.go", "middleware_apikey.go", "middleware_internal_key.go", "middleware_cors.go", "middleware_logging.go"]
@@ -108,6 +115,7 @@ routes_overview:
       - "GET  /auth/google/start, /auth/google/callback"
       - "POST /auth/telegram/callback"
     protected:
+      - "POST /admin/api/auth/shop-pending-link/consume (2026-05-13) — auth-required; body {token}; returns {tenant_id}; attaches orphan Shopify tenant to signed-in user"
       - "GET  /auth/me"
       - "POST /auth/logout"
       - "GET  /auth/sessions, DELETE /auth/sessions/{id}"
@@ -197,8 +205,11 @@ frontend_features:
   layout:
     purpose: "App shell, sidebar, header, route registration"
   auth:
-    pages: "Signup, Login, MagicLinkRequest, MagicLinkConsume, PasswordReset, 2FAVerify, GoogleCallback"
+    pages: "Signup, Login, MagicLinkRequest, MagicLinkConsume, PasswordReset, 2FAVerify, OAuthLoadingPage, InstallCompletePage, WorkspacePickerPage"
     flow: "On mount → GET /auth/me. 401 → render Login. Success → render Layout shell."
+    install_complete_page: "Two paths: (1) happy path (?shop=…) — magic link emailed, show 'check inbox'; (2) pending-link path (?pending_link=TOKEN&shop=…) — stashes token in sessionStorage under 'keepstar.pending_shop_link', shows 'sign in to attach store' UI"
+    workspace_picker_page: "On mount: reads pending token from sessionStorage → POST /auth/shop-pending-link/consume → removes token → lists tenants. Handles welcome_back=1&email=... query params from Google auto-merge to show banner."
+    oauth_loading_page: "Handles Google OAuth callback; on linked_from_email in response, redirects to /auth/pick-workspace?welcome_back=1&email=..."
   billing:
     pages: "BillingOverview, InvoicesList, PlanPicker, PreferencesForm"
   canvas:
@@ -241,7 +252,9 @@ invariants:
   - "Pre-2FA tokens MUST NOT pass middleware_auth — they only work through middleware_auth_pre2fa for 2FA verify endpoints."
   - "OAuth state param is generated server-side per request (CSRF protection); persisted to admin.oauth_login_states with TTL."
   - "Magic link codes are SHA-256 hashed at rest; plaintext sent only in email body."
-  - "ProvisionShopOwner is the only auth path that creates a user without an interactive signup — Shopify install treats the shop owner email as authoritative."
+  - "ProvisionShopOwner is the only auth path that creates a user without an interactive signup — Shopify install treats the shop owner email as authoritative. When shop has no email OR GetShopInfo fails, IssuePendingShopLink is called instead and the token returned to the frontend via query param."
+  - "shop_pending_link tokens live in sessionStorage (not URL) between InstallCompletePage and WorkspacePickerPage. If the merchant clears sessionStorage or opens a different browser tab for sign-in, the orphan tenant will NOT be auto-attached. Token still valid for 24h — merchant can re-trigger via re-install."
+  - "AuthResponse.LinkedFromEmail is only populated for Google OAuth step-2 auto-merge (existing email + new google_sub). Other auth paths (Telegram, email+pwd, magic-link) never set it even if they similarly encounter a pre-existing account."
   - "Canvas presets in DRAFT status are tenant-private; V4 reads only PUBLISHED. Forking a published preset creates a new DRAFT row (no in-place edit of live)."
   - "Memberships (UserTenantsPort) gate cross-tenant access — JWT carries UserID, but every protected handler must check membership for the requested TenantID before reading/writing."
   - "Internal-key endpoints (X-Internal-Key) MUST be unreachable without the header — accidentally allowing them through middleware_auth = privilege escalation."
@@ -258,6 +271,8 @@ gotchas:
   - "WIDGET_BASE_URL env value may lack `https://` prefix (current Admin Railway env has bare `v4-engine-production.up.railway.app`) — embed code becomes `<script src='v4-engine-production.../widget.js'>` without protocol; browsers may treat as relative."
   - "Internal-key middleware uses constant-time compare; using `==` would leak via timing. Verify on every new internal endpoint."
   - "auth_invitations.Accept does NOT auto-issue tokens — invitee must complete Login or magic_link.Consume separately. Frontend chains the two in one screen but it's two HTTP calls."
+  - "ProvisionShopOwner now fires in a goroutine (inside main.go install hook). OAuth callback returns before Resend email delivery completes. Errors in provisioning are logged (warn level) but never propagated to the merchant."
+  - "SoftDeleteEmptyOrphanTenants conservative heuristic: a tenant with any rows in tenant_integrations, products, tenant_presets, tenant_components, or tenant_design_tokens survives. A tenant where the user only opened canvas without saving stays (zero rows in all 5 tables = empty)."
 
 related_experts:
   - "catalog — owns all catalog/import/integrations/junk/enrichment usecases + handlers + adapters (catalog_adapter, shopify/client, harvester_lite, discovery_agent, merge_apply). Admin's catalog/ frontend feature is UI for catalog domain."
@@ -269,6 +284,7 @@ related_experts:
 active_workstreams:
   tracker: "docs/PRE_LAUNCH_TASKS.md (auth + admin sections), docs/CATALOG_GAPS.md (catalog UI in admin)"
   recent_milestones:
+    - "Auth dedup / Shopify pending-link flow (2026-05-13): IssuePendingShopLink, ConsumePendingShopLink, shop_pending_link challenge kind, InstallCompletePage two-path, WorkspacePickerPage consume, Google OAuth welcome-back banner, orphan tenant soft-delete"
     - "Magic-link race-fix (2026-04-29 commit 0fdaf61) — block email when newly-created user has no memberships"
     - "Resend HTTP adapter (2026-04-29 commit dab0629) — replaces SMTP that hangs on Railway"
     - "Shopify install + magic-link install flow (2026-04-29 commit 27f8a56)"
@@ -277,10 +293,11 @@ active_workstreams:
     - "Auth full stack — OAuth/2FA/sessions/workspaces/invites — DONE 2026-04-19/21"
   hot_files:
     - "shopify/client.go (1302 LOC) — owned by catalog expert; admin only via OAuth glue"
+    - "catalog_adapter.go (1293 LOC) — catalog domain"
     - "canvas_adapter.go (870 LOC) — split candidate when more design system features land"
+    - "cmd/server/main.go (832 LOC) — DI bootstrap with all routes; growing as features add. Split candidate by registering route groups."
     - "merge_apply.go (804 LOC) — catalog domain"
-    - "cmd/server/main.go (798 LOC) — DI bootstrap with all routes; growing as features add. Split candidate by registering route groups."
-    - "shopify_v2.go (786 LOC) — catalog domain (new install flow)"
+    - "shopify_v2.go (801 LOC) — catalog domain (install flow + CompleteOAuth 4-return)"
     - "CanvasPage.jsx (785 LOC) — frontend; growth signal as canvas matures"
+    - "catalog_migrations.go (752 LOC) — catalog domain"
     - "harvester_lite.go (736 LOC) — catalog domain"
-    - "discovery_tools.go (726 LOC) — catalog domain"

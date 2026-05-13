@@ -9,6 +9,7 @@ import PasswordChangedPage from './features/auth/pages/PasswordChangedPage.jsx'
 import VerifyEmailPage from './features/auth/pages/VerifyEmailPage.jsx'
 import SessionExpiredPage from './features/auth/pages/SessionExpiredPage.jsx'
 import OAuthLoadingPage from './features/auth/pages/OAuthLoadingPage.jsx'
+import TelegramCallbackPage from './features/auth/pages/TelegramCallbackPage.jsx'
 import MagicLinkPage from './features/auth/pages/MagicLinkPage.jsx'
 import InstallCompletePage from './features/auth/pages/InstallCompletePage.jsx'
 import AuthErrorPage from './features/auth/pages/AuthErrorPage.jsx'
@@ -55,6 +56,7 @@ export default function App() {
       <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
       <Route path="/auth/session-expired" element={<SessionExpiredPage />} />
       <Route path="/auth/google/callback" element={<OAuthLoadingPage />} />
+      <Route path="/auth/telegram/callback" element={<TelegramCallbackPage />} />
       <Route path="/auth/magic" element={<MagicLinkPage />} />
       <Route path="/auth/install-complete" element={<InstallCompletePage />} />
       <Route path="/auth/error" element={<AuthErrorPage />} />

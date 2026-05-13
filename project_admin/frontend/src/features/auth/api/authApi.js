@@ -9,6 +9,8 @@ export const authApi = {
   googleStart: () => api.post('/auth/google/start', {}),
   googleCallback: (code, state) => api.post('/auth/google/callback', { code, state }),
   telegramCallback: (payload) => api.post('/auth/telegram/callback', payload),
+  telegramStart: () => api.post('/auth/telegram/start', {}),
+  telegramOIDCCallback: (code, state) => api.post('/auth/telegram/oidc/callback', { code, state }),
   magicConsume: (code) => api.post('/auth/magic', { code }),
 
   // Pending-shop-link: Shopify install completed without an owner email, so

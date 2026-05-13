@@ -43,9 +43,11 @@ type Config struct {
 	GoogleOAuthClientSecret string
 	GoogleOAuthRedirectURL  string
 
-	// Telegram Login Widget
-	TelegramBotToken    string
-	TelegramBotUsername string
+	// Telegram — bot token used for both OIDC (client_secret) and legacy widget HMAC.
+	// TelegramOAuthRedirectURL defaults to AUTH_PUBLIC_BASE_URL+"/auth/telegram/callback".
+	TelegramBotToken          string
+	TelegramBotUsername       string
+	TelegramOAuthRedirectURL  string
 
 	// Auth lifetimes
 	AuthTOTPIssuer   string
@@ -91,8 +93,9 @@ func Load() *Config {
 		GoogleOAuthClientSecret: getEnv("GOOGLE_OAUTH_CLIENT_SECRET", ""),
 		GoogleOAuthRedirectURL:  getEnv("GOOGLE_OAUTH_REDIRECT_URL", ""),
 
-		TelegramBotToken:    getEnv("TELEGRAM_BOT_TOKEN", ""),
-		TelegramBotUsername: getEnv("TELEGRAM_BOT_USERNAME", ""),
+		TelegramBotToken:         getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramBotUsername:      getEnv("TELEGRAM_BOT_USERNAME", ""),
+		TelegramOAuthRedirectURL: getEnv("TELEGRAM_OAUTH_REDIRECT_URL", ""),
 
 		AuthTOTPIssuer:   getEnv("AUTH_TOTP_ISSUER", "Keepstar One"),
 		AuthAccessTTL:    getDurationEnv("AUTH_ACCESS_TTL", 15*time.Minute),
@@ -118,6 +121,15 @@ func (c *Config) HasGoogleOAuth() bool {
 }
 func (c *Config) HasTelegramLogin() bool {
 	return c.TelegramBotToken != "" && c.TelegramBotUsername != ""
+}
+func (c *Config) TelegramRedirectURL() string {
+	if c.TelegramOAuthRedirectURL != "" {
+		return c.TelegramOAuthRedirectURL
+	}
+	if c.AuthPublicBaseURL != "" {
+		return c.AuthPublicBaseURL + "/auth/telegram/callback"
+	}
+	return ""
 }
 
 func getEnv(key, defaultValue string) string {

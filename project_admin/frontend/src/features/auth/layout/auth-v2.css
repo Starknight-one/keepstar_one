@@ -207,6 +207,16 @@
   background: var(--av-accent-dark);
 }
 
+.pill-btn--telegram {
+  background: #fff;
+  color: #1A1A1A;
+  border-color: var(--av-border);
+}
+
+.pill-btn--telegram:hover:not(:disabled) {
+  border-color: #1A1A1A;
+}
+
 .pill-btn--block {
   width: 100%;
 }

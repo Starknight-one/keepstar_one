@@ -14,6 +14,7 @@ import (
 	"github.com/joho/godotenv"
 	anthropicAdapter "keepstar-admin/internal/adapters/anthropic"
 	googleAdapter "keepstar-admin/internal/adapters/google"
+	telegramAdapter "keepstar-admin/internal/adapters/telegram"
 	openaiAdapter "keepstar-admin/internal/adapters/openai"
 	"keepstar-admin/internal/adapters/postgres"
 	"keepstar-admin/internal/adapters/shopify"
@@ -186,12 +187,18 @@ func main() {
 
 	var telegramAuthUC *usecases.TelegramAuthUseCase
 	if cfg.HasTelegramLogin() {
+		var tgOIDC *telegramAdapter.OIDCClient
+		if redirectURL := cfg.TelegramRedirectURL(); redirectURL != "" {
+			tgOIDC = telegramAdapter.NewOIDCClient(cfg.TelegramBotToken, redirectURL)
+			log.Info("telegram_oidc_enabled", "redirect", redirectURL)
+		}
 		telegramAuthUC = usecases.NewTelegramAuthUseCase(
-			cfg.TelegramBotToken, authAdapter, catalogAdapter, userTenantsRepo, sessionsUC, log,
+			cfg.TelegramBotToken, tgOIDC, oauthLoginStatesRepo,
+			authAdapter, catalogAdapter, userTenantsRepo, sessionsUC, log,
 		)
 		log.Info("telegram_login_enabled", "bot", cfg.TelegramBotUsername)
 	} else {
-		log.Warn("telegram_login_not_configured — telegram widget disabled")
+		log.Warn("telegram_login_not_configured — telegram login disabled")
 	}
 
 	var passwordResetUC *usecases.PasswordResetUseCase
@@ -467,6 +474,8 @@ func main() {
 	mux.HandleFunc("/admin/api/auth/logout", sessionsHandler.HandleLogout)
 	mux.HandleFunc("/admin/api/auth/google/start", oauthHandler.HandleGoogleStart)
 	mux.HandleFunc("/admin/api/auth/google/callback", oauthHandler.HandleGoogleCallback)
+	mux.HandleFunc("/admin/api/auth/telegram/start", oauthHandler.HandleTelegramStart)
+	mux.HandleFunc("/admin/api/auth/telegram/oidc/callback", oauthHandler.HandleTelegramOIDCCallback)
 	mux.HandleFunc("/admin/api/auth/telegram/callback", oauthHandler.HandleTelegramCallback)
 	mux.HandleFunc("/admin/api/auth/magic", magicLinkHandler.HandleConsume)
 

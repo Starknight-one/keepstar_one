@@ -71,6 +71,54 @@ func (h *OAuthHandler) HandleGoogleCallback(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// HandleTelegramStart mints the consent URL for the OIDC redirect flow.
+func (h *OAuthHandler) HandleTelegramStart(w http.ResponseWriter, r *http.Request) {
+	if h.telegram == nil || !h.telegram.HasOIDC() {
+		writeError(w, http.StatusNotImplemented, "telegram oidc not configured")
+		return
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "POST or GET")
+		return
+	}
+	res, err := h.telegram.Start(r.Context())
+	if err != nil {
+		h.log.Error("telegram_start_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start telegram oauth")
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// HandleTelegramOIDCCallback accepts {code, state} from the OIDC redirect.
+func (h *OAuthHandler) HandleTelegramOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	if h.telegram == nil || !h.telegram.HasOIDC() {
+		writeError(w, http.StatusNotImplemented, "telegram oidc not configured")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var req struct {
+		Code  string `json:"code"`
+		State string `json:"state"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	ua := r.Header.Get("User-Agent")
+	ip := clientIP(r)
+	resp, err := h.telegram.CompleteOIDC(r.Context(), req.Code, req.State, ua, ip)
+	if err != nil {
+		h.log.Warn("telegram_oidc_callback_failed", "error", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // HandleTelegramCallback accepts the raw widget payload (id, first_name,
 // last_name, username, photo_url, auth_date, hash). The HMAC signature is the
 // only authentication needed — no pre-registered state to verify.
