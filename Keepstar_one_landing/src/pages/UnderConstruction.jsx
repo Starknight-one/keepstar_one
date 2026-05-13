@@ -60,7 +60,7 @@ export default function UnderConstruction() {
     <div className="uc-page">
       <header className="uc-header">
         <Link to="/" className="uc-logo">
-          <div className="uc-logo-icon" />
+          <img src="/logo-mark-h.svg" alt="Keepstar" className="uc-logo-icon" />
           <span className="uc-logo-text">Keepstar One</span>
         </Link>
         <a href="mailto:startknight@keepstar.one" className="uc-contact">
