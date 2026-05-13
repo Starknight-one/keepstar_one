@@ -4,15 +4,16 @@ import AuthShell from '../layout/AuthShell.jsx'
 import PillButton from '../layout/PillButton.jsx'
 import { useAuth } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
+import { useTelegramLogin } from '../hooks/useTelegramLogin.js'
 
 export default function SignInPage() {
-  const { login } = useAuth()
+  const { login, adoptSession } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [flags, setFlags] = useState({ google: false, email: false, telegram: { enabled: false } })
+  const [flags, setFlags] = useState({ google: false, email: false, telegram: { enabled: false, bot_username: '' } })
   const [googleLoading, setGoogleLoading] = useState(false)
   const [telegramLoading, setTelegramLoading] = useState(false)
 
@@ -39,17 +40,25 @@ export default function SignInPage() {
     }
   }
 
-  async function handleTelegram() {
+  async function handleTelegramAuth(tgUser) {
     setError('')
     setTelegramLoading(true)
     try {
-      const { url } = await authApi.telegramStart()
-      window.location.href = url
+      const data = await authApi.telegramCallback(tgUser)
+      adoptSession(data)
+      navigate('/auth/pick-workspace')
     } catch (err) {
-      setError(err.message || 'Failed to start Telegram sign-in')
+      setError(err.message || 'Telegram sign-in failed')
+    } finally {
       setTelegramLoading(false)
     }
   }
+
+  const { trigger: triggerTelegram, ready: telegramReady } = useTelegramLogin({
+    botUsername: flags.telegram.bot_username,
+    onAuth: handleTelegramAuth,
+    enabled: flags.telegram.enabled,
+  })
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -91,13 +100,13 @@ export default function SignInPage() {
               </PillButton>
             )}
             {flags.telegram.enabled && (
-              <PillButton variant="telegram" block onClick={handleTelegram} disabled={telegramLoading}>
+              <PillButton variant="telegram" block onClick={triggerTelegram} disabled={telegramLoading || !telegramReady}>
                 {!telegramLoading && (
                   <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
                     <path fill="#2AABEE" d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-2.032 9.573c-.144.65-.529.806-1.072.502l-2.968-2.185-1.432 1.38c-.158.157-.291.291-.6.291l.213-3.02 5.51-4.976c.24-.213-.052-.332-.372-.12L7.033 14.3l-2.923-.913c-.637-.198-.65-.637.133-.944l10.9-4.203c.53-.192.994.13.82.985z"/>
                   </svg>
                 )}
-                {telegramLoading ? 'Redirecting\u2026' : 'Continue with Telegram'}
+                {telegramLoading ? 'Signing in\u2026' : 'Continue with Telegram'}
               </PillButton>
             )}
           </div>
