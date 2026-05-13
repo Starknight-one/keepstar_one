@@ -74,6 +74,13 @@ type AuthResponse struct {
 	Requires2FA  bool   `json:"requires_2fa,omitempty"`
 	Pre2FAToken  string `json:"pre_2fa_token,omitempty"`
 	Has2FAEmail  bool   `json:"has_2fa_email,omitempty"`
+
+	// LinkedFromEmail is set when an OAuth callback auto-merged a brand-new
+	// provider identity (e.g. google_sub) onto an existing email-account.
+	// Frontend renders a "Welcome back — we connected X to your account at
+	// {LinkedFromEmail}" banner when non-empty. Empty value means no merge
+	// happened (fresh signup or already-linked provider).
+	LinkedFromEmail string `json:"linked_from_email,omitempty"`
 }
 
 func (uc *AuthUseCase) Signup(ctx context.Context, req SignupRequest) (*AuthResponse, error) {

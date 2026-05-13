@@ -62,3 +62,42 @@ func (h *MagicLinkHandler) HandleConsume(w http.ResponseWriter, r *http.Request)
 		User:         user,
 	})
 }
+
+// HandleConsumePendingShopLink — POST /admin/api/auth/shop-pending-link/consume
+// Body: {"token": "<token>"}.
+// Auth-required — the user is already signed in; this attaches the orphan
+// Shopify tenant (held in the challenge's meta_json) to the current user.
+// Returns {"tenant_id": "<uuid>"} so the frontend can switch workspace.
+func (h *MagicLinkHandler) HandleConsumePendingShopLink(w http.ResponseWriter, r *http.Request) {
+	if h.uc == nil {
+		writeError(w, http.StatusNotImplemented, "pending-shop-link not configured")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	userID := UserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "auth required")
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	tenantID, err := h.uc.ConsumePendingShopLink(r.Context(), req.Token, userID)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidCredentials) {
+			writeError(w, http.StatusUnauthorized, "link expired or already used")
+			return
+		}
+		h.log.Warn("shop_pending_link_consume_failed", "error", err, "user_id", userID)
+		writeError(w, http.StatusBadRequest, "pending-shop-link rejected")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"tenant_id": tenantID})
+}

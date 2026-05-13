@@ -75,10 +75,18 @@ type HarvesterLite interface {
 // admin_user for that email + tenant, and issue a magic-link so the merchant
 // can sign in from their inbox.
 //
+// Runs SYNCHRONOUSLY so the handler can branch on the return value:
+//   - "" — happy path (email present, magic-link queued / sent async by the
+//     implementation, no special UI handling needed).
+//   - non-empty string — a pending-shop-link token: shop had no owner email,
+//     the caller should redirect to /auth/install-complete?pending_link=TOKEN
+//     so the merchant can sign in via standard methods and attach the tenant
+//     after auth.
+//
 // Errors are logged by the implementation and never surface to the caller —
 // the integration is already persisted at this point and we don't want to
 // roll back a working install over a transient email/SMTP failure.
-type InstallCompletionHook func(ctx context.Context, tenantID, shopDomain, token string)
+type InstallCompletionHook func(ctx context.Context, tenantID, shopDomain, token string) (pendingToken string)
 
 // ShopifyV2UseCase owns the full Shopify lifecycle after the curator-driven
 // pivot (2026-04-27): OAuth, webhook subscription, dump-to-staging, discovery
@@ -241,28 +249,32 @@ func (uc *ShopifyV2UseCase) StartInstallEntry(ctx context.Context, shop string) 
 // flow kind so the HTTP handler can pick the right post-OAuth redirect (the
 // install path lands on a "check your email" page; the connect path goes
 // straight back into the in-app integrations view).
-func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state string, query map[string][]string) (*domain.Integration, string, error) {
+//
+// pendingToken is non-empty only on install flows where the shop has no
+// owner email — the caller redirects to /auth/install-complete?pending_link=…
+// to walk the merchant through a standard sign-in that attaches the tenant.
+func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state string, query map[string][]string) (*domain.Integration, string, string, error) {
 	normalized, ok := shopify.ValidateShopDomain(shop)
 	if !ok {
-		return nil, "", fmt.Errorf("invalid shop domain")
+		return nil, "", "", fmt.Errorf("invalid shop domain")
 	}
 	if !uc.client.VerifyInstallHMAC(query) {
-		return nil, "", fmt.Errorf("hmac verification failed")
+		return nil, "", "", fmt.Errorf("hmac verification failed")
 	}
 	record, err := uc.integrations.ConsumeOAuthState(ctx, state)
 	if err != nil {
-		return nil, "", fmt.Errorf("consume state: %w", err)
+		return nil, "", "", fmt.Errorf("consume state: %w", err)
 	}
 	if record.ShopDomain != normalized {
-		return nil, "", fmt.Errorf("state/shop mismatch")
+		return nil, "", "", fmt.Errorf("state/shop mismatch")
 	}
 	if time.Now().UTC().After(record.ExpiresAt) {
-		return nil, "", fmt.Errorf("state expired")
+		return nil, "", "", fmt.Errorf("state expired")
 	}
 
 	token, err := uc.client.ExchangeCodeForToken(ctx, normalized, code)
 	if err != nil {
-		return nil, "", fmt.Errorf("exchange code: %w", err)
+		return nil, "", "", fmt.Errorf("exchange code: %w", err)
 	}
 
 	integration := &domain.Integration{
@@ -276,7 +288,7 @@ func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state
 	}
 	integration, err = uc.integrations.Create(ctx, integration)
 	if err != nil {
-		return nil, "", fmt.Errorf("persist integration: %w", err)
+		return nil, "", "", fmt.Errorf("persist integration: %w", err)
 	}
 
 	webhookAddress := uc.publicURL + "/admin/api/webhooks/shopify"
@@ -288,16 +300,19 @@ func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state
 		}
 	}
 
-	// Install flow: provision admin_user from shop email + email a magic-link
-	// so the merchant can sign in. Fired in a goroutine — the OAuth callback
-	// shouldn't block on Shopify shop API + SMTP. Hook is nil-safe; "connect"
-	// flows don't trigger it (the user is already logged in).
+	// Install flow: run the install-completion hook SYNCHRONOUSLY so the
+	// handler can branch on its return value. The hook itself fans the slow
+	// parts (Shopify shop-info fetch, magic-link email send) into goroutines
+	// when appropriate, so the user-facing OAuth-callback latency stays low.
+	// Non-empty return = pending-shop-link token (shop had no owner email),
+	// caller redirects to /auth/install-complete?pending_link=…
+	var pendingToken string
 	if record.FlowKind == domain.OAuthFlowInstall && uc.onInstallDone != nil {
-		go uc.onInstallDone(context.Background(), record.TenantID, normalized, token)
+		pendingToken = uc.onInstallDone(ctx, record.TenantID, normalized, token)
 	}
 
 	go uc.runInitialIngest(integration.ID, record.TenantID)
-	return integration, record.FlowKind, nil
+	return integration, record.FlowKind, pendingToken, nil
 }
 
 // runInitialIngest — background after Connect: dump-to-staging then run

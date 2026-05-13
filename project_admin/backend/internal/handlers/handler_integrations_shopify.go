@@ -109,7 +109,7 @@ func (h *ShopifyHandler) HandleCallback(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "missing shop, code, or state")
 		return
 	}
-	integration, flowKind, err := h.v2.CompleteOAuth(r.Context(), shop, code, state, q)
+	integration, flowKind, pendingToken, err := h.v2.CompleteOAuth(r.Context(), shop, code, state, q)
 	if err != nil {
 		h.log.FromContext(r.Context()).Error("shopify_callback_failed", "shop", shop, "error", err)
 		writeError(w, http.StatusBadRequest, "oauth callback failed")
@@ -121,9 +121,18 @@ func (h *ShopifyHandler) HandleCallback(w http.ResponseWriter, r *http.Request) 
 	// don't apply). Send them to a dedicated "check your inbox" page that
 	// names the magic-link flow explicitly. Connect flow keeps the in-app
 	// redirect since the user is already logged in.
+	//
+	// pending-link variant: shop had no owner email, so no magic-link can be
+	// sent. Send the merchant to /auth/install-complete with a token that the
+	// page uses to walk them through standard sign-in + auto-attach the
+	// orphan tenant once they're authenticated.
 	target := "/integrations?connected=shopify&id=" + integration.ID
 	if flowKind == "install" {
-		target = "/auth/install-complete?shop=" + shop
+		if pendingToken != "" {
+			target = "/auth/install-complete?shop=" + shop + "&pending_link=" + pendingToken
+		} else {
+			target = "/auth/install-complete?shop=" + shop
+		}
 	}
 	http.Redirect(w, r, target, http.StatusFound)
 }

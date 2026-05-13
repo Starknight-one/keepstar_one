@@ -311,19 +311,52 @@ func main() {
 			shopifyV2UC.SetHarvester(harvesterLite)
 
 			// Install-flow completion hook: after a fresh Shopify install OAuth,
-			// fetch the shop owner email and provision an admin_user + send a
-			// magic-link. Closure captures shopifyClient + magicLinkUC so
-			// shopify_v2.go itself stays decoupled from auth concerns.
+			// fetch the shop owner email and either (a) provision an admin_user
+			// + send a magic-link, or (b) if the shop has no owner email, mint
+			// a pending-shop-link token and return it so the caller can redirect
+			// the merchant to a sign-in page that auto-attaches the tenant after
+			// auth. Closure captures shopifyClient + magicLinkUC so shopify_v2.go
+			// itself stays decoupled from auth concerns.
+			//
+			// Runs synchronously (per shopify_v2.CompleteOAuth contract). The
+			// slow path — Resend email delivery — fires in a goroutine inside
+			// ProvisionShopOwner so the OAuth callback latency stays low.
 			shopifyClientLocal := shopifyClient
 			magicLinkUCLocal := magicLinkUC
-			shopifyV2UC.SetInstallCompletionHook(func(ctx context.Context, tenantID, shopDomain, token string) {
+			shopifyV2UC.SetInstallCompletionHook(func(ctx context.Context, tenantID, shopDomain, token string) string {
 				info, err := shopifyClientLocal.GetShopInfo(ctx, shopDomain, token)
 				if err != nil {
 					log.Warn("shopify_install_provision_shop_lookup_failed",
 						"tenant_id", tenantID, "shop", shopDomain, "error", err)
-					return
+					// Shop info unavailable → fall back to pending-link path so
+					// the merchant can still sign in and claim their tenant.
+					pendingToken, perr := magicLinkUCLocal.IssuePendingShopLink(ctx, tenantID, shopDomain)
+					if perr != nil {
+						log.Error("shopify_install_pending_link_fallback_failed",
+							"tenant_id", tenantID, "shop", shopDomain, "error", perr)
+						return ""
+					}
+					return pendingToken
 				}
-				magicLinkUCLocal.ProvisionShopOwner(ctx, tenantID, info.Email)
+				if info.Email == "" {
+					// Shopify returned shop info but the owner email field is
+					// empty — issue a pending-link token instead of silently
+					// dropping the merchant on an empty page.
+					pendingToken, perr := magicLinkUCLocal.IssuePendingShopLink(ctx, tenantID, shopDomain)
+					if perr != nil {
+						log.Error("shopify_install_pending_link_create_failed",
+							"tenant_id", tenantID, "shop", shopDomain, "error", perr)
+						return ""
+					}
+					log.Info("shopify_install_pending_link_path",
+						"tenant_id", tenantID, "shop", shopDomain,
+						"reason", "shop_info_returned_empty_email")
+					return pendingToken
+				}
+				// Happy path: fire user-provisioning + magic-link send async so
+				// the OAuth callback isn't gated on Resend.
+				go magicLinkUCLocal.ProvisionShopOwner(context.Background(), tenantID, info.Email)
+				return ""
 			})
 
 			// M4c: discovery agent (Sonnet 4.6, 8 tools). Reuses staging +
@@ -460,6 +493,7 @@ func main() {
 	// Protected routes
 	protected := http.NewServeMux()
 	protected.HandleFunc("/admin/api/auth/me", authHandler.HandleMe)
+	protected.HandleFunc("/admin/api/auth/shop-pending-link/consume", magicLinkHandler.HandleConsumePendingShopLink)
 	protected.HandleFunc("/admin/api/auth/sessions", sessionsHandler.HandleList)
 	protected.HandleFunc("/admin/api/auth/sessions/", sessionsHandler.HandleDelete)
 	protected.HandleFunc("/admin/api/auth/tenants", tenantsHandler.HandleList)

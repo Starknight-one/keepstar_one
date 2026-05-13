@@ -108,6 +108,9 @@ func (f *fakeMemberships) Remove(_ context.Context, userID, tenantID string) err
 	delete(f.rows, userID+"|"+tenantID)
 	return nil
 }
+func (f *fakeMemberships) SoftDeleteEmptyOrphanTenants(_ context.Context, _, _ string) ([]string, error) {
+	return nil, nil
+}
 
 type fakeChallenges struct {
 	byHash map[string]*ports.Challenge // by code hash

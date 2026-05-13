@@ -96,7 +96,7 @@ func (uc *GoogleAuthUseCase) Complete(ctx context.Context, code, state, ua, ip s
 		return nil, fmt.Errorf("google rejected the authorization")
 	}
 
-	user, err := uc.findOrCreate(ctx, info)
+	user, linkedToExisting, err := uc.findOrCreate(ctx, info)
 	if err != nil {
 		return nil, err
 	}
@@ -107,13 +107,17 @@ func (uc *GoogleAuthUseCase) Complete(ctx context.Context, code, state, ua, ip s
 	if err != nil {
 		return nil, err
 	}
-	return &AuthResponse{
+	resp := &AuthResponse{
 		Token:        pair.AccessToken,
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,
 		ExpiresIn:    pair.ExpiresIn,
 		User:         user,
-	}, nil
+	}
+	if linkedToExisting {
+		resp.LinkedFromEmail = user.Email
+	}
+	return resp, nil
 }
 
 // findOrCreate resolves a google_sub to an admin user in three steps:
@@ -122,24 +126,28 @@ func (uc *GoogleAuthUseCase) Complete(ctx context.Context, code, state, ua, ip s
 //     and is now using Google for the first time. We link the sub to their
 //     row so subsequent logins hit step 1.
 //  3. New user — create a fresh tenant + passwordless user.
-func (uc *GoogleAuthUseCase) findOrCreate(ctx context.Context, info *google.UserInfo) (*domain.AdminUser, error) {
+//
+// The bool returned alongside the user is true only for step 2 (auto-merge
+// onto an existing email-account); callers surface this as a "Welcome back"
+// banner in the UI.
+func (uc *GoogleAuthUseCase) findOrCreate(ctx context.Context, info *google.UserInfo) (*domain.AdminUser, bool, error) {
 	email := strings.ToLower(strings.TrimSpace(info.Email))
 
 	// Step 1
 	if u, err := uc.users.GetUserByGoogleSub(ctx, info.Sub); err == nil {
-		return u, nil
+		return u, false, nil
 	} else if !errors.Is(err, domain.ErrUserNotFound) {
-		return nil, fmt.Errorf("lookup by google_sub: %w", err)
+		return nil, false, fmt.Errorf("lookup by google_sub: %w", err)
 	}
 
 	// Step 2
 	if u, err := uc.users.GetUserByEmail(ctx, email); err == nil {
 		if err := uc.users.LinkGoogleSub(ctx, u.ID, info.Sub, info.Picture); err != nil {
-			return nil, fmt.Errorf("link google_sub: %w", err)
+			return nil, false, fmt.Errorf("link google_sub: %w", err)
 		}
-		return u, nil
+		return u, true, nil
 	} else if !errors.Is(err, domain.ErrUserNotFound) {
-		return nil, fmt.Errorf("lookup by email: %w", err)
+		return nil, false, fmt.Errorf("lookup by email: %w", err)
 	}
 
 	// Step 3 — fresh signup. Use Google's name as the company name placeholder;
@@ -155,7 +163,7 @@ func (uc *GoogleAuthUseCase) findOrCreate(ctx context.Context, info *google.User
 		Settings: map[string]any{"currency": "USD"},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create tenant: %w", err)
+		return nil, false, fmt.Errorf("create tenant: %w", err)
 	}
 	user := &domain.AdminUser{
 		Email:    email,
@@ -164,12 +172,12 @@ func (uc *GoogleAuthUseCase) findOrCreate(ctx context.Context, info *google.User
 	}
 	user, err = uc.users.CreateOAuthUser(ctx, user, info.Sub, info.Picture)
 	if err != nil {
-		return nil, fmt.Errorf("create oauth user: %w", err)
+		return nil, false, fmt.Errorf("create oauth user: %w", err)
 	}
 	if uc.memberships != nil {
 		if err := uc.memberships.Add(ctx, user.ID, tenant.ID, "owner", ""); err != nil {
-			return nil, fmt.Errorf("grant owner membership: %w", err)
+			return nil, false, fmt.Errorf("grant owner membership: %w", err)
 		}
 	}
-	return user, nil
+	return user, false, nil
 }

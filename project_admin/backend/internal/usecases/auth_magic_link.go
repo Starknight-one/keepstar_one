@@ -163,6 +163,97 @@ func (uc *MagicLinkUseCase) ProvisionShopOwner(ctx context.Context, tenantID, em
 	}
 
 	uc.Issue(ctx, user.ID, email)
+
+	// Email-merge case: the user already had a Keepstar account (Google /
+	// email+pwd / Telegram), and we just attached this Shopify install as a
+	// second tenant. If their pre-existing tenant is blank (no integrations,
+	// no products, no canvas content), it's almost certainly the auto-
+	// provisioned workspace from initial signup — silent clutter in the
+	// picker. Soft-delete those and keep only the Shopify tenant we just set
+	// up. Strictly best-effort: the cleanup logs but never aborts the
+	// install. Skipped for newly-created users because they have nothing to
+	// clean up.
+	if !newlyCreated && uc.memberships != nil {
+		deleted, err := uc.memberships.SoftDeleteEmptyOrphanTenants(ctx, user.ID, tenantID)
+		if err != nil {
+			uc.log.Warn("install_provision_orphan_cleanup_failed",
+				"user_id", user.ID, "preserve_tenant", tenantID, "error", err)
+		} else if len(deleted) > 0 {
+			uc.log.Info("install_provision_orphan_cleanup_done",
+				"user_id", user.ID, "preserve_tenant", tenantID,
+				"deleted_tenants", deleted,
+				"reason", "shopify_install_email_merge_orphan_cleanup")
+		}
+	}
+}
+
+// IssuePendingShopLink creates a `shop_pending_link` challenge for a Shopify
+// install whose shop has no owner email. The returned token is meant to be
+// passed back to the merchant via the OAuth-callback redirect; the
+// /auth/install-complete page reads it from the URL and walks the merchant
+// through a standard sign-in flow. After auth, the frontend POSTs the token
+// to ConsumePendingShopLink which attaches the orphan tenant to that user.
+//
+// The challenge stores tenant_id + shop_domain in meta_json so the consume
+// step has everything it needs without a separate lookup.
+func (uc *MagicLinkUseCase) IssuePendingShopLink(ctx context.Context, tenantID, shopDomain string) (string, error) {
+	if tenantID == "" || shopDomain == "" {
+		return "", fmt.Errorf("tenant_id and shop_domain are required")
+	}
+	token := randomHex(32)
+	ch := &ports.Challenge{
+		Kind:      ports.ChallengeShopPendingLink,
+		CodeHash:  hashCode(token),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+		Meta: map[string]any{
+			"tenant_id":   tenantID,
+			"shop_domain": shopDomain,
+		},
+	}
+	if err := uc.challenges.Create(ctx, ch); err != nil {
+		return "", fmt.Errorf("create shop_pending_link challenge: %w", err)
+	}
+	uc.log.Info("shop_pending_link_issued",
+		"tenant_id", tenantID, "shop_domain", shopDomain, "ttl_hours", 24)
+	return token, nil
+}
+
+// ConsumePendingShopLink validates a clicked-or-posted shop_pending_link
+// token and attaches the orphan tenant (stored in challenge meta_json) to
+// the authenticated user. Single-use: the challenge is marked consumed
+// after the membership is granted, so the same token can't link the same
+// shop twice. Returns the tenant_id so the caller can navigate the user
+// straight into that workspace.
+func (uc *MagicLinkUseCase) ConsumePendingShopLink(ctx context.Context, code, userID string) (string, error) {
+	if code == "" || userID == "" {
+		return "", fmt.Errorf("code and user_id are required")
+	}
+	ch, err := uc.challenges.FindActive(ctx, ports.ChallengeShopPendingLink, hashCode(code))
+	if err != nil {
+		return "", fmt.Errorf("find shop_pending_link: %w", err)
+	}
+	if ch == nil {
+		return "", domain.ErrInvalidCredentials
+	}
+	tenantID, _ := ch.Meta["tenant_id"].(string)
+	shopDomain, _ := ch.Meta["shop_domain"].(string)
+	if tenantID == "" {
+		return "", fmt.Errorf("malformed shop_pending_link meta")
+	}
+	if uc.memberships != nil {
+		if err := uc.memberships.Add(ctx, userID, tenantID, "owner", ""); err != nil {
+			return "", fmt.Errorf("attach tenant: %w", err)
+		}
+	}
+	if err := uc.challenges.Consume(ctx, ch.ID); err != nil {
+		// Membership already granted — log but don't fail the user. The
+		// challenge row will expire on its own via DeleteExpired.
+		uc.log.Error("shop_pending_link_consume_cleanup_failed",
+			"challenge_id", ch.ID, "error", err)
+	}
+	uc.log.Info("shop_pending_link_consumed",
+		"tenant_id", tenantID, "user_id", userID, "shop_domain", shopDomain)
+	return tenantID, nil
 }
 
 // Consume validates a clicked link, mints a refresh+access pair, and consumes

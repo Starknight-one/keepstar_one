@@ -698,6 +698,32 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			ADD COLUMN IF NOT EXISTS already_linked_count INTEGER NOT NULL DEFAULT 0;`,
 	)
 
+	// Auth-dedup 2026-05-13 — soft-delete for catalog.tenants. Set when an
+	// email-merged Shopify install cleans up an empty Google-auto-provisioned
+	// orphan workspace (auth_magic_link.go:cleanupEmptyOrphanTenants). All
+	// tenant-list queries must filter `WHERE deleted_at IS NULL`.
+	migrations = append(migrations,
+		`ALTER TABLE catalog.tenants ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_tenants_deleted_at
+			ON catalog.tenants(deleted_at) WHERE deleted_at IS NOT NULL;`,
+	)
+
+	// Auth-dedup 2026-05-13 — extend auth_challenges.kind CHECK to include
+	// 'shop_pending_link' (Shopify install without owner email → token to
+	// link tenant after user signs in via standard methods). Drop-and-add
+	// guarded by a versioned constraint name so re-runs are idempotent.
+	migrations = append(migrations,
+		`DO $$ BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint WHERE conname = 'auth_challenges_kind_check_v2'
+			) THEN
+				ALTER TABLE admin.auth_challenges DROP CONSTRAINT IF EXISTS auth_challenges_kind_check;
+				ALTER TABLE admin.auth_challenges ADD CONSTRAINT auth_challenges_kind_check_v2
+					CHECK (kind IN ('email_verify','password_reset','totp_setup','email_2fa','magic_link','shop_pending_link'));
+			END IF;
+		END $$;`,
+	)
+
 	// pipeline_traces table (idempotent, same as chat backend)
 	migrations = append(migrations,
 		`CREATE TABLE IF NOT EXISTS pipeline_traces (

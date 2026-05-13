@@ -11,6 +11,14 @@ export const authApi = {
   telegramCallback: (payload) => api.post('/auth/telegram/callback', payload),
   magicConsume: (code) => api.post('/auth/magic', { code }),
 
+  // Pending-shop-link: Shopify install completed without an owner email, so
+  // no magic-link was sent. Frontend persists the token in sessionStorage at
+  // /auth/install-complete and consumes it on the next workspace-picker
+  // landing (after the user signs in via standard methods). On success the
+  // backend attaches the orphan Shopify tenant to the now-authenticated user.
+  consumePendingShopLink: (token) =>
+    api.post('/auth/shop-pending-link/consume', { token }),
+
   // 2FA — pre-session routes accept a pre-2FA bearer token (from login).
   setupTOTP: () => api.post('/auth/2fa/setup/totp', {}),
   confirmTOTP: (code) => api.post('/auth/2fa/confirm/totp', { code }),

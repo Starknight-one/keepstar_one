@@ -35,7 +35,16 @@ export default function OAuthLoadingPage() {
       .then((data) => {
         adoptSession(data)
         setStatus('Success — redirecting…')
-        navigate('/auth/pick-workspace', { replace: true })
+        // Auto-merge: backend attached google_sub to an existing email account.
+        // Surface a "Welcome back" banner on the destination page so the user
+        // sees what just happened instead of silently landing in a familiar inbox.
+        const linked = data && data.linked_from_email
+        if (linked) {
+          const q = `?welcome_back=1&email=${encodeURIComponent(linked)}`
+          navigate(`/auth/pick-workspace${q}`, { replace: true })
+        } else {
+          navigate('/auth/pick-workspace', { replace: true })
+        }
       })
       .catch((err) => {
         const reason = (err && err.message) || 'google_failed'

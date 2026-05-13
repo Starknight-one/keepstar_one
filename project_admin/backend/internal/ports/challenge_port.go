@@ -7,11 +7,18 @@ import (
 
 // Challenge kinds — mirrors the CHECK constraint in admin.auth_challenges.
 const (
-	ChallengeEmailVerify   = "email_verify"
-	ChallengePasswordReset = "password_reset"
-	ChallengeTOTPSetup     = "totp_setup"
-	ChallengeEmail2FA      = "email_2fa"
-	ChallengeMagicLink     = "magic_link"
+	ChallengeEmailVerify     = "email_verify"
+	ChallengePasswordReset   = "password_reset"
+	ChallengeTOTPSetup       = "totp_setup"
+	ChallengeEmail2FA        = "email_2fa"
+	ChallengeMagicLink       = "magic_link"
+	// ChallengeShopPendingLink is issued when a Shopify install completes
+	// but the shop has no owner email. The merchant lands on
+	// /auth/install-complete?pending_link=TOKEN, signs in with a standard
+	// method (Google/Telegram/email+pwd), and the token is consumed
+	// post-auth to attach the orphan tenant. Meta carries tenant_id and
+	// shop_domain.
+	ChallengeShopPendingLink = "shop_pending_link"
 )
 
 // Challenge is a single-use code/token issued for one of the flows above.

@@ -20,4 +20,12 @@ type UserTenantsPort interface {
 	HasMembership(ctx context.Context, userID, tenantID string) (role string, ok bool, err error)
 	Add(ctx context.Context, userID, tenantID, role, invitedBy string) error
 	Remove(ctx context.Context, userID, tenantID string) error
+
+	// SoftDeleteEmptyOrphanTenants soft-deletes tenants where the user is
+	// 'owner', the tenant has no integrations / products / canvas content,
+	// and the tenant id is NOT preserveTenantID. Returns the list of
+	// deleted tenant IDs (for logging). Called from ProvisionShopOwner
+	// after a Shopify install email-merge so a Google-auto-provisioned
+	// blank workspace stops cluttering the picker.
+	SoftDeleteEmptyOrphanTenants(ctx context.Context, userID, preserveTenantID string) ([]string, error)
 }

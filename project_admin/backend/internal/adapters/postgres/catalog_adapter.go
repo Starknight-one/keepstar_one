@@ -26,7 +26,7 @@ func NewCatalogAdapter(client *Client, log *logger.Logger) *CatalogAdapter {
 
 func (a *CatalogAdapter) GetTenantByID(ctx context.Context, id string) (*domain.Tenant, error) {
 	query := `SELECT id, slug, name, type, settings, created_at, updated_at
-		FROM catalog.tenants WHERE id = $1`
+		FROM catalog.tenants WHERE id = $1 AND deleted_at IS NULL`
 
 	var t domain.Tenant
 	var settingsJSON []byte
