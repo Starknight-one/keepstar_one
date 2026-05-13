@@ -74,7 +74,6 @@ Lines: N / 500
 ## Constraints
 
 - DO NOT exceed LINE_LIMIT.
-- DO NOT cite V4 code (`project_v4/`).
 - DO NOT expand engine-v5 internals — keep engine-v5 expert as source of truth for engine package.
 - DO update tool argument schemas if they change — Agent2 emits exactly what's in the tool definition.
 

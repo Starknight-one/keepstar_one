@@ -15,7 +15,7 @@ across all domains — that pattern was the previous design and didn't work).
 
 | Expert | Owns |
 |---|---|
-| `catalog` | Cross-cutting domain. Write side: `project_admin/` (harvester, discovery agent, mapping artifact, merge_apply, Shopify integration). Read side: `project_v4/.../postgres_catalog.go`. |
+| `catalog` | Cross-cutting domain. Write side: `project_admin/` (harvester, discovery agent, mapping artifact, merge_apply, Shopify integration). Read side: `project_v5/.../postgres_catalog.go`. |
 | `engine-v5` | V5 scene-graph engine: `project_v5/backend/internal/engine/`. Node types (map[string]any, 14 types), ops (5 types), pipeline steps, presets, binding, TreeMap. |
 | `pipeline-agents` | V5 chat orchestration: `project_v5/backend/internal/`. pipeline_execute, Agent1/Agent2, prompts, tools, anthropic adapter, span tracing, prompt caching. |
 | `widget` | V5 embeddable chat widget: `project_v5/frontend/`. Shadow DOM, SceneGraphRenderer, NodeRenderer, fillTemplate (instant drill), RenderContext, action dispatch. |

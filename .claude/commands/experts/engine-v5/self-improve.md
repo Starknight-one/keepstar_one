@@ -77,7 +77,6 @@ Lines: N / 500
 ## Constraints
 
 - DO NOT exceed LINE_LIMIT.
-- DO NOT cite V4 engine (`project_v4/backend/internal/engine_v4/`) — completely different model.
 - DO NOT invent preset names not in `engine/presets/presets.go SystemPresetSeeds`.
 - DO update preset descriptions in `engine/presets/prompt.go SystemPresetDescriptions` when preset descriptions change — that's the live source, not just this YAML.
 

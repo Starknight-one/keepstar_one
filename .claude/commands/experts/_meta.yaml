@@ -23,12 +23,8 @@ experts:
       - "project_admin/backend/internal/handlers/handler_{categories,products,curator_merge,enrichment,import,integrations,junk,stock,api_v1}*.go"
       - "project_admin/backend/cmd/crawler/**/*.go"
       - "project_admin/backend/internal/units/**/*.go"
-      - "project_v4/backend/internal/adapters/postgres/postgres_catalog.go"
-      - "project_v4/backend/internal/adapters/postgres/field_definition_adapter.go"
-      - "project_v4/backend/internal/adapters/postgres/catalog_migrations.go"
-      - "project_v4/backend/internal/usecases/catalog_get_*.go"
-      - "project_v4/backend/internal/usecases/catalog_list_*.go"
-      - "project_v4/backend/internal/handlers/handler_catalog.go"
+      - "project_v5/backend/internal/adapters/postgres/postgres_catalog.go"
+      - "project_v5/backend/internal/adapters/postgres/postgres_catalog_vector.go"
 
   engine-v5:
     globs:

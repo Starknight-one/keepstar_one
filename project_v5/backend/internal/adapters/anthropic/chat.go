@@ -129,7 +129,7 @@ func buildCountTokensParams(
 // buildToolUnionParams converts domain ToolDefinitions to SDK ToolUnionParam,
 // sorted by name. When cacheLast is true, the last tool gets
 // cache_control: ephemeral. Tools array order matters for prompt caching:
-// V4 sorts by name to produce byte-stable hashes across calls.
+// sorted by name so the array is byte-stable across calls.
 func buildToolUnionParams(tools []domain.ToolDefinition, cacheLast bool) []sdk.ToolUnionParam {
 	sorted := make([]domain.ToolDefinition, len(tools))
 	copy(sorted, tools)
@@ -253,7 +253,7 @@ func buildMessageParams(messages []domain.LLMMessage, cacheConv bool) []sdk.Mess
 		case "assistant":
 			out = append(out, sdk.NewAssistantMessage(blocks...))
 		default:
-			// V4 pattern: tool_result messages are always role "user".
+			// tool_result blocks travel on user-role messages.
 			out = append(out, sdk.NewUserMessage(blocks...))
 		}
 	}

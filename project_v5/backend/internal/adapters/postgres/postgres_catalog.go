@@ -506,9 +506,7 @@ func formatPrice(kopecks int, currency string) string {
 //  4. top-30 ingredients by frequency (uses mp.key_ingredients array directly
 //     — V5 doesn't depend on catalog.product_ingredients seeding)
 //
-// Mirrors V4's GenerateCatalogDigest (project_v4 postgres_catalog.go:974+),
-// minus the SaveCatalogDigest persistence path. V5 builds on demand and lets
-// the use case cache in process.
+// Builds the digest on demand; the use case caches it in process.
 func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string) (digest *domain.CatalogDigest, err error) {
 	var span *domain.SpanHandle
 	if sc := domain.SpanFromContext(ctx); sc != nil {

@@ -44,7 +44,6 @@ You MUST read code (not rely on YAML alone) when the question is about:
 ## Constraints
 
 - DO NOT change code or create files.
-- DO NOT cite V4 engine code (`project_v4/backend/internal/engine_v4/`) — different model, different node types, different op vocabulary.
 - DO point at test files when the user asks "how do I know X works".
 - DO flag when you spot drift between expertise.yaml and current code.
 

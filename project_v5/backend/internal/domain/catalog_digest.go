@@ -9,9 +9,6 @@ import (
 // CatalogDigest is a pre-computed meta-schema of a tenant's catalog. Compact
 // format (~300-400 tokens) — sent once per session in Agent1's system prompt
 // and cached by Anthropic.
-//
-// Verbatim port of V4's domain.CatalogDigest (V4 path:
-// project_v4/backend/internal/domain/catalog_digest_entity.go).
 type CatalogDigest struct {
 	GeneratedAt    time.Time             `json:"generated_at"`
 	TotalProducts  int                   `json:"total_products"`
@@ -43,8 +40,8 @@ type DigestSharedFilter struct {
 }
 
 // ToPromptText returns ultra-compact text for LLM context (~300-400 tokens).
-// Format mirrors V4 exactly so prompt-cache keys stay byte-stable for any
-// shared-tenant runs.
+// Format is byte-stable across runs so prompt-cache keys hold for shared-tenant
+// runs.
 func (d *CatalogDigest) ToPromptText() string {
 	if d == nil || d.TotalProducts == 0 {
 		return ""

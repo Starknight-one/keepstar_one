@@ -7,8 +7,8 @@ project:
 
 # Project structure paths (relative to project root)
 paths:
-  backend: "project_v4/backend"
-  frontend: "project/frontend"
+  backend: "project_v5/backend"
+  frontend: "project_v5/frontend"
   database: ""
   specs: "ADW/specs"
 
@@ -27,22 +27,22 @@ stack:
 # Empty commands are skipped
 validation:
   - name: "Backend build"
-    path: "project_v4/backend"
+    path: "project_v5/backend"
     cmd: "go build ./..."
     required: true
 
   - name: "Backend tests"
-    path: "project_v4/backend"
+    path: "project_v5/backend"
     cmd: "go test ./..."
     required: false
 
   - name: "Frontend build"
-    path: "project/frontend"
+    path: "project_v5/frontend"
     cmd: "npm run build"
     required: true
 
   - name: "Frontend lint"
-    path: "project/frontend"
+    path: "project_v5/frontend"
     cmd: "npm run lint"
     required: false
 
@@ -50,8 +50,8 @@ validation:
 # /init will generate expertise files for each
 experts:
   - name: backend
-    paths: ["project_v4/backend"]
+    paths: ["project_v5/backend"]
     line_limit: 300
   - name: frontend
-    paths: ["project/frontend"]
+    paths: ["project_v5/frontend"]
     line_limit: 500

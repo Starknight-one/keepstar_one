@@ -19,8 +19,7 @@ import (
 // Value: the fully-assembled prompt + built-at timestamp.
 //
 // Failure mode: any error fetching tenant or digest returns the base prompt
-// unchanged (fail-open). The same pattern V4 uses
-// (project_v4/.../agent1_execute.go:407-417).
+// unchanged (fail-open).
 type Agent1PromptCache struct {
 	catalog ports.CatalogPort
 	store   sync.Map // tenantSlug → *agent1PromptCacheEntry

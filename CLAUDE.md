@@ -48,7 +48,6 @@ refs and routes to a related expert when the answer crosses domains.
 |---|---|---|---|
 | V5 chat backend (production) | `project_v5/backend/` | 8084 | `v5-engine-production.up.railway.app` |
 | V5 widget | `project_v5/frontend/` | 5173 | served by V5 backend |
-| V4 chat backend (legacy) | `project_v4/backend/` | 8082 | `v4-engine-production.up.railway.app` |
 | Admin backend | `project_admin/backend/` | 8081 | `admin-production-4ae4.up.railway.app` |
 | Admin frontend | `project_admin/frontend/` | 5174 | (served by admin) |
 | Curator | `curator/` | 8082 (separate) | `curator-production-46d7.up.railway.app` |

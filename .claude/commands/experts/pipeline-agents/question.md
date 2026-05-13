@@ -47,7 +47,6 @@ You MUST read code (not rely on YAML alone) when the question is about:
 ## Constraints
 
 - DO NOT change code or create files.
-- DO NOT cite V4 pipeline code (`project_v4/backend/internal/`) — different module, different patterns.
 - DO route engine-v5 internals (op shape, preset node layout) to `experts:engine-v5:question`.
 - DO route Formation/Document rendering questions to `experts:widget:question`.
 - DO route catalog data shape to `experts:catalog:question`.
