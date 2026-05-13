@@ -13,10 +13,9 @@
 }
 
 .logo-icon {
-  width: 28px;
   height: 28px;
-  background: linear-gradient(180deg, #5BC4F0 0%, #FFFFFF 45%, #FF8C42 100%);
-  border-radius: 6px;
+  width: auto;
+  display: block;
 }
 
 .logo-text {

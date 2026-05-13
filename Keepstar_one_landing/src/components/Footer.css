@@ -23,10 +23,9 @@
 }
 
 .footer-brand .logo-icon {
-  width: 24px;
   height: 24px;
-  border-radius: 6px;
-  background: linear-gradient(180deg, #FF8C42 0%, #FFFFFF 45%, #5BC4F0 100%);
+  width: auto;
+  display: block;
 }
 
 .footer-brand .logo-text {

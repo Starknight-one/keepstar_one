@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-150 -210 300 480">
-  <polygon points="-145,156 -50.5,-192 -66,171.5" fill="#185FA5"/>
-  <polygon points="-50.5,-192 -45,-192 -66,171.5" fill="#185FA5"/>
-  <polygon points="-45,-192 -45,250 -62.5,250 -66,171.5" fill="#185FA5"/>
-  <polygon points="-145,156 -66,171.5 -62.5,250" fill="#185FA5"/>
-  <polygon points="145,156 50.5,-192 66,171.5" fill="#185FA5"/>
-  <polygon points="50.5,-192 45,-192 66,171.5" fill="#185FA5"/>
-  <polygon points="45,-192 45,250 62.5,250 66,171.5" fill="#185FA5"/>
-  <polygon points="145,156 66,171.5 62.5,250" fill="#185FA5"/>
+  <polygon points="-145,156 -50.5,-192 -66,171.5" fill="#FFFFFF"/>
+  <polygon points="-50.5,-192 -45,-192 -66,171.5" fill="#E5EBF1"/>
+  <polygon points="-45,-192 -45,250 -62.5,250 -66,171.5" fill="#C8D3DD"/>
+  <polygon points="-145,156 -66,171.5 -62.5,250" fill="#A8B7C5"/>
+  <polygon points="145,156 50.5,-192 66,171.5" fill="#FFFFFF"/>
+  <polygon points="50.5,-192 45,-192 66,171.5" fill="#E5EBF1"/>
+  <polygon points="45,-192 45,250 62.5,250 66,171.5" fill="#C8D3DD"/>
+  <polygon points="145,156 66,171.5 62.5,250" fill="#A8B7C5"/>
   <circle cx="0" cy="221" r="29" fill="#F5A04A"/>
 </svg>
