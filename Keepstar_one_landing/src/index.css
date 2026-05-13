@@ -1,23 +1,14 @@
 :root {
-  /* Brand tokens — Keepstar v0.6 */
-  --deep-space: #0B1B2E;
-  --sky: #5BA3D0;
-  --sky-deep: #185FA5;
-  --sky-light: #85B7EB;
-  --horizon: #F5A04A;
-  --ignite: #E85D2F;
-  --bg: #FFFFFF;
-  --bg-soft: #FAFAF8;
-  --muted: #5F5E5A;
-  --border: rgba(11, 27, 46, 0.1);
-  --border-strong: rgba(11, 27, 46, 0.18);
-
-  /* Compatibility aliases used by existing components */
-  --background: var(--bg);
-  --foreground: var(--deep-space);
-  --text-secondary: var(--muted);
-  --border-light: var(--border);
-  --section-bg: var(--bg-soft);
+  --background: #FFFFFF;
+  --foreground: #1A1A1A;
+  --text-secondary: #5F6368;
+  --google-blue: #4285F4;
+  --google-blue-bright: #1A73E8;
+  --google-red: #EA4335;
+  --google-yellow: #FBBC04;
+  --google-green: #34A853;
+  --section-bg: #F8F9FA;
+  --border-light: #F1F3F4;
 }
 
 * {
@@ -32,8 +23,8 @@ html {
 
 body {
   font-family: 'Inter', sans-serif;
-  background-color: var(--bg);
-  color: var(--deep-space);
+  background-color: var(--background);
+  color: var(--foreground);
   overflow-x: hidden;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
@@ -41,7 +32,7 @@ body {
 
 h1, h2, h3, h4, h5, h6 {
   font-family: 'Inter', sans-serif;
-  color: var(--deep-space);
+  color: var(--foreground);
   font-weight: 700;
   letter-spacing: -1.5px;
 }
@@ -52,7 +43,7 @@ a {
 }
 
 p {
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 17px;
   line-height: 1.7;
 }
@@ -70,25 +61,28 @@ p {
   }
 }
 
-/* Notched corners — brand signature */
-.notch-sm {
-  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
-}
-.notch-md {
-  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
-}
-.notch-lg {
-  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+/* Animations */
+@keyframes antigravity-float {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  33% { transform: translate(10px, -20px) rotate(5deg); }
+  66% { transform: translate(-10px, 10px) rotate(-5deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
 }
 
-/* Scanlines */
-.scanline-sky {
-  height: 1px;
-  background: repeating-linear-gradient(90deg, #5BA3D0 0, #5BA3D0 3px, transparent 3px, transparent 6px);
-  opacity: 0.5;
+.floating-shape {
+  position: absolute;
+  animation: antigravity-float 15s infinite ease-in-out;
+  z-index: -1;
 }
-.scanline-muted {
-  height: 1px;
-  background: repeating-linear-gradient(90deg, #5F5E5A 0, #5F5E5A 3px, transparent 3px, transparent 6px);
-  opacity: 0.3;
-}
+
+.delay-100 { animation-delay: 1s; }
+.delay-200 { animation-delay: 2s; }
+.delay-300 { animation-delay: 3s; }
+
+/* Confetti shapes */
+.shape-ellipse { border-radius: 50%; }
+.shape-rect { border-radius: 1px; }
+.bg-blue { background: var(--google-blue); }
+.bg-red { background: var(--google-red); }
+.bg-yellow { background: var(--google-yellow); }
+.bg-green { background: var(--google-green); }
