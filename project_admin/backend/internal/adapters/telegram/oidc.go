@@ -56,14 +56,28 @@ func NewOIDCClient(botToken, redirectURL string) *OIDCClient {
 }
 
 // BuildAuthURL returns the Telegram consent URL for the given opaque state.
+// Telegram requires an `origin` parameter — the scheme+host of the redirect URI.
 func (c *OIDCClient) BuildAuthURL(state string) string {
+	origin := c.origin()
 	q := url.Values{}
 	q.Set("client_id", c.ClientID)
 	q.Set("redirect_uri", c.RedirectURL)
 	q.Set("response_type", "code")
 	q.Set("scope", oidcScope)
 	q.Set("state", state)
+	if origin != "" {
+		q.Set("origin", origin)
+	}
 	return oidcAuthURL + "?" + q.Encode()
+}
+
+// origin extracts scheme+host from the redirect URL (e.g. "https://admin.keepstar.one").
+func (c *OIDCClient) origin() string {
+	u, err := url.Parse(c.RedirectURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 type oidcTokenResponse struct {

@@ -20,6 +20,13 @@ export default function SignInPage() {
     authApi.config().then(setFlags).catch(() => {})
   }, [])
 
+  // Browser bfcache restores the page with stale loading=true when user hits Back.
+  useEffect(() => {
+    const reset = (e) => { if (e.persisted) { setGoogleLoading(false); setTelegramLoading(false) } }
+    window.addEventListener('pageshow', reset)
+    return () => window.removeEventListener('pageshow', reset)
+  }, [])
+
   async function handleGoogle() {
     setError('')
     setGoogleLoading(true)

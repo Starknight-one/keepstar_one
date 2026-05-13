@@ -21,6 +21,12 @@ export default function SignUpPage() {
     authApi.config().then(setFlags).catch(() => {})
   }, [])
 
+  useEffect(() => {
+    const reset = (e) => { if (e.persisted) { setGoogleLoading(false); setTelegramLoading(false) } }
+    window.addEventListener('pageshow', reset)
+    return () => window.removeEventListener('pageshow', reset)
+  }, [])
+
   async function handleGoogle() {
     setError('')
     setGoogleLoading(true)
