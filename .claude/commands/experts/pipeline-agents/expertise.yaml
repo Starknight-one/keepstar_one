@@ -41,6 +41,7 @@ orchestration:
   prefetch:
     file: "internal/usecases/prefetch.go"
     trigger: "readPresetInUse(a2.Document) extracts domain.TemplatePresetInUseKey stamped by visual_assembly"
+    engine_calls: "prefetch.go calls engine.Materialise + ResolveAndInline directly (bypasses tool layer — intentional, prefetch is non-interactive)"
     nil_when: "active preset has no registered drill target OR data zone is empty"
   trace_persistence:
     location: "internal/handlers/handler_pipeline.go:persistTrace"
@@ -62,6 +63,7 @@ agent1:
     const: "Agent1SystemPrompt"
     purpose: "NLU guidance: intent classification, tool selection, query enrichment"
     catalog_block: "Agent1PromptCache appends <catalog> digest block per tenant"
+    rendered_block: "Rule 8 says: rendered = products the user can see RIGHT NOW; use to ground references like 'the first one', 'the COSRX one'. Match by id/name/brand or image URLs."
   deterministic_guard:
     condition: "ProductCount > 0 AND filterTriggers.MatchString(query) AND NOT styleFieldNames.MatchString(query)"
     action: "bypass LLM, call _internal_state_filter directly"
@@ -104,6 +106,7 @@ agent2:
     preset_auto_gen: "SystemPresetsBlock generated from engine/presets/SystemPresetSeeds keys + SystemPresetDescriptions — adding seed + description is sufficient, no manual prompt edit"
     cache_budget: "system + visual_assembly tool def must clear ≥ 4500 tokens for stable Haiku cache_read; run `go test -tags=tokens` to verify"
     sections: ["HOW IT WORKS", "MODE (rebuild/modify)", "PRESETS (auto-generated)", "REPLICATE", "OPS VOCABULARY", "FIELD BINDING", "FORMAT+WRAPPER", "BUILDING FROM SCRATCH", "COMPOSING", "MODIFYING EXISTING", "TREE_MAP", "DECISION RULES", "ANTI-PATTERNS"]
+    modify_hint: "MODE section explicitly says: 'A typical modify patch is 1–5 ops. If you need more, use rebuild.' — A2 mitigation added in chunk 16"
   history_trim: "last 4 messages (historyLimit=4 = 2 prior turns × 2 messages each); pair-aware: backs up past orphan tool_result blocks"
   tree_map_injection: "buildFormationTreeBlock(ctx, state.Current.Template) → <formation_tree> JSON prepended to user message; empty when template nil"
   microcontext_injection: "<microcontext>signal</microcontext>\n{query} prepended when Microcontext non-empty"
@@ -135,7 +138,8 @@ presets_block:
   file: "internal/engine/presets/prompt.go"
   vars:
     - "SystemPresetDescriptions map[string]string — name → one-line description"
-    - "SystemPresetsBlock string — generated at init from SystemPresetSeeds keys + descriptions"
+    - "SystemPresetsBlock string — generated at init from SystemPresetSeeds keys + descriptions (sorted alphabetically)"
+  generation: "buildSystemPresetsBlock() sorts seeds by name, formats as '  %-32s— %s\\n' lines"
   current_presets:
     - "product_card — standard product card for grids of 2–4 items"
     - "product_card_compact — small product card for dense grids (5+ items)"
@@ -146,6 +150,7 @@ presets_block:
     - "text_explainer — literal-text widget (title + body) for LLM explanations"
     - "empty_not_found — empty state"
     - "error_generic — error state"
+  removed_from_catalog: "catalog_category_card / liked_grid / cart_grid removed in chunk 16 — they don't exist in V5 registry; Agent2 was being told about unusable presets"
   add_new_preset: "Add seed JSON to SystemPresetSeeds (presets.go) AND add description to SystemPresetDescriptions — prompt auto-updates"
 
 tools:
@@ -190,11 +195,17 @@ tools:
         - "state retrieval/write fails → Go error (transport failure)"
       preset_stamp: "templateMap[domain.TemplatePresetInUseKey] = presetName for orchestrator drill-target lookup"
       freestyle_refs: "if ops-only and documentHasRefs → loads components on demand and appends as reusable:true children"
+      tool_schema_params: "mode (required enum), preset (string, optional), replicate (integer, optional), ops (array of op objects with op/target/parent/ref/props)"
   data_normalize:
     file: "internal/tools/data_normalize.go"
     functions:
       - "NormalizeProduct(*domain.Product) — trims whitespace, dedupes slices, filters empty image URLs"
     note: "Called before products reach LLM context; no NormalizeService (V5 is product-only)"
+  engine_callers_outside_tool:
+    note: "KNOWN EXCEPTION: prefetch.go and handler_navigation.go call engine.Materialise / ResolveAndInline / BindData directly. These are non-interactive paths (prefetch build + navigation expand/back) — they bypass tenant preset resolution guard but are intentional by design. Only visual_assembly is the LLM entry-point."
+    files:
+      - "internal/usecases/prefetch.go — Materialise + ResolveAndInline for drill-target build"
+      - "internal/handlers/handler_navigation.go — Materialise + ResolveAndInline + BindData for expand/back"
 
 llm_adapters:
   anthropic:
@@ -241,32 +252,35 @@ handlers:
 
 invariants:
   - "Tool definitions MUST be sorted by name in Registry.GetDefinitions() — Anthropic caches the tool array byte-for-byte; unsorted = 0% cache_read."
-  - "visual_assembly is the ONLY entry into engine-v5. Direct engine calls bypass tenant preset resolution, data binding, and InjectDefaultActions."
+  - "visual_assembly is the only LLM entry into engine-v5. prefetch.go and handler_navigation.go also call engine.Materialise directly — that is intentional and non-interactive."
   - "Agent2SystemPrompt is a var (not const) — built once at startup by buildAgent2SystemPrompt(). Changing engine/presets/ auto-propagates without prompt rewrite."
   - "Agent2 uses CacheTools=true, Agent1 uses CacheTools=false — Agent1's 3 tool defs are below Haiku's per-block 2048-token minimum."
   - "Agent2 history (AppendAgent2History) is separate from Agent1/user ConversationHistory (AppendConversation) — different state fields, different trim rules."
   - "Trace persistence fires AFTER response is written — never blocks the turn; curator may see gaps on crash."
   - "RenderedDataIndices + BuildRenderedSubset feed the <state>.rendered block in Agent1 context — shows what's on screen so Agent1 can resolve natural-language references."
   - "persistTrace persists both success and error turns — error path receives nil resp + non-nil pipelineErr."
+  - "SystemPresetsBlock is generated at init from SystemPresetSeeds keys — never list presets manually in agent2_prompt.go; the catalog section is auto-generated."
 
 gotchas:
   - "V5 was deployed in Singapore region initially while Anthropic API + Neon are us-east — caused ~75% of observed 8s p50 latency. After US migration: 1881-2423ms warm, 3446ms cold."
   - "Agent1 CacheTools deliberately OFF — V5 Agent1 tool defs (3 tools × small schemas) sum below Haiku's 2048-token per-block minimum. Enabling it produces invalid breakpoints silently skipped by Anthropic."
-  - "Agent2 modify-bias (A2 gap): Agent2 fires modify even when state has data from a different category, skipping catalog_search. 1-5 ops hint added to MODE section as mitigation."
+  - "Agent2 modify-bias (A2 gap): Agent2 fires modify even when state has data from a different category, skipping catalog_search. Chunk 16 added '1–5 ops → rebuild' hint in MODE section as mitigation; not fully closed."
   - "Anthropic prompt caching needs ≥ 4500 tokens stable (V4-prod threshold, not the documented 2048 Haiku min). V5 system+tools measured at 3001 tokens in chunk 5.5; Agent2 prompt growth in chunks 9-16 should now clear this — verify with `-tags=tokens` test."
   - "Agent2 history trim is pair-aware — if the cutoff would leave an orphan tool_result (no preceding assistant tool_use), backs up 1 position. Orphan tool_result blocks cause Anthropic API 400 errors."
   - "state_rollback.go exists for failed pipeline turns — if Agent2 fails after Agent1 writes state, rollback restores pre-turn state to avoid stale data on retry."
   - "NormalizeProduct dedupes tags/skinType/concern/keyIngredients and filters empty image URLs — must be called before products enter state to avoid LLM anchoring on phantom signals."
+  - "catalog_category_card / liked_grid / cart_grid were removed from Agent2 system prompt preset catalog in chunk 16 — they exist in V4 but not in V5 system preset registry. If re-added to V5, add seed JSON + SystemPresetDescriptions entry."
 
 active_known_gaps:
   tracker: "docs/v5-known-gaps.md"
   items:
-    A1: "Greeting handling — V5 emits empty_not_found on 'Привет'; needs greeting system preset + Agent2 prompt rules"
-    A2: "Modify-vs-rebuild misclassification — 'другая категория' doesn't fire catalog_search if state non-empty; Agent1 needs stricter category-change rules"
-    A3: "Default replicate count hardcoded 3; V4 shows all matched + paginates; needs page state in engine + frontend pagination UI"
-    A4: "Back button — CLOSED. WidgetApp.jsx canGoBack + handleBack + .kw-back button (renders when canGoBack=true). /api/v1/navigation/back wired via dispatchAction kind='back'. docs/v5-known-gaps.md A4 entry is stale."
-    A5: "Skip Agent2 on Agent1 no-op — pipeline always calls Agent2 LLM even when Agent1 found nothing / identical set; ~1s + $0.001 waste per no-change turn"
-    A6: "Layout density — V5 cards narrower than V4; system preset width=280 is rigid vs V4's viewport-responsive columns"
+    A1: "Greeting handling — V5 emits empty_not_found on 'Привет'; needs greeting system preset + Agent2 prompt rules for conversational intent (OPEN)"
+    A2: "Modify-vs-rebuild misclassification — 'другая категория' doesn't fire catalog_search if state non-empty; '1-5 ops → rebuild' hint added in chunk 16; not fully closed (OPEN)"
+    A3: "Default replicate count + pagination — V5 emits 3 cards always; V4 shows all matched + paginates; needs page state in engine + frontend pagination UI (OPEN)"
+    A4: "Back button — CLOSED. WidgetApp.jsx canGoBack + handleBack + .kw-back button renders when canGoBack=true; /api/v1/navigation/back wired via dispatchAction kind='back'."
+    A5: "Skip Agent2 on Agent1 no-op — pipeline always calls Agent2 LLM even when Agent1 found nothing / identical set; ~1s + $0.001 waste per no-change turn (OPEN)"
+    A6: "Layout density — V5 cards narrower than V4; system preset width=280 is rigid vs V4's viewport-responsive columns (OPEN)"
+    hybrid_search: "CLOSED in chunk 16 — catalog_search now runs SQL keyword ILIKE + pgvector cosine + RRF merge; keyword-only fallback when EmbeddingPort nil."
     deferred: "tree_map injected on every turn with non-empty Document — ~150-400 tokens wasted on preset-only turns; future optimisation"
     deferred2: "catalog digest cached in-process forever (no DB column, no background refresh); no /admin/invalidate-cache yet"
 

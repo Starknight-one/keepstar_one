@@ -108,6 +108,7 @@ renderer:
           2. inferEntityType(ctx) — reads first key of ctx.prefetch.entities (defaults 'product')
           3. Look up ctx.prefetch.adjacentTemplate[entityType] — null → no drill
           4. resolveEntityIdFromClone: uses node.dataIndex → entities[idx].id
+             Returns null (no drill) if dataIndex missing — no child-walking fallback.
           Returns {onClick, onKeyDown} handlers firing drill_detail action.
           Inner buttons stopPropagation to prevent bubble to frame click.
       css_classes: "kw-frame (always) + kw-frame--clickable (when drillable)"
@@ -245,6 +246,7 @@ gotchas:
   - "fillTemplate binding is flat-key only — node.fieldBinding='attributes.skin_type' returns undefined silently. Backend fieldBinding names must be top-level entity keys."
   - "Frame.jsx drill logic reads prefetch.adjacentTemplate[entityType] — if the entity type in the node doesn't match the prefetch key, drill falls back to cold path (no instant preview)."
   - "inferEntityType in Frame.jsx takes the FIRST key of prefetch.entities — only works correctly when exactly one entity type is present in the prefetch payload."
+  - "resolveEntityIdFromClone returns null (no drill) when node.dataIndex is missing — there is no child-walking fallback. A replicate clone without dataIndex silently drops drill capability."
   - "No session cache (localStorage) in V5 — F5 resets chat state. This is a known gap from V4 feature parity."
   - "widget.jsx devConfig: window.__KEEPSTAR_V5_WIDGET__ = {tenant, api} is the local-dev override hook. Not documented in embed guide; used in manual testing only."
   - "Back button (A4) is IMPLEMENTED in WidgetApp.jsx (canGoBack + handleBack + .kw-back) — docs/v5-known-gaps.md entry for A4 is stale."

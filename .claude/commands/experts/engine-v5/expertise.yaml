@@ -32,7 +32,7 @@ node_system:
     meta: ["note", "prompt", "context"]
     special: ["icon_font", "ref"]
   v5_additions:
-    image: "V5 adds 'image' type — atom-level image hint. binding routes resolved URL to fills[0].url (v9 canonical key; NOT 'image'). Frontend maps to Rectangle with image fill."
+    image: "V5 adds 'image' type — atom-level image hint. binding routes resolved URL to fills[0].url (v9 canonical key is 'url', NOT 'image'). Frontend maps to Rectangle with image fill. Note: the stale doc comment in node_types.go line 28 still says 'fills[0].image' — the implementation in binding.go is correct; the comment is wrong."
   helpers:
     NodeType: "returns n[\"type\"] as string or \"\""
     NodeID: "returns n[\"id\"] as string or \"\""
@@ -167,9 +167,10 @@ tree_map:
     2. Other replicate groups + non-clone literals → Literals[]
     3. Walk for __resolvedFrom nodes → Components[] (deduplicated by source id)
     4. DataCount = len(primary group); fallback = len(literals)
-  atom_rule: "bound atoms → {id, field}; Ref slots → {id, ref, slot}; literals → {id, content 32-char preview}"
+  atom_rule: "all atoms emit {id, type}; bound atoms add {field}; Ref nodes add {ref, slot}; literal atoms with content add {content 32-char preview}; format/wrapper/slot pass through when present"
   component_rule: "component-internal atoms listed WITHOUT ids — they're shared across clones; LLM must read-only"
   key_rule: "resolved component subtrees are NOT recursed for shape; collectAtoms stops at __resolvedFrom boundary"
+  tree_map_atom_struct: "TreeMapAtom{ID, Type, FieldBinding(=field), ContentPrev(=content), Format, Wrapper, Slot, Ref} — type always populated; all other fields omitempty"
 
 presets:
   registry_file: "engine/presets/system_registry.go"
@@ -270,8 +271,12 @@ tests:
     - "engine/scene_graph_test.go"
     - "engine/smoke_test.go"
     - "engine/tree_map_test.go"
-    - "engine/value_color_test.go / value_normalize_test.go / value_position_test.go"
+    - "engine/value_color_test.go / value_position_test.go"
+    - "engine/value_normalize_test.go (tests NormalizeFills + NormalizeEffects — functions live in value_fill.go / value_effect.go respectively; no separate value_normalize.go)"
     - "engine/variable_resolver_test.go"
+    - "engine/presets/presets_test.go"
+    - "engine/presets/system_registry_test.go"
+    - "engine/tokens/measurement_test.go (build tag: tokens; verifies system+tools prefix ≥ 4500 tokens for stable Anthropic cache)"
 
 invariants:
   - "Node is map[string]any — all property access must type-assert; no struct field safety net."
@@ -292,6 +297,8 @@ gotchas:
   - "Nav presets (catalog_category_card / liked_grid / cart_grid) were listed in the old V5 agent2_prompt.go but never existed in SystemPresetSeeds. Removed in chunk 16. Any leftover LLM history referencing them causes a preset-not-found ToolResult IsError."
   - "Image fill body uses 'url' key NOT 'image': {type:'image', url:'<val>', mode:'fill'}. Closed chunk 5.5 after v9 source confirmed the canonical key."
   - "RenderedDataIndices identifies clones by __templateOrigin (set by fanOut) AND dataIndex. Documents pre-dating replicate expansion yield nil — caller must handle nil gracefully."
+  - "node_types.go doc comment (line ~28) says 'fills[0].image' for the image node type — this is stale. The actual canonical key confirmed in v9 source is 'url': {type:'image', url:'<val>', mode:'fill'}. The binding.go implementation is correct; only the comment is wrong. Don't trust the comment."
+  - "InjectDefaultActions matches 'actions' frame by STRICT EQUALITY (NodeID == 'actions'), not substring. The code comment at line 14 says 'contains' — that's wrong; isActionsFrame() at line 114-119 uses == operator. Any card with an actions frame must use exactly id='actions'."
 
 active_workstreams:
   chunk_16_closed:
@@ -304,7 +311,7 @@ active_workstreams:
     A1: "Greeting handling — V5 emits empty_not_found on «Привет». Need greeting system preset or text_explainer routing rule."
     A2: "Modify-vs-rebuild misclassification — «другая категория» prompt fires modify instead of rebuild+catalog_search when state non-empty. Port V4 Agent1 rules."
     A3: "Replicate count hardcoded 3 in prompt safe-default; no pagination concept. V4 shows all matched + paginates."
-    A4: "Back button — CLOSED in widget. WidgetApp.jsx has canGoBack state + handleBack function + .kw-back button rendering when canGoBack=true. docs/v5-known-gaps.md A4 row is stale."
+    A4: "Back button — navigation/back endpoint exists (chunk 11). Frontend wiring status: docs/v5-known-gaps.md still lists A4 as open ('show back button when viewStack.length > 0'); widget expert is authoritative on actual frontend state."
     A5: "Skip Agent2 on Agent1 no-op — V5 always calls Agent2 LLM; V4 skips when no data change (~1s + ~$0.001 saving)."
     A6: "Layout density — cards narrower than V4 (product_card.json hardcodes width:280; V4 dynamic columns)."
 
