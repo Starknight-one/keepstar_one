@@ -55,26 +55,6 @@ func main() {
 	// Authenticated routes — wrapped with session middleware.
 	protected := http.NewServeMux()
 	protected.HandleFunc("/curator/me", h.Me)
-	protected.HandleFunc("/curator/candidates/attributes", h.ListAttributeCandidates)
-	protected.HandleFunc("/curator/candidates/attributes/", func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/promote"):
-			h.PromoteAttribute(w, r)
-		case strings.HasSuffix(r.URL.Path, "/dismiss"):
-			h.DismissAttribute(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	protected.HandleFunc("/curator/candidates/categories", h.ListCategoryCandidates)
-	protected.HandleFunc("/curator/junk", h.ListJunk)
-	protected.HandleFunc("/curator/junk/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/classify") {
-			h.ClassifyJunk(w, r)
-			return
-		}
-		http.NotFound(w, r)
-	})
 	protected.HandleFunc("/curator/audit", h.ListAudit)
 
 	// Tenants — operations dashboard (Этап 1, 2026-04-27 pivot).
@@ -91,12 +71,6 @@ func main() {
 			h.ListTenantProducts(w, r)
 		case strings.HasSuffix(path, "/schema"):
 			h.GetTenantSchema(w, r)
-		case strings.HasSuffix(path, "/merge/run"):
-			mergeProxy.HandleRun(w, r)
-		case strings.HasSuffix(path, "/merge-reports"):
-			mergeProxy.HandleListReports(w, r)
-		case strings.HasSuffix(path, "/discover"):
-			mergeProxy.HandleDiscover(w, r)
 		case strings.HasSuffix(path, "/sync-now"):
 			mergeProxy.HandleSyncNowV2(w, r)
 
@@ -120,9 +94,6 @@ func main() {
 		}
 	})
 
-	// Merge reports (Phase D3, 2026-04-28). All proxied to admin-backend.
-	protected.HandleFunc("/curator/merge-reports/", mergeProxy.HandleReport)
-
 	// Master catalog browse.
 	protected.HandleFunc("/curator/master/products", h.ListMasterProducts)
 	protected.HandleFunc("/curator/master/products/", h.GetMasterProduct)
@@ -143,17 +114,11 @@ func main() {
 	})
 
 	mux.Handle("/curator/me", auth(protected))
-	mux.Handle("/curator/candidates/", auth(protected))
-	mux.Handle("/curator/candidates/attributes", auth(protected))
-	mux.Handle("/curator/candidates/categories", auth(protected))
-	mux.Handle("/curator/junk", auth(protected))
-	mux.Handle("/curator/junk/", auth(protected))
 	mux.Handle("/curator/audit", auth(protected))
 	mux.Handle("/curator/tenants", auth(protected))
 	mux.Handle("/curator/tenants/", auth(protected))
 	mux.Handle("/curator/master/products", auth(protected))
 	mux.Handle("/curator/master/products/", auth(protected))
-	mux.Handle("/curator/merge-reports/", auth(protected))
 	mux.Handle("/curator/chats", auth(protected))
 	mux.Handle("/curator/chats/", auth(protected))
 

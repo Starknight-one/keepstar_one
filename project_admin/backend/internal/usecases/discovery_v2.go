@@ -54,6 +54,11 @@ const (
 // before commit_artifact.
 var errBudgetExhausted = errors.New("discovery v2: budget exhausted before commit")
 
+// AgentSender is the minimal Anthropic adapter contract used by the loop.
+type AgentSender interface {
+	Send(ctx context.Context, req anthropic.MessagesRequest) (*anthropic.MessagesResponse, error)
+}
+
 // DiscoveryV2 runs the new discovery loop. Stateless across runs.
 type DiscoveryV2 struct {
 	llm       AgentSender

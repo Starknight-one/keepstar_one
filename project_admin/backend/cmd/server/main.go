@@ -269,26 +269,12 @@ func main() {
 	settingsUC := usecases.NewSettingsUseCase(catalogAdapter)
 	stockUC := usecases.NewStockUseCase(catalogAdapter)
 
-	// Catalog completion 2026-04-28 (Phase A4): candidates + categories adapters
-	// are constructed up-front so harvester-lite can wire them via SetSignals.
-	// Both are stateless thin DB wrappers — building them early has no cost.
-	candidatesAdapter := postgres.NewCandidatesAdapter(dbClient, log)
 	categoriesV2Adapter := postgres.NewCategoriesV2Adapter(dbClient, log)
-
-	// Phase D1/D2/D3 — merge agent + applier shared adapters. Declared here
-	// so the discovery agent (inside the Shopify block below) can reuse the
-	// MasterVariants adapter, and the curator merge handlers can wire the
-	// applier without re-constructing the same DB-layer types.
-	masterVariantsAdapter := postgres.NewMasterVariantsAdapter(dbClient, log)
-	mappingArtifactAdapter := postgres.NewMappingArtifactAdapter(dbClient, log)
-	mergeReportsAdapter := postgres.NewMergeReportsAdapter(dbClient, log)
-	mergeApplyTxAdapter := postgres.NewMergeApplyTxAdapter(dbClient, log)
 
 	// Onboarding: integrations + CSV + Shopify
 	var integrationsUC *usecases.IntegrationsUseCase
 	var csvMappingUC *usecases.CSVMappingUseCase
 	var shopifyV2UC *usecases.ShopifyV2UseCase
-	var discoveryUC *usecases.DiscoveryUseCase
 	if integrationsAdapter != nil {
 		integrationsUC = usecases.NewIntegrationsUseCase(integrationsAdapter, log)
 		if cfg.HasEnrichment() {
@@ -296,26 +282,7 @@ func main() {
 		}
 		if cfg.HasShopify() {
 			shopifyClient := shopify.NewClient(cfg.ShopifyAPIKey, cfg.ShopifyAPISecret, cfg.ShopifyAPIVersion, cfg.ShopifyScopes)
-
-			// V2 pipeline owns the full Shopify lifecycle (curator-driven pivot
-			// 2026-04-27): OAuth, webhook subscription, dump-to-staging,
-			// discovery agent, harvester-lite (wired below in Этап 2.2).
-			// Legacy ShopifyUseCase was removed — it wrote directly to
-			// master_products, which polluted the master catalog with
-			// mis-classified vertical='cosmetics' rows.
-			shopifyStagingAdapter := postgres.NewShopifyStagingAdapter(dbClient, log)
-			shopifyV2UC = usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, catalogAdapter, shopifyStagingAdapter, cfg.PublicBaseURL, log)
-
-			// Harvester-lite: Tier-1 deterministic mapping from staging →
-			// catalog.products (no master_*). Wired late so the V2 UC can
-			// own the OAuth lifecycle without import-cycling on the harvester.
-			harvesterLite := usecases.NewHarvesterLite(shopifyStagingAdapter, catalogAdapter, log)
-			// Phase A4: wire candidates + tenant_categories side effects so each
-			// imported product feeds master_attribute_candidates / master_category_candidates
-			// and upserts a tenant_categories row per Shopify collection (with
-			// category_classifier deciding kind = category|showcase|promo).
-			harvesterLite.SetSignals(candidatesAdapter, categoriesV2Adapter)
-			shopifyV2UC.SetHarvester(harvesterLite)
+			shopifyV2UC = usecases.NewShopifyV2UseCase(shopifyClient, integrationsAdapter, catalogAdapter, cfg.PublicBaseURL, log)
 
 			// Install-flow completion hook: after a fresh Shopify install OAuth,
 			// fetch the shop owner email and either (a) provision an admin_user
@@ -366,24 +333,6 @@ func main() {
 				return ""
 			})
 
-			// M4c: discovery agent (Sonnet 4.6, 8 tools). Reuses staging +
-			// the M2 master_variants adapter for find_similar_masters /
-			// peek_master tools, plus the existing OpenAI embedder.
-			//
-			// Resolver=nil → units.Parse falls back to the in-code English
-			// alias table, which covers all M3-seeded global aliases. Tenant-
-			// specific overrides aren't needed yet; a per-tenant
-			// PostgresAliasResolver can be wired later when AliasQuery has
-			// a real adapter implementation.
-			if cfg.AnthropicAPIKey != "" {
-				agentClient := anthropicAdapter.NewAgentClient(cfg.AnthropicAPIKey, "claude-sonnet-4-6")
-				agent := usecases.NewDiscoveryAgent(agentClient, shopifyStagingAdapter, masterVariantsAdapter, embeddingClient, log)
-				discoveryUC = usecases.NewDiscoveryUseCase(shopifyStagingAdapter, masterVariantsAdapter, mappingArtifactAdapter, nil, agent, log)
-				log.Info("shopify_v2_discovery_enabled", "model", agentClient.Model())
-			} else {
-				log.Warn("shopify_v2_discovery_disabled — ANTHROPIC_API_KEY not set")
-			}
-
 			log.Info("shopify_integration_enabled")
 		}
 	}
@@ -408,20 +357,7 @@ func main() {
 	auditHandler := handlers.NewAuditHandler(auditAdapter, log)
 	productsHandler := handlers.NewProductsHandler(productsUC, auditAdapter, log)
 
-	// Phase D3 — merge applier wired with cascade + tx + audit. Cascade
-	// uses the existing MasterVariants adapter (no embedder for the applier
-	// path; the cascade only re-runs against pre-existing strategies the
-	// agent already chose during discovery).
-	mergeCascade := usecases.NewMatchCascade(masterVariantsAdapter, embeddingClient, log)
-	mergeApplyUC := usecases.NewMergeApplyUseCase(catalogAdapter, mappingArtifactAdapter, mergeReportsAdapter, mergeCascade, log).
-		WithApplyTx(mergeApplyTxAdapter).
-		WithAudit(auditAdapter)
-	curatorMergeHandler := handlers.NewCuratorMergeHandler(mergeApplyUC, discoveryUC, mergeReportsAdapter, log)
-	// candidatesAdapter + categoriesV2Adapter were constructed earlier (above the
-	// integrations block) so harvester-lite can wire them; reuse the same instances
-	// here for the HTTP handlers.
 	categoriesHandler := handlers.NewCategoriesHandler(categoriesV2Adapter, auditAdapter, log)
-	junkHandler := handlers.NewJunkHandler(candidatesAdapter, auditAdapter, log)
 	apiKeysAdapter := postgres.NewAPIKeysAdapter(dbClient, log)
 	apiKeysHandler := handlers.NewAPIKeysHandler(apiKeysAdapter, auditAdapter, log)
 	apiV1ProductsHandler := handlers.NewAPIv1ProductsHandler(productsUC, log)
@@ -441,7 +377,6 @@ func main() {
 	var integrationsHandler *handlers.IntegrationsHandler
 	var csvIntegrationsHandler *handlers.CSVIntegrationsHandler
 	var shopifyHandler *handlers.ShopifyHandler
-	var shopifyV2Handler *handlers.ShopifyV2Handler
 	if integrationsUC != nil {
 		integrationsWipeUC := usecases.NewIntegrationsWipeUseCase(dbClient.Pool(), integrationsAdapter, log)
 		integrationsHandler = handlers.NewIntegrationsHandler(integrationsUC, integrationsWipeUC, log)
@@ -449,7 +384,6 @@ func main() {
 	}
 	if shopifyV2UC != nil {
 		shopifyHandler = handlers.NewShopifyHandler(shopifyV2UC, log)
-		shopifyV2Handler = handlers.NewShopifyV2Handler(shopifyV2UC, discoveryUC, log)
 	}
 
 	// -------------------------------------------------------------------
@@ -609,17 +543,6 @@ func main() {
 	})
 	protected.HandleFunc("/admin/api/categories/master", categoriesHandler.HandleListMaster)
 	protected.HandleFunc("/admin/api/categories/mapping", categoriesHandler.HandleSetMapping)
-	// Junk variant triage (M9). Empty until harvester (M4d) populates the
-	// queue; UI renders an empty state in the meantime.
-	protected.HandleFunc("/admin/api/junk", junkHandler.HandleList)
-	protected.HandleFunc("/admin/api/junk/count", junkHandler.HandleCount)
-	protected.HandleFunc("/admin/api/junk/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/classify") {
-			junkHandler.HandleClassify(w, r)
-			return
-		}
-		http.NotFound(w, r)
-	})
 	// API keys (M10) — admin-protected CRUD.
 	protected.HandleFunc("/admin/api/api-keys", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -681,17 +604,7 @@ func main() {
 		if shopifyHandler != nil {
 			protected.HandleFunc("/admin/api/integrations/shopify/install", shopifyHandler.HandleInstall)
 			protected.HandleFunc("/admin/api/integrations/shopify/", func(w http.ResponseWriter, r *http.Request) {
-				// /resync removed with legacy cut-over (curator-driven pivot
-				// 2026-04-27). Re-running ingest is now curator-triggered:
-				// dump-to-staging → discover → run merge-agent.
-				switch {
-				case shopifyV2Handler != nil && strings.HasSuffix(r.URL.Path, "/dump-to-staging"):
-					shopifyV2Handler.HandleDumpToStaging(w, r)
-				case shopifyV2Handler != nil && strings.HasSuffix(r.URL.Path, "/discover"):
-					shopifyV2Handler.HandleDiscover(w, r)
-				default:
-					http.NotFound(w, r)
-				}
+				http.NotFound(w, r)
 			})
 		}
 		if csvIntegrationsHandler != nil {
@@ -769,43 +682,14 @@ func main() {
 		mux.HandleFunc("/admin/api/webhooks/shopify", shopifyHandler.HandleWebhook)
 	}
 
-	// Internal curator endpoints (Phase D3, 2026-04-28). Behind X-Internal-Key
-	// header — only the curator-backend should hit these. Empty env var
-	// returns 503 from the middleware, so a forgotten config never silently
-	// exposes the routes.
+	// Internal endpoints behind X-Internal-Key (curator-backend → admin).
+	// Empty env var returns 503 from the middleware, so a forgotten config
+	// never silently exposes the routes.
 	internalKey := os.Getenv("CURATOR_INTERNAL_KEY")
 	internalMW := handlers.InternalKeyMiddleware(internalKey)
-	internalMux := http.NewServeMux()
-	internalMux.HandleFunc("/admin/api/internal/curator/tenants/", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		switch {
-		case strings.HasSuffix(path, "/merge/run"):
-			curatorMergeHandler.HandleRun(w, r)
-		case strings.HasSuffix(path, "/merge-reports"):
-			curatorMergeHandler.HandleListForTenant(w, r)
-		case strings.HasSuffix(path, "/discover"):
-			curatorMergeHandler.HandleDiscover(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	internalMux.HandleFunc("/admin/api/internal/curator/merge-reports/", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		switch {
-		case strings.HasSuffix(path, "/apply"):
-			curatorMergeHandler.HandleApply(w, r)
-		case strings.HasSuffix(path, "/revert"):
-			curatorMergeHandler.HandleRevert(w, r)
-		default:
-			curatorMergeHandler.HandleGet(w, r)
-		}
-	})
-	mux.Handle("/admin/api/internal/curator/tenants/", internalMW(internalMux))
-	mux.Handle("/admin/api/internal/curator/merge-reports/", internalMW(internalMux))
 
-	// Catalog v2 manual triggers (sync-now + force discover). Same
-	// X-Internal-Key gate — curator's "Sync now" button hits these
-	// via MergeProxy-style forwarding.
+	// Catalog v2 manual triggers (sync-now + force discover). Curator's
+	// "Sync now" button hits these via MergeProxy-style forwarding.
 	if catalogV2Handler != nil {
 		v2Mux := http.NewServeMux()
 		v2Mux.HandleFunc("/admin/api/catalog/v2/sync-now/", catalogV2Handler.HandleSyncNow)

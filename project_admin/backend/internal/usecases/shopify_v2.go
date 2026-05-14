@@ -52,23 +52,6 @@ const bulkPollInterval = 3 * time.Second
 // Shopify's side (rare) or we sent a query they can't bulk-process (caller bug).
 const bulkOpMaxWait = 90 * time.Minute
 
-// HarvesterLite is the per-product write path that replaces legacy
-// runInitialSync. It writes to catalog.products only (no master_*) — implemented
-// in Этап 2.2. This interface lets the V2 UC own webhook routing without
-// importing the harvester package.
-type HarvesterLite interface {
-	// RunForTenant streams shopify_raw_imports for the tenant and upserts
-	// listings into catalog.products. Called after CompleteOAuth + DumpToStaging.
-	RunForTenant(ctx context.Context, tenantID string) (productCount int, err error)
-
-	// UpsertOne applies the same Tier-1 mapping for a single Shopify-product
-	// payload (used by webhook). The payload is the raw Shopify webhook body.
-	UpsertOne(ctx context.Context, tenantID string, body []byte) error
-
-	// SoftDeleteOne marks a listing deleted by source id (products/delete webhook).
-	SoftDeleteOne(ctx context.Context, tenantID, sourceID string) error
-}
-
 // InstallCompletionHook is invoked after a successful install-flow OAuth (i.e.
 // FlowKind == "install"). Implementations live in main.go and typically: fetch
 // the shop owner email via the freshly-issued token, find-or-create an
@@ -93,24 +76,19 @@ type InstallCompletionHook func(ctx context.Context, tenantID, shopDomain, token
 // agent, and webhook handling via harvester-lite. The legacy ShopifyUseCase
 // (REST initial-sync writing directly to master_products) was removed.
 type ShopifyV2UseCase struct {
-	client          *shopify.Client
-	integrations    ports.IntegrationsPort
-	catalog         ports.AdminCatalogPort // tenant CRUD for install-flow auto-provision
-	staging         ports.ShopifyStagingPort
-	harvester       HarvesterLite        // legacy; nil-safe. Replaced by inboxIngester.
-	inboxIngester   *ShopifyIngester     // 6-step catalog flow; if set, runInitialIngest + HandleWebhook
-	                                     // use the new pipeline (inbox → discovery_v2 → apply_v2) instead
-	                                     // of the legacy DumpToStaging + harvester-lite path.
-	onInstallDone   InstallCompletionHook // fired after install-flow OAuth; nil-safe
-	publicURL       string
-	log             *logger.Logger
+	client        *shopify.Client
+	integrations  ports.IntegrationsPort
+	catalog       ports.AdminCatalogPort // tenant CRUD for install-flow auto-provision
+	inboxIngester *ShopifyIngester       // 6-step catalog flow (inbox → discovery_v2 → apply_v2)
+	onInstallDone InstallCompletionHook  // fired after install-flow OAuth; nil-safe
+	publicURL     string
+	log           *logger.Logger
 }
 
 func NewShopifyV2UseCase(
 	client *shopify.Client,
 	integrations ports.IntegrationsPort,
 	catalog ports.AdminCatalogPort,
-	staging ports.ShopifyStagingPort,
 	publicURL string,
 	log *logger.Logger,
 ) *ShopifyV2UseCase {
@@ -118,22 +96,15 @@ func NewShopifyV2UseCase(
 		client:       client,
 		integrations: integrations,
 		catalog:      catalog,
-		staging:      staging,
 		publicURL:    publicURL,
 		log:          log,
 	}
 }
 
-// SetHarvester wires the harvester-lite implementation. Called from main.go
-// after both the V2 UC and harvester are constructed (avoids import cycles
-// while keeping main.go DI flat).
-func (uc *ShopifyV2UseCase) SetHarvester(h HarvesterLite) { uc.harvester = h }
-
-// SetInboxIngester wires the new-flow ingester. When set, runInitialIngest
-// and HandleWebhook route bulk-pull + webhook events through inbox → discovery
-// → apply instead of the legacy staging + harvester path. main.go wires both
-// (legacy + new) for a transitional period; the legacy path will be removed
-// once production traffic confirms the new pipeline is stable.
+// SetInboxIngester wires the 6-step catalog flow. Required for runInitialIngest
+// and HandleWebhook to function; main.go calls this immediately after
+// constructing the ingester. If left nil, the UC will panic on first ingest
+// call rather than silently absorb the data.
 func (uc *ShopifyV2UseCase) SetInboxIngester(ing *ShopifyIngester) { uc.inboxIngester = ing }
 
 // SetInstallCompletionHook wires the post-install user-provisioning step.
@@ -325,36 +296,29 @@ func (uc *ShopifyV2UseCase) CompleteOAuth(ctx context.Context, shop, code, state
 	return integration, record.FlowKind, pendingToken, nil
 }
 
-// runInitialIngest — background after Connect: pulls the Shopify bulk catalog
-// and pushes through the 6-step flow (inbox → discovery → apply). Falls back
-// to the legacy DumpToStaging + harvester path when the inboxIngester isn't
-// wired (compile-time fallback for environments still on the old DI).
-//
-// Status flips: syncing → connected on success, syncing → error on failure.
+// runInitialIngest — background after Connect: bulk-pulls the Shopify catalog,
+// writes raw payloads into catalog.inbox_items, and triggers discovery_v2 +
+// apply_v2 through the orchestrator. Status flips: syncing → connected on
+// success, syncing → error on failure.
 func (uc *ShopifyV2UseCase) runInitialIngest(integrationID, tenantID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
 	defer cancel()
 
-	uc.log.Info("shopify_v2_initial_ingest_started", "integration_id", integrationID, "path", uc.ingestPathName())
+	uc.log.Info("shopify_v2_initial_ingest_started", "integration_id", integrationID)
 
-	if uc.inboxIngester != nil {
-		uc.runInitialIngestNewFlow(ctx, integrationID, tenantID)
+	if uc.inboxIngester == nil {
+		uc.log.Error("shopify_v2_inbox_ingester_not_wired", "integration_id", integrationID)
+		_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusError, "inbox ingester not wired")
 		return
 	}
-	uc.runInitialIngestLegacy(ctx, integrationID, tenantID)
-}
 
-func (uc *ShopifyV2UseCase) ingestPathName() string {
-	if uc.inboxIngester != nil {
-		return "v2_inbox"
-	}
-	return "legacy_staging"
+	uc.runInitialIngestNewFlow(ctx, integrationID, tenantID)
 }
 
 // runInitialIngestNewFlow: bulk-pull products → parse JSONL → inbox.WriteFromShopifyBulk
-// → orchestrator.ManualSync (which cascades to discovery_v2 + apply_v2). Skips the
-// metafield-defs / navigation / shop-refs dumps that the legacy discovery agent
-// consumed — discovery_v2 reads samples straight from inbox via its own tools.
+// → orchestrator.ManualSync (which cascades to discovery_v2 + apply_v2). discovery_v2
+// reads samples straight from inbox via its own tools — no separate metafield-defs /
+// navigation / shop-refs dumps required.
 func (uc *ShopifyV2UseCase) runInitialIngestNewFlow(ctx context.Context, integrationID, tenantID string) {
 	integ, err := uc.integrations.Get(ctx, tenantID, integrationID)
 	if err != nil {
@@ -394,36 +358,9 @@ func (uc *ShopifyV2UseCase) runInitialIngestNewFlow(ctx context.Context, integra
 	_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusConnected, "")
 }
 
-// runInitialIngestLegacy is the old path (DumpToStaging + harvester-lite).
-// Retained until inbox flow is verified across a few real installs.
-func (uc *ShopifyV2UseCase) runInitialIngestLegacy(ctx context.Context, integrationID, tenantID string) {
-	dump, err := uc.DumpToStaging(ctx, tenantID, integrationID)
-	if err != nil {
-		uc.log.Error("shopify_v2_initial_dump_failed", "integration_id", integrationID, "error", err)
-		_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusError, err.Error())
-		return
-	}
-	if uc.harvester == nil {
-		uc.log.Info("shopify_v2_harvester_not_wired_skipping_apply",
-			"integration_id", integrationID, "products_in_staging", dump.ProductCount)
-		_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusConnected, "")
-		return
-	}
-	count, err := uc.harvester.RunForTenant(ctx, tenantID)
-	if err != nil {
-		uc.log.Error("shopify_v2_harvester_failed", "integration_id", integrationID, "error", err)
-		_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusError, err.Error())
-		return
-	}
-	uc.log.Info("shopify_v2_initial_ingest_completed",
-		"integration_id", integrationID, "products_written", count)
-	_ = uc.integrations.UpdateStatus(ctx, integrationID, domain.IntegrationStatusConnected, "")
-}
-
-// bulkPullProductsAsInboxItems runs the same bulk-op + JSONL parsing as
-// streamJSONLToStaging, but returns []ShopifyItem instead of writing to
-// staging. Children (variants, images, metafields, collections) are merged
-// under the parent product the same way the legacy path does.
+// bulkPullProductsAsInboxItems runs the Shopify bulk-op and parses the
+// resulting JSONL into a flat list of products with their children
+// (variants, images, metafields, collections) merged under the parent.
 func (uc *ShopifyV2UseCase) bulkPullProductsAsInboxItems(ctx context.Context, shop, token string) ([]ShopifyItem, error) {
 	op, err := uc.runBulkProductsAndWait(ctx, shop, token)
 	if err != nil {
@@ -507,50 +444,35 @@ func (uc *ShopifyV2UseCase) HandleWebhook(ctx context.Context, topic, shopDomain
 	if err != nil {
 		return fmt.Errorf("lookup integration: %w", err)
 	}
+	if uc.inboxIngester == nil {
+		uc.log.Error("shopify_v2_webhook_ingester_not_wired", "shop", shopDomain, "topic", topic)
+		return fmt.Errorf("inbox ingester not wired")
+	}
 	switch topic {
 	case "products/create", "products/update":
-		// Prefer the new inbox flow when wired; the orchestrator handles
-		// rate-limiting (≤1 apply/day) and routes the payload through
-		// inbox → apply_v2.
-		if uc.inboxIngester != nil {
-			// Extract GID from the webhook payload — Shopify webhook bodies
-			// have id as a numeric Admin REST id, so we build the GID form.
-			var probe struct {
-				ID int64 `json:"id"`
-			}
-			if err := json.Unmarshal(body, &probe); err != nil || probe.ID == 0 {
-				uc.log.Warn("shopify_v2_webhook_parse_id_failed", "shop", shopDomain, "error", err)
-				return nil
-			}
-			gid := fmt.Sprintf("gid://shopify/Product/%d", probe.ID)
-			verb := "updated"
-			if topic == "products/create" {
-				verb = "created"
-			}
-			_, err := uc.inboxIngester.IngestSingleWebhook(ctx, integration.TenantID, gid, verb, body)
-			return err
-		}
-		if uc.harvester == nil {
-			uc.log.Info("shopify_v2_webhook_upsert_skipped_no_harvester",
-				"shop", shopDomain, "topic", topic)
-			return nil
-		}
-		return uc.harvester.UpsertOne(ctx, integration.TenantID, body)
-	case "products/delete":
-		if uc.harvester == nil {
-			return nil
-		}
-		var payload struct {
+		// Orchestrator handles rate-limiting (≤1 apply/day) and routes the
+		// payload through inbox → apply_v2. Shopify webhook bodies carry the
+		// product id as a numeric Admin REST id; we lift it back to the GID
+		// form the rest of the pipeline expects.
+		var probe struct {
 			ID int64 `json:"id"`
 		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			return fmt.Errorf("parse delete payload: %w", err)
+		if err := json.Unmarshal(body, &probe); err != nil || probe.ID == 0 {
+			uc.log.Warn("shopify_v2_webhook_parse_id_failed", "shop", shopDomain, "error", err)
+			return nil
 		}
-		if payload.ID == 0 {
-			return fmt.Errorf("delete payload missing id")
+		gid := fmt.Sprintf("gid://shopify/Product/%d", probe.ID)
+		verb := "updated"
+		if topic == "products/create" {
+			verb = "created"
 		}
-		return uc.harvester.SoftDeleteOne(ctx, integration.TenantID,
-			fmt.Sprintf("%d", payload.ID))
+		_, err := uc.inboxIngester.IngestSingleWebhook(ctx, integration.TenantID, gid, verb, body)
+		return err
+	case "products/delete":
+		// TODO: surface deletion through the new flow. For now log and ignore —
+		// catalog won't auto-clean removed listings until a manual sync runs.
+		uc.log.Info("shopify_v2_webhook_delete_not_routed", "shop", shopDomain)
+		return nil
 	case "inventory_levels/update":
 		// Shopify's payload doesn't carry product_id; mapping it back requires
 		// inventory_item lookup. Curator-triggered re-dump covers stock drift.
@@ -572,158 +494,6 @@ func randomState() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// DumpToStagingResult carries the outcome of a single bulk-pull. ProductCount
-// is the most useful single number for the progress UI; CollectionCount /
-// MetafieldDefCount / Vendors are smaller numbers shown alongside.
-type DumpToStagingResult struct {
-	OperationID      string
-	ProductCount     int
-	CollectionCount  int
-	MetafieldDefs    int
-	NavigationItems  int
-	VendorCount      int
-	ProductTypeCount int
-	TagCount         int
-	Duration         time.Duration
-}
-
-// DumpToStaging runs one full metadata-first pull for a tenant. It is
-// idempotent: ON CONFLICT in the staging table replaces existing rows so
-// re-running just refreshes the buffer. The caller is responsible for
-// authorization (tenant must own the integration).
-//
-// Sequence:
-//   1. Pull metafield definitions (3 owner types × small list each)
-//   2. Pull main navigation menu (one snapshot)
-//   3. Pull shop reference data (vendors, product types, tags)
-//   4. Fire bulkOperationRunQuery for the full products graph
-//   5. Poll until COMPLETED / FAILED / CANCELED
-//   6. Stream JSONL → split into per-product rows → upsert into staging
-//
-// Steps 1-3 finish in seconds. Step 4-5 dominate wallclock for big catalogs.
-// Step 6 is bound by Postgres write throughput (~1k products/sec on Neon).
-func (uc *ShopifyV2UseCase) DumpToStaging(ctx context.Context, tenantID, integrationID string) (*DumpToStagingResult, error) {
-	start := time.Now()
-	integration, err := uc.integrations.Get(ctx, tenantID, integrationID)
-	if err != nil {
-		return nil, fmt.Errorf("lookup integration: %w", err)
-	}
-	shop := integration.ExternalID
-	token := integration.Credentials
-	if shop == "" || token == "" {
-		return nil, fmt.Errorf("integration not connected (missing shop or token)")
-	}
-
-	res := &DumpToStagingResult{}
-
-	// --- Phase 1: metadata snapshots (~5 sec) -----------------------------------
-	if err := uc.dumpMetafieldDefs(ctx, tenantID, shop, token, res); err != nil {
-		return nil, fmt.Errorf("metafield defs: %w", err)
-	}
-	if err := uc.dumpNavigation(ctx, tenantID, shop, token, res); err != nil {
-		return nil, fmt.Errorf("navigation: %w", err)
-	}
-	if err := uc.dumpShopReferences(ctx, tenantID, shop, token, res); err != nil {
-		return nil, fmt.Errorf("shop references: %w", err)
-	}
-
-	// --- Phase 2: bulk products pull (5-40 min) ---------------------------------
-	op, err := uc.runBulkProductsAndWait(ctx, shop, token)
-	if err != nil {
-		return nil, fmt.Errorf("bulk products: %w", err)
-	}
-	res.OperationID = op.ID
-
-	// --- Phase 3: stream JSONL → staging ----------------------------------------
-	if op.URL == "" {
-		// Empty catalogs return no URL. Not an error — just nothing to stream.
-		uc.log.Info("shopify_v2_bulk_op_no_url", "shop", shop, "status", op.Status)
-		res.Duration = time.Since(start)
-		return res, nil
-	}
-	productCount, err := uc.streamJSONLToStaging(ctx, tenantID, op.URL)
-	if err != nil {
-		return nil, fmt.Errorf("stream jsonl: %w", err)
-	}
-	res.ProductCount = productCount
-
-	// Recount collections from the staging table since the bulk JSONL inlines
-	// collections under product nodes (no separate top-level "collection"
-	// rows are written by streamJSONLToStaging in 4a).
-	if counts, err := uc.staging.CountByKind(ctx, tenantID); err == nil {
-		res.CollectionCount = counts["collection"]
-	}
-
-	res.Duration = time.Since(start)
-	uc.log.Info("shopify_v2_dump_to_staging_completed",
-		"shop", shop,
-		"products", res.ProductCount,
-		"metafield_defs", res.MetafieldDefs,
-		"vendors", res.VendorCount,
-		"duration_ms", res.Duration.Milliseconds(),
-	)
-	return res, nil
-}
-
-// dumpMetafieldDefs writes one staging row per owner type. The discovery agent
-// reads these to know which metafields are formally declared (high-signal,
-// merchant intentional) vs ad-hoc (lower-signal).
-func (uc *ShopifyV2UseCase) dumpMetafieldDefs(ctx context.Context, tenantID, shop, token string, res *DumpToStagingResult) error {
-	for _, ownerType := range []string{"PRODUCT", "PRODUCTVARIANT", "COLLECTION"} {
-		defs, err := uc.client.MetafieldDefinitions(ctx, shop, token, ownerType)
-		if err != nil {
-			return fmt.Errorf("%s defs: %w", ownerType, err)
-		}
-		payload, _ := json.Marshal(defs)
-		sourceID := "metafield_defs:" + strings.ToLower(ownerType)
-		if err := uc.staging.UpsertRaw(ctx, tenantID, "metadata", sourceID, payload); err != nil {
-			return fmt.Errorf("staging write %s: %w", sourceID, err)
-		}
-		res.MetafieldDefs += len(defs)
-	}
-	return nil
-}
-
-// dumpNavigation snapshots the published storefront menu. Many shops use only
-// "main-menu" — a missing menu is logged but not fatal (we'll fall back to
-// collection-handle prefixes when building the category tree).
-func (uc *ShopifyV2UseCase) dumpNavigation(ctx context.Context, tenantID, shop, token string, res *DumpToStagingResult) error {
-	menu, err := uc.client.NavigationMenu(ctx, shop, token, "main-menu")
-	if err != nil {
-		// Log and continue — navigation is helpful but not required.
-		uc.log.Info("shopify_v2_menu_unavailable", "shop", shop, "error", err.Error())
-		return nil
-	}
-	if menu == nil {
-		uc.log.Info("shopify_v2_menu_not_present", "shop", shop, "handle", "main-menu")
-		return nil
-	}
-	payload, _ := json.Marshal(menu)
-	if err := uc.staging.UpsertRaw(ctx, tenantID, "menu", "main-menu", payload); err != nil {
-		return fmt.Errorf("staging menu: %w", err)
-	}
-	res.NavigationItems = countMenuItems(menu.Items)
-	return nil
-}
-
-// dumpShopReferences captures the vendor/type/tag universe in one row. The
-// discovery agent uses these as quick "what's the shape of this catalog"
-// context before requesting samples.
-func (uc *ShopifyV2UseCase) dumpShopReferences(ctx context.Context, tenantID, shop, token string, res *DumpToStagingResult) error {
-	refs, err := uc.client.ShopReferences(ctx, shop, token)
-	if err != nil {
-		return fmt.Errorf("references: %w", err)
-	}
-	payload, _ := json.Marshal(refs)
-	if err := uc.staging.UpsertRaw(ctx, tenantID, "metadata", "shop_references", payload); err != nil {
-		return fmt.Errorf("staging references: %w", err)
-	}
-	res.VendorCount = len(refs.ProductVendors)
-	res.ProductTypeCount = len(refs.ProductTypes)
-	res.TagCount = len(refs.ProductTags)
-	return nil
 }
 
 // runBulkProductsAndWait fires a new bulk-op and polls until it's terminal.
@@ -774,125 +544,6 @@ type productAccum struct {
 	images         []json.RawMessage
 	metafields     []json.RawMessage
 	collections    []json.RawMessage
-}
-
-// streamJSONLToStaging parses the bulk-op JSONL and writes one staging row per
-// top-level product, with all children (variants/images/metafields/collections)
-// merged in under canonical "_v2_*" keys.
-//
-// Algorithm: two-pass over the JSONL.
-//   Pass 1 — bucket every line: top-level Product rows go into a map keyed by
-//            product GID (with insertion order preserved); child rows go into
-//            another map keyed by their __parentId (the product GID).
-//   Pass 2 — for each collected product, merge its children and upsert into
-//            staging.
-//
-// Why two-pass: Shopify's Bulk Operations spec promises that a product and its
-// children appear contiguously, but does NOT guarantee whether children precede
-// or follow their parent. Empirically (Admin API 2026-04, dev-store seed) the
-// order is parent-first; the original implementation assumed children-first
-// and silently dropped all children. Two-pass is robust to either order.
-//
-// Memory note: the entire JSONL is held in RAM during pass 1. Bulk operations
-// are capped server-side around 1M-5M lines; for a 100k-product catalog with
-// ~3 children each, this is roughly 300MB of raw bytes. Acceptable for our
-// deployment (Railway gives at least 1GB on the smallest tier). If we ever
-// need to support truly massive catalogs we'll switch to a temp-file two-pass.
-func (uc *ShopifyV2UseCase) streamJSONLToStaging(ctx context.Context, tenantID, jsonlURL string) (int, error) {
-	body, err := uc.client.FetchBulkJSONL(ctx, jsonlURL)
-	if err != nil {
-		return 0, err
-	}
-	defer body.Close()
-
-	scanner := shopify.ScanBulkJSONL(body)
-
-	products := make(map[string]json.RawMessage)
-	productOrder := make([]string, 0, 256) // preserve order for deterministic upserts
-	children := make(map[string][]childRow)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var head struct {
-			ID       string `json:"id"`
-			ParentID string `json:"__parentId"`
-		}
-		if err := json.Unmarshal(line, &head); err != nil {
-			uc.log.Info("shopify_v2_jsonl_parse_warning", "error", err.Error())
-			continue
-		}
-
-		// Copy — scanner.Bytes() is reused on next Scan.
-		row := make(json.RawMessage, len(line))
-		copy(row, line)
-
-		if head.ParentID == "" {
-			if _, exists := products[head.ID]; !exists {
-				productOrder = append(productOrder, head.ID)
-			}
-			products[head.ID] = row
-			continue
-		}
-
-		// Child. Classify by GID prefix. Metafields requested without `id`
-		// land here with empty head.ID — we still know it's a metafield by
-		// elimination (it's a child of a Product GID and has no GID of its
-		// own). The `Metafield` case below still wins when Shopify decides
-		// to populate id in future API versions.
-		kind := classifyChild(head.ID)
-		children[head.ParentID] = append(children[head.ParentID], childRow{kind: kind, row: row})
-	}
-	if err := scanner.Err(); err != nil {
-		return 0, fmt.Errorf("scanner: %w", err)
-	}
-
-	count := 0
-	orphans := 0
-	for _, pid := range productOrder {
-		a := &productAccum{productPayload: products[pid]}
-		for _, c := range children[pid] {
-			switch c.kind {
-			case childKindVariant:
-				a.variants = append(a.variants, c.row)
-			case childKindImage:
-				a.images = append(a.images, c.row)
-			case childKindMetafield:
-				a.metafields = append(a.metafields, c.row)
-			case childKindCollection:
-				a.collections = append(a.collections, c.row)
-			default:
-				// Unknown child types we still keep — bucket into metafields
-				// as a permissive default so we never drop data.
-				a.metafields = append(a.metafields, c.row)
-			}
-		}
-		merged, err := mergeChildrenIntoProduct(a)
-		if err != nil {
-			return count, fmt.Errorf("merge children for %s: %w", pid, err)
-		}
-		if err := uc.staging.UpsertRaw(ctx, tenantID, "product", pid, merged); err != nil {
-			return count, fmt.Errorf("staging upsert %s: %w", pid, err)
-		}
-		delete(children, pid)
-		count++
-	}
-	// Anything left in `children` is referencing a parent we never saw —
-	// orphans. Log so we notice if the bulk op is truncated or misordered.
-	for parentID, rows := range children {
-		orphans += len(rows)
-		uc.log.Info("shopify_v2_jsonl_orphan_children",
-			"parent_id", parentID,
-			"count", len(rows),
-		)
-	}
-	uc.log.Info("shopify_v2_jsonl_summary",
-		"products", count,
-		"orphans", orphans,
-	)
-	return count, nil
 }
 
 // childRow tags a buffered child JSONL line with its inferred kind so pass 2
@@ -961,11 +612,3 @@ func mergeChildrenIntoProduct(a *productAccum) (json.RawMessage, error) {
 	return json.Marshal(product)
 }
 
-// countMenuItems totals all nodes in a (possibly-nested) menu tree.
-func countMenuItems(items []shopify.NavigationMenuItem) int {
-	total := len(items)
-	for _, it := range items {
-		total += countMenuItems(it.Items)
-	}
-	return total
-}

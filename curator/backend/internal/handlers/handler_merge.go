@@ -1,11 +1,9 @@
-// Package handlers — merge-agent proxy to admin-backend (Phase D3,
-// catalog completion 2026-04-28).
+// Package handlers — admin-backend reverse-proxy for catalog v2 sync-now.
 //
-// The actual MergeApplyUseCase lives in admin-backend (project_admin/...) so
-// it can share the catalog domain types and adapters with the agent /
-// applier code. Curator-backend is a separate Go module — instead of
-// duplicating the use case, it proxies HTTP requests on its `/curator/merge/*`
-// surface to admin-backend's internal endpoints.
+// Curator-backend is a separate Go module from admin-backend; instead of
+// duplicating use-cases it proxies internal calls. After the 2026-05-15
+// legacy purge, the only remaining proxy surface is /sync-now → catalog v2's
+// ManualSync (rate-limit bypass cascading to discovery_v2 + apply_v2).
 //
 // Auth flow:
 //   - Curator-frontend → curator-backend with the curator session cookie
@@ -19,9 +17,7 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,11 +36,6 @@ type MergeProxy struct {
 
 func NewMergeProxy() *MergeProxy {
 	base := firstNonEmptyEnv("ADMIN_BASE_URL", "http://127.0.0.1:8081")
-	// Discovery agent has an 8-min wallclock budget on the admin side; merge
-	// run is much faster (~20s) but apply on a large report can be slow too.
-	// 10 minutes covers the worst case so curator UI doesn't bail before the
-	// admin-side work finishes (which would burn LLM tokens with no result
-	// surfaced to the operator).
 	return &MergeProxy{
 		adminBase: strings.TrimRight(base, "/"),
 		key:       os.Getenv("CURATOR_INTERNAL_KEY"),
@@ -52,82 +43,12 @@ func NewMergeProxy() *MergeProxy {
 	}
 }
 
-// HandleRun POST /curator/tenants/{id}/merge/run
-func (p *MergeProxy) HandleRun(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)
-	if !ok {
-		writeErr(w, http.StatusBadRequest, "tenant id missing")
-		return
-	}
-	target := p.adminBase + "/admin/api/internal/curator/tenants/" + url.PathEscape(tenantID) + "/merge/run"
-	p.proxy(w, r, http.MethodPost, target)
-}
-
-// HandleDiscover POST /curator/tenants/{id}/discover — triggers the M4c
-// discovery agent (~$0.40 LLM, ~2 min). Fire-and-forget: returns 202 to the
-// client immediately and runs the admin-side request in a background
-// goroutine with context.Background(). Closing the curator UI tab won't kill
-// the run — admin keeps going until completion and saves the artifact.
-//
-// Frontend polls /curator/tenants/{id}/schema to detect when discovered_at
-// advances; that's how it knows the run finished.
-func (p *MergeProxy) HandleDiscover(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)
-	if !ok {
-		writeErr(w, http.StatusBadRequest, "tenant id missing")
-		return
-	}
-	if p.key == "" {
-		writeErr(w, http.StatusServiceUnavailable, "merge proxy not configured (CURATOR_INTERNAL_KEY missing)")
-		return
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "read body: "+err.Error())
-		return
-	}
-	curatorUser := session.UserID(r.Context())
-	target := p.adminBase + "/admin/api/internal/curator/tenants/" + url.PathEscape(tenantID) + "/discover"
-
-	go func() {
-		// Background context — survives client disconnect. Own deadline keeps
-		// us from leaking the goroutine if admin hangs.
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
-		if err != nil {
-			log.Printf("discover bg: build request: %v", err)
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Internal-Key", p.key)
-		if curatorUser != "" {
-			req.Header.Set("X-Curator-User", curatorUser)
-		}
-		resp, err := p.client.Do(req)
-		if err != nil {
-			log.Printf("discover bg: tenant=%s admin call failed: %v", tenantID, err)
-			return
-		}
-		defer resp.Body.Close()
-		// Drain response so the connection can be reused. We don't surface the
-		// body anywhere — UI learns about completion via /schema polling.
-		_, _ = io.Copy(io.Discard, resp.Body)
-		log.Printf("discover bg: tenant=%s done status=%d", tenantID, resp.StatusCode)
-	}()
-
-	w.WriteHeader(http.StatusAccepted)
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"status":"started","poll":"schema"}`))
-}
-
 // HandleSyncNowV2 POST /curator/tenants/{id}/sync-now — proxies to admin
 // /admin/api/catalog/v2/sync-now/{tenant_id}. Triggers the new 6-step flow's
 // ManualSync (rate-limit bypass; cascades to discovery_v2 if no artifact).
 //
-// Unlike HandleDiscover this is synchronous: ManualSync runs inline on admin
-// and we return its ApplyResult JSON. Latency depends on inbox size; on a
-// 10-product smoke it's ~10s.
+// Synchronous: ManualSync runs inline on admin and we return its ApplyResult
+// JSON. Latency depends on inbox size; on a 10-product smoke it's ~10s.
 func (p *MergeProxy) HandleSyncNowV2(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)
 	if !ok {
@@ -136,35 +57,6 @@ func (p *MergeProxy) HandleSyncNowV2(w http.ResponseWriter, r *http.Request) {
 	}
 	target := p.adminBase + "/admin/api/catalog/v2/sync-now/" + url.PathEscape(tenantID)
 	p.proxy(w, r, http.MethodPost, target)
-}
-
-// HandleListReports GET /curator/tenants/{id}/merge-reports
-func (p *MergeProxy) HandleListReports(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)
-	if !ok {
-		writeErr(w, http.StatusBadRequest, "tenant id missing")
-		return
-	}
-	target := p.adminBase + "/admin/api/internal/curator/tenants/" + url.PathEscape(tenantID) + "/merge-reports"
-	if q := r.URL.RawQuery; q != "" {
-		target += "?" + q
-	}
-	p.proxy(w, r, http.MethodGet, target)
-}
-
-// HandleReport GET/POST /curator/merge-reports/{id}[/apply|/revert]
-func (p *MergeProxy) HandleReport(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/curator/merge-reports/")
-	if rest == "" {
-		writeErr(w, http.StatusBadRequest, "report id missing")
-		return
-	}
-	target := p.adminBase + "/admin/api/internal/curator/merge-reports/" + rest
-	method := r.Method
-	if method == "" {
-		method = http.MethodGet
-	}
-	p.proxy(w, r, method, target)
 }
 
 func (p *MergeProxy) proxy(w http.ResponseWriter, r *http.Request, method, target string) {
