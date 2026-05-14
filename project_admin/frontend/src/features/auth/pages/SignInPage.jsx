@@ -13,7 +13,7 @@ export default function SignInPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [flags, setFlags] = useState({ google: false, email: false, telegram: { enabled: false, bot_username: '' } })
+  const [flags, setFlags] = useState({ google: false, email: false, telegram: { enabled: false, bot_username: '', bot_id: 0 } })
   const [googleLoading, setGoogleLoading] = useState(false)
   const [telegramLoading, setTelegramLoading] = useState(false)
 
@@ -55,7 +55,7 @@ export default function SignInPage() {
   }
 
   const { trigger: triggerTelegram, ready: telegramReady } = useTelegramLogin({
-    botUsername: flags.telegram.bot_username,
+    botId: flags.telegram.bot_id,
     onAuth: handleTelegramAuth,
     enabled: flags.telegram.enabled,
   })

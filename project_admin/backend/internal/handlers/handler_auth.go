@@ -25,6 +25,7 @@ type AuthFeatureFlags struct {
 	Telegram struct {
 		Enabled     bool   `json:"enabled"`
 		BotUsername string `json:"bot_username"`
+		BotID       int64  `json:"bot_id"`
 	} `json:"telegram"`
 }
 
