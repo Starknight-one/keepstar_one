@@ -1,13 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import AuthShell from '../layout/AuthShell.jsx'
 import { useAuth } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
 
-// TelegramCallbackPage catches Telegram's OIDC redirect with ?code=…&state=…,
-// POSTs them to the backend, and installs the returned session.
+// TelegramCallbackPage handles Telegram's Login Widget return.
+//
+// oauth.telegram.org is NOT a real OIDC server: it ignores response_type
+// and redirect_uri, and posts the user payload as a URL hash
+// `#tgAuthResult=<base64url(JSON widget payload)>`. The JSON is the same
+// {id, first_name, ..., hash} shape the legacy Login Widget emits, with
+// the hash being an HMAC the backend already knows how to verify via
+// POST /admin/api/auth/telegram/callback.
 export default function TelegramCallbackPage() {
-  const [params] = useSearchParams()
   const navigate = useNavigate()
   const { adoptSession } = useAuth()
   const [status, setStatus] = useState('Signing you in…')
@@ -17,20 +22,27 @@ export default function TelegramCallbackPage() {
     if (started.current) return
     started.current = true
 
-    const code = params.get('code')
-    const state = params.get('state')
-    const errParam = params.get('error')
+    const hash = window.location.hash || ''
+    const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
+    const tgResult = params.get('tgAuthResult')
 
-    if (errParam) {
-      navigate(`/auth/error?reason=${encodeURIComponent(errParam)}`, { replace: true })
-      return
-    }
-    if (!code || !state) {
+    if (!tgResult) {
       navigate('/auth/error?reason=missing_params', { replace: true })
       return
     }
 
-    authApi.telegramOIDCCallback(code, state)
+    let payload
+    try {
+      // Telegram uses base64url without padding; restore standard base64.
+      let b64 = tgResult.replace(/-/g, '+').replace(/_/g, '/')
+      while (b64.length % 4) b64 += '='
+      payload = JSON.parse(atob(b64))
+    } catch (_) {
+      navigate('/auth/error?reason=missing_params', { replace: true })
+      return
+    }
+
+    authApi.telegramCallback(payload)
       .then((data) => {
         adoptSession(data)
         setStatus('Success — redirecting…')
@@ -40,7 +52,7 @@ export default function TelegramCallbackPage() {
         const reason = (err && err.message) || 'telegram_failed'
         navigate(`/auth/error?reason=${encodeURIComponent(reason)}`, { replace: true })
       })
-  }, [params, navigate, adoptSession])
+  }, [navigate, adoptSession])
 
   return (
     <AuthShell>

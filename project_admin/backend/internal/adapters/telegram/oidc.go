@@ -55,17 +55,32 @@ func NewOIDCClient(botToken, redirectURL string) *OIDCClient {
 	}
 }
 
-// BuildAuthURL returns the Telegram consent URL for the given opaque state.
-// Telegram requires an `origin` parameter — the scheme+host of the redirect URI.
+// BuildAuthURL returns the Telegram consent URL.
+//
+// Despite the OIDC-ish naming around this file, oauth.telegram.org/auth is
+// NOT a standard OAuth2 / OIDC authorization endpoint. Telegram ignores
+// `response_type`, `scope`, `redirect_uri`, and even `state`. The only
+// parameters it honors are `bot_id`, `origin`, `return_to`, and
+// `request_access`, and it returns the user payload as a URL hash on
+// `return_to`: `#tgAuthResult=<base64url(JSON widget payload)>`.
+//
+// The opaque state is preserved by appending it to the return_to as a query
+// param — Telegram passes the return_to through untouched, so the callback
+// page can read it back from window.location.
 func (c *OIDCClient) BuildAuthURL(state string) string {
-	origin := c.origin()
+	returnTo := c.RedirectURL
+	if state != "" {
+		sep := "?"
+		if strings.Contains(returnTo, "?") {
+			sep = "&"
+		}
+		returnTo = returnTo + sep + "state=" + url.QueryEscape(state)
+	}
 	q := url.Values{}
-	q.Set("client_id", c.ClientID)
-	q.Set("redirect_uri", c.RedirectURL)
-	q.Set("response_type", "code")
-	q.Set("scope", oidcScope)
-	q.Set("state", state)
-	if origin != "" {
+	q.Set("bot_id", c.ClientID)
+	q.Set("return_to", returnTo)
+	q.Set("request_access", "write")
+	if origin := c.origin(); origin != "" {
 		q.Set("origin", origin)
 	}
 	return oidcAuthURL + "?" + q.Encode()
