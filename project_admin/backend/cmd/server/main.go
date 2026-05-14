@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -396,14 +395,6 @@ func main() {
 	}
 	authFlags.Telegram.Enabled = cfg.HasTelegramLogin()
 	authFlags.Telegram.BotUsername = cfg.TelegramBotUsername
-	// Telegram.Login.auth() expects the NUMERIC bot id as `bot_id`, not the
-	// username. The bot token has the form "<bot_id>:<secret>", so we parse
-	// the prefix once here.
-	if i := strings.IndexByte(cfg.TelegramBotToken, ':'); i > 0 {
-		if id, err := strconv.ParseInt(cfg.TelegramBotToken[:i], 10, 64); err == nil {
-			authFlags.Telegram.BotID = id
-		}
-	}
 	authHandler := handlers.NewAuthHandler(authUC, log, authFlags)
 
 	passwordResetHandler := handlers.NewPasswordResetHandler(passwordResetUC, emailVerifyUC, log)
