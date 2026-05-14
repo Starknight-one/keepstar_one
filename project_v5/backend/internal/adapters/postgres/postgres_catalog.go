@@ -82,17 +82,21 @@ const catalogProductSelect = `
 		mv.color as mv_color, mv.image_url as mv_image_url,
 		mv.weight_g as mv_weight_g, mv.volume_ml as mv_volume_ml,
 		c.name as category_name,
-		COALESCE(mp.product_form, '') as product_form,
-		COALESCE(mp.texture, '') as texture,
-		COALESCE(mp.routine_step, '') as routine_step,
-		mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
-		COALESCE(mp.marketing_claim, '') as marketing_claim,
-		mp.benefits,
+		COALESCE(mc.product_form, '') as product_form,
+		COALESCE(mc.texture, '') as texture,
+		COALESCE(mc.routine_step, '') as routine_step,
+		COALESCE(mc.skin_type, '{}'::text[]) as skin_type,
+		COALESCE(mc.concern, '{}'::text[]) as concern,
+		COALESCE(mc.key_ingredients, '{}'::text[]) as key_ingredients,
+		COALESCE(mc.target_area, '{}'::text[]) as target_area,
+		COALESCE(mc.marketing_claim, '') as marketing_claim,
+		COALESCE(mc.benefits, '{}'::text[]) as benefits,
 		COALESCE(p.extra, '{}'::jsonb) as extra,
-		COALESCE(mp.tier2, '{}'::jsonb) as mp_tier2
+		COALESCE(mp.tier3, mp.tier2, '{}'::jsonb) as mp_tier2
 	FROM catalog.products p
 	LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
 	LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
+	LEFT JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
 	LEFT JOIN catalog.categories c ON mp.category_id = c.id
 	LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
 `
@@ -123,6 +127,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		FROM catalog.products p
 		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
 		LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
+		LEFT JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
 		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
@@ -179,37 +184,37 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		argNum++
 	}
 	if filter.ProductForm != "" {
-		conditions = append(conditions, fmt.Sprintf("mp.product_form = $%d", argNum))
+		conditions = append(conditions, fmt.Sprintf("mc.product_form = $%d", argNum))
 		args = append(args, filter.ProductForm)
 		argNum++
 	}
 	if filter.SkinType != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mp.skin_type)", argNum))
+		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mc.skin_type)", argNum))
 		args = append(args, filter.SkinType)
 		argNum++
 	}
 	if filter.Concern != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mp.concern)", argNum))
+		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mc.concern)", argNum))
 		args = append(args, filter.Concern)
 		argNum++
 	}
 	if filter.KeyIngredient != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mp.key_ingredients)", argNum))
+		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mc.key_ingredients)", argNum))
 		args = append(args, filter.KeyIngredient)
 		argNum++
 	}
 	if filter.TargetArea != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mp.target_area)", argNum))
+		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mc.target_area)", argNum))
 		args = append(args, filter.TargetArea)
 		argNum++
 	}
 	if filter.RoutineStep != "" {
-		conditions = append(conditions, fmt.Sprintf("mp.routine_step = $%d", argNum))
+		conditions = append(conditions, fmt.Sprintf("mc.routine_step = $%d", argNum))
 		args = append(args, filter.RoutineStep)
 		argNum++
 	}
 	if filter.Texture != "" {
-		conditions = append(conditions, fmt.Sprintf("mp.texture = $%d", argNum))
+		conditions = append(conditions, fmt.Sprintf("mc.texture = $%d", argNum))
 		args = append(args, filter.Texture)
 		argNum++
 	}
@@ -586,37 +591,53 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 		tree = append(tree, *groupMap[slug])
 	}
 
-	// 2. Shared filters — global distinct values.
+	// 2. Shared filters — global distinct values. Reads from master_cosmetics
+	// (vertical-typed, post-rebuild). For non-cosmetics tenants the JOIN
+	// returns no rows → digest has no shared filters, which is correct.
 	filterQuery := `
 		SELECT attr_key, ARRAY_AGG(DISTINCT attr_value ORDER BY attr_value) AS all_values
 		FROM (
-			SELECT 'product_form' AS attr_key, mp.product_form AS attr_value
-			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.product_form IS NOT NULL AND mp.product_form != ''
+			SELECT 'product_form' AS attr_key, mc.product_form AS attr_value
+			FROM catalog.products p
+			JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mc.product_form IS NOT NULL AND mc.product_form != ''
 			UNION ALL
-			SELECT 'texture', mp.texture
-			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.texture IS NOT NULL AND mp.texture != ''
+			SELECT 'texture', mc.texture
+			FROM catalog.products p
+			JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mc.texture IS NOT NULL AND mc.texture != ''
 			UNION ALL
-			SELECT 'routine_step', mp.routine_step
-			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.routine_step IS NOT NULL AND mp.routine_step != ''
+			SELECT 'routine_step', mc.routine_step
+			FROM catalog.products p
+			JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mc.routine_step IS NOT NULL AND mc.routine_step != ''
 			UNION ALL
-			SELECT 'skin_type', unnest(mp.skin_type)
-			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.skin_type IS NOT NULL
+			SELECT 'skin_type', unnest(mc.skin_type)
+			FROM catalog.products p
+			JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.skin_type, 1) > 0
 			UNION ALL
-			SELECT 'concern', unnest(mp.concern)
-			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.concern IS NOT NULL
+			SELECT 'concern', unnest(mc.concern)
+			FROM catalog.products p
+			JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.concern, 1) > 0
 			UNION ALL
-			SELECT 'key_ingredient', unnest(mp.key_ingredients)
-			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.key_ingredients IS NOT NULL
+			SELECT 'key_ingredient', unnest(mc.key_ingredients)
+			FROM catalog.products p
+			JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.key_ingredients, 1) > 0
 			UNION ALL
-			SELECT 'target_area', unnest(mp.target_area)
-			FROM catalog.products p JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.target_area IS NOT NULL
+			SELECT 'target_area', unnest(mc.target_area)
+			FROM catalog.products p
+			JOIN catalog.master_products mp ON p.master_product_id = mp.id
+			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.target_area, 1) > 0
 		) AS attrs
 		WHERE attr_value IS NOT NULL AND attr_value != ''
 		GROUP BY attr_key
@@ -663,15 +684,16 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 		topBrands = append(topBrands, brand)
 	}
 
-	// 4. Top ingredients — unnest the array column directly so we don't
-	// depend on catalog.product_ingredients seeding (which V4 hits via JOIN).
+	// 4. Top ingredients — read from master_cosmetics.key_ingredients.
+	// For non-cosmetics tenants the JOIN returns 0 rows → empty list.
 	ingrQuery := `
 		SELECT ingredient
 		FROM (
-			SELECT unnest(mp.key_ingredients) AS ingredient
+			SELECT unnest(mc.key_ingredients) AS ingredient
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mp.key_ingredients IS NOT NULL
+			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.key_ingredients, 1) > 0
 		) AS x
 		WHERE ingredient IS NOT NULL AND ingredient != ''
 		GROUP BY ingredient

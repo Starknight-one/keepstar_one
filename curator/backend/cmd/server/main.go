@@ -97,6 +97,22 @@ func main() {
 			mergeProxy.HandleListReports(w, r)
 		case strings.HasSuffix(path, "/discover"):
 			mergeProxy.HandleDiscover(w, r)
+
+		// Catalog Flow Rebuild — 6-step flow surfaces (curator UI tabs):
+		// inbox listing/detail, action log, agent runs, mapping artifact.
+		case strings.HasSuffix(path, "/inbox"):
+			h.ListTenantInbox(w, r)
+		case strings.Contains(path, "/inbox/"):
+			h.GetTenantInboxItem(w, r)
+		case strings.HasSuffix(path, "/action-log"):
+			h.ListTenantActionLog(w, r)
+		case strings.HasSuffix(path, "/agent-runs"):
+			h.ListTenantAgentRuns(w, r)
+		case strings.Contains(path, "/agent-runs/"):
+			h.GetTenantAgentRun(w, r)
+		case strings.HasSuffix(path, "/mapping"):
+			h.GetTenantMapping(w, r)
+
 		default:
 			h.GetTenant(w, r)
 		}

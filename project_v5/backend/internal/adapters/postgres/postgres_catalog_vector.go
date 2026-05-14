@@ -31,6 +31,7 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 		FROM catalog.products p
 		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
 		JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
+		LEFT JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
 		WHERE p.tenant_id = $1
@@ -53,37 +54,37 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			argNum++
 		}
 		if filter.ProductForm != "" {
-			query += fmt.Sprintf(" AND mp.product_form = $%d", argNum)
+			query += fmt.Sprintf(" AND mc.product_form = $%d", argNum)
 			args = append(args, filter.ProductForm)
 			argNum++
 		}
 		if filter.SkinType != "" {
-			query += fmt.Sprintf(" AND $%d = ANY(mp.skin_type)", argNum)
+			query += fmt.Sprintf(" AND $%d = ANY(mc.skin_type)", argNum)
 			args = append(args, filter.SkinType)
 			argNum++
 		}
 		if filter.Concern != "" {
-			query += fmt.Sprintf(" AND $%d = ANY(mp.concern)", argNum)
+			query += fmt.Sprintf(" AND $%d = ANY(mc.concern)", argNum)
 			args = append(args, filter.Concern)
 			argNum++
 		}
 		if filter.RoutineStep != "" {
-			query += fmt.Sprintf(" AND mp.routine_step = $%d", argNum)
+			query += fmt.Sprintf(" AND mc.routine_step = $%d", argNum)
 			args = append(args, filter.RoutineStep)
 			argNum++
 		}
 		if filter.Texture != "" {
-			query += fmt.Sprintf(" AND mp.texture = $%d", argNum)
+			query += fmt.Sprintf(" AND mc.texture = $%d", argNum)
 			args = append(args, filter.Texture)
 			argNum++
 		}
 		if filter.KeyIngredient != "" {
-			query += fmt.Sprintf(" AND $%d = ANY(mp.key_ingredients)", argNum)
+			query += fmt.Sprintf(" AND $%d = ANY(mc.key_ingredients)", argNum)
 			args = append(args, filter.KeyIngredient)
 			argNum++
 		}
 		if filter.TargetArea != "" {
-			query += fmt.Sprintf(" AND $%d = ANY(mp.target_area)", argNum)
+			query += fmt.Sprintf(" AND $%d = ANY(mc.target_area)", argNum)
 			args = append(args, filter.TargetArea)
 			argNum++
 		}
@@ -134,12 +135,15 @@ const catalogVectorSelect = `
 		mv.color as mv_color, mv.image_url as mv_image_url,
 		mv.weight_g as mv_weight_g, mv.volume_ml as mv_volume_ml,
 		c.name as category_name,
-		COALESCE(mp.product_form, '') as product_form,
-		COALESCE(mp.texture, '') as texture,
-		COALESCE(mp.routine_step, '') as routine_step,
-		mp.skin_type, mp.concern, mp.key_ingredients, mp.target_area,
-		COALESCE(mp.marketing_claim, '') as marketing_claim,
-		mp.benefits,
+		COALESCE(mc.product_form, '') as product_form,
+		COALESCE(mc.texture, '') as texture,
+		COALESCE(mc.routine_step, '') as routine_step,
+		COALESCE(mc.skin_type, '{}'::text[]) as skin_type,
+		COALESCE(mc.concern, '{}'::text[]) as concern,
+		COALESCE(mc.key_ingredients, '{}'::text[]) as key_ingredients,
+		COALESCE(mc.target_area, '{}'::text[]) as target_area,
+		COALESCE(mc.marketing_claim, '') as marketing_claim,
+		COALESCE(mc.benefits, '{}'::text[]) as benefits,
 		COALESCE(p.extra, '{}'::jsonb) as extra,
-		COALESCE(mp.tier2, '{}'::jsonb) as mp_tier2
+		COALESCE(mp.tier3, mp.tier2, '{}'::jsonb) as mp_tier2
 `

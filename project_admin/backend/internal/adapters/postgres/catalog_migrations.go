@@ -743,6 +743,29 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			ON pipeline_traces(session_id);`,
 	)
 
+	// inbox_items — universal raw-tenant-data buffer (6-step catalog flow,
+	// see /Users/starknight/.claude/plans/structured-discovering-lollipop.md).
+	// Schema-agnostic: any source (Shopify/CSV/Sheets/manual) writes here as
+	// JSONB. Discovery agent reads via narrow tools, apply consumes it.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS catalog.inbox_items (
+			id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id    UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			source_kind  TEXT NOT NULL CHECK (source_kind IN ('shopify','csv','sheets','manual')),
+			external_id  TEXT NOT NULL,
+			raw          JSONB NOT NULL,
+			payload_hash TEXT NOT NULL,
+			fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			applied_at   TIMESTAMPTZ
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_items_unique_source
+			ON catalog.inbox_items(tenant_id, source_kind, external_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_inbox_items_raw_gin
+			ON catalog.inbox_items USING GIN (raw);`,
+		`CREATE INDEX IF NOT EXISTS idx_inbox_items_tenant_unapplied
+			ON catalog.inbox_items(tenant_id) WHERE applied_at IS NULL;`,
+	)
+
 	for i, m := range migrations {
 		if _, err := c.pool.Exec(ctx, m); err != nil {
 			return fmt.Errorf("catalog migration %d failed: %w", i+1, err)

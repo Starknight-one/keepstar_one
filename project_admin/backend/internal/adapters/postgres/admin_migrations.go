@@ -327,6 +327,46 @@ func (c *Client) runAdminAuthV2Migrations(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_billing_invoices_tenant
 			ON admin.billing_invoices(tenant_id, period_start DESC);`,
+
+		// tenant_action_log — per-tenant timeline of catalog events (inbox
+		// pull, discovery, apply, webhook, mapping miss, disconnect…).
+		// Surfaced in curator's TenantDetail "Action Log" tab. Separate from
+		// global audit_log which captures cross-tenant operator actions.
+		`CREATE TABLE IF NOT EXISTS admin.tenant_action_log (
+			id          BIGSERIAL PRIMARY KEY,
+			tenant_id   UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			action      TEXT NOT NULL,
+			status      TEXT NOT NULL,
+			payload     JSONB NOT NULL DEFAULT '{}'::jsonb,
+			occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_tenant_action_log_tenant
+			ON admin.tenant_action_log(tenant_id, occurred_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_tenant_action_log_action
+			ON admin.tenant_action_log(action, occurred_at DESC);`,
+
+		// agent_runs — one row per discovery_v2 invocation. Tool calls,
+		// tokens, cost, outcome. Surfaced in curator's "Agent Runs" tab.
+		// trigger: 'first_install' | 'manual' | 'mapping_miss'.
+		// status: 'running' | 'success' | 'failed' | 'budget_exhausted'.
+		`CREATE TABLE IF NOT EXISTS admin.agent_runs (
+			id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id       UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			trigger         TEXT NOT NULL,
+			trigger_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+			started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			finished_at     TIMESTAMPTZ,
+			status          TEXT NOT NULL DEFAULT 'running',
+			tools_called    JSONB NOT NULL DEFAULT '[]'::jsonb,
+			tokens_in       INTEGER NOT NULL DEFAULT 0,
+			tokens_out      INTEGER NOT NULL DEFAULT 0,
+			cost_usd        NUMERIC(10,4) NOT NULL DEFAULT 0,
+			artifact_id     UUID
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_runs_tenant
+			ON admin.agent_runs(tenant_id, started_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_runs_status_running
+			ON admin.agent_runs(tenant_id) WHERE status = 'running';`,
 	}
 
 	for i, m := range migrations {

@@ -452,6 +452,44 @@ func main() {
 		shopifyV2Handler = handlers.NewShopifyV2Handler(shopifyV2UC, discoveryUC, log)
 	}
 
+	// -------------------------------------------------------------------
+	// Catalog Flow Rebuild — 6-step flow wiring (inbox → discovery_v2 →
+	// apply_v2 → updates cycle). See plan file
+	// /Users/starknight/.claude/plans/structured-discovering-lollipop.md
+	// and 2026-05-14 update log for the architectural picture.
+	//
+	// Wired alongside legacy harvester_lite / discovery_agent / merge_apply
+	// so old routes keep working until step 10 cleanup.
+	// -------------------------------------------------------------------
+	var catalogV2Handler *handlers.CatalogV2Handler
+	if cfg.AnthropicAPIKey != "" {
+		inboxAdapter := postgres.NewInboxAdapter(dbClient, log)
+		actionLogAdapter := postgres.NewTenantActionLogAdapter(dbClient, log)
+		agentRunsAdapter := postgres.NewAgentRunsAdapter(dbClient, log)
+		mappingArtifactV2Adapter := postgres.NewMappingArtifactV2Adapter(dbClient, log)
+		catalogV2Writer := postgres.NewCatalogV2WriterAdapter(dbClient, log)
+		rateLimitAdapter := postgres.NewApplyRateLimitAdapter(dbClient, log)
+
+		v2AgentClient := anthropicAdapter.NewAgentClient(cfg.AnthropicAPIKey, "claude-sonnet-4-6")
+		inboxUC := usecases.NewInboxUseCase(inboxAdapter, actionLogAdapter, log)
+		discoveryV2 := usecases.NewDiscoveryV2(v2AgentClient, inboxAdapter, mappingArtifactV2Adapter, actionLogAdapter, agentRunsAdapter, log)
+		applyV2 := usecases.NewApplyV2(inboxAdapter, mappingArtifactV2Adapter, catalogV2Writer, actionLogAdapter, discoveryV2, log)
+		orchestrator := usecases.NewUpdateOrchestrator(inboxUC, applyV2, discoveryV2, actionLogAdapter, rateLimitAdapter, log)
+
+		// Ingesters are constructed but currently used only via the
+		// catalog/v2 endpoints below. Existing shopify/csv install paths
+		// continue routing through the legacy harvester_lite + discovery
+		// pipelines until step 10 swaps them out. Kept as locals so the
+		// compiler enforces the wiring stays intact.
+		_ = usecases.NewShopifyIngester(inboxUC, orchestrator, log)
+		_ = usecases.NewCSVIngester(inboxUC, orchestrator, log)
+
+		catalogV2Handler = handlers.NewCatalogV2Handler(orchestrator, discoveryV2, log)
+		log.Info("catalog_v2_flow_enabled", "model", v2AgentClient.Model())
+	} else {
+		log.Warn("catalog_v2_flow_disabled — ANTHROPIC_API_KEY not set")
+	}
+
 	// Setup routes
 	mux := http.NewServeMux()
 	authMW := handlers.AuthMiddleware(cfg.JWTSecret)
@@ -760,6 +798,16 @@ func main() {
 	})
 	mux.Handle("/admin/api/internal/curator/tenants/", internalMW(internalMux))
 	mux.Handle("/admin/api/internal/curator/merge-reports/", internalMW(internalMux))
+
+	// Catalog v2 manual triggers (sync-now + force discover). Same
+	// X-Internal-Key gate — curator's "Sync now" button hits these
+	// via MergeProxy-style forwarding.
+	if catalogV2Handler != nil {
+		v2Mux := http.NewServeMux()
+		v2Mux.HandleFunc("/admin/api/catalog/v2/sync-now/", catalogV2Handler.HandleSyncNow)
+		v2Mux.HandleFunc("/admin/api/catalog/v2/discover/", catalogV2Handler.HandleDiscover)
+		mux.Handle("/admin/api/catalog/v2/", internalMW(v2Mux))
+	}
 
 	// Public REST API v1 (M10) — X-API-Key auth instead of JWT.
 	// Tenant comes from the resolved key; AuthMiddleware is NOT applied here.

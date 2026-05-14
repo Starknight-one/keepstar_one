@@ -24,7 +24,7 @@ overview:
 architecture:
   pattern: "Hexagonal — proper ports + adapters, multiple usecase packages, ~30 handlers"
   backend_structure:
-    cmd_server: "project_admin/backend/cmd/server/main.go (832 LOC) — DI bootstrap, all routes"
+    cmd_server: "project_admin/backend/cmd/server/main.go (841 LOC) — DI bootstrap, all routes"
     cmd_crawler: "project_admin/backend/cmd/crawler/main.go (608 LOC) — JSON-LD scraper for catalog seed (catalog expert covers details)"
     domain: "project_admin/backend/internal/domain/ — AdminUser, Tenant, Membership, Invitation, Session, Challenge, MagicLink, Invoice, Preferences, TenantPreset, TenantComponent, DesignToken, BillingOverview, AuditEntry"
     ports: "project_admin/backend/internal/ports/ — AuthPort, SessionsPort, BillingPort, CanvasPort, AdminCatalogPort, etc."
@@ -75,8 +75,14 @@ auth:
       file: "internal/usecases/auth_password_reset.go"
       flow: "Email → challenge code → email link → submit new password → bcrypt hash → UPDATE"
     telegram:
-      file: "internal/usecases/auth_telegram.go"
-      flow: "Telegram Login Widget → callback with user data + hash → verify hash with bot token → upsert user"
+      file: "internal/usecases/auth_telegram.go (240 LOC)"
+      adapter: "internal/adapters/telegram/ — login.go (HMAC-SHA256 widget verify) + oidc.go (OIDCClient: BuildAuthURL — see hash_callback note; Exchange — currently unused, see gotchas)"
+      reality: "oauth.telegram.org/auth is NOT a real OAuth2/OIDC endpoint. Despite naming in oidc.go, Telegram ignores response_type/scope/redirect_uri/state and returns the user payload as a URL hash on return_to: `#tgAuthResult=<base64url(JSON widget payload)>`. The payload is the same {id, first_name, …, hash} object the legacy Login Widget emits — so the frontend posts it back to the legacy HMAC endpoint."
+      modes:
+        redirect_hash: "Active path (commit 109378a, 2026-05-14): when cfg.TelegramRedirectURL() is set, /telegram/start mints state, persists in oauth_login_states, returns BuildAuthURL → frontend window.location.href = url. oauth.telegram.org redirects back to /auth/telegram/callback#tgAuthResult=… → TelegramCallbackPage.jsx parses hash, base64url-decodes JSON widget payload, POSTs to /admin/api/auth/telegram/callback (legacy HMAC verify). State param is preserved as a query string on return_to since Telegram passes return_to through untouched."
+        widget_iframe: "Dead code: useTelegramWidget.js hook (iframe-injection of telegram-widget.js) defined but no longer imported by SignInPage/SignUpPage. Kept in tree for now; safe to delete."
+        oidc_token_exchange: "Dead route /admin/api/auth/telegram/oidc/callback (+ OIDCClient.Exchange) still registered but unused — Telegram doesn't issue auth codes via this flow. Remove or repurpose."
+      findOrCreate: "GetUserByTelegramID → on miss synthesize email (<username>@telegram.keepstar.local), create tenant + user + owner membership via CreateTelegramUser. Shared by both Complete (HMAC payload) and CompleteOIDC (currently unreachable)."
     invitations:
       file: "internal/usecases/auth_invitations.go"
       table: "admin.invitations"
@@ -113,7 +119,9 @@ routes_overview:
       - "POST /auth/magic/issue, /auth/magic/consume"
       - "POST /auth/password-reset/request, /auth/password-reset/confirm"
       - "GET  /auth/google/start, /auth/google/callback"
-      - "POST /auth/telegram/callback"
+      - "POST /admin/api/auth/telegram/start — mints state, returns {url} to oauth.telegram.org; frontend does window.location redirect (requires HasOIDC + TelegramRedirectURL)"
+      - "POST /admin/api/auth/telegram/oidc/callback — registered but UNREACHABLE under current Telegram behavior (no auth code is ever issued)"
+      - "POST /admin/api/auth/telegram/callback — HMAC widget payload verify; called from TelegramCallbackPage.jsx after parsing the #tgAuthResult fragment"
     protected:
       - "POST /admin/api/auth/shop-pending-link/consume (2026-05-13) — auth-required; body {token}; returns {tenant_id}; attaches orphan Shopify tenant to signed-in user"
       - "GET  /auth/me"
@@ -195,8 +203,8 @@ integrations_adapters:
     purpose: "Fallback transactional email; deprecated for Railway envs (resend used instead)"
     templates: "internal/adapters/smtp/templates/"
   telegram:
-    file: "internal/adapters/telegram/"
-    purpose: "Telegram bot for auth_telegram.go login widget callback verification"
+    files: "internal/adapters/telegram/login.go (102 LOC; HMAC-SHA256 widget verify — active), internal/adapters/telegram/oidc.go (167 LOC; OIDCClient.BuildAuthURL — active, .Exchange + decodeOIDCToken — dead code, see auth.methods.telegram.reality)"
+    purpose: "Active path is `BuildAuthURL` (returns oauth.telegram.org/auth URL whose return_to gets a `#tgAuthResult=<base64url JSON>` fragment) + `login.go` HMAC verification of the payload posted back by TelegramCallbackPage. The Exchange/id_token code is preserved for now but unused — Telegram never issues an auth code in this flow."
   totp:
     file: "internal/adapters/totp/"
     purpose: "TOTP code generation/verification for 2FA"
@@ -205,8 +213,9 @@ frontend_features:
   layout:
     purpose: "App shell, sidebar, header, route registration"
   auth:
-    pages: "Signup, Login, MagicLinkRequest, MagicLinkConsume, PasswordReset, 2FAVerify, OAuthLoadingPage, InstallCompletePage, WorkspacePickerPage"
-    flow: "On mount → GET /auth/me. 401 → render Login. Success → render Layout shell."
+    pages: "SignInPage, SignUpPage, MagicLinkPage, ForgotPasswordPage, ResetPasswordPage, PasswordChangedPage, TwoFactorPage, VerifyEmailPage, CheckEmailPage, OAuthLoadingPage, TelegramCallbackPage (handles #tgAuthResult hash → POST /telegram/callback), InstallCompletePage, WorkspacePickerPage, InviteAcceptPage, SessionExpiredPage, AuthErrorPage"
+    hooks: "hooks/useTelegramWidget.js — defined but NO LONGER imported by any page (Sign{In,Up} switched to redirect flow in 109378a). Safe to delete on next sweep. Earlier useTelegramLogin.js attempt was reverted in 2f354fb."
+    flow: "On mount → GET /auth/me. 401 → render Login. Success → render Layout shell. Telegram path: SignInPage.handleTelegram → authApi.telegramStart() → window.location.href = url → return to /auth/telegram/callback with #tgAuthResult → TelegramCallbackPage decodes + posts payload → adoptSession + /auth/pick-workspace."
     install_complete_page: "Two paths: (1) happy path (?shop=…) — magic link emailed, show 'check inbox'; (2) pending-link path (?pending_link=TOKEN&shop=…) — stashes token in sessionStorage under 'keepstar.pending_shop_link', shows 'sign in to attach store' UI"
     workspace_picker_page: "On mount: reads pending token from sessionStorage → POST /auth/shop-pending-link/consume → removes token → lists tenants. Handles welcome_back=1&email=... query params from Google auto-merge to show banner."
     oauth_loading_page: "Handles Google OAuth callback; on linked_from_email in response, redirects to /auth/pick-workspace?welcome_back=1&email=..."
@@ -246,6 +255,8 @@ env_vars:
   optional:
     - "PRE_2FA_TOKEN_TTL — pre-2FA token validity"
     - "INTERNAL_KEY (legacy alias)"
+    - "TELEGRAM_OAUTH_REDIRECT_URL — overrides Telegram OIDC redirect_uri; if omitted, falls back to AUTH_PUBLIC_BASE_URL+/auth/telegram/callback"
+    - "AUTH_PUBLIC_BASE_URL (alias: PUBLIC_BASE_URL) — scheme+host of admin frontend; used to auto-derive Telegram redirect URI and origin param"
 
 invariants:
   - "Auth tokens (refresh) are HASHED at rest in admin.sessions. Plaintext only in HTTP layer."
@@ -267,6 +278,9 @@ gotchas:
   - "Canvas DRAFT vs PUBLISHED is enforced at API level only — direct DB UPDATE bypassing canvas use case can flip status without proper version bump."
   - "Magic link Issue accepts empty email (no-op for new users without verified email yet) — this is intentional for ProvisionShopOwner ordering, but easy to miss in tests."
   - "Telegram auth verifies hash with bot token — rotating the bot token invalidates all in-flight login attempts. No graceful migration."
+  - "Telegram redirect flow only activates when TELEGRAM_OAUTH_REDIRECT_URL (or AUTH_PUBLIC_BASE_URL fallback) is set. Without it HasOIDC()=false and /telegram/start returns 501. Active frontend path is the redirect → #tgAuthResult fragment → POST /telegram/callback (HMAC) pipeline, NOT the never-fired /telegram/oidc/callback."
+  - "oauth.telegram.org/auth is not standards-compliant: it ignores response_type/scope/redirect_uri/state, and the `state` we preserve only round-trips because it's appended as a query param on `return_to` (which Telegram passes through unmodified). If Telegram ever starts stripping unknown query params from return_to, state validation silently breaks."
+  - "OIDCClient.Exchange + decodeOIDCToken are dead code right now — kept against a future real-OIDC implementation. Calling /telegram/oidc/callback will 4xx because no code ever arrives. Delete or repurpose before someone wires another flow to it."
   - "Billing 'plan' updates only mutate internal accounting tables — no payment processor wired. Dashboard can show inconsistent state if plan != actual paid plan once Stripe lands."
   - "WIDGET_BASE_URL env value may lack `https://` prefix (current Admin Railway env has bare `v4-engine-production.up.railway.app`) — embed code becomes `<script src='v4-engine-production.../widget.js'>` without protocol; browsers may treat as relative."
   - "Internal-key middleware uses constant-time compare; using `==` would leak via timing. Verify on every new internal endpoint."
@@ -284,6 +298,9 @@ related_experts:
 active_workstreams:
   tracker: "docs/PRE_LAUNCH_TASKS.md (auth + admin sections), docs/CATALOG_GAPS.md (catalog UI in admin)"
   recent_milestones:
+    - "Telegram #tgAuthResult fragment flow (2026-05-14, commit 109378a): correct understanding that oauth.telegram.org/auth is NOT real OIDC. TelegramCallbackPage parses fragment, posts widget payload to legacy HMAC endpoint. OIDCClient.Exchange + /oidc/callback route remain in tree but are dead."
+    - "Telegram popup attempt rolled back (2026-05-14, commit 2f354fb): reverted ce3acb7..d1edd33 (useTelegramLogin hook, numeric bot_id fix); popup didn't work. useTelegramWidget.js (the iframe hook) remains but is now unused."
+    - "Telegram OIDC-ish redirect scaffold (2026-05-14, commits 9c12f96/bf79120/40eb982): OIDCClient adapter, dual-mode TelegramAuthUseCase (Start/CompleteOIDC + legacy Complete), routes /telegram/start + /telegram/oidc/callback, Google+Telegram logos on provider buttons. Superseded by fragment flow above for the OIDC path."
     - "Auth dedup / Shopify pending-link flow (2026-05-13): IssuePendingShopLink, ConsumePendingShopLink, shop_pending_link challenge kind, InstallCompletePage two-path, WorkspacePickerPage consume, Google OAuth welcome-back banner, orphan tenant soft-delete"
     - "Magic-link race-fix (2026-04-29 commit 0fdaf61) — block email when newly-created user has no memberships"
     - "Resend HTTP adapter (2026-04-29 commit dab0629) — replaces SMTP that hangs on Railway"
@@ -295,7 +312,7 @@ active_workstreams:
     - "shopify/client.go (1302 LOC) — owned by catalog expert; admin only via OAuth glue"
     - "catalog_adapter.go (1293 LOC) — catalog domain"
     - "canvas_adapter.go (870 LOC) — split candidate when more design system features land"
-    - "cmd/server/main.go (832 LOC) — DI bootstrap with all routes; growing as features add. Split candidate by registering route groups."
+    - "cmd/server/main.go (841 LOC) — DI bootstrap with all routes; growing as features add. Split candidate by registering route groups."
     - "merge_apply.go (804 LOC) — catalog domain"
     - "shopify_v2.go (801 LOC) — catalog domain (install flow + CompleteOAuth 4-return)"
     - "CanvasPage.jsx (785 LOC) — frontend; growth signal as canvas matures"
