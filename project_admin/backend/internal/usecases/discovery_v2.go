@@ -307,17 +307,26 @@ Tools available (full schemas in tool defs):
   peek_full_rows   — HEAVY: 1-5 full raw rows (cap: 10 calls/run)
   commit_artifact  — finalize and exit
 
-Target schema for your field_map:
+Target schema for your field_map (THREE prefixes, NOTHING ELSE):
   master.<col>           — Tier 1: name, brand, description, sku, vertical, image_url
-  <vertical>.<col>       — per-vertical typed columns. Today supported: cosmetics.
-                           cosmetics columns: skin_type, concern, key_ingredients,
-                           target_area, product_form, texture, routine_step,
-                           routine_time, application_method, free_from, scent,
-                           spf, marketing_claim, benefits, how_to_use, volume_ml,
-                           weight_g, unit_count
-  tier3.<key>            — JSONB fallback for attributes not covered by Tier 1
-                           or a per-vertical table. Use FREELY for unknown
-                           verticals or rare cosmetic-specific attributes.
+  cosmetics.<col>        — typed columns ONLY when vertical='cosmetics'.
+                           Available cosmetics columns: skin_type, concern,
+                           key_ingredients, target_area, product_form, texture,
+                           routine_step, routine_time, application_method,
+                           free_from, scent, spf, marketing_claim, benefits,
+                           how_to_use, volume_ml, weight_g, unit_count
+  tier3.<key>            — JSONB bucket for everything else (FREE-FORM key).
+
+CRITICAL: do NOT invent prefixes like 'furniture.material', 'electronics.ram',
+'apparel.size' — those typed tables DO NOT EXIST yet. For furniture, apparel,
+electronics, food, footwear, or unknown verticals, EVERY attribute beyond
+Tier 1 goes into tier3.<key>. The chat layer reads tier3 fine for these
+verticals — the only thing cosmetics has extra is faster typed search.
+
+Examples:
+  furniture sofa  → tier3.material, tier3.dimensions, tier3.upholstery_type
+  laptop          → tier3.cpu, tier3.ram_gb, tier3.screen_size
+  cosmetics serum → cosmetics.skin_type, cosmetics.concern, cosmetics.volume_ml
 
 Transforms supported in apply (set as 'transform' on a rule):
   lowercase, trim

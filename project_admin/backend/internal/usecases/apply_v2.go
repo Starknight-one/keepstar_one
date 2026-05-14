@@ -253,6 +253,24 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 				}
 			}
 		default:
+			// Forgiving fallback: when the agent emits a vertical prefix we
+			// don't have a per-vertical table for yet (e.g. furniture.material
+			// or electronics.ram before those tables exist), reroute the
+			// attribute into tier3.<col> instead of failing the row. Dev can
+			// later add a real master_<vertical> table + migrate tier3 keys
+			// over without losing data.
+			if dotIdx := strings.IndexByte(rule.To, '.'); dotIdx > 0 {
+				col := rule.To[dotIdx+1:]
+				if col != "" {
+					tier3[col] = transformed
+					uc.log.Warn("apply_v2_unknown_vertical_routed_to_tier3",
+						"tenant", tenantID,
+						"target", rule.To,
+						"item", item.ID,
+						"hint", "no per-vertical table for this prefix; rerouted to tier3")
+					break
+				}
+			}
 			return wrapMiss(item.ID, rule.From, rule.To, "unknown target prefix")
 		}
 	}

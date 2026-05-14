@@ -476,13 +476,17 @@ func main() {
 		applyV2 := usecases.NewApplyV2(inboxAdapter, mappingArtifactV2Adapter, catalogV2Writer, actionLogAdapter, discoveryV2, log)
 		orchestrator := usecases.NewUpdateOrchestrator(inboxUC, applyV2, discoveryV2, actionLogAdapter, rateLimitAdapter, log)
 
-		// Ingesters are constructed but currently used only via the
-		// catalog/v2 endpoints below. Existing shopify/csv install paths
-		// continue routing through the legacy harvester_lite + discovery
-		// pipelines until step 10 swaps them out. Kept as locals so the
-		// compiler enforces the wiring stays intact.
-		_ = usecases.NewShopifyIngester(inboxUC, orchestrator, log)
+		// Ingesters — Shopify is wired into ShopifyV2UseCase below so that
+		// real Shopify installs route through the new flow (inbox →
+		// discovery_v2 → apply_v2). CSV ingester is kept as a local for
+		// future wiring into handler_integrations_csv (legacy CSV upload
+		// still uses csv_mapping for now).
+		shopifyIngester := usecases.NewShopifyIngester(inboxUC, orchestrator, log)
 		_ = usecases.NewCSVIngester(inboxUC, orchestrator, log)
+		if shopifyV2UC != nil {
+			shopifyV2UC.SetInboxIngester(shopifyIngester)
+			log.Info("shopify_v2_inbox_ingester_wired")
+		}
 
 		catalogV2Handler = handlers.NewCatalogV2Handler(orchestrator, discoveryV2, log)
 		log.Info("catalog_v2_flow_enabled", "model", v2AgentClient.Model())
