@@ -10,33 +10,70 @@ import (
 	"strings"
 )
 
-// getPath fetches a value out of a parsed JSONB map by a "a.b.c" dotted
-// path. Returns nil if any segment is missing or not a map at intermediate
-// levels. Supports top-level only when path has no dots.
+// getPath fetches a value out of a parsed JSONB by a dotted path with
+// optional array indices. Supports:
+//   field
+//   field.subfield
+//   field[0]
+//   field[0].subfield
+//   field.subfield[2]
+//   field[0].subfield[1].leaf
 //
-// We intentionally keep this simple — no array indexing, no jsonpath. If
-// the agent needs nested structure access it should map the parent and let
-// apply route to tier3.
+// Returns nil if any segment misses (no field, out-of-range index, or
+// type mismatch at intermediate level).
 func getPath(raw map[string]any, path string) any {
 	if path == "" || raw == nil {
 		return nil
 	}
-	if !strings.Contains(path, ".") {
-		return raw[path]
+	tokens := tokenizePath(path)
+	if len(tokens) == 0 {
+		return nil
 	}
-	parts := strings.Split(path, ".")
-	cur := any(raw)
-	for _, p := range parts {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil
+	var cur any = raw
+	for _, tok := range tokens {
+		switch t := tok.(type) {
+		case string:
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return nil
+			}
+			cur = m[t]
+		case int:
+			// JSON arrays decode to []any.
+			a, ok := cur.([]any)
+			if !ok {
+				return nil
+			}
+			if t < 0 || t >= len(a) {
+				return nil
+			}
+			cur = a[t]
 		}
-		cur = m[p]
 		if cur == nil {
 			return nil
 		}
 	}
 	return cur
+}
+
+// pathTokenRe matches one path step: a key like `field` or an index like `[12]`.
+var pathTokenRe = regexp.MustCompile(`([a-zA-Z_][\w]*)|\[(\d+)\]`)
+
+// tokenizePath returns an ordered slice of either string (key) or int (index).
+func tokenizePath(path string) []any {
+	matches := pathTokenRe.FindAllStringSubmatch(path, -1)
+	out := make([]any, 0, len(matches))
+	for _, m := range matches {
+		if m[1] != "" {
+			out = append(out, m[1])
+		} else if m[2] != "" {
+			n, err := strconv.Atoi(m[2])
+			if err == nil {
+				out = append(out, n)
+			}
+		}
+	}
+	return out
 }
 
 // applyTransform runs a named transform on an input value. transform may be
@@ -65,6 +102,16 @@ func applyV2Transform(in any, transform string) (any, error) {
 		return strings.TrimSpace(s), nil
 
 	case strings.HasPrefix(transform, "split:"):
+		// Idempotent for already-array inputs: if the source value is
+		// already a slice, agent over-specified split: — return as-is.
+		if v, ok := asStringSlice(in); ok {
+			// Only treat as already-array when the input wasn't a plain
+			// string. asStringSlice wraps a string into a 1-element slice,
+			// which would be wrong here — so explicit type check first.
+			if _, isStr := in.(string); !isStr {
+				return v, nil
+			}
+		}
 		s, ok := asString(in)
 		if !ok {
 			return nil, fmt.Errorf("split: not a string (%T)", in)

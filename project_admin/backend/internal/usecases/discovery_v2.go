@@ -164,10 +164,13 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 		},
 	}
 
+	const maxNudges = 3 // retry-with-nudge when model emits end_turn w/o commit
+
 	var (
 		heavyCallsUsed int
 		totalCostUSD   float64
 		forceFinalize  bool
+		nudgesUsed     int
 	)
 
 	for turn := 0; turn < discoveryV2MaxTurns; turn++ {
@@ -207,8 +210,21 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 		}
 
 		if len(toolUses) == 0 {
-			// Model ended turn without invoking commit_artifact — fail.
-			return nil, fmt.Errorf("discovery v2: model ended turn without committing artifact (stop_reason=%s)", resp.StopReason)
+			// Model ended its turn without invoking any tool. Common path:
+			// agent wrote a text "I'm ready to commit" then stopped without
+			// the actual tool_use. Nudge it up to maxNudges times before
+			// giving up.
+			if nudgesUsed >= maxNudges {
+				return nil, fmt.Errorf("discovery v2: model ended turn without committing artifact after %d nudges (stop_reason=%s)", nudgesUsed, resp.StopReason)
+			}
+			nudgesUsed++
+			messages = append(messages, anthropic.Message{
+				Role: "user",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "You stopped without calling any tool. You MUST call commit_artifact now with the best mapping you can produce from what you've seen. If you genuinely need more info, call one more aggregate tool (list_fields / sample_values / field_stats / count_by) and then commit. Do not produce a turn with only text again."},
+				},
+			})
+			continue
 		}
 
 		var toolResults []anthropic.ContentBlock

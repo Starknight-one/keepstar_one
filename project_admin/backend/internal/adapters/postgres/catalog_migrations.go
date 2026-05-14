@@ -267,22 +267,40 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_catalog_mv_sku ON catalog.master_variants(sku) WHERE sku IS NOT NULL;`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_mv_kind ON catalog.master_variants(variant_kind);`,
 
-		// --- master_cosmetics: per-vertical Tier 2 (Option B) ---
-		// Cosmetics-specific typed columns. Promoted from candidates by curator
-		// via ALTER TABLE ADD COLUMN. Schema starts with the obvious set; new
-		// columns appear over time via promotion workflow.
+		// --- master_cosmetics: per-vertical Tier 2 typed columns ---
+		// Reshaped 2026-05-14 (catalog flow rebuild): PK is now master_product_id
+		// (not master_variant_id; master_variants is being phased out), and the
+		// column set covers all 17 cosmetic Tier-2 attributes plus an extra
+		// JSONB slot for one-offs. apply_v2 writes here for cosmetics tenants;
+		// V5 chat JOINs to read.
 		`CREATE TABLE IF NOT EXISTS catalog.master_cosmetics (
-			master_variant_id UUID PRIMARY KEY REFERENCES catalog.master_variants(id) ON DELETE CASCADE,
-			skin_type TEXT[] NOT NULL DEFAULT '{}',
-			concern TEXT[] NOT NULL DEFAULT '{}',
-			ingredients TEXT[] NOT NULL DEFAULT '{}',
-			scent TEXT,
-			spf INTEGER,
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			master_product_id   UUID PRIMARY KEY REFERENCES catalog.master_products(id) ON DELETE CASCADE,
+			skin_type           TEXT[]      NOT NULL DEFAULT '{}',
+			concern             TEXT[]      NOT NULL DEFAULT '{}',
+			key_ingredients     TEXT[]      NOT NULL DEFAULT '{}',
+			target_area         TEXT[]      NOT NULL DEFAULT '{}',
+			product_form        TEXT,
+			texture             TEXT,
+			routine_step        TEXT,
+			routine_time        TEXT,
+			application_method  TEXT,
+			free_from           TEXT[]      NOT NULL DEFAULT '{}',
+			scent               TEXT,
+			spf                 INTEGER,
+			marketing_claim     TEXT,
+			benefits            TEXT[]      NOT NULL DEFAULT '{}',
+			how_to_use          TEXT,
+			volume_ml           INTEGER,
+			weight_g            INTEGER,
+			unit_count          SMALLINT,
+			extra               JSONB       NOT NULL DEFAULT '{}'::jsonb,
+			updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_mc_skin_type ON catalog.master_cosmetics USING gin(skin_type);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_mc_concern ON catalog.master_cosmetics USING gin(concern);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_mc_ingredients ON catalog.master_cosmetics USING gin(ingredients);`,
+		`CREATE INDEX IF NOT EXISTS idx_mc_skin_type       ON catalog.master_cosmetics USING GIN (skin_type);`,
+		`CREATE INDEX IF NOT EXISTS idx_mc_concern         ON catalog.master_cosmetics USING GIN (concern);`,
+		`CREATE INDEX IF NOT EXISTS idx_mc_key_ingredients ON catalog.master_cosmetics USING GIN (key_ingredients);`,
+		`CREATE INDEX IF NOT EXISTS idx_mc_free_from       ON catalog.master_cosmetics USING GIN (free_from);`,
+		`CREATE INDEX IF NOT EXISTS idx_mc_benefits        ON catalog.master_cosmetics USING GIN (benefits);`,
 
 		// --- catalog.products: listing-as-overrides extensions ---
 		// New columns let the listing carry per-tenant deltas while master holds

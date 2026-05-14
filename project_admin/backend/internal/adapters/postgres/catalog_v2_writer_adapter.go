@@ -109,9 +109,9 @@ func (a *CatalogV2WriterAdapter) UpsertCosmetics(ctx context.Context, masterID s
 			free_from, scent, spf, marketing_claim, benefits, how_to_use,
 			volume_ml, weight_g, unit_count, extra, updated_at
 		) VALUES (
-			$1, COALESCE($2, '{}'), COALESCE($3, '{}'), COALESCE($4, '{}'), COALESCE($5, '{}'),
+			$1, COALESCE($2::text[], '{}'::text[]), COALESCE($3::text[], '{}'::text[]), COALESCE($4::text[], '{}'::text[]), COALESCE($5::text[], '{}'::text[]),
 			$6, $7, $8, $9, $10,
-			COALESCE($11, '{}'), $12, $13, $14, COALESCE($15, '{}'), $16,
+			COALESCE($11::text[], '{}'::text[]), $12, $13, $14, COALESCE($15::text[], '{}'::text[]), $16,
 			$17, $18, $19, $20::jsonb, NOW()
 		)
 		ON CONFLICT (master_product_id) DO UPDATE

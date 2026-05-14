@@ -48,3 +48,6 @@ project_admin/Crawler_results/
 # p<NN>.* (p01.v5.json, p23.v4.trace.json) — using [0-9] to keep
 # prompts.json itself committed.
 docs/v5-smoke/**/p[0-9]*.json
+
+# go build artifacts from smoke test
+project_admin/backend/smoke_catalog_v2

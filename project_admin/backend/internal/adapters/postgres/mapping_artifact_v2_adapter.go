@@ -46,9 +46,9 @@ func (a *MappingArtifactV2Adapter) Save(ctx context.Context, tenantID string, ar
 	_, err = a.client.pool.Exec(ctx, `
 		INSERT INTO catalog.tenant_catalog_schema
 			(tenant_id, status, artifact_version, mapping_artifact, discovered_at, validated_at)
-		VALUES ($1, 'validated', 1, $2::jsonb, NOW(), NOW())
+		VALUES ($1, 'active', 1, $2::jsonb, NOW(), NOW())
 		ON CONFLICT (tenant_id) DO UPDATE
-		SET status           = 'validated',
+		SET status           = 'active',
 		    artifact_version = tenant_catalog_schema.artifact_version + 1,
 		    mapping_artifact = EXCLUDED.mapping_artifact,
 		    discovered_at    = NOW(),
