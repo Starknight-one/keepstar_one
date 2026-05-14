@@ -97,6 +97,8 @@ func main() {
 			mergeProxy.HandleListReports(w, r)
 		case strings.HasSuffix(path, "/discover"):
 			mergeProxy.HandleDiscover(w, r)
+		case strings.HasSuffix(path, "/sync-now"):
+			mergeProxy.HandleSyncNowV2(w, r)
 
 		// Catalog Flow Rebuild — 6-step flow surfaces (curator UI tabs):
 		// inbox listing/detail, action log, agent runs, mapping artifact.

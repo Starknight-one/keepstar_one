@@ -1,15 +1,23 @@
+// App — curator shell + routing.
+//
+// 2026-05-15 rebuild: removed Candidates / Junk / MergeReport pages —
+// their backing tables (master_attribute_candidates, junk_candidates,
+// merge_reports) were dropped in the catalog flow rebuild. The page logic
+// is gone from the React Router, the sidebar links are gone, and the
+// backend handlers no longer exist either.
+//
+// New tabs surface inside TenantDetailPage: Catalog / Inbox / Mapping /
+// Action Log / Agent Runs.
+
 import { useEffect, useState } from 'react'
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom'
 import { api } from './api.js'
 import LoginPage from './pages/LoginPage.jsx'
-import CandidatesPage from './pages/CandidatesPage.jsx'
-import JunkPage from './pages/JunkPage.jsx'
 import AuditPage from './pages/AuditPage.jsx'
 import TenantsPage from './pages/TenantsPage.jsx'
 import TenantDetailPage from './pages/TenantDetailPage.jsx'
 import MasterCatalogPage from './pages/MasterCatalogPage.jsx'
 import MasterDetailPage from './pages/MasterDetailPage.jsx'
-import MergeReportPage from './pages/MergeReportPage.jsx'
 import ChatsPage from './pages/ChatsPage.jsx'
 import ChatDetailPage from './pages/ChatDetailPage.jsx'
 
@@ -22,10 +30,6 @@ function Layout({ user, onLogout, children }) {
           <div className="nav-section">Operations</div>
           <NavLink to="/tenants" className={({ isActive }) => isActive ? 'active' : ''}>Tenants</NavLink>
           <NavLink to="/master" className={({ isActive }) => isActive ? 'active' : ''}>Master Catalog</NavLink>
-
-          <div className="nav-section">Curation queues</div>
-          <NavLink to="/candidates" className={({ isActive }) => isActive ? 'active' : ''}>Candidates</NavLink>
-          <NavLink to="/junk" className={({ isActive }) => isActive ? 'active' : ''}>Junk</NavLink>
 
           <div className="nav-section">Activity</div>
           <NavLink to="/audit" className={({ isActive }) => isActive ? 'active' : ''}>Audit</NavLink>
@@ -48,8 +52,6 @@ export default function App() {
   const [loaded, setLoaded] = useState(false)
   const navigate = useNavigate()
 
-  // One-shot auth check on mount. The /curator/me 401 case is handled by
-  // setUser(null) → render LoginPage; api.js no longer does a hard redirect.
   useEffect(() => {
     api.get('/curator/me')
       .then(setUser)
@@ -80,11 +82,8 @@ export default function App() {
         <Route index element={<Navigate to="/tenants" replace />} />
         <Route path="/tenants" element={<TenantsPage />} />
         <Route path="/tenants/:id" element={<TenantDetailPage />} />
-        <Route path="/tenants/:tenantId/merge-reports/:reportId" element={<MergeReportPage />} />
         <Route path="/master" element={<MasterCatalogPage />} />
         <Route path="/master/:id" element={<MasterDetailPage />} />
-        <Route path="/candidates" element={<CandidatesPage />} />
-        <Route path="/junk" element={<JunkPage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/chats" element={<ChatsPage />} />
         <Route path="/chats/:sessionId" element={<ChatDetailPage />} />

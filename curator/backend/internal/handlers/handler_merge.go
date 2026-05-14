@@ -121,6 +121,23 @@ func (p *MergeProxy) HandleDiscover(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"started","poll":"schema"}`))
 }
 
+// HandleSyncNowV2 POST /curator/tenants/{id}/sync-now — proxies to admin
+// /admin/api/catalog/v2/sync-now/{tenant_id}. Triggers the new 6-step flow's
+// ManualSync (rate-limit bypass; cascades to discovery_v2 if no artifact).
+//
+// Unlike HandleDiscover this is synchronous: ManualSync runs inline on admin
+// and we return its ApplyResult JSON. Latency depends on inbox size; on a
+// 10-product smoke it's ~10s.
+func (p *MergeProxy) HandleSyncNowV2(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "tenant id missing")
+		return
+	}
+	target := p.adminBase + "/admin/api/catalog/v2/sync-now/" + url.PathEscape(tenantID)
+	p.proxy(w, r, http.MethodPost, target)
+}
+
 // HandleListReports GET /curator/tenants/{id}/merge-reports
 func (p *MergeProxy) HandleListReports(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantIDFromCuratorPath(r.URL.Path)

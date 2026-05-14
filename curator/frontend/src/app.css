@@ -335,3 +335,104 @@ main { flex: 1; padding: 28px 36px; }
 .spans-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .spans-table tr.span-error { background: rgba(239, 68, 68, 0.06); }
 .span-attrs code { font-size: 11px; color: #aaa; word-break: break-all; }
+
+/* ============================================================================
+ * Catalog Flow v2 tabs (TenantDetailPage rebuild, 2026-05-15)
+ * Inbox / Mapping / Action Log / Agent Runs use the badge + modal patterns
+ * below. Colors leverage brand palette where natural; existing tabs keep
+ * their pre-rebuild styling.
+ * ========================================================================= */
+
+.tenant-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.tenant-actions { display: flex; align-items: center; gap: 12px; }
+
+.btn-primary {
+  background: #5BA4D9; color: #fff; border: none; padding: 6px 14px;
+  border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;
+}
+.btn-primary:hover:not(:disabled) { background: #4a93c7; }
+.btn-primary:disabled { opacity: 0.5; cursor: wait; }
+
+.small { font-size: 11px; }
+
+/* Badges — reused across inbox / action log / agent runs */
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 3px;
+  font-size: 10px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 0.4px; font-family: ui-monospace, monospace;
+  text-decoration: none;
+}
+.badge-ok      { background: rgba( 80, 200, 120, 0.15); color: #6bd690; }
+.badge-warn    { background: rgba(240, 146,  74, 0.18); color: #F0924A; }
+.badge-err     { background: rgba(239,  68,  68, 0.15); color: #f88080; }
+.badge-info    { background: rgba( 91, 164, 217, 0.18); color: #7fbde5; }
+.badge-neutral { background: rgba(160, 160, 160, 0.12); color: #aaa; }
+
+a.badge:hover { filter: brightness(1.2); }
+
+/* Clickable row affordance — used in inbox + agent runs tables */
+.table tr.clickable { cursor: pointer; }
+.table tr.clickable:hover td { background: rgba(91, 164, 217, 0.05); }
+.table tr.row-error td { background: rgba(239, 68, 68, 0.05); }
+.error-text { color: #f88080; }
+
+/* JSON view — raw payload / artifact body */
+.json-view {
+  background: #0e0e15; color: #c0c4d4; border: 1px solid #25252e;
+  border-radius: 4px; padding: 10px 12px; font-size: 11px;
+  font-family: ui-monospace, monospace; overflow: auto;
+  max-height: 60vh; white-space: pre-wrap; word-break: break-word;
+}
+.json-view.inline { max-height: 240px; }
+
+.section-h3 {
+  margin: 24px 0 10px; font-size: 13px; font-weight: 500;
+  color: #999; text-transform: uppercase; letter-spacing: 0.6px;
+}
+
+.note-block {
+  background: rgba(91, 164, 217, 0.06); border-left: 2px solid #5BA4D9;
+  padding: 10px 14px; margin: 12px 0; font-size: 13px;
+}
+.note-label {
+  font-size: 10px; text-transform: uppercase; color: #7fbde5;
+  letter-spacing: 0.6px; margin-bottom: 4px;
+}
+
+/* Pager — prev/next at bottom of paginated tables */
+.pager {
+  display: flex; align-items: center; gap: 12px; padding: 12px 0;
+  border-top: 1px solid #25252e; margin-top: 12px;
+}
+.pager button {
+  background: #1a1a22; color: #ccc; border: 1px solid #25252e;
+  padding: 4px 12px; border-radius: 3px; cursor: pointer; font-size: 12px;
+}
+.pager button:hover:not(:disabled) { border-color: #5BA4D9; color: #fff; }
+.pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Modal — full inbox row / agent run detail */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100; padding: 24px;
+}
+.modal {
+  background: #15151c; border: 1px solid #25252e; border-radius: 6px;
+  width: 100%; max-width: 900px; max-height: 90vh;
+  display: flex; flex-direction: column;
+}
+.modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid #25252e;
+}
+.modal-title { font-size: 13px; font-weight: 500; color: #ddd; }
+.modal-close {
+  background: none; border: none; color: #888; font-size: 22px;
+  line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.modal-close:hover { color: #fff; }
+.modal-body { padding: 16px; overflow: auto; }

@@ -56,3 +56,22 @@ export const mergeApi = {
   revert: (reportId, body) => api.post(`/curator/merge-reports/${reportId}/revert`, body || {}),
   discover: (tenantId) => api.post(`/curator/tenants/${tenantId}/discover`),
 }
+
+// Catalog Flow v2 — backend reads come directly from curator's adapter
+// (catalog.inbox_items + admin.tenant_action_log + admin.agent_runs +
+// catalog.tenant_catalog_schema). Sync-now / discover are proxied through
+// curator's MergeProxy to admin /admin/api/catalog/v2/* endpoints.
+export const catalogV2Api = {
+  listInbox:      (tenantId, limit = 50, offset = 0) => api.get(`/curator/tenants/${tenantId}/inbox?limit=${limit}&offset=${offset}`),
+  getInboxItem:   (tenantId, itemId)                  => api.get(`/curator/tenants/${tenantId}/inbox/${itemId}`),
+  listActionLog:  (tenantId, limit = 100, offset = 0) => api.get(`/curator/tenants/${tenantId}/action-log?limit=${limit}&offset=${offset}`),
+  listAgentRuns:  (tenantId, limit = 50, offset = 0)  => api.get(`/curator/tenants/${tenantId}/agent-runs?limit=${limit}&offset=${offset}`),
+  getAgentRun:    (tenantId, runId)                   => api.get(`/curator/tenants/${tenantId}/agent-runs/${runId}`),
+  getMapping:     (tenantId)                          => api.get(`/curator/tenants/${tenantId}/mapping`),
+
+  // Manual triggers — proxied through curator backend to admin's
+  // /admin/api/catalog/v2/... endpoints (curator MergeProxy adds X-Internal-Key).
+  // syncNow handles both "cold start" (cascades to discovery_v2 internally if
+  // no artifact yet) and "already discovered" (just applies). One button.
+  syncNow:        (tenantId)                          => api.post(`/curator/tenants/${tenantId}/sync-now`),
+}
