@@ -17,16 +17,31 @@ import (
 	"fmt"
 
 	"keepstar-admin/internal/logger"
+	"keepstar-admin/internal/ports"
 )
 
 type ShopifyIngester struct {
 	inbox        *InboxUseCase
 	orchestrator *UpdateOrchestrator
+	writer       ports.CatalogV2WriterPort // for SoftDeleteListing on products/delete webhooks
+	actionLog    ports.TenantActionLogPort // logs disconnect-like events
 	log          *logger.Logger
 }
 
-func NewShopifyIngester(inbox *InboxUseCase, orchestrator *UpdateOrchestrator, log *logger.Logger) *ShopifyIngester {
-	return &ShopifyIngester{inbox: inbox, orchestrator: orchestrator, log: log}
+func NewShopifyIngester(
+	inbox *InboxUseCase,
+	orchestrator *UpdateOrchestrator,
+	writer ports.CatalogV2WriterPort,
+	actionLog ports.TenantActionLogPort,
+	log *logger.Logger,
+) *ShopifyIngester {
+	return &ShopifyIngester{
+		inbox:        inbox,
+		orchestrator: orchestrator,
+		writer:       writer,
+		actionLog:    actionLog,
+		log:          log,
+	}
 }
 
 // IngestBulkItems writes pre-parsed Shopify products into inbox, then
@@ -62,6 +77,35 @@ func (i *ShopifyIngester) IngestSingleWebhook(ctx context.Context, tenantID, gid
 		Verb:       verb,
 		Payload:    raw,
 	})
+}
+
+// SoftDeleteListing handles the products/delete shopify webhook. Marks the
+// matching listing row in catalog.products as deleted (deleted_at = NOW())
+// and emits a tenant_action_log entry. The master_product row is never
+// touched — other tenants linked to the same master continue to serve.
+//
+// Returns nil even when no listing row matches the GID (delete-of-unknown
+// is harmless and shouldn't surface as a webhook error to Shopify).
+func (i *ShopifyIngester) SoftDeleteListing(ctx context.Context, tenantID, gid string) error {
+	if tenantID == "" || gid == "" {
+		return fmt.Errorf("shopify soft-delete: tenant_id and gid required")
+	}
+	if err := i.writer.SoftDeleteListing(ctx, tenantID, "shopify", gid); err != nil {
+		return fmt.Errorf("shopify soft-delete listing: %w", err)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"source":      "shopify",
+		"verb":        "deleted",
+		"external_id": gid,
+	})
+	_ = i.actionLog.Log(ctx, &ports.TenantActionLogEntry{
+		TenantID: tenantID,
+		Action:   "webhook_received",
+		Status:   "ok",
+		Payload:  payload,
+	})
+	i.log.Info("shopify_listing_soft_deleted", "tenant", tenantID, "gid", gid)
+	return nil
 }
 
 // IngestResult bundles inbox-write counts and apply counts so callers can

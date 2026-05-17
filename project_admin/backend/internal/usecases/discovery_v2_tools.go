@@ -103,31 +103,58 @@ func discoveryTools() []anthropic.ToolDef {
 		},
 		{
 			Name: toolCommitArtifact,
-			Description: "Finalize discovery. Submit the mapping artifact and terminate. " +
-				"`vertical` must be one of: cosmetics, electronics, furniture, apparel, footwear, food, unknown. " +
-				"`field_map` is an ordered list of rules — each maps an inbox field to a target (master.<col>, " +
-				"<vertical>.<col>, or tier3.<key>) with optional transform. Optional `notes` for free-form summary.",
+			Description: "Finalize discovery and exit. Submit the artifact as branches by vertical class plus " +
+				"optional classify_rules. One branch per vertical the tenant carries (cosmetics, electronics, " +
+				"furniture, haircare, apparel, footwear, food, ski, unknown). Each branch has its own field_map: " +
+				"target prefixes are master.<col> for Tier 1 columns, cosmetics.<col> ONLY when the branch is " +
+				"'cosmetics' (typed table exists), and tier3.<key> for every other vertical's attributes. " +
+				"classify_rules are evaluated row-by-row when Shopify product_type doesn't alias to a known " +
+				"vertical — supported DSL: \"product_type contains 'X'\", \"brand = 'X'\", \"name contains 'X'\", " +
+				"\"tag = 'X'\".",
 			InputSchema: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"vertical":{"type":"string","enum":["cosmetics","electronics","furniture","apparel","footwear","food","unknown"]},
-					"field_map":{
+					"branches":{
+						"type":"array",
+						"minItems":1,
+						"items":{
+							"type":"object",
+							"properties":{
+								"vertical":{"type":"string","enum":["cosmetics","electronics","furniture","haircare","apparel","footwear","food","ski","unknown"]},
+								"field_map":{
+									"type":"array",
+									"items":{
+										"type":"object",
+										"properties":{
+											"from":{"type":"string"},
+											"to":{"type":"string"},
+											"transform":{"type":"string"},
+											"default":{"type":"string"}
+										},
+										"required":["from","to"],
+										"additionalProperties":false
+									}
+								}
+							},
+							"required":["vertical","field_map"],
+							"additionalProperties":false
+						}
+					},
+					"classify_rules":{
 						"type":"array",
 						"items":{
 							"type":"object",
 							"properties":{
-								"from":{"type":"string"},
-								"to":{"type":"string"},
-								"transform":{"type":"string"},
-								"default":{"type":"string"}
+								"when":{"type":"string"},
+								"then_vertical":{"type":"string"}
 							},
-							"required":["from","to"],
+							"required":["when","then_vertical"],
 							"additionalProperties":false
 						}
 					},
 					"notes":{"type":"string"}
 				},
-				"required":["vertical","field_map"],
+				"required":["branches"],
 				"additionalProperties":false
 			}`),
 		},
@@ -144,10 +171,10 @@ func discoveryTools() []anthropic.ToolDef {
 // for the LLM tool_result, a preview for agent_runs logging, plus the
 // optional "committed artifact" signal.
 type dispatchResult struct {
-	Output          string                    // JSON-encoded result for LLM
-	Preview         json.RawMessage           // compact preview for agent_runs log
-	IsError         bool                      // surfaced to LLM as tool_result is_error
-	CommitArtifact  *domain.MappingArtifactV2 // non-nil iff commit_artifact was called
+	Output         string                    // JSON-encoded result for LLM
+	Preview        json.RawMessage           // compact preview for agent_runs log
+	IsError        bool                      // surfaced to LLM as tool_result is_error
+	CommitArtifact *domain.MappingArtifactV3 // non-nil iff commit_artifact was called
 }
 
 // dispatchTool runs one tool invocation against InboxPort. Caller is
@@ -262,28 +289,43 @@ func dispatchTool(
 
 	case toolCommitArtifact:
 		var a struct {
-			Vertical string                    `json:"vertical"`
-			FieldMap []domain.FieldMappingRule `json:"field_map"`
-			Notes    string                    `json:"notes"`
+			Branches      []domain.VerticalBranch `json:"branches"`
+			ClassifyRules []domain.ClassifyRule   `json:"classify_rules"`
+			Notes         string                  `json:"notes"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
 			return errResult(fmt.Errorf("commit_artifact: invalid args: %w", err))
 		}
-		if a.Vertical == "" || len(a.FieldMap) == 0 {
-			return errResult(fmt.Errorf("commit_artifact: vertical and non-empty field_map required"))
+		if len(a.Branches) == 0 {
+			return errResult(fmt.Errorf("commit_artifact: at least one branch required"))
 		}
-		art := &domain.MappingArtifactV2{
-			Version:  2,
-			Vertical: a.Vertical,
-			FieldMap: a.FieldMap,
-			Notes:    a.Notes,
+		ruleCount := 0
+		for _, b := range a.Branches {
+			if b.Vertical == "" {
+				return errResult(fmt.Errorf("commit_artifact: every branch needs a vertical"))
+			}
+			if len(b.FieldMap) == 0 {
+				return errResult(fmt.Errorf("commit_artifact: branch %q has empty field_map", b.Vertical))
+			}
+			ruleCount += len(b.FieldMap)
+		}
+		art := &domain.MappingArtifactV3{
+			Version:       3,
+			Branches:      a.Branches,
+			ClassifyRules: a.ClassifyRules,
+			Notes:         a.Notes,
 		}
 		body, _ := json.Marshal(map[string]any{
-			"committed":     true,
-			"vertical":      a.Vertical,
-			"field_map_len": len(a.FieldMap),
+			"committed":      true,
+			"branches":       art.VerticalNames(),
+			"total_rules":    ruleCount,
+			"classify_rules": len(a.ClassifyRules),
 		})
-		preview, _ := json.Marshal(map[string]any{"vertical": a.Vertical, "rules": len(a.FieldMap)})
+		preview, _ := json.Marshal(map[string]any{
+			"branches":       art.VerticalNames(),
+			"rules":          ruleCount,
+			"classify_rules": len(a.ClassifyRules),
+		})
 		return &dispatchResult{Output: string(body), Preview: preview, CommitArtifact: art}
 
 	default:

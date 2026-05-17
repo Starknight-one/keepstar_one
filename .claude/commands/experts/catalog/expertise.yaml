@@ -1,265 +1,422 @@
 # Catalog Expertise
-# Cross-cutting domain: write side in admin (project_admin/), read side in V4
-# (project_v4/). Same Postgres schema (catalog.*). Pipeline:
-# ingest → harvest → discovery → mapping artifact → merge_apply → curator.
+# Cross-cutting domain: write side in admin (project_admin/), read side in V5
+# (project_v5/). Same Postgres schema (catalog.*). Pipeline rebuilt 2026-05-14:
+# source → inbox_items → discovery_v2 → apply_v2 → master_products + master_cosmetics
+# (+ tier3 fallback) + slim listings. Legacy harvester/discovery/merge/junk
+# code purged 2026-05-15.  Evening 2026-05-15: structured-discovering-lollipop
+# rebuild — MappingArtifactV3 (multi-vertical branches + classify_rules),
+# deterministic SKU→GTIN→NormalizedMatchKey cascade in MatchOrCreateMaster,
+# masters are IMMUTABLE on bind, products/delete soft-delete listing webhook.
 
 overview:
   cross_cutting: true
   write_side:
     path: "project_admin/backend/internal/{adapters/postgres, adapters/shopify, usecases, handlers}/"
     go_module: "keepstar-admin"
-    purpose: "Ingest from sources (Shopify/CSV/manual), discover schema via LLM, build mapping artifact, link listings to master, manage candidates queue"
+    purpose: "Ingest sources → catalog.inbox_items (raw JSONB) → DiscoveryV2 (Sonnet 4.6) produces MappingArtifactV2 → ApplyV2 writes master_products + per-vertical (master_cosmetics) + tier3 + slim catalog.products listings."
   read_side:
     path: "project_v5/backend/internal/adapters/postgres/postgres_catalog.go (+ postgres_catalog_vector.go)"
     go_module: "keepstar-v5"
-    purpose: "Serve catalog reads to V5 chat pipeline (ListProducts, VectorSearch, GetMasterProduct, BuildCatalogDigest)"
+    purpose: "Serve catalog reads to V5 chat pipeline (ListProducts, GetProduct, BuildCatalogDigest, VectorSearch). JOINs master_cosmetics for cosmetics tenants, COALESCEs tier3 → tier2 for non-cosmetics fallback."
   curator_side:
     path: "curator/backend/internal/adapters/postgres.go"
-    purpose: "Read-only browse + candidate promotion (ALTER TABLE for tier1 promotion). See `curator` expert."
-  database: "Single Neon Postgres. catalog.* schema shared across all three modules."
+    purpose: "Read-only browse + manual sync trigger. Legacy candidate/junk/merge-report flows deleted with catalog-v2 rebuild. See `curator` expert."
+  database: "Single Neon Postgres. catalog.* schema (data) + admin.* schema (operational tables: agent_runs, tenant_action_log)."
 
 schema:
-  schemas: ["catalog.*"]
+  schemas: ["catalog.*", "admin.* (operational)"]
   core_tables:
-    catalog_tenants: "tenants {id, slug, name, type, settings JSONB, created_at, updated_at, deleted_at TIMESTAMPTZ NULL} — soft-delete added 2026-05-13; NULL=active, non-null=deleted orphan"
-    catalog_categories: "categories {id, name, slug, parent_id (self-ref), created_at}"
+    catalog_tenants: "tenants {id, slug, name, type, settings JSONB, catalog_digest JSONB, created_at, updated_at, deleted_at TIMESTAMPTZ NULL} — soft-delete added 2026-05-13; NULL=active."
+    catalog_categories: "categories {id, name, slug, parent_id (self-ref), created_at} — legacy single-table tree; v2 uses master_categories + tenant_categories + category_mapping."
     catalog_master_products: |
-      master_products {id, sku UNIQUE, name, description, brand, category_id,
-      images JSONB, attributes JSONB, owner_tenant_id, embedding vector(384),
-      tier2 JSONB, created_at, updated_at}
-    catalog_master_variants: "master_variants {id, master_product_id, sku, gtins TEXT[], color, size, material, weight_g, volume_ml, image_url}"
+      master_products {id, sku UNIQUE, name, description, brand, category_id, images JSONB,
+      owner_tenant_id, embedding vector(384), vertical TEXT NOT NULL DEFAULT 'cosmetics',
+      tier2 JSONB, tier3 JSONB NOT NULL DEFAULT '{}', confidence TEXT (unverified|reviewed|approved),
+      source_system, source_id, original_name, product_line, product_form, texture, routine_step,
+      routine_time, application_method, skin_type/concern/key_ingredients/target_area/free_from TEXT[],
+      marketing_claim, benefits TEXT[], how_to_use, volume_ml, weight_g, unit_count,
+      enrichment_version, gtin TEXT NULL, normalized_match_key TEXT NULL, created_at, updated_at}.
+      NEW 2026-05-15 (evening): gtin + normalized_match_key feed the MatchOrCreateMaster cascade.
+      NOTE: most cosmetic typed columns ALSO exist on master_products (legacy from PIM redesign);
+      apply_v2 writes the new master_cosmetics table; chat reads can fall back to either via merge.
+    catalog_master_cosmetics: |
+      master_cosmetics {master_product_id PK FK→master_products, skin_type/concern/key_ingredients/
+      target_area/free_from/benefits TEXT[], product_form, texture, routine_step, routine_time,
+      application_method, scent, spf INT, marketing_claim, how_to_use, volume_ml, weight_g,
+      unit_count, extra JSONB, updated_at} — reshaped 2026-05-14 to be PK=master_product_id
+      (was master_variant_id). apply_v2 UpsertCosmetics writes here for cosmetics-vertical tenants.
+    catalog_master_variants: "master_variants {id, master_product_id FK, sku, gtins TEXT[], image_url, weight_g, volume_ml, length_mm/width_mm/height_mm, color, size, material, axes JSONB, variant_kind (real|addon|bundle), weight_raw, volume_raw, parse_status JSONB, embedding vector(384)} — being phased out per catalog-v2 rebuild; adapter still exposes UpsertMasterVariant + FindByGTIN/FindByVendorAndSKU/FindByVendorAndFuzzyName/FindByEmbedding, but apply_v2 no longer writes here."
     catalog_products: |
-      products (listings) {id, tenant_id FK, master_product_id FK NULL,
-      master_variant_id FK NULL, name (display_name), original_name, description,
-      price (cents int), currency, stock_quantity, rating, source_system,
-      source_id, raw_payload JSONB, created_at, updated_at}
-    tenant_catalog_schema: "tenant_catalog_schema {tenant_id PK, status, artifact_version, mapping_artifact JSONB, validation_report JSONB, discovered_at, validated_at}"
-    mapping_artifact_versions: "Multiple artifact_version rows per tenant; latest read by status='validated'"
-    catalog_field_definitions: "field_definitions {id, tenant_id, name, label, type, slot_role, ...}"
+      products (listings) {id, tenant_id FK, master_product_id FK NULL, master_variant_id FK NULL,
+      name (legacy), display_name, original_name, description, price INT cents, currency,
+      stock_quantity, rating, raw_attributes JSONB, media JSONB, source_system, source_id,
+      payload_hash, tags JSONB, tenant_overrides JSONB DEFAULT '{}', deleted_at, created_at, updated_at}.
+      NEW 2026-05-15 (evening): tenant_overrides reserved for per-tenant marketing fluff
+      (hot-sale badges, custom images, video links) — column added; first writer wired later.
+    catalog_inbox_items: |
+      inbox_items {id, tenant_id FK, source_kind CHECK ('shopify'|'csv'|'sheets'|'manual'),
+      external_id, raw JSONB, payload_hash, fetched_at, applied_at TIMESTAMPTZ NULL}.
+      UNIQUE(tenant_id, source_kind, external_id). GIN(raw). Partial idx on (tenant_id) WHERE applied_at IS NULL.
+      Universal raw-buffer for the 6-step flow; any source writes here; discovery_v2 reads via narrow tools; apply_v2 consumes applied_at IS NULL rows.
+    catalog_tenant_catalog_schema: "tenant_catalog_schema {tenant_id PK, mapping_artifact JSONB, artifact_version, status (active|stale|needs_human_review), discovered_at, validated_at, validation_report JSONB, re_discover_after} — now stores MappingArtifactV2 (version=2)."
+    catalog_master_categories: "master_categories {id, parent_id (self-ref), slug UNIQUE, name, vertical, created_at} — global curated taxonomy."
+    catalog_tenant_categories: "tenant_categories {id, tenant_id, parent_id, external_id, slug, name, kind (category|showcase|promo)} — tenant's own category tree; UNIQUE(tenant_id, external_id) WHERE external_id NOT NULL."
+    catalog_category_mapping: "category_mapping {tenant_category_id PK, master_category_id NULL, confidence, mapped_by} — N:1 link."
+    catalog_master_field_definitions: "master_field_definitions {id, vertical, key, label, type (text|number|enum|array|boolean), enum_values TEXT[], source (seed|curator|migration), promoted_from_candidate, promoted_at, promoted_by, UNIQUE(vertical,key)} — declarative tier2 schema; curator promotes via INSERT here (no ALTER TABLE)."
+    catalog_ingredients_and_links: "ingredients {id, inci_name, name_ru, slug UNIQUE, function} + product_ingredients M:N {master_product_id, ingredient_id, position, is_key}."
+    catalog_shopify_raw_imports: "shopify_raw_imports {tenant_id, source_kind, source_id, payload JSONB, fetched_at, PK(tenant_id,source_kind,source_id)} — high-tide staging for bulk pulls (legacy; v2 path skips this and writes inbox_items directly)."
+    catalog_audit_log: "audit_log {id BIGSERIAL, tenant_id NULL, actor_kind, actor_id, entity_kind, entity_id, action, field_changes JSONB, aggregate_meta JSONB, created_at}."
+    catalog_unit_aliases: "unit_aliases {id, tenant_id NULL=global, raw_token, canonical_unit, confidence, source, UNIQUE(tenant_id,raw_token)} — English-only seed (ml/g/oz/mm/in/pcs)."
+    catalog_vertical_aliases: |
+      vertical_aliases {alias TEXT PK (lowercased), vertical TEXT NOT NULL, source DEFAULT 'seed', created_at}.
+      NEW 2026-05-15 (evening). Shopify product_type → internal vertical class lookup; seeded with ~45 starter aliases
+      across cosmetics, haircare, electronics, furniture, apparel, footwear, ski. apply_v2 ClassifyVertical hits this
+      table first (alias source), falls back to artifact classify_rules, then 'unknown'. Curator-editable later.
+    catalog_api_keys: "api_keys {id, tenant_id, key_hash bcrypt, key_prefix, label, last_used_at, revoked_at, created_at} — public REST API auth."
+    admin_tenant_action_log: |
+      admin.tenant_action_log {id BIGSERIAL, tenant_id FK→catalog.tenants ON DELETE CASCADE,
+      action TEXT, status TEXT, payload JSONB, occurred_at}. NEW 2026-05-14. Per-tenant timeline
+      surfaced in curator's "Action Log" tab. Distinct from catalog.audit_log (cross-tenant operator actions).
+      Actions: inbox_pull|discovery_start|discovery_done|apply|webhook_received|manual_sync|mapping_miss|disconnect…
+    admin_agent_runs: |
+      admin.agent_runs {id UUID, tenant_id FK, trigger TEXT (first_install|manual|mapping_miss),
+      trigger_payload JSONB, started_at, finished_at, status (running|success|failed|budget_exhausted),
+      tools_called JSONB (appended), tokens_in/out, cost_usd NUMERIC(10,4), artifact_id}. NEW 2026-05-14.
+      One row per DiscoveryV2 invocation; curator's "Agent Runs" tab reads from here.
   candidate_tables:
-    attribute_candidates: "attribute_candidates {id, key, vertical, seen_in_tenants, sample_values, proposed_type, agent_meta, status (proposed|promoted|dismissed), promoted_to_column}"
-    category_candidates: "category_candidates {id, name, proposed_parent, seen_in_tenants, vertical, status}"
-    junk_candidates: "junk_candidates {id, tenant_id, listing_id, detected_reason JSONB, classification, classified_by}"
+    master_attribute_candidates: "master_attribute_candidates {id, key, vertical, seen_in_tenants, sample_values JSONB, proposed_type, agent_meta, embedding vector(384), status (pending|promoted|dismissed|merged), merged_into_key, promoted_to_column, UNIQUE(key,vertical)} — promote → INSERT master_field_definitions."
+    master_category_candidates: "master_category_candidates {id, name, proposed_parent, seen_in_tenants, vertical, status, promoted_to_id}."
+    tenant_variant_candidates_junk: "tenant_variant_candidates_junk {id, tenant_id, listing_id, master_variant_id NULL, detected_reason JSONB, classification (pending|confirmed_addon|false_positive), classified_at, classified_by} — kept for forward compat; legacy junk_detector deleted."
   relations:
     - "products.tenant_id → tenants.id (FK, required)"
     - "products.master_product_id → master_products.id (NULLable — un-linked listings exist)"
-    - "products.master_variant_id → master_variants.id (NULLable)"
+    - "master_cosmetics.master_product_id → master_products.id (1:1, PK)"
     - "master_variants.master_product_id → master_products.id"
-    - "master_products.category_id → categories.id"
-    - "categories.parent_id → categories.id (self-ref hierarchy)"
-    - "master_products.owner_tenant_id → tenants.id (the tenant that 'created' the master)"
+    - "inbox_items.tenant_id → tenants.id ON DELETE CASCADE"
+    - "agent_runs.tenant_id → catalog.tenants.id ON DELETE CASCADE (cross-schema FK)"
+    - "tenant_action_log.tenant_id → catalog.tenants.id ON DELETE CASCADE"
   indexes:
     - "HNSW on master_products.embedding (pgvector cosine)"
-    - "HNSW on master_services.embedding"
-    - "B-tree on products.tenant_id"
-    - "B-tree on products.master_product_id"
-    - "Unique on master_products.sku"
-    - "Partial B-tree idx_catalog_tenants_deleted_at ON tenants(deleted_at) WHERE deleted_at IS NOT NULL (2026-05-13)"
+    - "HNSW on master_services.embedding, master_variants.embedding"
+    - "GIN on master_products.tier2 (idx_master_products_tier2_gin)"
+    - "GIN on master_cosmetics.skin_type / concern / key_ingredients / free_from / benefits"
+    - "GIN on inbox_items.raw"
+    - "Trigram GIN on master_products.name (idx_catalog_mp_name_trgm) — pg_trgm extension"
+    - "Trigram GIN on master_products.brand, master_products.name (idx_master_products_brand_trgm, idx_master_products_name_trgm) — 2026-05-15 (evening) for future curator fuzzy search; NOT used by strict-exact MatchOrCreateMaster cascade"
+    - "Partial idx_master_products_gtin(gtin) WHERE gtin IS NOT NULL (2026-05-15) — stage 2 of match cascade"
+    - "Partial idx_master_products_normalized_match_key(normalized_match_key) WHERE normalized_match_key IS NOT NULL (2026-05-15) — stage 3 of match cascade"
+    - "Partial UNIQUE idx_inbox_items_unique_source(tenant_id,source_kind,external_id)"
+    - "Partial idx_inbox_items_tenant_unapplied(tenant_id) WHERE applied_at IS NULL"
+    - "Partial idx_catalog_tenants_deleted_at WHERE deleted_at IS NOT NULL (2026-05-13)"
+    - "Partial idx_catalog_products_tenant_source_unique(tenant_id,source_system,source_id) WHERE source_*  NOT NULL"
+    - "Partial idx_catalog_products_active(tenant_id, master_product_id) WHERE deleted_at IS NULL (2026-05-15)"
+    - "Partial idx_agent_runs_status_running(tenant_id) WHERE status='running'"
   pgvector:
     extension: "CREATE EXTENSION IF NOT EXISTS vector"
     dim: 384
     operator: "<=> (cosine distance)"
+  extensions: ["vector", "pg_trgm"]
 
 write_side_pipeline:
-  description: "Stages from raw source data → curated master catalog. Each stage has inputs/outputs in DB and an LLM-or-deterministic engine."
+  description: |
+    Rebuilt 2026-05-14 (commit 67e9f94). Replaces legacy 5-stage pipeline
+    (harvest → discovery → validate → merge → curator approval) with a
+    leaner 4-step loop. Legacy code purged 2026-05-15 (commit 62a2e36).
   stages:
     1_ingest:
       sources:
-        - "Shopify OAuth → bulk products query (Admin GraphQL)"
-        - "CSV upload (handler_integrations_csv.go)"
-        - "Crawler tool (cmd/crawler/main.go) — scrape JSON-LD from sitemap"
-      writes_to: "catalog.products (listings) with raw_payload JSONB; tenant_id FK"
-      handler: "internal/handlers/handler_integrations*.go"
-      usecase: "internal/usecases/integrations.go, integrations_wipe.go, csv_mapping.go"
-    2_harvest:
-      file: "internal/usecases/harvester_lite.go (736 LOC)"
-      use_case: "HarvesterLiteUseCase"
-      purpose: "Per-tenant: parse Shopify bulk JSONL, extract canonical fields (handle, title, vendor, productType, tags, options, variants), record signals for category/attribute candidates"
-      methods:
-        - "RunForTenant — full harvest"
-        - "UpsertOne — single-product update (webhook-driven)"
-        - "SoftDeleteOne — webhook delete"
-      signals: "signalCounters tracks per-attribute, per-category occurrences; persisted to attribute_candidates / category_candidates"
-    3_discovery:
-      file: "internal/usecases/discovery_agent.go (685 LOC) + discovery_run.go + discovery_tools.go (726 LOC) + auto_map_tier1.go"
-      use_case: "DiscoveryAgent"
-      llm_budget: "8 minutes wallclock, ~$0.40 per run (Claude Haiku)"
-      output: "MappingArtifact (versioned JSONB in tenant_catalog_schema)"
-      artifact_shape:
-        field_mapping: "raw payload paths → master fields (e.g. body_html → description)"
-        category_mapping: "tenant categories → master categories"
-        brand_mapping: "vendors → master brand normalization"
-        templates: "MasterTemplateProposal for new master products"
-        junk_signals: "junk_vendors, junk_axis_patterns"
-        match_strategy: "MatchStrategyConfig — thresholds for tier1/tier2 strict/loose"
-        require_identifier: "bool — require GTIN/SKU for confident match"
-      tier1_input: "AutoMapTier1Result — deterministic pass before LLM, populates the artifact builder with high-confidence trivial mappings"
-      builder: "ArtifactBuilder helps build the artifact incrementally"
-    4_validate:
-      file: "internal/usecases/validate_artifact.go"
-      purpose: "Sanity-check the artifact (no orphan refs, no required-field gaps, schema valid). Persists validation_report into tenant_catalog_schema."
-    5_merge_apply:
-      file: "internal/usecases/merge_apply.go (804 LOC) + merge_apply_d3.go"
-      use_case: "MergeApplyUseCase"
-      methods:
-        - "GenerateReport(ctx, tenantID) — dry-run; produces MergeProposal[] without writing"
-        - "WithApplyTx(tx) — wrap with transactional applier (ports.MergeApplyTxPort)"
-        - "WithAudit(audit) — wrap with audit emission"
-      proposal_shape: "MergeProposal {ListingID, ProposedMaster, MatchConfidence, Strategy (strict|loose|new), Score}"
-      thresholds_from_artifact: "thresholdsFromArtifact(artifact) — parses match_strategy_config"
-      tier2_extraction:
-        func: "extractTier2(artifact, raw, vertical)"
-        purpose: "Pulls tier2 attributes from raw payload using artifact's field_mapping; applies transforms (units/lowercase/shorten/split)"
-        recent: "Transform applied 2026-04-29 (commit 4e1c8d1) — units, lowercase, shorten, split"
-      vertical_resolution: "resolveVertical(artifact, vendor, listing) — falls back through vendor→category mapping→default"
-      build_proposed_master: "buildProposedMaster(artifact, listing, vendor, vertical) — proposes new master if no match"
-    6_curator_approval:
-      ownership: "Curator service — see `curator` expert"
-      flow: "Operator sees MergeProposal[] in MergeReportPage, approves/rejects per-listing, applies via curator-frontend → curator-backend → MergeProxy → admin's MergeApplyUseCase.Apply"
+        - "Shopify OAuth bulk → ShopifyIngester.IngestBulkItems → InboxUseCase.WriteFromShopifyBulk"
+        - "Shopify webhook (products/<verb>) → ShopifyIngester.IngestSingleWebhook → UpdateOrchestrator.OnWebhook"
+        - "CSV upload → CSVIngester.IngestReader → InboxUseCase.WriteFromCSV"
+        - "Sheets / manual → InboxUseCase.WriteFromSheets / WriteManual"
+      files:
+        - "internal/usecases/ingest_shopify.go — ShopifyIngester {IngestBulkItems, IngestSingleWebhook}"
+        - "internal/usecases/ingest_csv.go — CSVIngester {IngestReader}"
+        - "internal/usecases/inbox.go — InboxUseCase {WriteFromShopifyBulk, WriteFromCSV, WriteFromSheets, WriteManual}; computes payload_hash (SHA-256 canonical JSON)"
+      writes_to: "catalog.inbox_items (raw JSONB, source_kind, external_id, payload_hash). Idempotent via UNIQUE(tenant_id, source_kind, external_id) — re-pulls of unchanged payloads return 'unchanged' and don't reset applied_at."
+    2_discovery_v2:
+      file: "internal/usecases/discovery_v2.go (~430 LOC) + discovery_v2_tools.go (~340 LOC)"
+      use_case: "DiscoveryV2.Discover(ctx, tenantID, trigger, triggerPayload) → *MappingArtifactV3 (2026-05-15 evening: switched from V2 to V3 in-memory; adapter lifts legacy V2 JSONB transparently)"
+      model: "claude-sonnet-4-6 (was Haiku in legacy DiscoveryAgent)"
+      triggers: |
+        ['first_install', 'manual', 'mapping_miss', 'unknown_vertical'] — payload shape depends on trigger;
+        mapping_miss carries {inbox_item_id, offending_from, offending_to, reason}; unknown_vertical carries
+        {missing_vertical, sample_inbox_item_id} so the agent can add a new branch to the artifact.
+      budgets:
+        max_turns: 30
+        wallclock: "10 minutes"
+        cost_usd: "$5.00 hard cap (claude-sonnet-4-6 pricing)"
+        heavy_tools_cap: "10 peek_full_rows calls / run"
+        force_finalize_threshold: "90% of $ budget → nudge model to commit on next turn"
+      tools_offered:
+        - "count_total — row count, no args"
+        - "list_fields — distinct top-level JSONB keys, default limit 100"
+        - "sample_values — distinct stringified values of ONE field"
+        - "count_by — value→count distribution, top-N buckets"
+        - "field_stats — non_null/distinct/samples/min/max/length"
+        - "peek_full_rows — HEAVY, 1-5 raw rows (capped)"
+        - "commit_artifact — finalize and exit"
+      prompt_caching: "tool list cache-breakpointed on last ToolDef (ephemeral). Static system block also cached; dynamic trigger context separate uncached block."
+      side_effects:
+        - "admin.agent_runs Start/AppendTool/AddTokens/Finish around every run"
+        - "admin.tenant_action_log: discovery_start + discovery_done events"
+      output: |
+        MappingArtifactV3 (2026-05-15 evening) persisted to catalog.tenant_catalog_schema.mapping_artifact.
+        Shape: {version:3, branches:[{vertical, field_map:[{from,to,transform,default}...]}],
+        classify_rules:[{when, then_vertical}], notes, built_at}. One branch per vertical class
+        the tenant ships (cosmetics, electronics, furniture, haircare, apparel, footwear, food,
+        ski, unknown). Adapter accepts V2 JSONB on read and lifts to one-branch V3 via LiftV2ToV3.
+        Status column now 'active' (was 'validated').
+    3_apply_v2:
+      file: "internal/usecases/apply_v2.go (~660 LOC) + apply_v2_transforms.go (~274 LOC); new helpers classify_vertical.go + match_key.go"
+      use_case: "ApplyV2UseCase.ApplyForTenant(ctx, tenantID) → *ApplyResult"
+      flow_v3: |
+        Per inbox row WHERE applied_at IS NULL (batched 100):
+          1. Parse raw JSONB.
+          2. classifyContextFromRaw(raw) → {product_type, brand, name, tags} (Shopify-shaped pluck).
+          3. ClassifyVertical(ctx, writer.LookupVertical, art.ClassifyRules, cctx) → (vertical, source)
+             cascade: alias → rules → "unknown".
+          4. art.FindBranch(vertical): exact → "unknown" fallback. Branch missing → mapping_miss
+             with synthetic key "branch.<vertical>" so agent adds it.
+          5. Walk branch.field_map: build MasterProductUpsert + MasterCosmeticsUpsert + tier3 patch
+             + listing fields; apply transforms.
+          6. Override mp.Vertical with classified value (rules don't get to disagree).
+          7. Reject row if Name AND SKU both empty → mapping_miss "no signal".
+          8. If SKU empty but Name present → synthesize "auto-<source_kind>-<external_id>".
+          9. mp.NormalizedMatchKey = NormalizeMatchKey(brand, name).
+         10. writer.MatchOrCreateMaster(mp) → (masterID, wasCreated) deterministic 3-stage cascade:
+             SKU (lowercased exact) → GTIN (digits-only exact) → NormalizedMatchKey exact.
+         11. IF wasCreated: write Tier2 (master_cosmetics) when vertical='cosmetics' AND hasCosmetics;
+             merge tier3 patch. IF !wasCreated (BIND): master_products row is IMMUTABLE; skip Tier2
+             and tier3 writes entirely. Per-tenant differences will live in listing.tenant_overrides
+             (column reserved 2026-05-15; first writer wired in a later pass).
+         12. ALWAYS UpsertListing (price/stock/title/master_product_id link).
+         13. Mark inbox row applied_at = NOW().
+      first_install_cascade: "If no artifact yet → ApplyForTenant calls discovery.Discover(trigger='first_install') and uses its output."
+      mapping_miss_loop: |
+        On transform fail, unknown target prefix, missing branch (trigger='unknown_vertical'),
+        or required field absent → wraps errMappingMiss with {inbox_item_id, offending_from,
+        offending_to, reason}, calls discovery.Discover narrow run. Capped at
+        applyV2MaxMissesPerRun=3 per ApplyForTenant call to prevent runaway loops.
+      gtin_field_aliases: "assignMasterField routes gtin/barcode/ean/upc all to mp.GTIN; stripGTIN keeps digits only (merchants upload hyphenated/spaced strings)."
+      cosmetics_in_non_cosmetics_branch: |
+        Agent emits a cosmetics.* rule inside a non-cosmetics branch → forgive: route value
+        into tier3 under the stripped key + warn 'apply_v2_cosmetics_rule_in_non_cosmetics_branch'.
+        No mapping_miss; soft misuse.
+      what_apply_v2_does_NOT_do: |
+        Compared to legacy MergeApplyUseCase: no embedding-fuzzy match across tenants, no junk
+        classification, no candidate emission, no brand mapping resolution, no embedding
+        seeding. Match cascade is STRICT-EXACT only (SKU/GTIN/normalized_match_key) — fuzzy
+        is left to curator UI in a later pass. master_products is also IMMUTABLE on bind —
+        apply_v2 never overwrites an existing master's columns.
+      writes_to:
+        - "catalog.master_products (MatchOrCreateMaster: 3-stage cascade insert-on-miss; no UPDATE on hit)"
+        - "catalog.master_cosmetics (UpsertCosmetics — ONLY when wasCreated AND vertical='cosmetics')"
+        - "catalog.master_products.tier3 (MergeTier3 JSONB merge — ONLY when wasCreated)"
+        - "catalog.products (UpsertListing: ON CONFLICT(tenant_id, source_system, source_id))"
+        - "catalog.inbox_items.applied_at = NOW()"
+        - "admin.tenant_action_log: apply event with full ApplyResult JSON"
+    4_orchestrator:
+      file: "internal/usecases/update_orchestrator.go (181 LOC)"
+      use_case: "UpdateOrchestrator {OnWebhook, ManualSync, OnMappingMiss}"
+      rate_limit: "applyRateWindow = 24 * time.Hour. OnWebhook absorbs payload into inbox always; runs apply ONLY if LastAppliedAt > 24h ago. ManualSync bypasses the window."
+      rate_limit_port: "ApplyRateLimitPort (in usecases pkg; impl is ApplyRateLimitAdapter reading admin.tenant_action_log for last action='apply' row)"
+      called_from:
+        - "ShopifyIngester.IngestSingleWebhook → OnWebhook (rate-limited)"
+        - "ShopifyIngester.IngestBulkItems → ManualSync (always applies)"
+        - "ShopifyIngester.SoftDeleteListing (NEW 2026-05-15) → writer.SoftDeleteListing for products/delete webhook; bypasses orchestrator; emits webhook_received tenant_action_log row"
+        - "CatalogV2Handler.HandleSyncNow (curator 'Sync now' button) → ManualSync"
 
 shopify_integration:
   file: "project_admin/backend/internal/adapters/shopify/client.go"
   size_loc: 1302
-  scopes: "Configured via app config; required: read_products, read_orders, write_products (for product create), read_metafields"
+  scopes: "Configured via app config; required: read_products, read_orders, write_products, read_metafields"
   oauth:
     install_url: "InstallURL(shop, redirectURI, state)"
     exchange: "ExchangeCodeForToken(ctx, shop, code)"
     hmac_verify: "VerifyInstallHMAC(q) for install callback, VerifyWebhookHMAC(body, sig) for webhooks"
-  read:
-    - "ListProducts(shop, token, pageInfo, limit) — REST cursor-paginated"
-    - "GetProduct(shop, token, productID) — single product"
-    - "GetShopInfo — currency, locale, timezone"
-    - "GetProductMetafields — extra structured data"
-    - "MetafieldDefinitions — schema discovery"
-    - "NavigationMenu — for category extraction"
-    - "ShopReferences — references for canonicalizing product variants"
+  v2_use_case: "ShopifyV2UseCase (project_admin/.../usecases/shopify_v2.go — 614 LOC, was 1069 before purge). Entry funcs: StartOAuth, StartInstallEntry (unauthed App-URL entry), CompleteOAuth, HandleWebhook, SetInboxIngester (required wire — panics if nil), SetInstallCompletionHook, Client (exposes underlying *shopify.Client for HMAC verification)."
   oauth_callback:
-    complete_oauth: "CompleteOAuth(ctx, shop, code, state, q) → (integration, flowKind, pendingToken, error) — 4 return values since 2026-05-13; pendingToken non-empty when shop has no owner email (shop_pending_link flow)"
-    pending_link_redirect: "When pendingToken != '' → /auth/install-complete?shop=...&pending_link=<token>; otherwise /auth/install-complete?shop=..."
+    complete_oauth: "CompleteOAuth(ctx, shop, code, state, query) → (*Integration, flowKind string, pendingToken string, error). 4 return values since 2026-05-13; pendingToken non-empty when shop has no owner email."
+    pending_link_redirect: "When pendingToken != '' → /auth/install-complete?shop=...&pending_link=<token>; install flow with email → /auth/install-complete?shop=...; connect flow → /integrations?connected=shopify&id=..."
+  read:
+    - "ListProducts (REST cursor-paginated)"
+    - "GetProduct (single product)"
+    - "GetShopInfo (currency/locale/timezone)"
+    - "GetProductMetafields, MetafieldDefinitions"
+    - "NavigationMenu, ShopReferences"
   bulk:
-    - "RunBulkProductsQuery — async GraphQL bulk operation; fetches FULL catalog as JSONL"
-    - "GetCurrentBulkOperation — poll status (CREATED/RUNNING/COMPLETED/FAILED)"
+    - "RunBulkProductsQuery → async GraphQL bulk op"
+    - "GetCurrentBulkOperation — poll state (CREATED→RUNNING→COMPLETED|FAILED|CANCELED)"
     - "FetchBulkJSONL(jsonlURL) — download completed bulk file"
-    - "Used by harvester_lite for full-catalog ingest (1000+ products)"
+    - "shopify_v2 keeps internal runBulkProductsAndWait + bulkPullProductsAsInboxItems (writes directly to inbox via ShopifyIngester; no more shopify_raw_imports staging in the v2 path)"
   webhooks:
     register: "RegisterWebhook(shop, token, topic, address)"
     topics: ["products/create", "products/update", "products/delete", "app/uninstalled", "shop/update"]
-    verification: "VerifyWebhookHMAC must run before processing — admin handler middleware applies it"
+    verification: "VerifyWebhookHMAC enforced in handler_integrations_shopify.go:159 BEFORE any processing — only call site"
+    handler_pattern: "Ack <5s (Shopify SLA). Handler returns 200, dispatches body to ShopifyV2UseCase.HandleWebhook in a goroutine with a detached context.WithTimeout(5*time.Minute) — r.Context() is cancelled when handler returns."
+    products_delete_path: "ShopifyIngester.SoftDeleteListing(tenant, gid) → writer.SoftDeleteListing(tenant, 'shopify', gid). Master untouched (other tenants may still link). Idempotent; delete-of-unknown returns nil (logged only). NEW 2026-05-15 (evening)."
   product_writes:
-    - "ProductCreate(input) — create product on Shopify (export from master)"
-    - "ProductCreateMedia(productGID, imageURLs)"
-    - "CollectionAddProducts(collectionGID, productGIDs)"
-    - "CollectionCreate(title, handle, description)"
+    - "ProductCreate, ProductCreateMedia"
+    - "CollectionAddProducts, CollectionCreate"
+    - "ProductsDeleteAll, CollectionsDeleteAll (destructive testing only)"
+
+read_side_v5:
+  file: "project_v5/backend/internal/adapters/postgres/postgres_catalog.go (727 LOC)"
+  adapter: "CatalogAdapter"
+  read_methods:
+    - "GetTenantBySlug(ctx, slug) — filters deleted_at IS NULL"
+    - "ListProducts(ctx, tenantID, ProductFilter) → ([]Product, total, error) — joins master_products LEFT JOIN master_cosmetics; COALESCE(mp.tier3, mp.tier2, '{}') for non-cosmetics; multi-word query OR-matches on (name, brand) via ILIKE"
+    - "GetProduct(ctx, tenantID, productID) — same JOIN shape; calls mergeProductWithMaster"
+    - "BuildCatalogDigest(ctx, tenantID) → *CatalogDigest — full table scan; cached in tenants.catalog_digest JSONB; consumed by Agent1 system prompt"
+  internal_helpers:
+    - "mergeProductWithMaster(p *Product, mp masterProductRow) — listing-as-overrides: COALESCE(listing.field, master.field). tier3 takes precedence over tier2 (precedence rule chunk-3 plan)."
+    - "Shared distinct filters: queries master_cosmetics directly for skin_type/concern/key_ingredients/target_area/free_from/benefits/product_form distinct lists."
+  vector_search: "VectorSearch in postgres_catalog_vector.go — HNSW index; non-NULL embedding required (listings without embedding invisible to vector search)."
 
 usecases_inventory:
-  ingest:
-    - "import.go — generic import dispatch"
+  ingest_and_inbox:
+    - "inbox.go — InboxUseCase {WriteFromShopifyBulk, WriteFromCSV, WriteFromSheets, WriteManual}; SHA-256 payload_hash; one tenant_action_log row per batch"
+    - "ingest_shopify.go — ShopifyIngester {IngestBulkItems → ManualSync, IngestSingleWebhook → OnWebhook, SoftDeleteListing → writer.SoftDeleteListing (products/delete)}. Constructor now takes (inbox, orchestrator, writer CatalogV2WriterPort, actionLog TenantActionLogPort, log) — was (inbox, orchestrator, log) pre-2026-05-15."
+    - "ingest_csv.go — CSVIngester.IngestReader(ctx, tenantID, source, r io.Reader, naturalIDField)"
+    - "import.go — generic import dispatch (449 LOC)"
     - "integrations.go, integrations_wipe.go — list/connect/disconnect tenant integrations"
-    - "csv_mapping.go — CSV → master_products schema mapping"
-  harvest_and_classify:
-    - "harvester_lite.go (736) — Shopify bulk parse"
-    - "metadata_harvest.go (566) — extract canonical fields from raw payload"
-    - "category_classifier.go — heuristic / LLM-assisted vertical detection"
-    - "junk_detector.go — flags weird/empty/duplicate listings; writes junk_candidates"
-  discovery_and_artifact:
-    - "discovery_agent.go (685) — main LLM-driven schema discovery"
-    - "discovery_run.go — orchestration (single + retry)"
-    - "discovery_tools.go (726) — tool implementations Agent uses (read tenant samples, fetch ontology, write artifact)"
-    - "auto_map_tier1.go — pre-LLM deterministic Tier1 mapping"
-    - "validate_artifact.go — post-LLM artifact validation"
-  matching:
-    - "match_cascade.go — strict → loose → new master cascade per listing"
-    - "merge_apply.go (804) — generate report + apply (writes products.master_product_id)"
-    - "merge_apply_d3.go — Phase D3 enhancements (deduplication, batch reporting)"
+    - "csv_mapping.go — CSV → schema mapping (365 LOC)"
+  catalog_v2_loop:
+    - "discovery_v2.go (~430 LOC) — DiscoveryV2.Discover → *MappingArtifactV3; Sonnet 4.6 agentic loop, 7 tools, $5/10min/30-turn budget; triggers include 'unknown_vertical'"
+    - "discovery_v2_tools.go (~340 LOC) — ToolDefs + dispatchTool; commit_artifact now emits V3 (branches + classify_rules)"
+    - "apply_v2.go (~660 LOC) — ApplyV2UseCase.ApplyForTenant; classify→branch→cascade→Tier2-only-on-create→listing-always; mapping_miss loop (cap 3/run) covers transform fail / unknown target / missing branch"
+    - "apply_v2_transforms.go (~274 LOC) — getPath(raw, dotted), applyV2Transform (lowercase|trim|split:<delim>|ml_from_string|g_from_string|bool_from_yesno|int|numeric); unknown transform = pass-through with warn"
+    - "classify_vertical.go (NEW 2026-05-15) — ClassifyVertical(ctx, VerticalAliasLookup, []ClassifyRule, ClassifyContext) → (vertical, ClassifyVerticalSource ∈ {alias, rule, unknown}). Tiny DSL: 'product_type contains X', 'brand = X', 'name contains X', 'tag = X' (case-insensitive)."
+    - "match_key.go (NEW 2026-05-15) — NormalizeMatchKey(brand, name): strip non-alphanumeric (unicode \\p{L}\\p{N}), collapse whitespace, lowercase. MUST stay byte-for-byte identical to the Postgres backfill regex in catalog_migrations.go."
+    - "update_orchestrator.go (181 LOC) — UpdateOrchestrator {OnWebhook (24h rate-limit), ManualSync, OnMappingMiss}"
+  domain_types:
+    - "domain/mapping_artifact_v3.go (NEW 2026-05-15) — MappingArtifactV3 {Version=3, Branches[]VerticalBranch, ClassifyRules[]ClassifyRule, Notes, BuiltAt}; VerticalBranch {Vertical, FieldMap[]FieldMappingRule}; FindBranch(vertical) returns exact → 'unknown' fallback → nil; LiftV2ToV3 wraps a legacy V2 into a one-branch V3; PeekArtifactVersion(jsonBytes)→int dispatches adapter reads"
+    - "domain/mapping_artifact.go (v1) and mapping_artifact_v2.go — legacy; mapping_artifact_v2_port.Get auto-lifts both into V3"
+  ports_catalog_v2:
+    - "ports/catalog_v2_writer_port.go — MatchOrCreateMaster (REPLACES UpsertMaster 2026-05-15) → (id, wasCreated, error) 3-stage SKU→GTIN→NormalizedMatchKey cascade insert-on-miss / no-update-on-hit; UpsertCosmetics; MergeTier3; UpsertListing; LookupVertical (vertical_aliases lookup, lowercased); SoftDeleteListing(tenant, sourceSystem, sourceID). MasterProductUpsert adds GTIN + NormalizedMatchKey fields."
+    - "ports/mapping_artifact_v2_port.go — file name retained; type now *MappingArtifactV3 on Save/Get. Meta.Status enum 'active'|'stale'|'needs_human_review' (was 'validated' pre-2026-05-15)."
   enrichment:
-    - "enrichment.go (509) — LLM-driven master product enrichment (PIM fields, descriptions)"
-  auth_dedup_2026_05_13:
-    - "auth_magic_link.go: IssuePendingShopLink(ctx, tenantID, shopDomain) → token — creates shop_pending_link challenge (24h TTL) for shops with no owner email"
-    - "auth_magic_link.go: ConsumePendingShopLink(ctx, code, userID) → tenantID — single-use; attaches orphan tenant to authenticated user"
-    - "auth_magic_link.go: ProvisionShopOwner → calls SoftDeleteEmptyOrphanTenants to clean up blank auto-provisioned workspaces after email-merge"
+    - "enrichment.go (509) — LLM-driven master product enrichment (PIM fields, descriptions). Untouched by catalog-v2 rebuild."
+  shopify_v2:
+    - "shopify_v2.go (614, was 1069 before legacy purge) — ShopifyV2UseCase {StartOAuth, StartInstallEntry, CompleteOAuth, HandleWebhook, SetInboxIngester, SetInstallCompletionHook, Client, runBulkProductsAndWait, bulkPullProductsAsInboxItems, mergeChildrenIntoProduct, classifyChild}"
   basic_crud:
     - "products.go — listing CRUD"
     - "stock.go — stock_quantity updates"
+  auth_dedup_2026_05_13:
+    - "auth_magic_link.go: IssuePendingShopLink → 24h shop_pending_link challenge for shops with no owner email"
+    - "auth_magic_link.go: ConsumePendingShopLink — single-use, attaches orphan tenant to authenticated user"
+    - "auth_magic_link.go: ProvisionShopOwner → SoftDeleteEmptyOrphanTenants to clean up blank workspaces"
   user_tenants_repo:
-    - "ListForUser(ctx, userID) — now filters AND t.deleted_at IS NULL"
-    - "SoftDeleteEmptyOrphanTenants(ctx, userID, preserveTenantID) → []deletedIDs — atomically finds owner tenants with zero rows in (tenant_integrations, products, tenant_presets, tenant_components, tenant_design_tokens) and soft-deletes them + removes memberships in a single TX (MVCC-safe)"
+    - "ListForUser — filters AND t.deleted_at IS NULL"
+    - "SoftDeleteEmptyOrphanTenants(ctx, userID, preserveTenantID) → []deletedIDs — atomic TX-safe cleanup"
+  DELETED_2026_05_15:
+    - "harvester_lite.go (+ test) — replaced by ShopifyIngester + InboxUseCase"
+    - "discovery_agent.go, discovery_run.go, discovery_tools.go, auto_map_tier1.go, validate_artifact.go — replaced by discovery_v2"
+    - "merge_apply.go (+ test), merge_apply_d3.go, match_cascade.go (+ test) — replaced by apply_v2"
+    - "junk_detector.go (+ test) — feature dropped from v2 flow"
+    - "category_classifier.go, metadata_harvest.go — folded into discovery_v2"
+    - "handler_curator_merge.go, handler_integrations_shopify_v2.go (old dump-to-staging handler) — replaced by handler_catalog_v2.go"
+    - "ports: merge_apply_tx_port.go, shopify_staging_port.go; adapters: merge_apply_tx_adapter.go, shopify_staging_adapter.go"
+    - "CLI binaries: cmd/run-discovery/, cmd/run-merge-apply/, cmd/sync-tenant-now/"
 
 http_routes:
   ingest_admin:
     - "POST /admin/api/integrations — connect Shopify/CSV/manual"
     - "POST /admin/api/integrations/{id}/wipe — disconnect + clean"
-    - "POST /admin/api/integrations/csv — CSV upload + map"
-    - "POST /admin/api/integrations/shopify/v2 — Shopify v2 install flow"
+    - "POST /admin/api/integrations/csv/suggest-mapping, /admin/api/integrations/csv/import"
+    - "GET  /admin/api/integrations/shopify/install (authed) — returns {install_url}"
+    - "GET  /admin/api/integrations/shopify/app (UNAUTHED, HMAC-only) — Shopify-driven App-URL entry; auto-provisions tenant"
+    - "GET  /admin/api/integrations/shopify/callback (UNAUTHED, state-signed) — OAuth callback"
+    - "POST /admin/api/webhooks/shopify (UNAUTHED, HMAC-only) — Shopify webhook entry"
   catalog_admin:
     - "GET  /admin/api/products?tenant=...&search=... — listings browse"
-    - "POST /admin/api/products/{id}/edit — listing CRUD"
+    - "POST /admin/api/products/{id}/edit"
     - "GET  /admin/api/categories — category tree"
-    - "POST /admin/api/enrichment/run — bulk enrichment"
-    - "POST /admin/api/import — manual import"
-    - "POST /admin/api/junk/{id}/classify — junk decision"
-    - "GET  /admin/api/stock — stock summary"
-  internal_to_curator:
-    - "POST /admin/api/internal/curator/tenants/{id}/merge/run — generate report"
-    - "POST /admin/api/internal/curator/tenants/{id}/discover — run discovery agent"
-    - "GET  /admin/api/internal/curator/tenants/{id}/merge-reports — list reports"
-    - "GET  /admin/api/internal/curator/merge-reports/{id} — single report"
-    - "Auth: X-Internal-Key + X-Curator-User (set by curator MergeProxy)"
+    - "GET  /admin/api/categories/tenant — tenant categories"
+    - "GET  /admin/api/categories/master, POST /admin/api/categories/mapping"
+    - "POST /admin/api/catalog/enrich, /admin/api/catalog/enrich-v2"
+    - "POST /admin/api/catalog/import (+ /admin/api/catalog/imports list)"
+    - "POST /admin/api/stock/bulk"
+  catalog_v2_internal_to_curator:
+    - "POST /admin/api/catalog/v2/sync-now/{tenant_id} — UpdateOrchestrator.ManualSync (bypasses 24h)"
+    - "POST /admin/api/catalog/v2/discover/{tenant_id} — force DiscoveryV2 run; body optional {trigger, payload}"
+    - "Auth: X-Internal-Key middleware (internalMW); reached via curator's MergeProxy"
   auth_shopify_pending:
-    - "POST /admin/api/auth/shop-pending-link/consume (auth-required) → {tenant_id} — consume shop_pending_link token; attaches orphan Shopify tenant to signed-in user (2026-05-13)"
+    - "POST /admin/api/auth/shop-pending-link/consume (authed) — consume token; attaches orphan tenant to signed-in user"
   public_v1:
     - "GET /api/v1/products?... — public catalog API for tenants (X-API-Key auth)"
     - "GET /api/v1/categories"
     - "Spec: docs/api/v1/openapi.yaml"
-  v4_chat_reads:
-    - "GET /api/v1/catalog/* — V4 catalog handler (handler_catalog.go) consumed by Agent1's catalog_search tool"
+  REMOVED_2026_05_15:
+    - "POST /admin/api/internal/curator/tenants/{id}/merge/run (legacy merge generate report)"
+    - "POST /admin/api/internal/curator/tenants/{id}/discover (legacy discovery_agent — superseded by /catalog/v2/discover/)"
+    - "GET  /admin/api/internal/curator/tenants/{id}/merge-reports, /admin/api/internal/curator/merge-reports/{id}"
+    - "POST /admin/api/junk/{id}/classify; GET /admin/api/junk; GET /admin/api/junk/count"
 
 invariants:
-  - "catalog.tenants soft-delete (2026-05-13): deleted_at IS NULL = active. ALL queries joining or filtering catalog.tenants must include this predicate. GetTenantByID and ListForUser already updated; raw SQL added without it exposes deleted orphan workspaces."
-  - "Schema in catalog.* is owned by admin migrations — V4 is a READER. New tables/columns added via project_admin migrations only."
-  - "products.master_product_id is NULLable — un-linked listings exist legitimately (pre-merge state)."
-  - "VectorSearch HNSW index requires non-NULL embedding — listings without embedding are invisible to vector search (SQL keyword still works)."
-  - "Match cascade order is fixed: strict → loose → new master. Strict requires identifier (GTIN/SKU) match if MappingArtifact.RequireIdentifier=true."
-  - "MergeApplyUseCase has TWO modes: GenerateReport (dry-run, no writes) and Apply (transactional, writes via ports.MergeApplyTxPort). Both go through buildProposal() so cascade logic is shared."
-  - "tier2 attributes are READ-side concerns — V4 chat consumes them via GetMasterProduct/ListProducts/VectorSearch. Write-side puts them into master_products.tier2 JSONB during merge_apply via extractTier2()."
-  - "Shopify webhook handlers MUST verify HMAC before processing — skip = arbitrary write vector."
-  - "Curator's PromoteAttribute is the only path that runs ALTER TABLE on master_products (tier1 promotion). Bypasses go through validIdent() guard in curator's adapter."
+  - "catalog.tenants soft-delete (2026-05-13): deleted_at IS NULL = active. ALL queries joining or filtering catalog.tenants must include this predicate. GetTenantBySlug and ListForUser already updated."
+  - "catalog.* schema is owned by admin migrations — V5 is a READER. New tables/columns added via project_admin migrations only."
+  - "products.master_product_id is NULLable — un-linked listings exist legitimately (pre-apply state)."
+  - "VectorSearch HNSW index requires non-NULL embedding — listings without embedding are invisible to vector search (keyword/trigram still works)."
+  - "apply_v2 is the ONLY path that writes master_products + master_cosmetics + listings from inbox. Tier3 absorbs anything unknown (vertical not modeled, unmapped target prefix with valid '.', or cosmetics-fields-but-not-cosmetics-vertical)."
+  - "tier3 takes precedence over tier2 in V5 mergeProductWithMaster (COALESCE order: tier3 → tier2 → '{}'). New code routes new attributes to tier3; tier2 is legacy storage."
+  - "master_products is IMMUTABLE on bind (2026-05-15 evening). MatchOrCreateMaster either inserts a fresh row OR returns the existing id untouched. Apply_v2 only writes Tier2/tier3 when wasCreated=true. Per-tenant differences live in listing.tenant_overrides (reserved). Master edits flow ONLY through the curator UI (planned)."
+  - "Match cascade is strict-exact only — SKU (lowercased) → GTIN (digits-only) → normalized_match_key (NFKC-strip-collapse-lower). The pg_trgm GIN indexes on brand/name exist for FUTURE curator fuzzy search and are NOT consulted by apply_v2."
+  - "NormalizeMatchKey (Go) and the catalog_migrations backfill (SQL REGEXP_REPLACE) MUST produce byte-identical output. Changing one without the other corrupts stage-3 matching."
+  - "Shopify webhook handler MUST call client.VerifyWebhookHMAC BEFORE processing — only enforced call site is handler_integrations_shopify.go:159. Webhook body must be detached onto a fresh context.WithTimeout (r.Context cancels at handler return)."
+  - "DiscoveryV2 hard budgets: 30 turns, 10 min wallclock, $5 USD, 10 peek_full_rows. At 90% of $ budget the loop forces a commit-on-next-turn nudge. Hitting any cap → finalStatus='budget_exhausted' and no artifact persisted."
+  - "DiscoveryV2 target prefixes are CLOSED set: master.<col>, cosmetics.<col>, tier3.<key>. Cosmetics is the ONLY typed vertical with a Tier-2 table; any other vertical's typed attributes go to tier3. Agent prompt forbids inventing prefixes like 'electronics.cpu' but apply_v2 forgivingly reroutes to tier3 with a warn if it sees them."
+  - "ShopifyV2UseCase.inboxIngester is REQUIRED — SetInboxIngester must be called by main.go DI; nil → panic on first ingest. Legacy harvester-lite fallback was removed 2026-05-15."
+  - "apply_v2 mapping_miss cap is 3 narrow discovery triggers per ApplyForTenant call — prevents runaway agent loops when artifact is fundamentally broken."
+  - "UpdateOrchestrator.OnWebhook 24h rate-limit: webhooks within window are absorbed into inbox but NOT applied. ManualSync bypasses. Curator 'Sync now' uses ManualSync. products/delete webhook bypasses the orchestrator entirely (SoftDeleteListing path)."
+  - "tenant_catalog_schema.status is now 'active'|'stale'|'needs_human_review' (was 'validated' pre-2026-05-15 evening). Curator UI and any new reader must accept 'active'."
 
 gotchas:
-  - "Multi-word search in V4 ListProducts splits query into words and OR-matches each via ILIKE on (name, brand) — narrow categories with many short words can produce spurious matches. Vector search complements with semantic but doesn't replace."
-  - "ProductFilter conditions are AND-combined — passing both category=X AND attributes.brand=Y narrows hard. Loose searches need fewer filters."
-  - "extractTier2 transforms (units/lowercase/shorten/split) are applied ONLY when artifact field_mapping declares them — un-transformed raw values land in tier2 verbatim if no transform key."
-  - "Discovery agent has 8-min wallclock budget AND $0.40 LLM cost per run — closing curator UI doesn't cancel the admin-side run (fire-and-forget by MergeProxy). Re-running before completion = wasted tokens."
-  - "match_cascade strict mode requires identifier (SKU/GTIN). If listing source has no identifier (pure-text Shopify products), strict NEVER matches — all listings cascade to loose or new-master."
-  - "GenerateCatalogDigest is expensive (full table scan per tenant) — cached in tenants.catalog_digest JSONB. Stale digest = stale Agent1 system prompt; bust on schema change."
-  - "Shopify bulk operation is async — RunBulkProductsQuery returns immediately, harvester polls GetCurrentBulkOperation until COMPLETED. State machine: CREATED → RUNNING → COMPLETED|FAILED|CANCELED."
-  - "raw_payload JSONB on products is the source-of-truth for ingest — re-running harvester re-parses raw_payload. Don't drop it after harvest; it's the rollback surface."
-  - "Tier1 promotion (curator's PromoteAttribute) is irreversible at the schema level — column added stays. Dismissing a promoted candidate doesn't drop the column."
-  - "SoftDeleteEmptyOrphanTenants conservative heuristic: empty = zero rows in ALL 5 tables (tenant_integrations, products, tenant_presets, tenant_components, tenant_design_tokens). If a user visited canvas without saving, the tenant survives. Runs in a single TX for MVCC safety."
-  - "auth_challenges.kind constraint renamed to auth_challenges_kind_check_v2 (migration 2026-05-13) — adds 'shop_pending_link'. Old constraint name auth_challenges_kind_check dropped. Inserting the old kind CHECK name in any migration will conflict."
-  - "CompleteOAuth (shopify_v2.go) now returns 4 values: (integration, flowKind, pendingToken, error). Any call site that destructured 3 values will fail to compile."
+  - "Legacy harvester_lite, discovery_agent, merge_apply, match_cascade, junk_detector, validate_artifact and their tests/ports/adapters were DELETED 2026-05-15 (commit 62a2e36). Any code or doc referencing them is stale."
+  - "MappingArtifactV2 is no longer the in-memory type — apply_v2 reads V3 only. V1/V2 JSONB still readable: adapter PeekArtifactVersion dispatches and LiftV2ToV3 wraps a V2 into a single-branch V3 in memory. Writes always emit V3. Don't write new code against V1 or V2 types directly."
+  - "Per-row vertical classification cascade (alias → rules → 'unknown'). The alias table is catalog.vertical_aliases (lowercase PK). The rules DSL is tiny — anything outside the four supported predicates is silently treated as no-match. Parse failures don't surface at row time; the artifact-build pass is supposed to validate syntax once."
+  - "MatchOrCreateMaster returns wasCreated. Apply_v2 uses it as the SINGLE gate for Tier 2 + tier3 writes. A future code path that writes Tier 2 on bind would silently corrupt other tenants' chat (their catalog reads the same master). Don't add such a path without a curator workflow review."
+  - "GTIN field name aliasing: assignMasterField accepts gtin / barcode / ean / upc and stripGTIN normalizes to digits-only. Adding a new alias (e.g. ISBN) requires updating BOTH this switch and the agent's prompt examples."
+  - "NormalizeMatchKey unicode: uses \\p{L}\\p{N} (any-script letter/number). Cyrillic, Greek, CJK characters all preserved. The Postgres backfill must use a compatible character-class — pg_trgm collation handles this in Neon today; check before migrating clusters."
+  - "vertical_aliases is seeded with ~45 starter aliases (cosmetics/haircare/electronics/furniture/apparel/footwear/ski). Missing aliases fall through to classify_rules then 'unknown' — fix path is INSERT INTO vertical_aliases (curator UI planned)."
+  - "master_cosmetics was reshaped 2026-05-14: PK is now master_product_id (not master_variant_id). Old MasterVariantsAdapter.UpsertMasterCosmetics(mc *domain.MasterCosmetics) still exists in the adapter but apply_v2 uses CatalogV2WriterAdapter.UpsertCosmetics(masterID, ports.MasterCosmeticsUpsert) directly. Two write paths to the same table — prefer the V2 one."
+  - "apply_v2 forgiving fallback (commit 8ddaaa5 + 2026-05-15 evening rebuild): unknown vertical prefix 'foo.bar' → tier3.bar with warn; cosmetics.* inside a non-cosmetics branch → tier3.<col> with warn. Neither surfaces a mapping_miss; data isn't lost but lives under a flat tier3 key. Branch missing entirely → mapping_miss with synthetic key 'branch.<vertical>' triggers narrow discovery_v2."
+  - "discovery_v2 nudge mechanism: when the model emits text-only end_turn without calling commit_artifact, the loop injects a user message demanding a commit and retries up to 3 times before failing. If you see 'model ended turn without committing artifact after 3 nudges' in logs, the system prompt isn't routing the model to the tool."
+  - "discovery_v2 cost accounting uses claude-sonnet-4-6 pricing constants (sonnet46InputUSDPer1M etc). Refresh these if Anthropic changes pricing — overestimate stops runs early; underestimate blows the budget."
+  - "Inbox payload_hash dedup: WriteFromShopifyBulk returns 'unchanged' counts. Don't bump applied_at on unchanged rows or you'll re-process steady-state inventory daily."
+  - "UpdateOrchestrator.OnWebhook calls inbox.WriteManual with the entire webhook body — even for products/<verb> Shopify events. ShopifyIngester.IngestSingleWebhook wraps OnWebhook; if you wire a raw webhook directly to OnWebhook, the JSONB shape differs from bulk JSONL (single-product Shopify REST shape vs GraphQL bulk node shape)."
+  - "agent_runs.tools_called is appended via JSONB concatenation (no full-array rewrite) so concurrent reads stay safe during a live run."
+  - "catalog.tenant_catalog_schema.mapping_artifact stores v1, v2, AND v3 artifacts (cross-revision) — distinguish by artifact_version column or by inspecting the JSON's 'version' field (1, 2, or 3). v3 (NEW 2026-05-15 evening) has 'branches:[{vertical, field_map:[]}]' + 'classify_rules:[]' instead of a single flat 'field_map'."
+  - "extractTier2 / match_cascade / Tier1 promotion are all GONE. Curator's PromoteAttribute still exists but flows through master_field_definitions INSERT (no ALTER TABLE on master_products). See curator expert."
+  - "Shopify webhook MUST detach from r.Context() — handler_integrations_shopify.go:169 uses context.WithTimeout(context.Background(), 5*time.Minute) inside the goroutine. Using r.Context() will fail with 'context canceled' the moment the handler writes its 200 response."
 
 related_experts:
-  - "admin — owns the write-side handlers, auth, billing. Catalog is the single biggest concern in admin but admin has more (auth, settings, billing). See `admin` expert."
-  - "pipeline-agents — chat consumes catalog via catalog_search tool; tenant catalog digest is read by Agent1 system prompt. Field renames cascade."
-  - "engine-v5 — scene-graph atoms bound to catalog field names via fieldBinding; tier2 fields flow through master_products → atom.fieldBinding."
-  - "curator — read-only browse + candidate promotion. Cross-domain SQL identifier safety (validIdent) is curator's responsibility."
+  - "admin — owns auth/billing/canvas. Catalog write path shares main.go DI with admin; cross-cuts on session/tenant resolution."
+  - "pipeline-agents — V5 chat consumes catalog via catalog_search tool; tenant catalog_digest is read by Agent1 system prompt. Schema changes here cascade."
+  - "engine-v5 — scene-graph atoms read from master_products/master_cosmetics/tier3 via fieldBinding. New tier3 keys appear in chat without code change."
+  - "curator — read-only browse + manual sync trigger (CatalogV2Handler routes). Cross-domain SQL identifier safety remains curator's responsibility for any remaining promotion flows."
 
 active_workstreams:
-  tracker: "docs/CATALOG_GAPS.md (live source of truth for phase 1 catalog finalize) + docs/PRE_LAUNCH_TASKS.md"
+  tracker: "docs/CATALOG_GAPS.md + docs/PRE_LAUNCH_TASKS.md + docs/CATALOG_V2_TEST_SPEC.md"
   recent_milestones:
-    - "Auth dedup / orphan cleanup (2026-05-13): catalog.tenants.deleted_at soft-delete, SoftDeleteEmptyOrphanTenants, shop_pending_link challenge kind, CompleteOAuth 4-return-value"
-    - "B7 prep — V4 chat reads master_products.tier2 (2026-04-29, commit 8a3357d)"
-    - "extractTier2 transforms (2026-04-29, commit 4e1c8d1)"
-    - "M1-M12 admin catalog implementation (2026-04-26)"
-    - "Phase D3 merge dedup + reports (2026-04-28)"
-    - "Curator-driven pivot Этап 0-3 (2026-04-27)"
+    - "Structured-discovering-lollipop rebuild (2026-05-15 evening, UNCOMMITTED): MappingArtifactV3 (branches+classify_rules); vertical_aliases table; master_products.gtin+normalized_match_key; products.tenant_overrides JSONB; MatchOrCreateMaster 3-stage cascade; immutable masters on bind; products/delete soft-delete webhook; new helpers classify_vertical.go + match_key.go + mapping_artifact_v3.go"
+    - "Legacy code purge (2026-05-15, commit 62a2e36) — 23 files deleted, shopify_v2.go -455 LOC; inbox ingester is now required"
+    - "Catalog-v2 ShopifyIngester wired to install + webhook, forgiving vertical fallback (2026-05-15, commit 8ddaaa5)"
+    - "Curator TenantDetailPage rebuilt for 6-step flow (2026-05-15, commit 5e85ad6)"
+    - "Catalog-v2 smoke test green end-to-end (2026-05-14, commit d659088) — $0.044 / ~30s / 10/10 success"
+    - "6-step inbox/discovery/apply rebuild + typed master_cosmetics (2026-05-14, commit 67e9f94) — admin.tenant_action_log + admin.agent_runs + catalog.inbox_items + reshaped master_cosmetics"
+    - "Auth dedup / orphan cleanup (2026-05-13): catalog.tenants.deleted_at, SoftDeleteEmptyOrphanTenants, shop_pending_link, CompleteOAuth 4-return"
   hot_files:
     - "project_admin/.../shopify/client.go (1302 LOC) — Shopify API; split candidate (products/orders/webhooks/oauth)"
-    - "project_admin/.../catalog_adapter.go (1293 LOC) — admin write-side DB; split candidate (master/listings/categories/proposals)"
-    - "project_admin/.../usecases/shopify_v2.go (801 LOC) — Shopify v2 install/connect flow incl. CompleteOAuth, pending-link logic"
-    - "project_admin/.../merge_apply.go (804 LOC)"
-    - "project_admin/.../catalog_migrations.go (752 LOC)"
-    - "project_admin/.../harvester_lite.go (736 LOC)"
-    - "project_admin/.../discovery_tools.go (726 LOC)"
-    - "project_v5/.../postgres_catalog.go (705 LOC) — V5 read-side; BuildCatalogDigest + mergeProductWithMaster added 2026-05-13"
-    - "project_admin/.../discovery_agent.go (685 LOC)"
+    - "project_admin/.../catalog_adapter.go (1293 LOC) — admin write-side DB; split candidate"
+    - "project_admin/.../canvas_adapter.go (870 LOC)"
+    - "project_admin/.../catalog_migrations.go (862 LOC) — adds vertical_aliases, gtin/normalized_match_key, tenant_overrides, pg_trgm GIN, normalized_match_key backfill"
+    - "project_v5/.../postgres_catalog.go (727 LOC) — V5 read-side; master_cosmetics JOIN + tier3-precedence merge"
+    - "project_admin/.../apply_v2.go (~660 LOC, up from 548) — classify+cascade rebuild"
+    - "project_admin/.../shopify_v2.go (623 LOC)"
+    - "project_admin/.../enrichment.go (509 LOC)"
+    - "project_admin/.../smoke_catalog_v2/main.go (492 LOC) — end-to-end smoke for full v2 loop"
+    - "project_admin/.../import.go (449 LOC)"
+    - "project_admin/.../discovery_v2.go (~430 LOC) — now emits V3"
+    - "project_admin/.../discovery_v2_tools.go (~340 LOC)"

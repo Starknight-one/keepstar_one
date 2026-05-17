@@ -91,11 +91,12 @@ func NewDiscoveryV2(
 // (or nil on failure). Always finishes the agent_runs row and emits a
 // discovery_done action_log entry.
 //
-// trigger ∈ {'first_install', 'manual', 'mapping_miss'}. triggerPayload is
-// free-form context — for mapping_miss it carries {field, sample_value,
-// inbox_item_id}, for first_install it's empty, for manual it's
-// {requested_by_user_id}.
-func (d *DiscoveryV2) Discover(ctx context.Context, tenantID, trigger string, triggerPayload json.RawMessage) (*domain.MappingArtifactV2, error) {
+// trigger ∈ {'first_install', 'manual', 'mapping_miss', 'unknown_vertical'}.
+// triggerPayload is free-form context — for mapping_miss it carries {field,
+// sample_value, inbox_item_id}; for unknown_vertical it carries
+// {missing_vertical, sample_inbox_item_id}; for first_install it's empty;
+// for manual it's {requested_by_user_id}.
+func (d *DiscoveryV2) Discover(ctx context.Context, tenantID, trigger string, triggerPayload json.RawMessage) (*domain.MappingArtifactV3, error) {
 	if tenantID == "" {
 		return nil, fmt.Errorf("discover: empty tenant_id")
 	}
@@ -154,7 +155,7 @@ func (d *DiscoveryV2) Discover(ctx context.Context, tenantID, trigger string, tr
 	return artifact, loopErr
 }
 
-func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, triggerPayload json.RawMessage, runID string) (*domain.MappingArtifactV2, error) {
+func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, triggerPayload json.RawMessage, runID string) (*domain.MappingArtifactV3, error) {
 	wallClockDeadline := time.Now().Add(discoveryV2WallclockBudget)
 
 	systemBlocks := buildDiscoveryV2System(trigger, triggerPayload)
@@ -233,7 +234,7 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 		}
 
 		var toolResults []anthropic.ContentBlock
-		var committed *domain.MappingArtifactV2
+		var committed *domain.MappingArtifactV3
 
 		for _, tu := range toolUses {
 			t0 := time.Now()
@@ -294,16 +295,29 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 // a separate, uncached block at the end.
 func buildDiscoveryV2System(trigger string, triggerPayload json.RawMessage) []anthropic.SystemBlock {
 	staticPrompt := strings.TrimSpace(`
-You are Keepstar's catalog discovery agent. Your job: examine a tenant's raw product
-data in the inbox and produce a mapping artifact that tells our code how to translate
-their fields into our master schema.
+You are Keepstar's catalog discovery agent. Your job: examine a tenant's raw
+product data in the inbox and produce a mapping artifact that tells our code
+how to translate every product — across every vertical the tenant carries —
+into our master schema.
 
 Pipeline you live in:
-  source (Shopify/CSV/Sheets/manual) → inbox (raw JSONB) → YOU → mapping artifact
-                                                          ↓
-                                            apply_v2 reads inbox + your artifact → master catalog
+  source (Shopify) → inbox (raw JSONB) → YOU → mapping artifact (v3, branched)
+                                          ↓
+                            apply_v2 reads inbox + your artifact → master catalog
 
-Tools available (full schemas in tool defs):
+Artifact shape (v3):
+  - branches: one per vertical class the tenant ships products in
+    (cosmetics, electronics, furniture, haircare, apparel, footwear, food,
+    ski, unknown). Each branch has its own field_map.
+  - classify_rules: row-level fallback when shopify product_type doesn't
+    alias to a known vertical. Tiny DSL (case-insensitive):
+        "product_type contains 'sofa'"
+        "brand = 'Apple'"
+        "name contains 'serum'"
+        "tag = 'sale'"
+    Apply_v2 evaluates in order; first match wins.
+
+Tools (full JSON schemas in tool defs):
   count_total      — row count
   list_fields      — distinct top-level JSONB keys
   sample_values    — distinct values of one field
@@ -312,57 +326,66 @@ Tools available (full schemas in tool defs):
   peek_full_rows   — HEAVY: 1-5 full raw rows (cap: 10 calls/run)
   commit_artifact  — finalize and exit
 
-Target schema for your field_map (THREE prefixes, NOTHING ELSE):
-  master.<col>           — Tier 1: name, brand, description, sku, vertical, image_url
-  cosmetics.<col>        — typed columns ONLY when vertical='cosmetics'.
-                           Available cosmetics columns: skin_type, concern,
-                           key_ingredients, target_area, product_form, texture,
-                           routine_step, routine_time, application_method,
-                           free_from, scent, spf, marketing_claim, benefits,
-                           how_to_use, volume_ml, weight_g, unit_count
-  tier3.<key>            — JSONB bucket for everything else (FREE-FORM key).
+Target prefixes inside each branch's field_map (THREE, nothing else):
+  master.<col>     — Tier 1 column on master_products: name, brand,
+                     description, sku, vertical, image_url, gtin
+  cosmetics.<col>  — Tier 2 typed columns. VALID ONLY inside the
+                     'cosmetics' branch. Allowed columns: skin_type,
+                     concern, key_ingredients, target_area, product_form,
+                     texture, routine_step, routine_time,
+                     application_method, free_from, scent, spf,
+                     marketing_claim, benefits, how_to_use, volume_ml,
+                     weight_g, unit_count.
+  tier3.<key>      — JSONB pocket on master_products. Free-form key.
 
-CRITICAL: do NOT invent prefixes like 'furniture.material', 'electronics.ram',
-'apparel.size' — those typed tables DO NOT EXIST yet. For furniture, apparel,
-electronics, food, footwear, or unknown verticals, EVERY attribute beyond
-Tier 1 goes into tier3.<key>. The chat layer reads tier3 fine for these
-verticals — the only thing cosmetics has extra is faster typed search.
+CRITICAL: cosmetics is the ONLY vertical with a typed Tier 2 table today.
+For electronics, furniture, haircare, apparel, footwear, food, ski, or
+unknown — EVERY non-master attribute goes into tier3.<key>. Do NOT invent
+prefixes like 'electronics.cpu' or 'furniture.material' — apply_v2 will
+warn and reroute to tier3, but you waste tokens.
 
-Examples:
-  furniture sofa  → tier3.material, tier3.dimensions, tier3.upholstery_type
-  laptop          → tier3.cpu, tier3.ram_gb, tier3.screen_size
-  cosmetics serum → cosmetics.skin_type, cosmetics.concern, cosmetics.volume_ml
+Examples by branch:
+  cosmetics serum  → cosmetics.skin_type, cosmetics.concern, cosmetics.volume_ml
+  electronics laptop → tier3.cpu, tier3.ram_gb, tier3.screen_size
+  furniture sofa   → tier3.material, tier3.dimensions, tier3.upholstery_type
+  ski boots        → tier3.size_mondo, tier3.flex_index
 
-Transforms supported in apply (set as 'transform' on a rule):
+Transforms supported in apply_v2 (set 'transform' on a rule):
   lowercase, trim
-  split:<delim>          — only when target is a text[] column
-  ml_from_string         — '30 ml' → 30
-  g_from_string          — '200 g' → 200
-  bool_from_yesno        — 'yes'/'true'/'1' → true
-  int                    — strconv.Atoi
-  numeric                — ParseFloat
+  split:<delim>      — only when target is a text[] column (cosmetics arrays)
+  ml_from_string     — '30 ml' → 30
+  g_from_string      — '200 g' → 200
+  bool_from_yesno    — 'yes'/'true'/'1' → true
+  int                — strconv.Atoi
+  numeric            — ParseFloat
 
-Approach guidance:
-  - Start with count_total + list_fields.
-  - For each field that looks important (name, brand, price, descriptive
-    attributes), call field_stats once to see distinct/sample/range. That's
-    usually enough to decide its target. Don't enumerate every value.
-  - Use sample_values when distinct count is small (<30) and you want to
-    see them all.
-  - Use count_by when you suspect a field is an enum and want skew.
-  - Resort to peek_full_rows ONLY when aggregates can't disambiguate —
-    e.g. the field looks like a nested object you can't make sense of.
-  - Aim to commit_artifact within ~15 tool calls. The $5 budget is a hard
-    cap; budget burns roughly $0.01-0.05 per tool call depending on what
-    you peek at.
+Approach:
+  1. count_total + list_fields. See the catalog size and field shape.
+  2. Use field_stats / sample_values / count_by on each promising field to
+     learn its distinct/sample/range before deciding its target.
+  3. Inspect product_type distribution via count_by — this drives branch
+     selection. Multi-vertical tenants (e.g. cosmetics + electronics) need
+     a branch per class. Single-vertical tenants need one branch.
+  4. peek_full_rows ONLY when aggregates can't disambiguate.
+  5. Aim for ~15 tool calls. Budget cap is $5. ~$0.01-0.05 per call.
 
-Vertical decision:
-  - If most products read as cosmetic (skin_type/ingredient cues), use 'cosmetics'.
-  - Otherwise pick the best vertical from the enum, or 'unknown' if unclear.
-  - When in doubt, 'unknown' is the safe call — apply_v2 will route attributes
-    to tier3 JSONB which still works for chat search and curator browse.
+Branch decision:
+  - count_by 'product_type' tells you which verticals are present. Build
+    a branch for each.
+  - If product_type is missing or unreliable, lean on classify_rules
+    (brand-based or name-based) so apply_v2 still routes correctly.
+  - When unsure, commit an 'unknown' branch — apply_v2 routes that vertical's
+    attributes to tier3 and chat search still works.
 
-When ready, call commit_artifact and you're done.
+Trigger-specific behaviour:
+  - first_install: build the full artifact from scratch.
+  - mapping_miss: a previous apply failed on one field. Investigate THAT
+    field, append/fix one rule, commit. Don't re-explore the whole catalog.
+  - unknown_vertical: tenant added a product whose vertical you didn't
+    cover. Add ONE new branch for that vertical and commit.
+  - manual: full re-discovery; the curator pressed a button.
+
+When ready, call commit_artifact.
 	`)
 
 	blocks := []anthropic.SystemBlock{

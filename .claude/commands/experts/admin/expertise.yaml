@@ -24,7 +24,7 @@ overview:
 architecture:
   pattern: "Hexagonal — proper ports + adapters, multiple usecase packages, ~30 handlers"
   backend_structure:
-    cmd_server: "project_admin/backend/cmd/server/main.go (841 LOC) — DI bootstrap, all routes"
+    cmd_server: "project_admin/backend/cmd/server/main.go (777 LOC) — DI bootstrap, all routes"
     cmd_crawler: "project_admin/backend/cmd/crawler/main.go (608 LOC) — JSON-LD scraper for catalog seed (catalog expert covers details)"
     domain: "project_admin/backend/internal/domain/ — AdminUser, Tenant, Membership, Invitation, Session, Challenge, MagicLink, Invoice, Preferences, TenantPreset, TenantComponent, DesignToken, BillingOverview, AuditEntry"
     ports: "project_admin/backend/internal/ports/ — AuthPort, SessionsPort, BillingPort, CanvasPort, AdminCatalogPort, etc."
@@ -146,7 +146,7 @@ routes_overview:
   catalog:
     note: "Owned by `catalog` expert. Brief: /admin/api/products, /admin/api/categories, /admin/api/integrations, /admin/api/import, /admin/api/junk, /admin/api/enrichment, /admin/api/api/v1/* (public)"
   curator_internal:
-    note: "Internal endpoints called by curator MergeProxy. Auth via X-Internal-Key + X-Curator-User. Owned by `catalog` expert (merge_apply use case)."
+    note: "Internal endpoints called by curator. Auth via X-Internal-Key (CURATOR_INTERNAL_KEY). Owned by `catalog` expert. Active routes (2026-05-15): POST /admin/api/catalog/v2/sync-now/{tenant_id}, POST /admin/api/catalog/v2/discover/{tenant_id}. Legacy merge_apply routes (/internal/curator/tenants/{id}/merge/run, /merge-reports, /discover) removed with catalog-v2 cut-over."
   settings_misc:
     - "GET  /admin/api/settings — tenant preferences"
     - "GET  /admin/api/audit?limit=N — audit log"
@@ -292,12 +292,13 @@ related_experts:
   - "catalog — owns all catalog/import/integrations/junk/enrichment usecases + handlers + adapters (catalog_adapter, shopify/client, harvester_lite, discovery_agent, merge_apply). Admin's catalog/ frontend feature is UI for catalog domain."
   - "engine-v4 — admin's canvas usecase produces the data engine-v4 reads via tenant_preset_loader.ResolverFor."
   - "pipeline-agents — admin's canvas DESIGN_CONTEXT feeds Agent2 system prompt; admin's traces UI consumes pipeline_traces table."
-  - "curator — proxies internal-curator endpoints to admin's MergeApplyUseCase; admin owns merge logic, curator only hosts the operator UI."
+  - "curator — calls admin's internal catalog-v2 endpoints (/admin/api/catalog/v2/sync-now, /discover) via X-Internal-Key. Admin owns the orchestration; curator only hosts the operator UI."
   - "widget — admin's widget feature generates the embed code that points at V4 backend (widget expert covers consumer side)."
 
 active_workstreams:
   tracker: "docs/PRE_LAUNCH_TASKS.md (auth + admin sections), docs/CATALOG_GAPS.md (catalog UI in admin)"
   recent_milestones:
+    - "Catalog-v2 cut-over (2026-05-15, commit 62a2e36): main.go DI shrank — no more candidatesAdapter/masterVariantsAdapter/mappingArtifactAdapter/mergeReportsAdapter/mergeApplyTxAdapter/shopifyStagingAdapter wiring; harvester_lite/discovery_agent/merge_apply/junk_detector usecases deleted. New wiring: inboxAdapter, tenant_action_log, agent_runs, catalogV2Writer, applyRateLimit + InboxUseCase + DiscoveryV2 + ApplyV2 + UpdateOrchestrator + ShopifyIngester. New internal mount: /admin/api/catalog/v2/{sync-now,discover}/ behind internalMW."
     - "Telegram #tgAuthResult fragment flow (2026-05-14, commit 109378a): correct understanding that oauth.telegram.org/auth is NOT real OIDC. TelegramCallbackPage parses fragment, posts widget payload to legacy HMAC endpoint. OIDCClient.Exchange + /oidc/callback route remain in tree but are dead."
     - "Telegram popup attempt rolled back (2026-05-14, commit 2f354fb): reverted ce3acb7..d1edd33 (useTelegramLogin hook, numeric bot_id fix); popup didn't work. useTelegramWidget.js (the iframe hook) remains but is now unused."
     - "Telegram OIDC-ish redirect scaffold (2026-05-14, commits 9c12f96/bf79120/40eb982): OIDCClient adapter, dual-mode TelegramAuthUseCase (Start/CompleteOIDC + legacy Complete), routes /telegram/start + /telegram/oidc/callback, Google+Telegram logos on provider buttons. Superseded by fragment flow above for the OIDC path."
@@ -312,9 +313,7 @@ active_workstreams:
     - "shopify/client.go (1302 LOC) — owned by catalog expert; admin only via OAuth glue"
     - "catalog_adapter.go (1293 LOC) — catalog domain"
     - "canvas_adapter.go (870 LOC) — split candidate when more design system features land"
-    - "cmd/server/main.go (841 LOC) — DI bootstrap with all routes; growing as features add. Split candidate by registering route groups."
-    - "merge_apply.go (804 LOC) — catalog domain"
-    - "shopify_v2.go (801 LOC) — catalog domain (install flow + CompleteOAuth 4-return)"
+    - "catalog_migrations.go (793 LOC) — catalog domain"
+    - "cmd/server/main.go (777 LOC) — DI bootstrap with all routes; shrank with catalog-v2 cut-over (removed 13 adapter wires for legacy merge/candidate/junk/staging flows); 2026-05-15 evening: NewShopifyIngester now also takes catalogV2Writer + actionLogAdapter (for products/delete soft-delete + webhook_received logging)"
+    - "shopify_v2.go (614 LOC) — catalog domain (install flow + CompleteOAuth 4-return)"
     - "CanvasPage.jsx (785 LOC) — frontend; growth signal as canvas matures"
-    - "catalog_migrations.go (752 LOC) — catalog domain"
-    - "harvester_lite.go (736 LOC) — catalog domain"

@@ -13,8 +13,12 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
+
+	"github.com/jackc/pgx/v5"
 
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
@@ -35,23 +39,62 @@ func NewCatalogV2WriterAdapter(client *Client, log *logger.Logger) *CatalogV2Wri
 
 var _ ports.CatalogV2WriterPort = (*CatalogV2WriterAdapter)(nil)
 
-// UpsertMaster writes one master_products row keyed by SKU.
+// MatchOrCreateMaster runs the deterministic 3-stage cascade and either
+// returns an existing master_id (wasCreated=false) without modifying the row,
+// or INSERTs a new master_products row (wasCreated=true) when none of the
+// stages hits.
 //
-// vertical is stamped on insert and overwritten on conflict — multi-tenant
-// shares of the same master can disagree about vertical only across re-runs;
-// last write wins which is fine because apply_v2 always passes the artifact
-// vertical (consistent within a tenant).
+// Stages:
 //
-// images is written as a one-element JSONB array containing image_url, when
-// present. The full media gallery (if any) is responsibility of tier3.images.
-func (a *CatalogV2WriterAdapter) UpsertMaster(ctx context.Context, mp *ports.MasterProductUpsert) (string, error) {
+//  1. SKU exact (case-insensitive on input; sku is stored mixed-case).
+//  2. GTIN exact (skipped when mp.GTIN is empty).
+//  3. normalized_match_key exact (skipped when empty; populated for every
+//     existing row by the migration backfill).
+//
+// On INSERT we rely on the master_products_sku_key UNIQUE constraint to be
+// race-safe — if a concurrent process inserted the same SKU between our
+// SELECTs and our INSERT, ON CONFLICT (sku) DO NOTHING returns no rows and
+// we SELECT the racing row by SKU. wasCreated is false in that branch.
+//
+// images: when mp.ImageURL is set, a one-element JSONB array is written on
+// INSERT only. On bind we never touch the existing images.
+func (a *CatalogV2WriterAdapter) MatchOrCreateMaster(ctx context.Context, mp *ports.MasterProductUpsert) (string, bool, error) {
 	if mp == nil {
-		return "", fmt.Errorf("upsert master: nil input")
+		return "", false, fmt.Errorf("match or create master: nil input")
 	}
 	if mp.SKU == "" || mp.Name == "" {
-		return "", fmt.Errorf("upsert master: sku and name required (sku=%q name=%q)", mp.SKU, mp.Name)
+		return "", false, fmt.Errorf("match or create master: sku and name required (sku=%q name=%q)", mp.SKU, mp.Name)
 	}
 
+	// Stage 1: SKU. master_products.sku is mixed-case but the legacy data
+	// has clean values, so a case-insensitive compare is enough to absorb
+	// merchants who upload "SKU-123" vs "sku-123" inconsistently.
+	if id, found, err := a.findMasterBySKU(ctx, mp.SKU); err != nil {
+		return "", false, err
+	} else if found {
+		return id, false, nil
+	}
+
+	// Stage 2: GTIN. Skipped when empty.
+	if mp.GTIN != "" {
+		if id, found, err := a.findMasterByGTIN(ctx, mp.GTIN); err != nil {
+			return "", false, err
+		} else if found {
+			return id, false, nil
+		}
+	}
+
+	// Stage 3: normalized match key. Skipped when empty.
+	if mp.NormalizedMatchKey != "" {
+		if id, found, err := a.findMasterByMatchKey(ctx, mp.NormalizedMatchKey); err != nil {
+			return "", false, err
+		} else if found {
+			return id, false, nil
+		}
+	}
+
+	// No match — INSERT new master. Pass NULLIF for empty optional fields so
+	// the column gets NULL instead of '' (cleaner for downstream SQL).
 	imagesJSON := []byte("[]")
 	if mp.ImageURL != "" {
 		b, _ := json.Marshal([]string{mp.ImageURL})
@@ -61,21 +104,124 @@ func (a *CatalogV2WriterAdapter) UpsertMaster(ctx context.Context, mp *ports.Mas
 	var id string
 	err := a.client.pool.QueryRow(ctx, `
 		INSERT INTO catalog.master_products
-			(sku, name, brand, description, vertical, images, owner_tenant_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW(), NOW())
-		ON CONFLICT (sku) DO UPDATE
-		SET name        = EXCLUDED.name,
-		    brand       = COALESCE(NULLIF(EXCLUDED.brand, ''), master_products.brand),
-		    description = COALESCE(NULLIF(EXCLUDED.description, ''), master_products.description),
-		    vertical    = COALESCE(NULLIF(EXCLUDED.vertical, ''), master_products.vertical),
-		    images      = CASE WHEN EXCLUDED.images::text = '[]' THEN master_products.images ELSE EXCLUDED.images END,
-		    updated_at  = NOW()
+			(sku, name, brand, description, vertical, images, owner_tenant_id,
+			 gtin, normalized_match_key, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NULLIF($8,''), NULLIF($9,''), NOW(), NOW())
+		ON CONFLICT (sku) DO NOTHING
 		RETURNING id::text
-	`, mp.SKU, mp.Name, mp.Brand, mp.Description, mp.Vertical, string(imagesJSON), nullableUUID(mp.OwnerTenantID)).Scan(&id)
-	if err != nil {
-		return "", fmt.Errorf("upsert master exec: %w", err)
+	`,
+		mp.SKU, mp.Name, mp.Brand, mp.Description, mp.Vertical,
+		string(imagesJSON), nullableUUID(mp.OwnerTenantID),
+		mp.GTIN, mp.NormalizedMatchKey,
+	).Scan(&id)
+
+	if err == nil {
+		return id, true, nil
 	}
-	return id, nil
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", false, fmt.Errorf("match or create master insert: %w", err)
+	}
+
+	// ON CONFLICT (sku) DO NOTHING returned no rows — concurrent insert won
+	// the race. Re-fetch by SKU and return that id; we did not create it.
+	raceID, found, raceErr := a.findMasterBySKU(ctx, mp.SKU)
+	if raceErr != nil {
+		return "", false, fmt.Errorf("match or create master race-recover: %w", raceErr)
+	}
+	if !found {
+		return "", false, fmt.Errorf("match or create master: insert returned no rows AND post-race SELECT empty (sku=%q)", mp.SKU)
+	}
+	return raceID, false, nil
+}
+
+// findMasterBySKU runs stage 1 of the cascade. Returns (id, true, nil) on hit,
+// ("", false, nil) on miss, ("", false, err) on DB error.
+func (a *CatalogV2WriterAdapter) findMasterBySKU(ctx context.Context, sku string) (string, bool, error) {
+	var id string
+	err := a.client.pool.QueryRow(ctx,
+		`SELECT id::text FROM catalog.master_products WHERE LOWER(sku) = LOWER($1) LIMIT 1`,
+		sku,
+	).Scan(&id)
+	if err == nil {
+		return id, true, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("find master by sku: %w", err)
+}
+
+func (a *CatalogV2WriterAdapter) findMasterByGTIN(ctx context.Context, gtin string) (string, bool, error) {
+	var id string
+	err := a.client.pool.QueryRow(ctx,
+		`SELECT id::text FROM catalog.master_products WHERE gtin = $1 LIMIT 1`,
+		gtin,
+	).Scan(&id)
+	if err == nil {
+		return id, true, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("find master by gtin: %w", err)
+}
+
+func (a *CatalogV2WriterAdapter) findMasterByMatchKey(ctx context.Context, key string) (string, bool, error) {
+	var id string
+	err := a.client.pool.QueryRow(ctx,
+		`SELECT id::text FROM catalog.master_products WHERE normalized_match_key = $1 LIMIT 1`,
+		key,
+	).Scan(&id)
+	if err == nil {
+		return id, true, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("find master by match key: %w", err)
+}
+
+// LookupVertical resolves a Shopify product_type into our internal vertical
+// class. The alias table is lowercased on insert (see migration #94), and we
+// lowercase the input here for case-insensitive lookup. Empty input returns
+// (_, false, nil) so apply_v2 falls through to its rule-based classifier.
+func (a *CatalogV2WriterAdapter) LookupVertical(ctx context.Context, productType string) (string, bool, error) {
+	productType = strings.TrimSpace(productType)
+	if productType == "" {
+		return "", false, nil
+	}
+	var vertical string
+	err := a.client.pool.QueryRow(ctx,
+		`SELECT vertical FROM catalog.vertical_aliases WHERE alias = LOWER($1) LIMIT 1`,
+		productType,
+	).Scan(&vertical)
+	if err == nil {
+		return vertical, true, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("lookup vertical: %w", err)
+}
+
+// SoftDeleteListing marks a catalog.products row deleted by setting
+// deleted_at = NOW(). Idempotent: re-calling on an already-deleted row
+// keeps the original deletion timestamp. Returns nil even when no row
+// matches (delete-of-unknown — apply_v2 logs it, no error to surface).
+func (a *CatalogV2WriterAdapter) SoftDeleteListing(ctx context.Context, tenantID, sourceSystem, sourceID string) error {
+	if tenantID == "" || sourceSystem == "" || sourceID == "" {
+		return fmt.Errorf("soft delete listing: tenant_id, source_system, source_id required")
+	}
+	_, err := a.client.pool.Exec(ctx, `
+		UPDATE catalog.products
+		SET deleted_at = COALESCE(deleted_at, NOW()),
+		    updated_at = NOW()
+		WHERE tenant_id = $1 AND source_system = $2 AND source_id = $3
+	`, tenantID, sourceSystem, sourceID)
+	if err != nil {
+		return fmt.Errorf("soft delete listing exec: %w", err)
+	}
+	return nil
 }
 
 // UpsertCosmetics writes per-vertical cosmetics columns keyed by
@@ -209,6 +355,7 @@ func (a *CatalogV2WriterAdapter) UpsertListing(ctx context.Context, lst *ports.L
 		    stock_quantity = EXCLUDED.stock_quantity,
 		    source_system  = COALESCE(NULLIF(EXCLUDED.source_system, ''), products.source_system),
 		    source_id      = COALESCE(NULLIF(EXCLUDED.source_id, ''), products.source_id),
+		    deleted_at     = NULL,
 		    updated_at     = NOW()
 		RETURNING id::text
 	`,

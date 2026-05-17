@@ -1,8 +1,12 @@
-// Package postgres — MappingArtifactV2Adapter writes/reads MappingArtifactV2
-// into the same catalog.tenant_catalog_schema row used by the legacy port.
-// The mapping_artifact JSONB column is overloaded: legacy MappingArtifact
-// has version=1, the new shape has version=2. apply_v2 only deserializes
-// version=2; legacy merge_apply only handles version=1.
+// Package postgres — MappingArtifactV2Adapter writes/reads mapping artifacts
+// into catalog.tenant_catalog_schema.mapping_artifact (JSONB). The column is
+// overloaded across formats; the version field inside the JSON disambiguates:
+//
+//	version=1 → legacy MappingArtifact (merge_apply); ignored by this adapter
+//	version=2 → MappingArtifactV2; lifted to v3 on read (one-branch)
+//	version=3 → MappingArtifactV3; the only format Save() emits
+//
+// Apply_v2 and discovery_v2 see only MappingArtifactV3 in memory.
 package postgres
 
 import (
@@ -29,20 +33,21 @@ func NewMappingArtifactV2Adapter(client *Client, log *logger.Logger) *MappingArt
 
 var _ ports.MappingArtifactV2Port = (*MappingArtifactV2Adapter)(nil)
 
-func (a *MappingArtifactV2Adapter) Save(ctx context.Context, tenantID string, artifact *domain.MappingArtifactV2) error {
+// Save writes a v3 artifact, force-stamping Version=3 so a v2 caller can't
+// accidentally persist with the wrong tag. The row's artifact_version
+// counter is bumped each time, monotonic per tenant.
+func (a *MappingArtifactV2Adapter) Save(ctx context.Context, tenantID string, artifact *domain.MappingArtifactV3) error {
 	if tenantID == "" {
 		return fmt.Errorf("artifact save: empty tenant_id")
 	}
 	if artifact == nil {
 		return fmt.Errorf("artifact save: nil artifact")
 	}
-	artifact.Version = 2 // force — the table column is shared with v1
+	artifact.Version = 3
 	body, err := json.Marshal(artifact)
 	if err != nil {
 		return fmt.Errorf("artifact save marshal: %w", err)
 	}
-	// Bump artifact_version, stamp timestamps, set status validated.
-	// ON CONFLICT (tenant_id) DO UPDATE for upsert semantics.
 	_, err = a.client.pool.Exec(ctx, `
 		INSERT INTO catalog.tenant_catalog_schema
 			(tenant_id, status, artifact_version, mapping_artifact, discovered_at, validated_at)
@@ -60,7 +65,9 @@ func (a *MappingArtifactV2Adapter) Save(ctx context.Context, tenantID string, ar
 	return nil
 }
 
-func (a *MappingArtifactV2Adapter) Get(ctx context.Context, tenantID string) (*domain.MappingArtifactV2, *ports.MappingArtifactMeta, error) {
+// Get reads the current artifact and normalizes the result to v3 (or nil
+// when the row is a legacy v1 artifact / empty / missing).
+func (a *MappingArtifactV2Adapter) Get(ctx context.Context, tenantID string) (*domain.MappingArtifactV3, *ports.MappingArtifactMeta, error) {
 	if tenantID == "" {
 		return nil, nil, fmt.Errorf("artifact get: empty tenant_id")
 	}
@@ -80,21 +87,24 @@ func (a *MappingArtifactV2Adapter) Get(ctx context.Context, tenantID string) (*d
 	if len(body) == 0 || string(body) == "null" {
 		return nil, meta, nil
 	}
-	// Peek at version field to decide if this is v2.
-	var probe struct {
-		Version int `json:"version"`
-	}
-	_ = json.Unmarshal(body, &probe)
-	if probe.Version != 2 {
-		// Legacy v1 artifact in this row — return nil body so callers
-		// know to treat it as "no v2 artifact yet".
+
+	switch domain.PeekArtifactVersion(body) {
+	case 3:
+		var art domain.MappingArtifactV3
+		if err := json.Unmarshal(body, &art); err != nil {
+			return nil, meta, fmt.Errorf("artifact unmarshal v3: %w", err)
+		}
+		return &art, meta, nil
+	case 2:
+		var v2 domain.MappingArtifactV2
+		if err := json.Unmarshal(body, &v2); err != nil {
+			return nil, meta, fmt.Errorf("artifact unmarshal v2: %w", err)
+		}
+		return domain.LiftV2ToV3(&v2), meta, nil
+	default:
+		// Legacy v1 (or unrecognized) — treat as "no v3 artifact".
 		return nil, meta, nil
 	}
-	var art domain.MappingArtifactV2
-	if err := json.Unmarshal(body, &art); err != nil {
-		return nil, meta, fmt.Errorf("artifact unmarshal v2: %w", err)
-	}
-	return &art, meta, nil
 }
 
 func (a *MappingArtifactV2Adapter) MarkStale(ctx context.Context, tenantID string) error {

@@ -1,26 +1,37 @@
 // Package usecases — ApplyV2 consumes catalog.inbox_items via the per-tenant
-// MappingArtifactV2 and produces master_products + master_cosmetics (or
-// tier3 fallback) + slim catalog.products rows. Replaces legacy
-// MergeApplyUseCase + match_cascade + merge_apply_d3.
+// MappingArtifactV3 and produces master_products + master_cosmetics (or
+// tier3 fallback) + slim catalog.products rows.
 //
-// Run model:
-//   1. ApplyForTenant fetches the artifact. If none → triggers discovery_v2
-//      (first_install path) and uses its output.
-//   2. Pages through ListUnapplied in batches, applying each item.
-//   3. On a mapping miss (unmapped key encountered, transform failed, or a
-//      required target produced no value) — calls discovery_v2 with
-//      trigger='mapping_miss' carrying the offending field. The mapping_miss
-//      counter is capped per run to avoid runaway agent loops.
-//   4. Writes one tenant_action_log row per ApplyForTenant call with counts.
+// Run model (per inbox item):
 //
-// What apply_v2 deliberately does NOT do (vs legacy merge_apply):
-//   - match cascade (GTIN/SKU/embedding fuzzy match across tenants):
-//     master_products is keyed on SKU uniqueness. If an apply produces a
-//     master_products row with the same SKU as an existing one, the
-//     UpsertMaster adapter resolves to update-in-place. Cross-tenant
-//     sharing happens organically when SKUs match. No fuzzy matching.
-//   - junk classification, candidate emission, brand mapping resolution,
-//     embedding seeding — all dropped.
+//  1. Parse raw JSONB into a generic map.
+//  2. Build a classify context from the raw (product_type, brand, name, tags)
+//     and call ClassifyVertical → vertical class + source.
+//  3. Pick the matching artifact branch (exact vertical match → fallback to
+//     "unknown" branch → fallback to single-branch artifact). If no branch
+//     covers the row, raise mapping_miss with trigger=unknown_vertical so
+//     discovery_v2 can add the branch.
+//  4. Walk the branch's field_map: build a MasterProductUpsert + optional
+//     MasterCosmeticsUpsert + tier3 patch + listing fields. Override
+//     mp.Vertical with the classified value (rules don't get to disagree).
+//  5. Compute mp.NormalizedMatchKey via NormalizeMatchKey(brand, name).
+//  6. Reject items with no SKU AND no Name (no signal). Synthesize SKU only
+//     when SKU is empty but Name is present.
+//  7. MatchOrCreateMaster — deterministic SKU → GTIN → NormalizedMatchKey
+//     cascade. Returns (id, wasCreated).
+//  8. wasCreated branch: write Tier 2 (master_cosmetics) when vertical is
+//     cosmetics; write tier3 for everything else; merge tier3 patch.
+//  9. !wasCreated branch (bind): master row is IMMUTABLE. Skip cosmetics,
+//     skip tier3 writes. Per-tenant marketing fluff will live in
+//     listing.tenant_overrides (column reserved; writer wired in a later pass).
+// 10. UpsertListing — always. The listing carries price/stock/custom_title.
+// 11. Mapping miss path: on transform error, unknown target prefix, or
+//     required field absent → wrap as mappingMissErr; caller queues a
+//     narrow discovery_v2 run with trigger=mapping_miss carrying the
+//     offending rule.
+//
+// Per-call tenant_action_log row: one "apply" entry summarizing counts,
+// status derived from miss/error tally.
 package usecases
 
 import (
@@ -190,24 +201,37 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 
 // applyOne runs the transformation+write pipeline for a single inbox item.
 // Returns an error wrapping errMappingMiss when the failure is recoverable
-// via narrow discovery (unmapped target, transform fail).
-func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *domain.MappingArtifactV2, item *domain.InboxItem) error {
+// via narrow discovery (transform fail, unknown target prefix, branch
+// missing for a freshly-encountered vertical).
+func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *domain.MappingArtifactV3, item *domain.InboxItem) error {
 	var raw map[string]any
 	if err := json.Unmarshal(item.Raw, &raw); err != nil {
 		return fmt.Errorf("apply_v2: parse raw json: %w", err)
 	}
 
-	mp := &ports.MasterProductUpsert{
-		OwnerTenantID: tenantID,
-		Vertical:      art.Vertical,
+	// --- Step 1: classify the row's vertical.
+	cctx := classifyContextFromRaw(raw)
+	vertical, classifySource := ClassifyVertical(ctx, uc.writer, art.ClassifyRules, cctx)
+
+	// --- Step 2: pick the artifact branch matching that vertical.
+	branch := art.FindBranch(vertical)
+	if branch == nil {
+		// No branch covers this vertical — fire a narrow discovery so the
+		// agent adds one. apply_v2's caller catches mapping_miss and queues
+		// the run; on the next pass FindBranch will succeed.
+		return wrapMiss(item.ID, "", "branch."+vertical,
+			fmt.Sprintf("no artifact branch for vertical %q (classified via %s); agent must add it", vertical, classifySource))
 	}
+
+	// --- Step 3: walk the branch's rules.
+	mp := &ports.MasterProductUpsert{OwnerTenantID: tenantID}
 	cosmetics := &ports.MasterCosmeticsUpsert{}
 	hasCosmetics := false
 	tier3 := map[string]any{}
 	var listingPrice, listingStock int
 	var listingCurrency, listingTitle string
 
-	for _, rule := range art.FieldMap {
+	for _, rule := range branch.FieldMap {
 		val := getPath(raw, rule.From)
 		if val == nil {
 			if rule.Default == "" {
@@ -215,18 +239,26 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 			}
 			val = rule.Default
 		}
-
 		transformed, err := applyV2Transform(val, rule.Transform)
 		if err != nil {
 			return wrapMiss(item.ID, rule.From, rule.To, fmt.Sprintf("transform %q failed: %v", rule.Transform, err))
 		}
-
 		switch {
 		case strings.HasPrefix(rule.To, "master."):
 			if err := assignMasterField(mp, strings.TrimPrefix(rule.To, "master."), transformed); err != nil {
 				return wrapMiss(item.ID, rule.From, rule.To, err.Error())
 			}
 		case strings.HasPrefix(rule.To, "cosmetics."):
+			if vertical != "cosmetics" {
+				// Agent emitted a cosmetics.* rule inside a non-cosmetics
+				// branch — forgive: route the value to tier3 under the
+				// stripped key. (No mapping_miss; this is a soft misuse.)
+				key := strings.TrimPrefix(rule.To, "cosmetics.")
+				tier3[key] = transformed
+				uc.log.Warn("apply_v2_cosmetics_rule_in_non_cosmetics_branch",
+					"tenant", tenantID, "vertical", vertical, "rule_to", rule.To, "item", item.ID)
+				continue
+			}
 			if err := assignCosmeticsField(cosmetics, strings.TrimPrefix(rule.To, "cosmetics."), transformed); err != nil {
 				return wrapMiss(item.ID, rule.From, rule.To, err.Error())
 			}
@@ -253,67 +285,73 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 				}
 			}
 		default:
-			// Forgiving fallback: when the agent emits a vertical prefix we
-			// don't have a per-vertical table for yet (e.g. furniture.material
-			// or electronics.ram before those tables exist), reroute the
-			// attribute into tier3.<col> instead of failing the row. Dev can
-			// later add a real master_<vertical> table + migrate tier3 keys
-			// over without losing data.
+			// Forgiving fallback: agent emitted a per-vertical prefix
+			// (e.g. electronics.cpu) for a vertical that lacks a typed
+			// table — reroute to tier3 with a warning.
 			if dotIdx := strings.IndexByte(rule.To, '.'); dotIdx > 0 {
 				col := rule.To[dotIdx+1:]
 				if col != "" {
 					tier3[col] = transformed
 					uc.log.Warn("apply_v2_unknown_vertical_routed_to_tier3",
-						"tenant", tenantID,
-						"target", rule.To,
-						"item", item.ID,
-						"hint", "no per-vertical table for this prefix; rerouted to tier3")
-					break
+						"tenant", tenantID, "vertical", vertical, "target", rule.To, "item", item.ID)
+					continue
 				}
 			}
 			return wrapMiss(item.ID, rule.From, rule.To, "unknown target prefix")
 		}
 	}
 
-	if mp.Name == "" {
-		return wrapMiss(item.ID, "", "master.name", "no rule produced master.name (required)")
+	// --- Step 4: classified vertical wins. Overrides any rule that set it.
+	mp.Vertical = vertical
+
+	// --- Step 5: signal check. No name AND no SKU = junk row.
+	if mp.Name == "" && mp.SKU == "" {
+		uc.log.Warn("apply_v2_reject_no_signal", "tenant", tenantID, "item", item.ID)
+		return wrapMiss(item.ID, "", "master.name|master.sku",
+			"row produced neither name nor sku; cannot create or match a master")
 	}
+	// If we have a name but no SKU, synthesize a stable per-source key. The
+	// match cascade still gets a fair shot at stages 2-3 (gtin, normalized
+	// match key) before this synthesizes.
 	if mp.SKU == "" {
-		// Fall back to inbox external_id for SKU uniqueness — guarantees
-		// idempotent upsert even when source has no SKU column.
-		mp.SKU = fmt.Sprintf("%s:%s", item.SourceKind, item.ExternalID)
+		mp.SKU = fmt.Sprintf("auto-%s-%s", item.SourceKind, item.ExternalID)
 	}
+	// Compute the normalized match key for stage 3 of the cascade. Empty
+	// when both brand and name are blank; adapter skips stage 3 in that
+	// case automatically.
+	mp.NormalizedMatchKey = NormalizeMatchKey(mp.Brand, mp.Name)
 
-	masterID, err := uc.writer.UpsertMaster(ctx, mp)
+	// --- Step 6: cascade or insert. Adapter is responsible for atomicity.
+	masterID, wasCreated, err := uc.writer.MatchOrCreateMaster(ctx, mp)
 	if err != nil {
-		return fmt.Errorf("apply_v2: upsert master: %w", err)
+		return fmt.Errorf("apply_v2: match or create master: %w", err)
 	}
 
-	if hasCosmetics && art.Vertical == "cosmetics" {
-		if err := uc.writer.UpsertCosmetics(ctx, masterID, cosmetics); err != nil {
-			if errors.Is(err, ports.ErrCosmeticsSchemaNotReady) {
-				// Schema not yet reshaped — fall back to tier3.
-				for k, v := range cosmeticsToMap(cosmetics) {
-					tier3[k] = v
+	// --- Step 7: Tier 2 + tier3 writes happen ONLY when we created the master.
+	// On bind, master_products is immutable; per-tenant attribute differences
+	// will eventually land in listing.tenant_overrides (column reserved).
+	if wasCreated {
+		if vertical == "cosmetics" && hasCosmetics {
+			if err := uc.writer.UpsertCosmetics(ctx, masterID, cosmetics); err != nil {
+				if errors.Is(err, ports.ErrCosmeticsSchemaNotReady) {
+					for k, v := range cosmeticsToMap(cosmetics) {
+						tier3[k] = v
+					}
+					uc.log.Warn("apply_v2_cosmetics_fallback_to_tier3",
+						"tenant", tenantID, "master", masterID)
+				} else {
+					return fmt.Errorf("apply_v2: upsert cosmetics: %w", err)
 				}
-				uc.log.Warn("apply_v2_cosmetics_fallback_to_tier3", "tenant", tenantID, "master", masterID)
-			} else {
-				return fmt.Errorf("apply_v2: upsert cosmetics: %w", err)
 			}
 		}
-	} else if hasCosmetics {
-		// Cosmetic fields produced but vertical isn't cosmetics — route to tier3.
-		for k, v := range cosmeticsToMap(cosmetics) {
-			tier3[k] = v
+		if len(tier3) > 0 {
+			if err := uc.writer.MergeTier3(ctx, masterID, tier3); err != nil {
+				return fmt.Errorf("apply_v2: merge tier3: %w", err)
+			}
 		}
 	}
 
-	if len(tier3) > 0 {
-		if err := uc.writer.MergeTier3(ctx, masterID, tier3); err != nil {
-			return fmt.Errorf("apply_v2: merge tier3: %w", err)
-		}
-	}
-
+	// --- Step 8: always upsert the listing.
 	if _, err := uc.writer.UpsertListing(ctx, &ports.ListingUpsert{
 		TenantID:        tenantID,
 		MasterProductID: masterID,
@@ -328,6 +366,59 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 	}
 
 	return nil
+}
+
+// classifyContextFromRaw plucks the four signals ClassifyVertical needs out
+// of a Shopify-shaped raw inbox payload. Field names follow Shopify
+// (product_type / vendor / title / tags); other source kinds will need
+// their own extractor when added.
+func classifyContextFromRaw(raw map[string]any) ClassifyContext {
+	c := ClassifyContext{}
+	if v := getPath(raw, "product_type"); v != nil {
+		if s, ok := asString(v); ok {
+			c.ProductType = s
+		}
+	} else if v := getPath(raw, "productType"); v != nil {
+		if s, ok := asString(v); ok {
+			c.ProductType = s
+		}
+	}
+	if v := getPath(raw, "vendor"); v != nil {
+		if s, ok := asString(v); ok {
+			c.Brand = s
+		}
+	} else if v := getPath(raw, "brand"); v != nil {
+		if s, ok := asString(v); ok {
+			c.Brand = s
+		}
+	}
+	if v := getPath(raw, "title"); v != nil {
+		if s, ok := asString(v); ok {
+			c.Name = s
+		}
+	} else if v := getPath(raw, "name"); v != nil {
+		if s, ok := asString(v); ok {
+			c.Name = s
+		}
+	}
+	if v := getPath(raw, "tags"); v != nil {
+		switch t := v.(type) {
+		case []any:
+			for _, item := range t {
+				if s, ok := asString(item); ok && s != "" {
+					c.Tags = append(c.Tags, s)
+				}
+			}
+		case string:
+			for _, tag := range strings.Split(t, ",") {
+				tag = strings.TrimSpace(tag)
+				if tag != "" {
+					c.Tags = append(c.Tags, tag)
+				}
+			}
+		}
+	}
+	return c
 }
 
 func (uc *ApplyV2UseCase) triggerNarrowDiscovery(ctx context.Context, tenantID, itemID string, mm MappingMissDetails) error {
@@ -386,16 +477,36 @@ func assignMasterField(mp *ports.MasterProductUpsert, col string, val any) error
 	case "sku":
 		mp.SKU = s
 	case "vertical":
-		// Allow per-row override (rare); otherwise the artifact vertical wins.
+		// Per-row vertical is set by ClassifyVertical AFTER all rules run;
+		// this assignment is a no-op-style fallback so rules emitting
+		// master.vertical don't surface a mapping_miss.
 		if s != "" {
 			mp.Vertical = s
 		}
 	case "image_url":
 		mp.ImageURL = s
+	case "gtin", "barcode", "ean", "upc":
+		// All four names map to the same Tier-1 column. Strip non-digits
+		// because Shopify barcode fields sometimes include hyphens.
+		mp.GTIN = stripGTIN(s)
 	default:
 		return fmt.Errorf("master.%s is not a known Tier-1 column", col)
 	}
 	return nil
+}
+
+// stripGTIN keeps only digit characters. GTIN is digits-only; merchants
+// occasionally upload "00-800001000001" or "8 800001 000001" — the
+// equality lookup is byte-for-byte so we must normalize.
+func stripGTIN(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= '0' && c <= '9' {
+			out = append(out, c)
+		}
+	}
+	return string(out)
 }
 
 func assignCosmeticsField(c *ports.MasterCosmeticsUpsert, col string, val any) error {

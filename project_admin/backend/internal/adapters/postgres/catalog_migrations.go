@@ -536,24 +536,11 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		// M4a (2026-04-26) — Foundation for metadata-first Shopify import
 		// =========================================================================
 
-		// --- shopify_raw_imports: high-tide staging for bulk pulls ---
-		// JSONL from Shopify GraphQL Bulk Operations lands here as-is, one row
-		// per top-level resource (product / collection / metafield). Discovery
-		// agent reads from here; harvester applies the mapping artifact and
-		// writes to master/listing tables. ON CONFLICT (tenant_id, source_kind,
-		// source_id) refreshes the payload — re-pulls don't duplicate.
-		`CREATE TABLE IF NOT EXISTS catalog.shopify_raw_imports (
-			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
-			source_kind TEXT NOT NULL,
-			source_id TEXT NOT NULL,
-			payload JSONB NOT NULL,
-			fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			PRIMARY KEY (tenant_id, source_kind, source_id)
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_sri_tenant_fetched
-			ON catalog.shopify_raw_imports(tenant_id, fetched_at DESC);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_sri_kind
-			ON catalog.shopify_raw_imports(tenant_id, source_kind);`,
+		// shopify_raw_imports table was removed 2026-05-17: the catalog v2
+		// rebuild replaced its role with catalog.inbox_items. No live writer
+		// references it anymore. The CREATE TABLE IF NOT EXISTS block was
+		// dropped here to stop recreating the empty table on each startup;
+		// the prod row will be DROPped in a coordinated migration with backup.
 
 		// --- master_variants.embedding: per-variant vectors ---
 		// Spec §8 decision: parent + per-variant from launch (no A/B). Variant
@@ -782,6 +769,75 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			ON catalog.inbox_items USING GIN (raw);`,
 		`CREATE INDEX IF NOT EXISTS idx_inbox_items_tenant_unapplied
 			ON catalog.inbox_items(tenant_id) WHERE applied_at IS NULL;`,
+	)
+
+	// Catalog v2 hardening — master matching + per-row vertical + soft-delete.
+	// See: /Users/starknight/.claude/plans/structured-discovering-lollipop.md
+	// (Addendum: 2026-05-15 evening).
+	//   - vertical_aliases: shopify product_type → class lookup, seeded with
+	//     ~45 starter aliases. Curator-editable later.
+	//   - master_products.gtin / normalized_match_key: secondary match keys
+	//     for MatchOrCreateMaster cascade.
+	//   - products.tenant_overrides: reserved JSONB pocket for tenant-specific
+	//     marketing payload (tags like "HIT SALE", custom images, video links).
+	//     Column added now; first writer wired in a later pass.
+	//   - pg_trgm GIN indexes on master_products(brand, name) for future
+	//     curator-side fuzzy search. Not used by the apply_v2 match cascade
+	//     (which is strict-exact only).
+	//   - Backfill of normalized_match_key for any existing master_products
+	//     (hey-babes seed) so the new cascade can hit them.
+	migrations = append(migrations,
+		`CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
+		`CREATE TABLE IF NOT EXISTS catalog.vertical_aliases (
+			alias       TEXT PRIMARY KEY,
+			vertical    TEXT NOT NULL,
+			source      TEXT NOT NULL DEFAULT 'seed',
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`INSERT INTO catalog.vertical_aliases (alias, vertical) VALUES
+			('skincare','cosmetics'), ('skin care','cosmetics'), ('cosmetics','cosmetics'),
+			('beauty','cosmetics'), ('makeup','cosmetics'), ('fragrance','cosmetics'),
+			('perfume','cosmetics'), ('sunscreen','cosmetics'), ('body care','cosmetics'),
+			('serum','cosmetics'), ('moisturizer','cosmetics'), ('cleanser','cosmetics'),
+			('hair care','haircare'), ('haircare','haircare'), ('shampoo','haircare'),
+			('conditioner','haircare'), ('hair styling','haircare'), ('hair dryer','haircare'),
+			('laptop','electronics'), ('laptops','electronics'), ('computer','electronics'),
+			('pc','electronics'), ('phone','electronics'), ('smartphone','electronics'),
+			('tablet','electronics'), ('camera','electronics'), ('headphones','electronics'),
+			('tv','electronics'), ('monitor','electronics'), ('keyboard','electronics'),
+			('mouse','electronics'),
+			('sofa','furniture'), ('chair','furniture'), ('table','furniture'),
+			('desk','furniture'), ('bed','furniture'), ('wardrobe','furniture'),
+			('bookshelf','furniture'), ('cabinet','furniture'), ('dresser','furniture'),
+			('shirt','apparel'), ('t-shirt','apparel'), ('dress','apparel'),
+			('pants','apparel'), ('jeans','apparel'), ('jacket','apparel'),
+			('coat','apparel'), ('sweater','apparel'),
+			('shoes','footwear'), ('boots','footwear'), ('sneakers','footwear'),
+			('sandals','footwear'),
+			('skis','ski'), ('snowboard','ski'), ('ski boots','ski'),
+			('ski goggles','ski'), ('ski poles','ski')
+		ON CONFLICT (alias) DO NOTHING;`,
+		`ALTER TABLE catalog.master_products
+			ADD COLUMN IF NOT EXISTS gtin TEXT,
+			ADD COLUMN IF NOT EXISTS normalized_match_key TEXT;`,
+		`ALTER TABLE catalog.products
+			ADD COLUMN IF NOT EXISTS tenant_overrides JSONB NOT NULL DEFAULT '{}'::jsonb;`,
+		`CREATE INDEX IF NOT EXISTS idx_master_products_gtin
+			ON catalog.master_products(gtin) WHERE gtin IS NOT NULL;`,
+		`CREATE INDEX IF NOT EXISTS idx_master_products_normalized_match_key
+			ON catalog.master_products(normalized_match_key) WHERE normalized_match_key IS NOT NULL;`,
+		`CREATE INDEX IF NOT EXISTS idx_master_products_brand_trgm
+			ON catalog.master_products USING gin (brand gin_trgm_ops);`,
+		`CREATE INDEX IF NOT EXISTS idx_master_products_name_trgm
+			ON catalog.master_products USING gin (name gin_trgm_ops);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_products_active
+			ON catalog.products(tenant_id, master_product_id) WHERE deleted_at IS NULL;`,
+		`UPDATE catalog.master_products
+			SET normalized_match_key = LOWER(REGEXP_REPLACE(
+				REGEXP_REPLACE(COALESCE(brand,'') || ' ' || COALESCE(name,''),
+					'[^[:alnum:][:space:]]', '', 'g'),
+				'\s+', ' ', 'g'))
+			WHERE normalized_match_key IS NULL;`,
 	)
 
 	for i, m := range migrations {

@@ -1,7 +1,8 @@
 # Curator Expertise
 # Standalone Go binary + React SPA for catalog curation. Read-side dashboard
-# over the same Neon DB as admin + V4. Mutating ops on candidates/junk/audit
-# are local; merge operations are proxied to admin-backend.
+# over the same Neon DB as admin + V5. The 6-step catalog flow (inbox →
+# discovery_v2 → apply_v2) surfaces are read locally; sync-now is proxied to
+# admin-backend's /admin/api/catalog/v2/sync-now.
 
 overview:
   layer: "standalone-service"
@@ -9,53 +10,53 @@ overview:
   imports: "keepstar-curator/internal/{adapters, domain, handlers, session} (no cross-module imports)"
   path: "curator/"
   purpose: |
-    Operator dashboard for catalog curation. Surfaces (a) candidates queue
-    (attribute candidates from discovery, category candidates), (b) junk
-    classification, (c) audit log, (d) tenant operations (browse listings,
-    schema status, run discovery, run merge, view merge reports), (e) master
-    catalog browse + detail.
-  database: "Same Neon Postgres as admin/v4. CURATOR_DATABASE_URL or DATABASE_URL fallback."
+    Operator dashboard for catalog curation, rebuilt 2026-05-15 around the
+    6-step catalog flow. Surfaces (a) tenants dashboard with operations,
+    (b) per-tenant catalog v2 tabs: inbox, action log, agent runs, mapping
+    artifact, products listings, (c) master catalog browse + detail,
+    (d) cross-tenant V5 chat/trace inspection, (e) audit log.
+    Legacy candidate/junk/merge-report flows were removed with the catalog-v2
+    cut-over.
+  database: "Same Neon Postgres as admin/v5. CURATOR_DATABASE_URL or DATABASE_URL fallback."
   deployment: "Single binary multi-stage Dockerfile (mirrors project_admin pattern). One Railway service: Curator → curator-production-46d7.up.railway.app, branch main, rootDir /curator, port 8082."
 
 architecture:
-  pattern: "Hexagonal lite — single adapter package (postgres.go + v5_chats.go), single handlers package, thin domain types"
+  pattern: "Hexagonal lite — single adapter package (postgres.go + v5_chats.go + catalog_v2.go), single handlers package, thin domain types"
   backend_structure:
-    cmd_server: "curator/backend/cmd/server/main.go (202 LOC) — DI bootstrap, route mux, CORS, SPA fallback"
+    cmd_server: "curator/backend/cmd/server/main.go (185 LOC) — DI bootstrap, route mux, CORS, SPA fallback"
     cmd_seed: "curator/backend/cmd/seed-curator/main.go (49 LOC) — bootstrap default curator user"
-    domain: "curator/backend/internal/domain/types.go (147 LOC) — read-shape types for catalog domain only. NOTE: v5 chat/trace types live in the adapters package (v5_chats.go), not here — a deliberate exception for read-only cross-DB inspection."
-    adapters_postgres: "curator/backend/internal/adapters/postgres.go (876 LOC) — primary Client struct, ~25 methods spanning auth + curation queues + tenants + master catalog"
+    domain: "curator/backend/internal/domain/types.go (147 LOC) — read-shape types for catalog domain only. NOTE: v5 chat/trace types live in the adapters package (v5_chats.go), and catalog-v2 types (Inbox*, ActionLogEntry, AgentRun*, MappingArtifactView) live in adapters/catalog_v2.go — both deliberate exceptions for cross-domain read inspection."
+    adapters_postgres: "curator/backend/internal/adapters/postgres.go (708 LOC) — primary Client struct: auth + audit + tenants + master catalog. Lost ~170 LOC with the 2026-05-15 purge (candidate/junk/promote methods removed)."
+    adapters_catalog_v2: "curator/backend/internal/adapters/catalog_v2.go (240 LOC) — NEW 2026-05-15. Read methods for the 6-step flow: ListInbox, GetInboxItem, ListActionLog, ListAgentRuns, GetAgentRun, GetMappingArtifact. Reads catalog.inbox_items, admin.tenant_action_log, admin.agent_runs, catalog.tenant_catalog_schema."
     adapters_v5_chats: "curator/backend/internal/adapters/v5_chats.go (302 LOC) — V5 chat/trace read methods (Client.ListChats / GetChatTimeline / GetChatTurn). Reads tables OWNED by V5: v5_chat_sessions, v5_chat_session_traces. Curator never writes them."
-    handlers: "curator/backend/internal/handlers/handlers.go (284 LOC) — auth + queues + tenants + master catalog HTTP handlers"
-    handler_merge: "curator/backend/internal/handlers/handler_merge.go (204 LOC) — MergeProxy: thin reverse-proxy to admin-backend for merge run/discover/reports"
+    handlers: "curator/backend/internal/handlers/handlers.go (204 LOC) — auth + audit + tenants + master catalog HTTP handlers"
+    handler_catalog_v2: "curator/backend/internal/handlers/handler_catalog_v2.go (119 LOC) — NEW 2026-05-15. Pure-read handlers for inbox/action-log/agent-runs/mapping tabs."
+    handler_merge: "curator/backend/internal/handlers/handler_merge.go (113 LOC) — MergeProxy: single remaining endpoint HandleSyncNowV2 (→ /admin/api/catalog/v2/sync-now/{tenant_id})."
     handler_chats: "curator/backend/internal/handlers/handler_chats.go (88 LOC) — V5 chat inspection: ListChats / GetChatTimeline / GetChatTurn. Pure read; no proxy."
     session: "curator/backend/internal/session/middleware.go (94 LOC) — Bearer or HttpOnly Cookie auth, opaque tokens"
   frontend_structure:
     framework: "React 19 + Vite 7 + React Router 7"
-    entry: "curator/frontend/src/main.jsx, App.jsx (96 LOC)"
+    entry: "curator/frontend/src/main.jsx, App.jsx (95 LOC)"
     pages:
       - "LoginPage — POST /curator/auth/login, sets cookie + receives token"
       - "TenantsPage — GET /curator/tenants (operator dashboard)"
-      - "TenantDetailPage — GET /curator/tenants/{id} (346 LOC)"
+      - "TenantDetailPage (574 LOC) — 6-step catalog-v2 flow tabs: Products / Inbox / Action Log / Agent Runs / Mapping; Sync-now button"
       - "MasterCatalogPage / MasterDetailPage — master catalog browse"
-      - "CandidatesPage — attribute + category candidates"
-      - "JunkPage — junk classification queue"
       - "AuditPage — audit log read-only"
-      - "MergeReportPage — merge report viewer (424 LOC, biggest)"
       - "ChatsPage (155 LOC) — cross-tenant V5 chat session list with filters (tenant, status, q) + aggregates (cost/tokens/turn count)"
       - "ChatDetailPage (207 LOC) — session timeline + spans waterfall for one V5 chat turn"
-    sidebar_sections: "Operations (Tenants, Master Catalog) > Curation queues (Candidates, Junk) > Activity (Audit) > Tracing (Chat Sessions)"
+    removed_2026_05_15: "CandidatesPage, JunkPage, MergeReportPage; sidebar Curation Queues section."
     api_client: "curator/frontend/src/api.js (58 LOC) — fetch wrapper, no hard redirect on 401 (App.jsx handles via setUser(null))"
-    styling: "curator/frontend/src/app.css (337 LOC) + styles/{tokens, merge}.css; design tokens via CSS variables"
+    styling: "curator/frontend/src/app.css + styles/tokens.css; design tokens via CSS variables."
 
 domain_types:
   file: "curator/backend/internal/domain/types.go"
   philosophy: "Read-shape only. Curator does NOT own canonical catalog domain — admin owns it. Keep types here narrow, JSON-exact for the operator UI."
-  v5_chat_types_location: "ChatRow, ListChatsFilter, TurnSummary, ChatTimeline, TurnDetail live in adapters/v5_chats.go (NOT domain/types.go) — explicit exception: V5 owns the data shape, Curator just renders it."
+  cross_package_types:
+    - "ChatRow, ListChatsFilter, TurnSummary, ChatTimeline, TurnDetail live in adapters/v5_chats.go — V5 owns the shape, Curator renders it"
+    - "InboxRow, InboxItemFull, ActionLogEntry, AgentRunSummary, AgentRunDetail, MappingArtifactView live in adapters/catalog_v2.go — admin owns the catalog-v2 shape"
   types:
     - "CuratorUser {ID, Email, Role string, CreatedAt} — Role default 'curator' (DB column DEFAULT 'curator')"
-    - "AttributeCandidate {ID, Key, Vertical, SeenInTenants, SampleValues, ProposedType, AgentMeta, Status, PromotedToColumn, CreatedAt}"
-    - "CategoryCandidate {ID, Name, ProposedParent, SeenInTenants, Vertical, Status, CreatedAt}"
-    - "JunkCandidate {ID, TenantID, ListingID, DetectedReason, Classification, ClassifiedBy, CreatedAt}"
     - "AuditEntry {ID, TenantID, ActorKind, ActorID, EntityKind, EntityID, Action, FieldChanges, AggregateMeta, CreatedAt}"
     - "IntegrationSummary {Kind, Status, DisplayName, ExternalID, LastSyncAt}"
     - "TenantSummary {ID, Slug, Name, Type, ProductsCount, MasterLinkedCount, MasterLinkCoverage, Integrations, SchemaStatus, SchemaVersion, CreatedAt}"
@@ -64,6 +65,8 @@ domain_types:
     - "MasterVariantSummary {ID, SKU, GTINs, Color, Size, Material, WeightG, VolumeML, ImageURL}"
     - "MasterProductDetail (embeds MasterProductSummary) {Description, PIMFields, Variants, LinkedListings}"
     - "TenantSchemaSummary {TenantID, Status, ArtifactVersion, DiscoveredAt, ValidatedAt, MappingArtifact, ValidationReport}"
+  dead_types:
+    - "AttributeCandidate, CategoryCandidate, JunkCandidate — types remain in types.go for backwards-compat but no adapter/handler/page references them after 2026-05-15. Safe to delete on next sweep."
 
 http_routes:
   public:
@@ -73,14 +76,6 @@ http_routes:
   protected:
     description: "All wrapped in session.Middleware(client). Reject 401 if no Bearer header AND no curator_session cookie."
     me: "GET /curator/me → {id, email, role}"
-    candidates:
-      - "GET  /curator/candidates/attributes?status=... → AttributeCandidate[]"
-      - "POST /curator/candidates/attributes/{id}/promote → PromoteAttribute (transactional ALTER TABLE on master_products)"
-      - "POST /curator/candidates/attributes/{id}/dismiss → DismissAttribute"
-      - "GET  /curator/candidates/categories?status=... → CategoryCandidate[]"
-    junk:
-      - "GET  /curator/junk?status=... → JunkCandidate[]"
-      - "POST /curator/junk/{id}/classify → ClassifyJunk"
     audit:
       - "GET /curator/audit?limit=N → AuditEntry[]"
     tenants:
@@ -88,13 +83,13 @@ http_routes:
       - "GET  /curator/tenants/{id} → TenantSummary"
       - "GET  /curator/tenants/{id}/products?search=...&limit=...&offset=... → {rows: TenantProductRow[], total: int}"
       - "GET  /curator/tenants/{id}/schema → TenantSchemaSummary"
-      - "POST /curator/tenants/{id}/merge/run → proxy to admin-backend (MergeProxy.HandleRun)"
-      - "POST /curator/tenants/{id}/discover → proxy to admin-backend, fire-and-forget 202 (MergeProxy.HandleDiscover)"
-      - "GET  /curator/tenants/{id}/merge-reports → proxy (MergeProxy.HandleListReports)"
-    merge_reports:
-      - "GET  /curator/merge-reports/{id} → proxy (MergeProxy.HandleReport)"
-      - "POST /curator/merge-reports/{id}/apply → proxy (MergeProxy.HandleReport, passes sub-path through)"
-      - "POST /curator/merge-reports/{id}/revert → proxy (MergeProxy.HandleReport, passes sub-path through)"
+      - "POST /curator/tenants/{id}/sync-now → MergeProxy.HandleSyncNowV2 → admin /admin/api/catalog/v2/sync-now/{tenant_id}"
+      - "GET  /curator/tenants/{id}/inbox?limit=&offset= → {items: InboxRow[], total} — catalog.inbox_items list"
+      - "GET  /curator/tenants/{id}/inbox/{itemID} → InboxItemFull — full raw JSONB payload"
+      - "GET  /curator/tenants/{id}/action-log?limit=&offset= → {items: ActionLogEntry[], total} — admin.tenant_action_log timeline"
+      - "GET  /curator/tenants/{id}/agent-runs?limit=&offset= → {items: AgentRunSummary[], total} — admin.agent_runs list"
+      - "GET  /curator/tenants/{id}/agent-runs/{runID} → AgentRunDetail — full tools_called + tokens + cost"
+      - "GET  /curator/tenants/{id}/mapping → {exists, artifact?} — current mapping artifact JSONB from catalog.tenant_catalog_schema; shape is version-tagged (v1/v2/v3 since 2026-05-15 evening). Body is opaque to curator — UI must inspect `version` to render."
     master_catalog:
       - "GET /curator/master/products?vertical=...&search=...&limit=...&offset=... → {rows: MasterProductSummary[], total: int}"
       - "GET /curator/master/products/{id} → MasterProductDetail"
@@ -125,37 +120,30 @@ session_auth:
   logout: "Both cookie and Bearer paths: client.Logout(token) deletes server-side row, then ClearCookie sets MaxAge=-1"
 
 merge_proxy:
-  file: "curator/backend/internal/handlers/handler_merge.go"
-  pattern: "Reverse-proxy. Curator does NOT duplicate merge logic — admin-backend owns MergeApplyUseCase (it has the catalog domain types and adapters)."
-  why: "Different Go modules — keepstar-curator vs keepstar-admin — duplicating would cause drift. Proxy is one HTTP hop."
+  file: "curator/backend/internal/handlers/handler_merge.go (113 LOC)"
+  pattern: "Thin HTTP forwarder. After catalog-v2 cut-over (2026-05-15), only HandleSyncNowV2 remains (legacy merge/discover/report routes deleted)."
+  why: "Keep catalog-v2 logic in admin-backend (single source of truth). Cross-module proxy avoids code duplication and drift."
   flow:
     - "1. Curator-frontend → curator-backend with curator_session cookie"
-    - "2. session middleware authenticates → sets ctx.UserID"
-    - "3. MergeProxy strips client auth, attaches X-Internal-Key + X-Curator-User: <uid>"
-    - "4. POST/GET to admin-backend internal endpoint (/admin/api/internal/curator/...)"
-    - "5. admin-backend's InternalKeyMiddleware accepts the header → executes use case → returns response"
-    - "6. MergeProxy pipes response back to curator-frontend"
+    - "2. session.Middleware authenticates → sets ctx.UserID"
+    - "3. MergeProxy attaches X-Internal-Key + X-Curator-User: <uid>"
+    - "4. POST to admin-backend internal endpoint behind internalMW"
+    - "5. admin-backend's InternalKeyMiddleware accepts header → UpdateOrchestrator.ManualSync → returns ApplyResult JSON"
+    - "6. MergeProxy pipes response back to curator-frontend (synchronous)"
   admin_internal_endpoints:
-    - "POST /admin/api/internal/curator/tenants/{id}/discover"
-    - "POST /admin/api/internal/curator/tenants/{id}/merge/run"
-    - "GET  /admin/api/internal/curator/tenants/{id}/merge-reports"
-    - "GET  /admin/api/internal/curator/merge-reports/{id}"
-    - "POST /admin/api/internal/curator/merge-reports/{id}/apply"
-    - "POST /admin/api/internal/curator/merge-reports/{id}/revert"
+    - "POST /admin/api/catalog/v2/sync-now/{tenant_id} — UpdateOrchestrator.ManualSync; runs synchronously (~10s on 10-product smoke)"
   config_env:
     - "ADMIN_BASE_URL — admin-backend base (default http://127.0.0.1:8081 for local dev)"
-    - "CURATOR_INTERNAL_KEY — must match admin's CURATOR_INTERNAL_KEY env var"
+    - "CURATOR_INTERNAL_KEY — must match admin's CURATOR_INTERNAL_KEY env var; empty → 503 from proxy"
   timeouts:
-    client_timeout: "10 minutes — covers worst-case discovery (8 min budget) + slow merge-apply on large reports"
-    rationale: "Discovery agent on admin side has 8-min wallclock budget. Curator UI must not bail before — would burn LLM tokens with no result surfaced."
-  fire_and_forget:
-    where: "HandleDiscover only"
-    behavior: "Returns 202 to client immediately, then runs admin-side request in background goroutine with context.WithTimeout(context.Background(), 15*time.Minute). Closing curator UI tab does NOT cancel the run — but the 15-min deadline prevents goroutine leak if admin hangs."
-    polling: "Frontend polls /curator/tenants/{id}/schema to detect when discovered_at advances → run finished"
+    client_timeout: "10 minutes — covers worst-case discovery_v2 (10 min wallclock budget) cascading from a first_install ManualSync"
+    rationale: "On a fresh tenant ManualSync may trigger discovery_v2 (10 min budget). Curator UI must not bail before that — would burn LLM tokens with no result surfaced."
+  body_limit: "8 MiB request body cap (LimitReader) — sync-now body is tiny but the proxy is generic."
 
 adapter_methods:
   files:
-    - "curator/backend/internal/adapters/postgres.go (876 LOC)"
+    - "curator/backend/internal/adapters/postgres.go (708 LOC)"
+    - "curator/backend/internal/adapters/catalog_v2.go (240 LOC)"
     - "curator/backend/internal/adapters/v5_chats.go (302 LOC)"
   groups:
     auth:
@@ -163,17 +151,9 @@ adapter_methods:
       - "Login(ctx, email, password) → (token, user, err) — verifies bcrypt, generates session, persists hashed token"
       - "Logout(ctx, plain) — deletes session by hashed token"
       - "ResolveSession(ctx, plain) → CuratorUser — middleware entry point"
-    candidates:
-      - "ListAttributeCandidates(ctx, status) — filter by status (proposed | promoted | dismissed)"
-      - "ListCategoryCandidates(ctx, status)"
-      - "PromoteAttribute(ctx, candidateID, key, vertical, columnType, actorID) — TRANSACTIONAL: three-gate SQL safety (see promote_attribute_guards); ALTER TABLE catalog.<vertical_table> ADD COLUMN; UPDATE candidate status; INSERT audit"
-      - "DismissAttribute(ctx, candidateID, actorID)"
-    junk:
-      - "ListJunkCandidates(ctx, status)"
-      - "ClassifyJunk(ctx, id, classification, classifiedBy)"
     audit:
       - "ListAudit(ctx, limit)"
-      - "WriteAudit(ctx, e) — emitted by promote/classify"
+      - "WriteAudit(ctx, e) — kept for future operator actions; no internal caller after 2026-05-15"
     tenants:
       - "ListTenants(ctx) — TenantSummary[] (joins tenants + products counts + master link coverage + integrations + schema status)"
       - "GetTenant(ctx, id)"
@@ -183,6 +163,15 @@ adapter_methods:
     master_catalog:
       - "ListMasterProducts(ctx, vertical, search, limit, offset) → ([]row, total)"
       - "GetMasterProduct(ctx, id) → MasterProductDetail (with variants + linked listings)"
+    catalog_v2:
+      file: "catalog_v2.go"
+      methods:
+        - "ListInbox(ctx, tenantID, limit, offset) → ([]InboxRow, total) — reads catalog.inbox_items; ORDER BY fetched_at DESC; includes applied_at NULL filter as a flag, not a hard filter"
+        - "GetInboxItem(ctx, itemID) → *InboxItemFull — single row with full raw JSONB payload"
+        - "ListActionLog(ctx, tenantID, limit, offset) → ([]ActionLogEntry, total) — reads admin.tenant_action_log; ORDER BY occurred_at DESC"
+        - "ListAgentRuns(ctx, tenantID, limit, offset) → ([]AgentRunSummary, total) — reads admin.agent_runs; ORDER BY started_at DESC"
+        - "GetAgentRun(ctx, runID) → *AgentRunDetail — full tools_called JSONB + tokens_in/out + cost_usd"
+        - "GetMappingArtifact(ctx, tenantID) → *MappingArtifactView{Status, ArtifactVersion, Body json.RawMessage, DiscoveredAt, ValidatedAt} — current artifact body from catalog.tenant_catalog_schema; Body is pass-through JSONB (v1/v2/v3 since 2026-05-15 evening); nil when no row. Status enum now includes 'active' (replaced 'validated' admin-side)."
     v5_chats:
       file: "v5_chats.go"
       methods:
@@ -190,21 +179,12 @@ adapter_methods:
         - "GetChatTimeline(ctx, sessionID) → ChatTimeline — header from v5_chat_sessions; turns ordered ASC; populates session aggregates from accumulator"
         - "GetChatTurn(ctx, sessionID, requestID) → TurnDetail — full row + spans JSONB unmarshalled to []json.RawMessage for waterfall"
   utility:
-    - "verticalKeys() — list of allowed verticals (currently: cosmetics, laptops)"
-    - "verticalTables map — cosmetics→master_cosmetics, laptops→master_laptops; key for PromoteAttribute table resolution"
-    - "allowedColumnTypes map — text→TEXT, text_array→TEXT[], integer→INTEGER, numeric→NUMERIC, boolean→BOOLEAN"
-    - "validIdent(s) — SQL identifier safety check: snake_case [a-z][a-z0-9_]*, max 60 chars (used by PromoteAttribute for column name)"
     - "generateSessionToken() — crypto/rand 32-byte token"
     - "hashToken(plain) — SHA-256 hex"
-
-promote_attribute_guards:
-  description: "PromoteAttribute is the only path that runs ALTER TABLE on catalog schema. Three gates protect against injection or bad input:"
-  gates:
-    - "1. verticalTables whitelist — vertical must be 'cosmetics' or 'laptops' (map lookup); unknown vertical returns error without touching DB"
-    - "2. validIdent(key) — column name must match [a-z][a-z0-9_]*, max 60 chars; prevents SQL injection through free-text candidate key"
-    - "3. allowedColumnTypes whitelist — columnType must be one of {text, text_array, integer, numeric, boolean}; maps to PG type; unknown type returns error"
-  sql_pattern: "ALTER TABLE catalog.<verticalTable> ADD COLUMN IF NOT EXISTS <key> <pgType> — all three interpolated values come from whitelisted maps, not raw user input"
-  transaction: "All three ops (ALTER TABLE + UPDATE candidate + INSERT audit) run in one pgx transaction with defer Rollback"
+  removed_2026_05_15:
+    - "Candidate queues (ListAttributeCandidates, ListCategoryCandidates, PromoteAttribute, DismissAttribute)"
+    - "Junk classification (ListJunkCandidates, ClassifyJunk)"
+    - "SQL identifier safety helpers (verticalKeys, verticalTables, allowedColumnTypes, validIdent)"
 
 frontend:
   router_v7: "react-router-dom 7"
@@ -246,43 +226,44 @@ deploy:
 
 invariants:
   - "Curator domain types are READ-shape only — admin owns canonical catalog domain. Adding new types here means duplicating, fix at admin first."
-  - "MergeProxy never executes business logic — pure HTTP forwarder. Adding merge variants means add to admin-backend internal endpoint, not curator."
+  - "MergeProxy never executes business logic — pure HTTP forwarder. Adding mutating ops means add to admin-backend internal endpoint, not curator."
+  - "After 2026-05-15, curator does NOT mutate catalog DB. No ALTER TABLE, no schema writes. Only writes are curator.users + curator.sessions (own schema) and audit_log via WriteAudit (currently unused)."
   - "Session tokens are HASHED at rest (SHA-256). Plaintext only travels in HTTP layer (cookie/Bearer/login response)."
-  - "PromoteAttribute is the only path that modifies catalog DB schema (ALTER TABLE) — wrapped in transaction, protected by three guards: verticalTables whitelist + validIdent(key) + allowedColumnTypes whitelist."
-  - "Sidebar nav order matters semantically: Operations (tenants, master) > Queues (candidates, junk) > Activity (audit) > Tracing (chats) — operators see the dashboard then drill into work."
+  - "Sidebar nav order: Operations (tenants, master) > Activity (audit) > Tracing (chats). Curation Queues section was removed with the candidate/junk purge."
   - "Login does NOT auto-create users — seed-curator command bootstraps the first admin user. New users come via admin-managed flow."
   - "Curator uses its own 'curator' schema in Postgres (curator.users, curator.sessions) — separate from admin.* and catalog.* schemas. RunMigrations creates it idempotently on startup."
 
 gotchas:
-  - "SQL identifier injection — PromoteAttribute receives column name from candidate.key. validIdent(s) is the primary gate; adding any NEW code path that calls ALTER TABLE must also go through validIdent + verticalTables + allowedColumnTypes or it becomes direct injection."
-  - "MergeProxy fire-and-forget for /discover — closing the curator tab does NOT cancel the admin-side run. Background goroutine has a 15-min self-timeout; closing before that burns LLM tokens silently. No cancel endpoint currently."
-  - "Curator and admin share the same Postgres but different schemas — curator reads from admin.* and catalog.* schemas; never mutates admin's auth or catalog tables outside PromoteAttribute (and that one writes catalog.<vertical_table>)."
+  - "Sync-now is synchronous — admin's ManualSync runs inline and the response is the ApplyResult JSON. On a fresh tenant it may cascade into discovery_v2 (10 min budget). The curator client timeout is 10 minutes; UI should show a spinner, not a stuck button."
+  - "Curator and admin share the same Postgres but different schemas — curator reads from admin.*, catalog.*, and V5 chat tables; never mutates them. After 2026-05-15 there are zero ALTER TABLE call sites in curator."
   - "Cookie SameSite=Lax means cross-origin POSTs from curator UI to curator backend MUST share parent domain in prod. CURATOR_CORS_ORIGIN allow-list is for dev only (Vite :5175 → 8082). In prod, frontend and backend share host."
   - "ADMIN_BASE_URL has no health check — if admin is down, MergeProxy returns the raw fetch error. No circuit breaker or retry."
-  - "Curator has no tests (`*_test.go` count: 0). Adding tests is a known gap; for now any change relies on integration testing against live admin/v4 stack."
-  - "verticalKeys() whitelist must include any new vertical before it can be used in candidate/master filters OR PromoteAttribute — silent empty results on filter mismatch; hard error on PromoteAttribute. Both share the same verticalTables map."
+  - "Curator has no tests (`*_test.go` count: 0). Adding tests is a known gap; for now any change relies on integration testing against live admin/V5 stack."
   - "TenantProductRow.Name uses COALESCE(display_name, original_name, name) — listing rename via admin's editing UI changes display_name only; original is retained."
   - "V5 chat tables (v5_chat_sessions, v5_chat_session_traces) are READ-ONLY from Curator. V5 backend writes them best-effort async; missing turns aren't a Curator bug — could be V5 trace writer dropped them."
   - "ChatRow.Status is computed in code, not a DB column: time.Since(LastActivityAt) <= 30min → 'active'. The same 30-min cutoff is duplicated in the SQL WHERE for status filter — if you change one, change both (adapters/v5_chats.go ListChats, const cutoff = '30 minutes')."
-  - "/curator/chats/ prefix dispatcher in main.go branches on '/turns/' substring. Adding a new sub-resource (e.g. /curator/chats/{id}/spans) means adding another branch — the StripPrefix mux trick used elsewhere isn't applied here."
-  - "v5_chats.go uses fmt.Sprintf to build the WHERE clause. Cutoff interval is a hardcoded '30 minutes' string, not user input — no injection risk. Status filter values 'active'/'closed' come from URL but go through a switch, never into SQL directly."
-  - "HandleReport passes the full sub-path through to admin-backend — /curator/merge-reports/{id}/apply and /curator/merge-reports/{id}/revert both work via the same handler. The method (GET vs POST) is preserved from the original request."
+  - "/curator/tenants/ and /curator/chats/ prefix dispatchers in main.go branch on path suffix/substring. Adding a new sub-resource means adding another switch case — the StripPrefix mux trick isn't used here. The tenants dispatcher now has 8 branches (products/schema/sync-now/inbox/inbox-detail/action-log/agent-runs/agent-run-detail/mapping); easy to break ordering."
+  - "extractTenantSegment in handler_catalog_v2.go assumes path shape /curator/tenants/{id}/{suffix} — if a new path segment (like a UUID with embedded slashes) ever appears, the helper will mis-extract. Same gotcha applies to GetTenantInboxItem / GetTenantAgentRun which index parts[4] explicitly."
+  - "AttributeCandidate / CategoryCandidate / JunkCandidate types still live in domain/types.go but no code references them. They look live to anyone grepping the domain package — they are dead code from before 2026-05-15."
 
 related_experts:
-  - "admin — owns canonical catalog domain types, MergeApplyUseCase, discovery agent, candidate generation. Curator UI is a thin operator surface over admin's data + endpoints."
-  - "catalog (cross-cutting) — master_products / master_variants / tenant catalog schemas; curator reads these via SQL through its own Client."
-  - "engine-v4 / pipeline-agents — NOT directly related; curator does not consume the chat pipeline. Mentioned only in context: curator audits the catalog that pipeline-agents reads."
+  - "admin — owns canonical catalog domain types, UpdateOrchestrator, ApplyV2, DiscoveryV2. Curator UI is a thin operator surface over admin's data + endpoints. Sync-now proxy targets admin's /admin/api/catalog/v2/sync-now/."
+  - "catalog (cross-cutting) — inbox_items / master_products / master_cosmetics / tenant_catalog_schema / agent_runs / tenant_action_log; curator reads these via SQL through its own Client."
+  - "pipeline-agents — NOT directly related to curator's catalog tabs, but curator's /chats endpoints consume the v5_chat_sessions/traces tables pipeline-agents writes."
 
 active_workstreams:
-  tracker: "docs/PRE_LAUNCH_TASKS.md (curator-related: candidates flow, junk flow, merge UI)"
+  tracker: "docs/PRE_LAUNCH_TASKS.md (curator-related: catalog-v2 UI follow-ups)"
   recent_milestones:
-    - "M11 — standalone service split (2026-04-26)"
-    - "Phase D3 — merge proxy + MergeReportPage (2026-04-28)"
-    - "Curator-driven pivot — Этап 1 tenants dashboard (2026-04-27)"
+    - "Catalog-v2 cut-over (2026-05-15, commits 62a2e36 + 5e85ad6): TenantDetailPage rebuilt around 6-step flow (Products/Inbox/Action Log/Agent Runs/Mapping tabs + Sync-now). New handler_catalog_v2.go + adapter catalog_v2.go (240 LOC). MergeProxy reduced to single HandleSyncNowV2. CandidatesPage/JunkPage/MergeReportPage deleted."
     - "V5 chunk-13 — cross-tenant chat/trace inspection (2026-05-03): /curator/chats list + detail, ChatsPage + ChatDetailPage, sidebar 'Tracing' section"
+    - "Phase D3 — merge proxy + MergeReportPage (2026-04-28) — SUPERSEDED by catalog-v2 cut-over"
+    - "Curator-driven pivot — Этап 1 tenants dashboard (2026-04-27)"
+    - "M11 — standalone service split (2026-04-26)"
   hot_files:
-    - "adapters/postgres.go (876 LOC) — primary adapter, candidate for split when adding more queues (split by domain group: auth.go, candidates.go, tenants.go, master.go). v5_chats.go was the first such carve-out."
-    - "frontend MergeReportPage.jsx (424 LOC) — large detail page; split if more report types added"
-    - "frontend TenantDetailPage.jsx (346 LOC) — operator workspace; growth signal"
-    - "adapters/v5_chats.go (302 LOC) — V5 chat read methods; SQL grew quickly with three queries + dynamic WHERE; watch for further filter additions (tenant, status, search)"
-    - "frontend ChatDetailPage.jsx (207 LOC) — spans waterfall renderer; visual complexity may warrant a Span subcomponent if more views (gantt, table) are added"
+    - "adapters/postgres.go (708 LOC) — primary adapter; lost ~170 LOC with legacy purge"
+    - "frontend TenantDetailPage.jsx (574 LOC) — 6-step flow UI; split candidate if more tabs land"
+    - "adapters/v5_chats.go (302 LOC) — V5 session timeline + waterfall"
+    - "adapters/catalog_v2.go (240 LOC) — NEW 2026-05-15; catalog-v2 read methods"
+    - "handler_catalog_v2.go (119 LOC) — NEW 2026-05-15; catalog-v2 HTTP handlers"
+    - "frontend ChatDetailPage.jsx (207 LOC) — spans waterfall renderer"
+    - "handlers.go (204 LOC) — auth + tenant + master handlers"

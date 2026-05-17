@@ -469,10 +469,19 @@ func (uc *ShopifyV2UseCase) HandleWebhook(ctx context.Context, topic, shopDomain
 		_, err := uc.inboxIngester.IngestSingleWebhook(ctx, integration.TenantID, gid, verb, body)
 		return err
 	case "products/delete":
-		// TODO: surface deletion through the new flow. For now log and ignore —
-		// catalog won't auto-clean removed listings until a manual sync runs.
-		uc.log.Info("shopify_v2_webhook_delete_not_routed", "shop", shopDomain)
-		return nil
+		// Shopify's product/delete webhook body is { "id": 12345 }. Lift to
+		// the GID form the rest of the pipeline uses and route through the
+		// ingester so action_log gets the soft-delete event and the master
+		// row is left alone (other tenants may share it).
+		var probe struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.Unmarshal(body, &probe); err != nil || probe.ID == 0 {
+			uc.log.Warn("shopify_v2_webhook_delete_parse_id_failed", "shop", shopDomain, "error", err)
+			return nil
+		}
+		gid := fmt.Sprintf("gid://shopify/Product/%d", probe.ID)
+		return uc.inboxIngester.SoftDeleteListing(ctx, integration.TenantID, gid)
 	case "inventory_levels/update":
 		// Shopify's payload doesn't carry product_id; mapping it back requires
 		// inventory_item lookup. Curator-triggered re-dump covers stock drift.

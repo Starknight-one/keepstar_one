@@ -415,7 +415,7 @@ func main() {
 		// discovery_v2 → apply_v2). CSV ingester is kept as a local for
 		// future wiring into handler_integrations_csv (legacy CSV upload
 		// still uses csv_mapping for now).
-		shopifyIngester := usecases.NewShopifyIngester(inboxUC, orchestrator, log)
+		shopifyIngester := usecases.NewShopifyIngester(inboxUC, orchestrator, catalogV2Writer, actionLogAdapter, log)
 		_ = usecases.NewCSVIngester(inboxUC, orchestrator, log)
 		if shopifyV2UC != nil {
 			shopifyV2UC.SetInboxIngester(shopifyIngester)
