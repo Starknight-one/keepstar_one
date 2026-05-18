@@ -503,7 +503,13 @@ func main() {
 	protected.HandleFunc("/admin/api/auth/set-password", authHandler.HandleSetPassword)
 	protected.HandleFunc("/admin/api/auth/tenants", tenantsHandler.HandleList)
 	protected.HandleFunc("/admin/api/auth/tenants/select", tenantsHandler.HandleSelect)
-	protected.HandleFunc("/admin/api/auth/invitations", invitationsHandler.HandleCreate)
+	protected.HandleFunc("/admin/api/auth/invitations", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			invitationsHandler.HandleList(w, r)
+			return
+		}
+		invitationsHandler.HandleCreate(w, r)
+	})
 	protected.HandleFunc("/admin/api/auth/2fa/setup/totp", twoFactorHandler.HandleSetupTOTP)
 	protected.HandleFunc("/admin/api/auth/2fa/confirm/totp", twoFactorHandler.HandleConfirmTOTP)
 	protected.HandleFunc("/admin/api/auth/2fa/disable/totp", twoFactorHandler.HandleDisableTOTP)

@@ -24,7 +24,7 @@ export const authApi = {
   // 2FA — pre-session routes accept a pre-2FA bearer token (from login).
   setupTOTP: () => api.post('/auth/2fa/setup/totp', {}),
   confirmTOTP: (code) => api.post('/auth/2fa/confirm/totp', { code }),
-  disableTOTP: () => api.post('/auth/2fa/disable/totp', {}),
+  disableTOTP: (code) => api.post('/auth/2fa/disable/totp', { code }),
   verifyTOTP: (code, pre2faToken) =>
     api.post('/auth/2fa/verify/totp', { code }, { headers: { Authorization: `Bearer ${pre2faToken}` } }),
   sendEmail2FA: (pre2faToken) =>
@@ -52,6 +52,8 @@ export const authApi = {
   // Invitations. Create runs protected (current user is the inviter).
   // Preview + accept are public — the token in the URL is the credential.
   createInvite: (email, role) => api.post('/auth/invitations', { email, role }),
+  listInvitations: () => api.get('/auth/invitations'),
+  resendInvitation: (id) => api.post(`/auth/invitations/${encodeURIComponent(id)}/resend`, {}),
   previewInvite: (token) => api.get(`/auth/invitations/${encodeURIComponent(token)}`),
   acceptInvite: (token, password) =>
     api.post(`/auth/invitations/${encodeURIComponent(token)}/accept`, password ? { password } : {}),

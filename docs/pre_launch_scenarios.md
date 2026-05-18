@@ -207,7 +207,7 @@
 
 81. Я как приглашённый пользователь использую неизвестный token — `ErrInvalidCredentials`. ✅ (unit — `TestInvite_AcceptRejectsUnknownToken` + `TestInvite_PreviewUnknownToken`)
 
-82. Если mailer недоступен при Create — invitation row создаётся, но email не уходит. ⚠ backend ✅ / frontend ❌ *(Alpha 0.8.0 — `InvitationsUseCase.Resend(invitationID)` + endpoint `POST /admin/api/auth/invitations/{id}/resend` готовы. Тест `TestScenario_082_InviteMailerFail_ResendRecoverable` PASS. **Остался UI:** кнопка «Отправить ещё раз» в Settings → Members. До unfreezing — invitee всё ещё в неведении после mailer-fail, но owner может перезвать пользователя другим способом и в БД row уже есть)*
+82. Если mailer недоступен при Create — invitation row создаётся, но email не уходит. ✅ *(Alpha 0.8.1 — backend Resend + GET list endpoint, frontend `MembersPage` со списком pending/joined/expired + кнопкой «Resend» рядом с pending. Ссылка на странице Settings → Members)*
 
 ## 13. 2FA — TOTP
 

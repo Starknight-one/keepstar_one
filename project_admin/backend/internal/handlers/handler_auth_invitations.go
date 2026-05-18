@@ -60,6 +60,50 @@ func (h *InvitationsHandler) HandleCreate(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// HandleList — authenticated. GET /admin/api/auth/invitations.
+// Returns pending + accepted invitations for the current tenant.
+func (h *InvitationsHandler) HandleList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	tenantID := TenantID(r.Context())
+	if tenantID == "" {
+		writeError(w, http.StatusUnauthorized, "no tenant in session")
+		return
+	}
+	invs, err := h.invites.ListForTenant(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	type item struct {
+		ID         string  `json:"id"`
+		Email      string  `json:"email"`
+		Role       string  `json:"role"`
+		ExpiresAt  string  `json:"expires_at"`
+		AcceptedAt *string `json:"accepted_at,omitempty"`
+		CreatedAt  string  `json:"created_at"`
+	}
+	out := make([]item, 0, len(invs))
+	for _, inv := range invs {
+		var acceptedAt *string
+		if inv.AcceptedAt != nil {
+			s := inv.AcceptedAt.Format("2006-01-02T15:04:05Z07:00")
+			acceptedAt = &s
+		}
+		out = append(out, item{
+			ID:         inv.ID,
+			Email:      inv.Email,
+			Role:       inv.Role,
+			ExpiresAt:  inv.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+			AcceptedAt: acceptedAt,
+			CreatedAt:  inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invitations": out})
+}
+
 // HandleResend — authenticated. POST /admin/api/auth/invitations/{id}/resend.
 // Re-emails an existing invitation with a freshly-rotated token. Used when
 // the initial mailer.Send failed (sc 82) — invitee stranded.

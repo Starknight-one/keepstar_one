@@ -115,6 +115,12 @@ func (uc *InvitationsUseCase) Create(ctx context.Context, tenantID, inviterID, e
 	return nil
 }
 
+// ListForTenant returns all invitations for a tenant — used by the
+// Settings → Members page to show pending invites + their accepted-state.
+func (uc *InvitationsUseCase) ListForTenant(ctx context.Context, tenantID string) ([]*ports.Invitation, error) {
+	return uc.invites.ListForTenant(ctx, tenantID)
+}
+
 // Resend re-emails an existing invitation. Used when the initial mailer.Send
 // failed (sc 82) — invitee stranded without the link. We rotate the token so
 // the original (if it ever made it out) is invalidated, then re-send the
