@@ -223,7 +223,7 @@
 
 88. Я как пользователь ввожу неправильный TOTP код — `ErrInvalidCredentials`, могу retry. ✅ (unit — `TestTOTP_ConfirmBadCodeRejects` + `TestTOTP_VerifyDisabledErrors`)
 
-89. Я как пользователь могу выключить TOTP (Settings → Security → Disable 2FA) — **перед выключением фронт требует повторного ввода пароля + TOTP-кода** (re-auth, защита от session-takeover). ⚠ backend ✅ / frontend ❌ *(Alpha 0.8.0 — backend требует current TOTP code в теле запроса: `DisableTOTP(userID, code)`; пустой/неверный код → 401. Тест `TestScenario_089_DisableTOTP_RequiresReAuth` PASS. **Остался UI:** modal «введите TOTP-код для подтверждения» перед disable. **Внимание:** существующий фронт `SettingsPage` шлёт POST без body — кнопка вернёт 401 пока не доделан modal)*
+89. Я как пользователь могу выключить TOTP (Settings → Security → Disable 2FA) — **перед выключением фронт требует повторного ввода пароля + TOTP-кода** (re-auth, защита от session-takeover). ✅ *(Alpha 0.8.1 — backend `DisableTOTP(userID, code)` (401 на пустой/неверный код) + новая `SecurityPage` с modal'ом «введите 6-значный код из authenticator app» перед disable. Тест `TestScenario_089_DisableTOTP_RequiresReAuth` PASS)*
 
 ## 14. 2FA — Email code
 
@@ -621,3 +621,115 @@ Backlog отсортирован по техническому риску, бе�
 1. Security (52-55, 89) → correctness (7, 33, 60) → UX (19) → delivery (82).
 2. Закрыть 📗 — пока ответов нет, статус сценариев висит.
 3. Сценарии чата — отдельный документ, когда будет нужно.
+
+---
+
+## 🎯 ИТОГОВЫЙ СТАТУС НА Alpha 0.9.0 (читай это первым в новой сессии)
+
+### Версии и что закрылось
+
+| Версия | Коммит | Что покрыли |
+|---|---|---|
+| 0.5.0 | базовый | Auth scenarios 1-15 (signup, login, sessions, OAuth Google, Telegram OIDC, magic link) |
+| 0.5.1 | f412cea | Auth gaps batch 2 (sc 14, 33, 38, 39, 40, 41) — frontend + backend frienly-error pages, last-login hint, remember-me |
+| 0.6.0 | 8c6ff65 | Catalog batch 1 — 19 unit tests, sec 16-28 покрыты (sc 103-107, 121-126, 133, 137-144, 148, 155-156, 159, 163-164, 174) |
+| 0.7.0 | 8835895 | Catalog batch 2 — 12 discovery_v2 unit tests с FakeAgentSender (sc 111-120 + 121, 122, 124) |
+| 0.8.0 | 1373b9d | Auth gaps batch 3 backend — sc 60 (route registered), sc 82 (Resend usecase), sc 89 (TOTP disable re-auth), sc 177 (picker filter SQL) |
+| 0.8.1 | 6bf3629 | Phase E frontend — `SecurityPage` (TOTP disable modal) + `MembersPage` (invitations list + Resend button). Routes: `/settings/security`, `/settings/members` |
+| 0.9.0 | 4e7614f | Integration tests batch 1 — sc 156 (SQL deleted_at stamp) + sc 141 (listing uniqueness, real Postgres). Build tag `integration` |
+
+### Что осталось НЕ покрыто (важно для новой сессии)
+
+#### 🔴 Security critical — sc 52-55 (Shopify auto-merge consent flow)
+**Не сделано.** Уязвимость: атакующий ставит наш Shopify app со своим shop, использует email victim'а — мы автоматически добавляем membership без consent.
+
+**Что нужно:** новая challenge kind `pending_claim`, email original owner с Approve/Reject ссылками, новые usecase методы + endpoints, новый email template.
+
+**Объём:** 2-3 часа + **продуктовые решения**:
+- Текст email'а consent challenge
+- Approve/Reject — single-click links или страница подтверждения?
+- TTL на pending_claim
+- Что делать с orphan tenant при Reject — удалить / оставить в pending state
+
+**Тесты-как-спецификация уже есть и красные:** `TestScenario_052..055_*` в `auth_shopify_consent_test.go`.
+
+#### 🟡 Integration tests — sc 146/147 (atomicity + concurrent INSERT race)
+**Не сделано.** Подход готов (`internal/integration_test/dbtest.go` существует), нужно дописать `match_cascade_test.go` с 2 goroutines на отдельных connections.
+
+#### 🟡 E2E tests против дев-стенда — Phase D
+**Не сделано.** Планировалось `e2e/catalog_e2e_test.go` (admin webhook + sync-now routes) + `e2e/curator_e2e_test.go` (curator endpoints). Helper'ы есть в существующем `e2e/auth_e2e_test.go`.
+
+#### 🟡 Frontend gaps (не unit / e2e — manual QA + UX)
+- **sc 15a** — last login method hint на /signin (auth-batch 1 backend ✅, FE подсказка для returning user)
+- **sc 26, 27, 29** — friendly экраны Google rejected/expired/«link single-use»
+- **sc 39** — после magic-link nudge сменить пароль (backend ✅ через `has_password` field, FE pages есть — нужна manual проверка flow)
+- **sec 27 (165-170)** — Curator `TenantDetailPage` 5 табов — фронт `curator/` отдельный сервис, backend endpoints **все есть** (Catalog tab может частично существовать — проверять руками)
+- **sec 30 (188-192)** — Куратор-дашборд (single pane of glass): список tenants + recent errors 24h + mailer health + search by email. **Backend нет, frontend нет** — full feature
+
+#### 🟡 Не покрывается автотестами в принципе (manual QA)
+- **sc 84** — QR-код сканирование в Google Authenticator
+- **Реальный Shopify install из App Store** (sc 44-51 happy install path) — нужен dev-store
+- **Реальные webhooks** от Shopify (`products/update/delete`, `app/uninstalled`) — нужен dev-store + webhook delivery
+- **sc 113** — реальная стоимость discovery v2 ~$0.04-0.06 — production observation
+- **sc 105, 153, 178** — load tests (1000 SKU bulk, 50 webhook burst, 10k SKU streaming)
+- **sc 180-185** — infra runtime (network down, SMTP down, Anthropic down, Postgres down, Sentry alerts)
+
+#### 🟡 CLI / cron / admin-only
+- **sc 176** — `cleanup-tenant-stale` CLI cron не запущен — отдельный cmd
+- **sc 187** — admin force-disconnect tenant (deferred)
+- **sc 158** — V5 chat skips `deleted_at IS NOT NULL` — тестируется в `project_v5/backend/` (отдельный сервис)
+
+### 📗 Открытые продуктовые решения (ждут ответа владельца)
+
+**Auth:**
+- sc 8 — email-verify обязательно или опционально?
+- sc 14 — remember-me на 30 дней ОК?
+- sc 39 — set-new-password nudge — скип или принуждение?
+- sc 96 — TOTP+Email 2FA одновременно — разрешить?
+- sc 97 — отдельный forgot-password или magic-link достаточно?
+- sc 181 — fallback при SMTP down (показать код прямо на странице?)
+- sc 56 — Shopify pending_claim badge в Settings — нужен?
+
+**Catalog:**
+- sc 145 — content moderation для junk-имён
+- sc 157 — auto-cleanup inbox при listing delete
+- sc 171-173 — куратор edit master / artifact / aliases вручную
+
+**Phase E5:** см. security critical выше — формат consent email, approve/reject UX, TTL.
+
+### ⚠️ Замечание про несоответствия документа и кода
+
+- **sc 141** — документ говорит unique key `(tenant_id, source_system, source_id)`. **Реальный adapter** в `internal/adapters/postgres/catalog_v2_writer_adapter.go::UpsertListing` использует `(tenant_id, master_product_id)`. Integration test зафиксировал реальное поведение. Если документ важнее — нужна миграция; если adapter важнее — обновить документ.
+
+- **sc 89** — был **breaking change** в Alpha 0.8.0 backend (требует body `{code}`), фронт `SecurityPage` добавлен в Alpha 0.8.1. **Старая кнопка `SettingsPage` (где-то ещё может быть POST без body) — могла отвалиться**. Проверить руками.
+
+### Что висит uncommitted в репозитории (моя побочная работа)
+
+- `.claude/commands/experts/admin/expertise.yaml` — modified, но это **не моя работа** (видимо, hook expert-sync). Не коммитил.
+- `.agents/` — новая папка (агентские team-runs metadata). Не моя.
+- `docs/seeds/` — **работа Vlad'а из соседнего терминала** (сидинг каталога). Не трогал.
+
+### Команды для прогона
+
+```bash
+cd project_admin/backend
+
+# Unit (быстро):
+go test -count=1 ./internal/usecases/... ./internal/handlers/...
+
+# Integration (нужен Neon connection):
+DATABASE_URL=$NEON_URL go test -count=1 -tags=integration -v ./internal/integration_test/...
+
+# E2E против dev stand (auth scenarios):
+BASE_URL=https://admin-production-4ae4.up.railway.app \
+  go test -count=1 -tags=e2e -v ./e2e/...
+```
+
+Cleanup тестовых юзеров: `DELETE FROM admin.admin_users WHERE email LIKE 'e2e-%@keepstar.test';`
+
+### Приоритеты для следующей сессии (рекомендация, не обязательно)
+
+1. **Если есть желание закрыть auth полностью**: sc 52-55 Shopify consent (security critical, требует продуктовых решений).
+2. **Если хочешь больше покрытия catalog**: sc 146/147 race tests (dbtest.go scaffold готов).
+3. **Если хочешь найти прода-баги**: Phase D e2e тесты против dev stand'а (auth + catalog routes).
+4. **Если идём в seeds + V5 движок (параллельный трек)**: не блокирует, можно ехать.
