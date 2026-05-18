@@ -104,8 +104,13 @@ type fakeWriter struct {
 	listings   []*ports.ListingUpsert
 	aliases    map[string]string // lowercased product_type → vertical
 
-	createCalls int
-	bindCalls   int
+	createCalls       int
+	bindCalls         int
+	softDeleteCalls   []softDeleteCall
+}
+
+type softDeleteCall struct {
+	tenantID, source, sourceID string
 }
 
 func newFakeWriter() *fakeWriter {
@@ -174,7 +179,10 @@ func (w *fakeWriter) LookupVertical(_ context.Context, pt string) (string, bool,
 	v, ok := w.aliases[strings.ToLower(strings.TrimSpace(pt))]
 	return v, ok, nil
 }
-func (w *fakeWriter) SoftDeleteListing(_ context.Context, _, _, _ string) error { return nil }
+func (w *fakeWriter) SoftDeleteListing(_ context.Context, tenantID, source, sourceID string) error {
+	w.softDeleteCalls = append(w.softDeleteCalls, softDeleteCall{tenantID, source, sourceID})
+	return nil
+}
 
 type fakeActionLog struct {
 	entries []*ports.TenantActionLogEntry
@@ -692,5 +700,294 @@ func TestApplyForTenant_MarksItemsApplied(t *testing.T) {
 	}
 	if !inbox.applied["i1"] {
 		t.Error("i1 should be marked applied")
+	}
+}
+
+// TestScenario_137_BindCascade_GTINMatch_NoMasterUpdate verifies:
+// «Когда SKU не совпадает, но GTIN совпадает с существующим мастером — bind
+// по GTIN (stage 2 каскада). Master immutable».
+func TestScenario_137_BindCascade_GTINMatch_NoMasterUpdate(t *testing.T) {
+	art := &domain.MappingArtifactV3{
+		Version: 3,
+		Branches: []domain.VerticalBranch{{
+			Vertical: "cosmetics",
+			FieldMap: []domain.FieldMappingRule{
+				{From: "title", To: "master.name"},
+				{From: "vendor", To: "master.brand"},
+				{From: "variants[0].sku", To: "master.sku"},
+				{From: "variants[0].barcode", To: "master.gtin"},
+			},
+		}},
+	}
+	uc, inbox, writer, _ := mkApply(art)
+	seedCosmeticsAlias(writer)
+	// Pre-seed an existing master keyed by GTIN but NOT by the new row's SKU.
+	writer.byGTIN["8800001000001"] = "master-pre"
+	writer.masters["master-pre"] = &ports.MasterProductUpsert{
+		SKU:      "OLD-SKU",
+		Name:     "Original Name",
+		Brand:    "Original Brand",
+		GTIN:     "8800001000001",
+		Vertical: "cosmetics",
+	}
+
+	inbox.items = []*domain.InboxItem{
+		mkInbox("i1", "gid://shopify/Product/1", map[string]any{
+			"title":        "RENAMED",
+			"vendor":       "DIFFERENT",
+			"product_type": "Cream",
+			"variants": []any{map[string]any{
+				"sku":     "NEW-SKU",
+				"barcode": "8800001000001",
+			}},
+		}),
+	}
+	if _, err := uc.ApplyForTenant(context.Background(), "t-test"); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if writer.bindCalls != 1 || writer.createCalls != 0 {
+		t.Fatalf("bind=%d create=%d, want bind=1 create=0 (stage 2 GTIN match)", writer.bindCalls, writer.createCalls)
+	}
+	mp := writer.masters["master-pre"]
+	if mp.Name != "Original Name" || mp.Brand != "Original Brand" || mp.SKU != "OLD-SKU" {
+		t.Errorf("master mutated on GTIN bind: name=%q brand=%q sku=%q", mp.Name, mp.Brand, mp.SKU)
+	}
+	if _, ok := writer.cosmetics["master-pre"]; ok {
+		t.Error("cosmetics written on bind path — must be skipped")
+	}
+	if _, ok := writer.tier3["master-pre"]; ok {
+		t.Error("tier3 written on bind path — must be skipped")
+	}
+	if len(writer.listings) != 1 {
+		t.Fatalf("listings = %d, want 1 (always upserted)", len(writer.listings))
+	}
+}
+
+// TestScenario_138_BindCascade_MatchKeyMatch_NoMasterUpdate verifies:
+// «Когда ни SKU ни GTIN не совпадают, но normalized_match_key совпадает — bind
+// по match_key (stage 3). Master immutable».
+func TestScenario_138_BindCascade_MatchKeyMatch_NoMasterUpdate(t *testing.T) {
+	uc, inbox, writer, _ := mkApply(cosmeticsArtifact())
+	seedCosmeticsAlias(writer)
+	// Pre-seed by match_key derived from brand="My Brand" + name="My Product".
+	mk := NormalizeMatchKey("My Brand", "My Product")
+	writer.byMatchKey[mk] = "master-mk"
+	writer.masters["master-mk"] = &ports.MasterProductUpsert{
+		SKU:                "ORIG",
+		Name:               "Original",
+		Brand:              "Original Brand",
+		Vertical:           "cosmetics",
+		NormalizedMatchKey: mk,
+	}
+
+	inbox.items = []*domain.InboxItem{
+		mkInbox("i1", "gid://shopify/Product/2", map[string]any{
+			// New SKU, no GTIN — stages 1 and 2 miss. brand+name reduce to
+			// the seeded match_key → stage 3 binds.
+			"title":        "My Product",
+			"vendor":       "My Brand",
+			"product_type": "Cream",
+			"variants":     []any{map[string]any{"sku": "DIFFERENT-SKU"}},
+		}),
+	}
+	if _, err := uc.ApplyForTenant(context.Background(), "t-test"); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if writer.bindCalls != 1 || writer.createCalls != 0 {
+		t.Fatalf("bind=%d create=%d, want bind=1 create=0 (stage 3 match_key)", writer.bindCalls, writer.createCalls)
+	}
+	mp := writer.masters["master-mk"]
+	if mp.SKU != "ORIG" || mp.Name != "Original" || mp.Brand != "Original Brand" {
+		t.Errorf("master mutated on match_key bind: %+v", mp)
+	}
+}
+
+// TestScenario_139_AllMiss_InsertsNewMaster verifies:
+// «Когда ВСЕ три миссы — INSERT нового master».
+func TestScenario_139_AllMiss_InsertsNewMaster(t *testing.T) {
+	uc, inbox, writer, _ := mkApply(cosmeticsArtifact())
+	seedCosmeticsAlias(writer)
+	// Writer is empty — no SKU, no GTIN, no match_key match → must create.
+	inbox.items = []*domain.InboxItem{
+		mkInbox("i1", "gid://shopify/Product/9", map[string]any{
+			"title":        "Brand New Serum",
+			"vendor":       "Brand New",
+			"product_type": "Serum",
+			"variants":     []any{map[string]any{"sku": "FRESH-1"}},
+		}),
+	}
+	if _, err := uc.ApplyForTenant(context.Background(), "t-test"); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if writer.createCalls != 1 || writer.bindCalls != 0 {
+		t.Fatalf("create=%d bind=%d, want create=1 bind=0", writer.createCalls, writer.bindCalls)
+	}
+	if _, ok := writer.masters["master-FRESH-1"]; !ok {
+		t.Errorf("expected new master under SKU 'FRESH-1' in masters map")
+	}
+}
+
+// TestScenario_133_UnknownPrefix_RerouteToTier3 verifies:
+// «Если agent эмитит rule с unknown prefix (например services.duration_min)
+// и vertical.column форму — apply_v2 reroute'ит в tier3 с warning (forgiving
+// fallback). НЕ mapping_miss».
+func TestScenario_133_UnknownPrefix_RerouteToTier3(t *testing.T) {
+	art := &domain.MappingArtifactV3{
+		Version: 3,
+		Branches: []domain.VerticalBranch{{
+			Vertical: "cosmetics",
+			FieldMap: []domain.FieldMappingRule{
+				{From: "title", To: "master.name"},
+				{From: "vendor", To: "master.brand"},
+				{From: "variants[0].sku", To: "master.sku"},
+				// Unknown prefix "services." — neither master/cosmetics/tier3/listing.
+				// Has a dot → reroute to tier3.duration_min (forgiving fallback).
+				{From: "duration_min", To: "services.duration_min", Transform: "int"},
+			},
+		}},
+	}
+	uc, inbox, writer, _ := mkApply(art)
+	seedCosmeticsAlias(writer)
+	inbox.items = []*domain.InboxItem{
+		mkInbox("i1", "gid://shopify/Product/1", map[string]any{
+			"title":        "Massage Service",
+			"vendor":       "Spa Co",
+			"product_type": "Cream", // alias → cosmetics so we land in the branch
+			"variants":     []any{map[string]any{"sku": "MS-60"}},
+			"duration_min": "60",
+		}),
+	}
+	res, err := uc.ApplyForTenant(context.Background(), "t-test")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if res.Applied != 1 || res.MappingMisses != 0 {
+		t.Fatalf("res = %+v, want applied=1 mapping_misses=0 (forgiving fallback)", res)
+	}
+	t3 := writer.tier3["master-MS-60"]
+	if t3 == nil || t3["duration_min"] != 60 {
+		t.Errorf("tier3 reroute under stripped key 'duration_min' missing: %+v", t3)
+	}
+}
+
+// TestScenario_121_MappingMiss_Wrapped_CountsToResult verifies:
+// «apply_v2 натыкается на rule которая не может транформ'ить значение → wraps
+// в mappingMissErr → result.MappingMisses++».
+// LIMITATION: action_log entry "mapping_miss" + narrow discovery cascade
+// require a wired DiscoveryV2; with discovery=nil the counter still increments
+// (the wrap is the unit-testable part). Cascade coverage is in batch 2.
+func TestScenario_121_MappingMiss_Wrapped_CountsToResult(t *testing.T) {
+	// Artifact has a rule with an unknown master column → assignMasterField
+	// returns "master.X is not a known Tier-1 column" → wrapMiss.
+	art := &domain.MappingArtifactV3{
+		Version: 3,
+		Branches: []domain.VerticalBranch{{
+			Vertical: "cosmetics",
+			FieldMap: []domain.FieldMappingRule{
+				{From: "title", To: "master.name"},
+				{From: "vendor", To: "master.brand"},
+				{From: "variants[0].sku", To: "master.sku"},
+				{From: "vendor", To: "master.unknown_column"}, // unknown Tier-1 column → mapping_miss
+			},
+		}},
+	}
+	uc, inbox, writer, _ := mkApply(art)
+	seedCosmeticsAlias(writer)
+	inbox.items = []*domain.InboxItem{
+		mkInbox("i1", "gid://shopify/Product/1", map[string]any{
+			"title":        "Test Cream",
+			"vendor":       "Brand",
+			"product_type": "Cream",
+			"variants":     []any{map[string]any{"sku": "TC-1"}},
+		}),
+	}
+	res, err := uc.ApplyForTenant(context.Background(), "t-test")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if res.MappingMisses != 1 || res.Applied != 0 {
+		t.Fatalf("res = %+v, want mapping_misses=1 applied=0", res)
+	}
+	if res.FirstError == "" || !strings.Contains(res.FirstError, "unknown_column") {
+		t.Errorf("first_error = %q, want non-empty mentioning unknown_column", res.FirstError)
+	}
+}
+
+// TestScenario_124_MappingMiss_CounterAccumulatesAcrossItems verifies:
+// «apply_v2 не падает целиком при mapping_miss; продолжает следующие items;
+// итоговый res.MappingMisses == число offending rows».
+// LIMITATION: the «3-pass cap on discovery triggers» part of sc 124 needs
+// a wired discovery — covered in batch 2.
+func TestScenario_124_MappingMiss_CounterAccumulatesAcrossItems(t *testing.T) {
+	art := &domain.MappingArtifactV3{
+		Version: 3,
+		Branches: []domain.VerticalBranch{{
+			Vertical: "cosmetics",
+			FieldMap: []domain.FieldMappingRule{
+				{From: "title", To: "master.name"},
+				{From: "vendor", To: "master.brand"},
+				{From: "variants[0].sku", To: "master.sku"},
+				{From: "vendor", To: "master.bogus"}, // unknown column → every item misses
+			},
+		}},
+	}
+	uc, inbox, writer, _ := mkApply(art)
+	seedCosmeticsAlias(writer)
+	inbox.items = []*domain.InboxItem{
+		mkInbox("i1", "gid://shopify/Product/1", map[string]any{"title": "A", "vendor": "B", "product_type": "Cream", "variants": []any{map[string]any{"sku": "A-1"}}}),
+		mkInbox("i2", "gid://shopify/Product/2", map[string]any{"title": "C", "vendor": "D", "product_type": "Cream", "variants": []any{map[string]any{"sku": "C-1"}}}),
+		mkInbox("i3", "gid://shopify/Product/3", map[string]any{"title": "E", "vendor": "F", "product_type": "Cream", "variants": []any{map[string]any{"sku": "E-1"}}}),
+		mkInbox("i4", "gid://shopify/Product/4", map[string]any{"title": "G", "vendor": "H", "product_type": "Cream", "variants": []any{map[string]any{"sku": "G-1"}}}),
+		mkInbox("i5", "gid://shopify/Product/5", map[string]any{"title": "I", "vendor": "J", "product_type": "Cream", "variants": []any{map[string]any{"sku": "I-1"}}}),
+	}
+	res, err := uc.ApplyForTenant(context.Background(), "t-test")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if res.MappingMisses != 5 {
+		t.Errorf("mapping_misses = %d, want 5 (counter accumulates, apply doesn't abort)", res.MappingMisses)
+	}
+	if res.Applied != 0 {
+		t.Errorf("applied = %d, want 0 (every row misses)", res.Applied)
+	}
+}
+
+// TestScenario_125_UnknownVertical_TriggersMappingMissWithReason verifies:
+// «Если row классифицируется в vertical для которого нет branch'a в artifact →
+// wraps в mapping_miss с reason "no artifact branch for vertical X"».
+func TestScenario_125_UnknownVertical_TriggersMappingMissWithReason(t *testing.T) {
+	// Artifact has ONLY cosmetics — no unknown fallback. classify_rule routes
+	// Apple-branded items to "electronics" → FindBranch returns nil → miss.
+	art := &domain.MappingArtifactV3{
+		Version: 3,
+		Branches: []domain.VerticalBranch{{
+			Vertical: "cosmetics",
+			FieldMap: []domain.FieldMappingRule{
+				{From: "title", To: "master.name"},
+				{From: "vendor", To: "master.brand"},
+				{From: "variants[0].sku", To: "master.sku"},
+			},
+		}},
+		ClassifyRules: []domain.ClassifyRule{
+			{When: "brand = 'Apple'", ThenVertical: "electronics"},
+		},
+	}
+	uc, inbox, _, _ := mkApply(art)
+	inbox.items = []*domain.InboxItem{
+		mkInbox("i1", "gid://shopify/Product/1", map[string]any{
+			"title":    "MacBook Air",
+			"vendor":   "Apple",
+			"variants": []any{map[string]any{"sku": "MBA-1"}},
+		}),
+	}
+	res, err := uc.ApplyForTenant(context.Background(), "t-test")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if res.MappingMisses != 1 || res.Applied != 0 {
+		t.Fatalf("res = %+v, want mapping_misses=1 applied=0", res)
+	}
+	if !strings.Contains(res.FirstError, "electronics") {
+		t.Errorf("first_error = %q, want mention of 'electronics' vertical", res.FirstError)
 	}
 }

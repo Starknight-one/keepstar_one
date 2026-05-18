@@ -261,15 +261,15 @@
 
 ## 16. PIM — Inbox ingest (Shopify bulk)
 
-103. Я как merchant подключаю Shopify → ShopifyIngester делает bulk operations query → получает JSONL → парсит → каждый product = 1 inbox_item с source_kind='shopify', external_id=Shopify GID, raw=полный JSONB, payload_hash=sha256(raw). ❓
+103. Я как merchant подключаю Shopify → ShopifyIngester делает bulk operations query → получает JSONL → парсит → каждый product = 1 inbox_item с source_kind='shopify', external_id=Shopify GID, raw=полный JSONB, payload_hash=sha256(raw). ✅
 
-104. Я как merchant пере-подключаю тот же Shopify → bulk pull снова → `Upsert` определяет: если payload_hash совпадает (товар не менялся) — `changed=false`, обновляет только `fetched_at`; если hash отличается — `changed=true`, переписывает `raw` и **сбрасывает applied_at=NULL** (apply подхватит на следующем проходе). ❓
+104. Я как merchant пере-подключаю тот же Shopify → bulk pull снова → `Upsert` определяет: если payload_hash совпадает (товар не менялся) — `changed=false`, обновляет только `fetched_at`; если hash отличается — `changed=true`, переписывает `raw` и **сбрасывает applied_at=NULL** (apply подхватит на следующем проходе). ✅
 
-105. Я как merchant имею 1000 SKU в Shopify — bulk operation gracefully handle'ит большой объём (Shopify streams JSONL, ingester батчит). ❓
+105. Я как merchant имею 1000 SKU в Shopify — bulk operation gracefully handle'ит большой объём (Shopify streams JSONL, ingester батчит). ⚠ *(не покрыто unit-ом — load-тест на real Shopify bulk operation)*
 
-106. Я как merchant имею товар с не-ASCII символами в title (русский, эмодзи, китайский) — `raw` JSONB корректно хранит UTF-8, никаких \u escape. ❓
+106. Я как merchant имею товар с не-ASCII символами в title (русский, эмодзи, китайский) — `raw` JSONB корректно хранит UTF-8, никаких \u escape. ✅
 
-107. action_log пишет `inbox_pull` с payload `{source, total, inserted, updated, unchanged, errors}`, status=ok (или warning если errors>0). ❓
+107. action_log пишет `inbox_pull` с payload `{source, total, inserted, updated, unchanged, errors}`, status=ok (или warning если errors>0). ✅
 
 ## 17. PIM — Inbox ingest (CSV / Sheets / manual)
 
@@ -281,143 +281,147 @@
 
 ## 18. PIM — Discovery v2 (first_install)
 
-111. Когда inbox_items наполнились впервые для нового tenant → apply_v2 видит artifact=NULL → cascade'ится в `discovery.Discover(trigger='first_install')`. ❓
+*Эта секция целиком покрывается batch 2 (требует FakeAgentSender — мок интерфейса AgentSender вместо живого Anthropic API; ~150 LOC scaffold).*
 
-112. Discovery agent запускается с Sonnet 4.6, $5 budget, 30 turns max, 10 min wallclock, prompt-cached system block. ❓
+111. Когда inbox_items наполнились впервые для нового tenant → apply_v2 видит artifact=NULL → cascade'ится в `discovery.Discover(trigger='first_install')`. 🟡 batch 2
 
-113. Agent делает 5-15 tool calls (count_total, list_fields, sample_values, count_by, field_stats, peek_full_rows), стоит ~$0.04-0.06 для 50 SKU. ❓
+112. Discovery agent запускается с Sonnet 4.6, $5 budget, 30 turns max, 10 min wallclock, prompt-cached system block. 🟡 batch 2
 
-114. Agent коммитит artifact через `commit_artifact` tool → MappingArtifactV3 с branches[] (по одному per vertical) + classify_rules → сохраняется в `catalog.tenant_catalog_schema.mapping_artifact`. ❓
+113. Agent делает 5-15 tool calls (count_total, list_fields, sample_values, count_by, field_stats, peek_full_rows), стоит ~$0.04-0.06 для 50 SKU. 🟡 batch 2 *(real-cost — production observation, не unit)*
 
-115. action_log пишет `discovery_start` (ok) и `discovery_done` (ok+committed:true). agent_runs хранит full timeline с tokens, cost, tool_calls JSONB. ❓
+114. Agent коммитит artifact через `commit_artifact` tool → MappingArtifactV3 с branches[] (по одному per vertical) + classify_rules → сохраняется в `catalog.tenant_catalog_schema.mapping_artifact`. 🟡 batch 2
 
-116. Если у tenant 10 SKU косметики — agent коммитит artifact с одним branch=cosmetics. ❓
+115. action_log пишет `discovery_start` (ok) и `discovery_done` (ok+committed:true). agent_runs хранит full timeline с tokens, cost, tool_calls JSONB. 🟡 batch 2
 
-117. Если у tenant 10 cosmetics + 10 electronics — agent коммитит artifact с двумя branches и optionally classify_rules для disambiguation. ❓
+116. Если у tenant 10 SKU косметики — agent коммитит artifact с одним branch=cosmetics. 🟡 batch 2
 
-118. Если agent доходит до 90% от $5 budget — на следующем turn'е дополнительный nudge «force commit». ❓
+117. Если у tenant 10 cosmetics + 10 electronics — agent коммитит artifact с двумя branches и optionally classify_rules для disambiguation. 🟡 batch 2
 
-119. Если agent end_turn'ит без commit — до 3 nudge'ей «вы должны вызвать commit_artifact». Потом — fail. ❓
+118. Если agent доходит до 90% от $5 budget — на следующем turn'е дополнительный nudge «force commit». 🟡 batch 2
 
-120. Если budget exhausted без commit — artifact_run помечается `budget_exhausted`, действующий artifact (если был) НЕ перезаписывается. ❓
+119. Если agent end_turn'ит без commit — до 3 nudge'ей «вы должны вызвать commit_artifact». Потом — fail. 🟡 batch 2
+
+120. Если budget exhausted без commit — artifact_run помечается `budget_exhausted`, действующий artifact (если был) НЕ перезаписывается. 🟡 batch 2
 
 ## 19. PIM — Discovery v2 (mapping_miss / unknown_vertical)
 
-121. Когда apply_v2 натыкается на rule которая не может транформ'ить значение → wraps в mappingMissErr → action_log пишет `mapping_miss`, триггерит `discovery.Discover(trigger='mapping_miss')` с payload {inbox_item_id, offending_from, offending_to, reason}. ❓
+121. Когда apply_v2 натыкается на rule которая не может транформ'ить значение → wraps в mappingMissErr → action_log пишет `mapping_miss`, триггерит `discovery.Discover(trigger='mapping_miss')` с payload {inbox_item_id, offending_from, offending_to, reason}. ⚠ *(unit покрывает wrap + counter; action_log entry + cascade в discovery → batch 2)*
 
-122. Narrow discovery_v2 (mapping_miss) фокусируется на конкретном поле — system prompt инструктирует «не re-discover весь каталог», обычно 3-5 tool calls, $0.01. ❓
+122. Narrow discovery_v2 (mapping_miss) фокусируется на конкретном поле — system prompt инструктирует «не re-discover весь каталог», обычно 3-5 tool calls, $0.01. 🟡 batch 2
 
-123. После narrow discovery apply_v2 re-fetch'ит artifact и продолжает loop. ❓
+123. После narrow discovery apply_v2 re-fetch'ит artifact и продолжает loop. 🟡 batch 2
 
-124. Если за один apply-run сработало больше 3 mapping_miss подряд — дальнейшие НЕ триггерят discovery (защита от storm'а). ❓
+124. Если за один apply-run сработало больше 3 mapping_miss подряд — дальнейшие НЕ триггерят discovery (защита от storm'а). ⚠ *(unit покрывает counter accumulation; 3-pass cap на discovery triggers → batch 2)*
 
-125. Если row классифицируется в vertical для которого нет branch'a в artifact (например свежий tenant добавил товар категории furniture, а артефакт был cosmetics-only) → wraps в mapping_miss с trigger=unknown_vertical → narrow discovery добавляет недостающую branch. ❓
+125. Если row классифицируется в vertical для которого нет branch'a в artifact (например свежий tenant добавил товар категории furniture, а артефакт был cosmetics-only) → wraps в mapping_miss с trigger=unknown_vertical → narrow discovery добавляет недостающую branch. ✅ *(wrap + reason покрыт unit; addition of branch — batch 2)*
 
-126. action_log за весь apply-run суммирует counts (applied / errors / mapping_misses / skipped) в одной записи `apply` со status'ом (ok / warning / error). ❓
+126. action_log за весь apply-run суммирует counts (applied / errors / mapping_misses / skipped) в одной записи `apply` со status'ом (ok / warning / error). ✅
 
 ## 20. PIM — Apply v2 (create master)
 
-127. Когда inbox_item с уникальным SKU и нет такого мастера в БД — `MatchOrCreateMaster` INSERT'ит новый row в `catalog.master_products` (Tier 1: name, brand, vertical, sku, gtin, normalized_match_key, owner_tenant_id, tier3 JSONB). ❓
+127. Когда inbox_item с уникальным SKU и нет такого мастера в БД — `MatchOrCreateMaster` INSERT'ит новый row в `catalog.master_products` (Tier 1: name, brand, vertical, sku, gtin, normalized_match_key, owner_tenant_id, tier3 JSONB). ✅
 
-128. Vertical берётся НЕ из rule (master.vertical), а из per-row классификации (`ClassifyVertical` cascade: alias → classify_rule → unknown). Это перебивает любой artifact rule на master.vertical. ❓
+128. Vertical берётся НЕ из rule (master.vertical), а из per-row классификации (`ClassifyVertical` cascade: alias → classify_rule → unknown). Это перебивает любой artifact rule на master.vertical. ✅
 
-129. Если row классифицирован как `cosmetics` и есть `cosmetics.*` rules — создаётся row в `catalog.master_cosmetics` (Tier 2 типизированная: skin_type[], concern[], key_ingredients[], product_form, texture, volume_ml, spf, и т.д.). ❓
+129. Если row классифицирован как `cosmetics` и есть `cosmetics.*` rules — создаётся row в `catalog.master_cosmetics` (Tier 2 типизированная: skin_type[], concern[], key_ingredients[], product_form, texture, volume_ml, spf, и т.д.). ✅
 
-130. Если row классифицирован как `electronics`/`furniture`/`unknown` — master_cosmetics НЕ создаётся; per-vertical поля (cpu/ram_gb/material) идут в `master_products.tier3` JSONB. ❓
+130. Если row классифицирован как `electronics`/`furniture`/`unknown` — master_cosmetics НЕ создаётся; per-vertical поля (cpu/ram_gb/material) идут в `master_products.tier3` JSONB. ✅
 
-131. Если agent эмитит `cosmetics.spf` rule в `unknown` branch — apply_v2 forgiving fallback: пишет в tier3.spf с warning в логе (НЕ mapping_miss). ❓
+131. Если agent эмитит `cosmetics.spf` rule в `unknown` branch — apply_v2 forgiving fallback: пишет в tier3.spf с warning в логе (НЕ mapping_miss). ✅
 
-132. Если agent эмитит `tier3.cpu` для electronics branch — нормально, пишется в tier3. ❓
+132. Если agent эмитит `tier3.cpu` для electronics branch — нормально, пишется в tier3. ✅
 
-133. Если agent эмитит rule с unknown prefix (например `services.duration_min`) и `vertical.column` форму — apply_v2 reroute'ит в tier3 с warning (forgiving fallback). ❓
+133. Если agent эмитит rule с unknown prefix (например `services.duration_min`) и `vertical.column` форму — apply_v2 reroute'ит в tier3 с warning (forgiving fallback). ✅
 
-134. GTIN/barcode/ean/upc rules → все мапятся в `master_products.gtin`, очищаются от не-цифр. ❓
+134. GTIN/barcode/ean/upc rules → все мапятся в `master_products.gtin`, очищаются от не-цифр. ✅
 
-135. normalized_match_key computed via `NormalizeMatchKey(brand, name)` — lowercased, не-alnum stripped, multi-space collapsed. ❓
+135. normalized_match_key computed via `NormalizeMatchKey(brand, name)` — lowercased, не-alnum stripped, multi-space collapsed. ✅
 
 ## 21. PIM — Apply v2 (bind cascade + master immutability)
 
-136. Когда inbox_item с тем же SKU как существующий мастер — `MatchOrCreateMaster` возвращает (existing_master_id, wasCreated=false). Master row **НЕ перезаписывается**. ❓
+136. Когда inbox_item с тем же SKU как существующий мастер — `MatchOrCreateMaster` возвращает (existing_master_id, wasCreated=false). Master row **НЕ перезаписывается**. ✅
 
-137. Когда SKU не совпадает, но GTIN совпадает с существующим мастером — bind по GTIN (stage 2 каскада). Master immutable. ❓
+137. Когда SKU не совпадает, но GTIN совпадает с существующим мастером — bind по GTIN (stage 2 каскада). Master immutable. ✅
 
-138. Когда ни SKU ни GTIN не совпадают, но normalized_match_key совпадает — bind по match_key (stage 3). Master immutable. ❓
+138. Когда ни SKU ни GTIN не совпадают, но normalized_match_key совпадает — bind по match_key (stage 3). Master immutable. ✅
 
-139. Когда ВСЕ три миссы — INSERT нового master. ❓
+139. Когда ВСЕ три миссы — INSERT нового master. ✅
 
-140. На bind master_products **не апдейтится**, master_cosmetics **не апдейтится**, tier3 **не апдейтится**. Записывается ТОЛЬКО listing. ❓
+140. На bind master_products **не апдейтится**, master_cosmetics **не апдейтится**, tier3 **не апдейтится**. Записывается ТОЛЬКО listing. ✅
 
-141. Listing (catalog.products) ВСЕГДА upsert'ится по (tenant_id, source_system, source_id) — это per-tenant overlay. Поля: price_cents, currency, stock_quantity, custom_title, master_product_id, source_id (Shopify GID). ❓
+141. Listing (catalog.products) ВСЕГДА upsert'ится по (tenant_id, source_system, source_id) — это per-tenant overlay. Поля: price_cents, currency, stock_quantity, custom_title, master_product_id, source_id (Shopify GID). ✅ *(unit покрывает write-path; uniqueness on real DB → integration test, see sc 146/147)*
 
 142. Per-tenant marketing customization (теги, картинки, видео) **deferred** — колонка `listing.tenant_overrides` JSONB зарезервирована, но writer не подключён. ⚠
 
 ## 22. PIM — Apply v2 (synthetic SKU / junk rejection)
 
-143. Если row имеет name но не имеет SKU — apply_v2 синтезирует `auto-<source>-<external_id>` (например `auto-shopify-gid://shopify/Product/123`). Bind cascade всё равно пробуется по GTIN и normalized_match_key до синтеза. ❓
+143. Если row имеет name но не имеет SKU — apply_v2 синтезирует `auto-<source>-<external_id>` (например `auto-shopify-gid://shopify/Product/123`). Bind cascade всё равно пробуется по GTIN и normalized_match_key до синтеза. ✅
 
-144. Если row не имеет ни name ни SKU — **junk row**, raises mapping_miss с reason "row produced neither name nor sku", не пишется ни мастер ни listing. ❓
+144. Если row не имеет ни name ни SKU — **junk row**, raises mapping_miss с reason "row produced neither name nor sku", не пишется ни мастер ни listing. ✅
 
 145. Если row имеет name из спам-слов / random unicode но всё-таки заходит в каталог — мы пишем мастер. Никакой content moderation. ❓ (известный gap, не блокер) 📗 *(нужна content moderation или ок?)*
 
 ## 23. PIM — Match cascade contract
 
-146. `MatchOrCreateMaster` атомарен на уровне адаптера: cascade + INSERT в одной транзакции с `ON CONFLICT DO NOTHING` для race-recovery. ❓
+146. `MatchOrCreateMaster` атомарен на уровне адаптера: cascade + INSERT в одной транзакции с `ON CONFLICT DO NOTHING` для race-recovery. ⚠ *(не покрыто unit-ом — нужен integration test на real Postgres)*
 
-147. Если две параллельные apply-сессии пытаются INSERT мастер с одним SKU — выигрывает первая, вторая делает SELECT и возвращает существующий id. Никаких duplicate row. ❓
+147. Если две параллельные apply-сессии пытаются INSERT мастер с одним SKU — выигрывает первая, вторая делает SELECT и возвращает существующий id. Никаких duplicate row. ⚠ *(не покрыто unit-ом — concurrent INSERT race test на real Postgres)*
 
-148. SKU comparison case-sensitive (Shopify normalizes сам). GTIN digit-only. normalized_match_key уже lowercased. ❓
+148. SKU comparison case-sensitive (Shopify normalizes сам). GTIN digit-only. normalized_match_key уже lowercased. ✅
 
 ## 24. PIM — Webhook updates (in-window / out-of-window)
 
-149. Я как merchant изменяю цену товара в Shopify → Shopify шлёт webhook `products/update` → handler verify'ит HMAC, парсит payload, передаёт в `UpdateOrchestrator.OnWebhook(ev)`. ❓
+149. Я как merchant изменяю цену товара в Shopify → Shopify шлёт webhook `products/update` → handler verify'ит HMAC, парсит payload, передаёт в `UpdateOrchestrator.OnWebhook(ev)`. ✅ *(unit покрывает OnWebhook вход; HMAC handler — HTTP layer)*
 
-150. OnWebhook ВСЕГДА пишет `webhook_received` в action_log + ВСЕГДА upsert'ит inbox_item (даже если apply не запустится). ❓
+150. OnWebhook ВСЕГДА пишет `webhook_received` в action_log + ВСЕГДА upsert'ит inbox_item (даже если apply не запустится). ✅
 
-151. Если с последнего apply прошло <24 часов — OnWebhook возвращает `absorbed_only`, apply НЕ запускается. ❓
+151. Если с последнего apply прошло <24 часов — OnWebhook возвращает `absorbed_only`, apply НЕ запускается. ✅
 
-152. Если с последнего apply прошло >24 часов — OnWebhook запускает apply_v2 → listing.price_cents обновляется до новой цены. ❓
+152. Если с последнего apply прошло >24 часов — OnWebhook запускает apply_v2 → listing.price_cents обновляется до новой цены. ✅
 
-153. Я как merchant изменяю 50 товаров подряд → 50 webhook'ов → 50 inbox upsert'ов + 50 webhook_received log entries, apply НЕ запускается per-event (rate-limit). ❓
+153. Я как merchant изменяю 50 товаров подряд → 50 webhook'ов → 50 inbox upsert'ов + 50 webhook_received log entries, apply НЕ запускается per-event (rate-limit). ⚠ *(load-тест — не unit; rate-limit логика покрыта sc 151)*
 
-154. Через 24 часа после последнего apply следующий webhook автоматически запустит apply (или manual sync). ❓
+154. Через 24 часа после последнего apply следующий webhook автоматически запустит apply (или manual sync). ✅ *(покрыто sc 152 как «outside window applies»)*
 
 ## 25. PIM — Webhook delete
 
-155. Я как merchant удаляю товар в Shopify → webhook `products/delete` → handler verify'ит HMAC → вызывает `inboxIngester.SoftDeleteListing(tenant, source_system, source_id)`. ❓
+155. Я как merchant удаляю товар в Shopify → webhook `products/delete` → handler verify'ит HMAC → вызывает `inboxIngester.SoftDeleteListing(tenant, source_system, source_id)`. ✅ *(unit покрывает SoftDeleteListing dispatch; HMAC verify — HTTP layer)*
 
-156. SoftDeleteListing стампит `catalog.products.deleted_at=NOW()` для матчинг listing'а. `master_products` row НЕ трогается (другие тенанты могут на него ссылаться). ❓
+156. SoftDeleteListing стампит `catalog.products.deleted_at=NOW()` для матчинг listing'а. `master_products` row НЕ трогается (другие тенанты могут на него ссылаться). ✅ *(unit ассертит master immutability; SQL `deleted_at=NOW()` — adapter-level, integration test)*
 
-157. inbox_item для удалённого товара НЕ удаляется автоматически — остаётся как исторический snapshot. ❓ (deferred cleanup decision)
+157. inbox_item для удалённого товара НЕ удаляется автоматически — остаётся как исторический snapshot. ❓ (deferred cleanup decision) 📗
 
-158. V5 chat при поиске пропускает rows с `deleted_at IS NOT NULL`. ❓
+158. V5 chat при поиске пропускает rows с `deleted_at IS NOT NULL`. ⚠ *(тестируется в `project_v5/backend/` — отдельный сервис)*
 
-159. Delete webhook идемпотентный — повторный вызов на уже-удалённый listing — no-op. ❓
+159. Delete webhook идемпотентный — повторный вызов на уже-удалённый listing — no-op. ✅
 
 ## 26. PIM — Manual sync (Sync now button)
 
-160. Я как куратор/admin нажимаю «Sync now» в curator UI для конкретного tenant → curator POST'ит к admin backend `/admin/api/catalog/v2/sync-now/{tenant_id}` через X-Internal-Key middleware. ❓
+160. Я как куратор/admin нажимаю «Sync now» в curator UI для конкретного tenant → curator POST'ит к admin backend `/admin/api/catalog/v2/sync-now/{tenant_id}` через X-Internal-Key middleware. ⚠ *(backend ManualSync покрыт sc 161; HTTP route + X-Internal-Key — handler layer test)*
 
-161. ManualSync **bypass'ит** 24h rate-limit, всегда запускает apply_v2. ❓
+161. ManualSync **bypass'ит** 24h rate-limit, всегда запускает apply_v2. ✅
 
-162. action_log пишет `manual_sync` (ok) + потом `apply` с результатами. ❓
+162. action_log пишет `manual_sync` (ok) + потом `apply` с результатами. ✅
 
-163. Если нет artifact'а — ManualSync каскадно запустит discovery_v2 first_install. ❓
+163. Если нет artifact'а — ManualSync каскадно запустит discovery_v2 first_install. ⚠ *(cascade attempt verified; full cascade — batch 2 с FakeAgentSender)*
 
-164. Если ManualSync запущен параллельно для того же tenant — обычно одна выиграет, вторая увидит уже apply'нутые items (idempotent). ❓
+164. Если ManualSync запущен параллельно для того же tenant — обычно одна выиграет, вторая увидит уже apply'нутые items (idempotent). ✅ *(unit покрывает sequential idempotency; goroutine race — integration test)*
 
 ## 27. PIM — Curator UI (per-tenant view)
 
-165. Я как куратор открываю TenantDetailPage для tenant'а — вижу 5 табов: Catalog, Inbox, Mapping, Action Log, Agent Runs. ❓
+*Frontend в `curator/` — не покрывается unit-тестами backend'а. Нужны playwright / manual QA.*
 
-166. Catalog tab показывает все listings tenant'а с master-link badge (MASTER если bound, OWNED если этот тенант owns master). ❓
+165. Я как куратор открываю TenantDetailPage для tenant'а — вижу 5 табов: Catalog, Inbox, Mapping, Action Log, Agent Runs. ⚠ *(frontend — curator service)*
 
-167. Inbox tab показывает все inbox_items (raw payload, JSONB preview, applied_at status). Можно открыть detail modal с full payload. ❓
+166. Catalog tab показывает все listings tenant'а с master-link badge (MASTER если bound, OWNED если этот тенант owns master). ⚠ *(frontend)*
 
-168. Mapping tab показывает текущий MappingArtifactV3: branches[] + classify_rules + notes + built_at. JSON view. ❓
+167. Inbox tab показывает все inbox_items (raw payload, JSONB preview, applied_at status). Можно открыть detail modal с full payload. ⚠ *(frontend)*
 
-169. Action Log tab показывает timeline всех action_log записей: inbox_pull, discovery_start, discovery_done, apply, mapping_miss, webhook_received, manual_sync, connect, disconnect. ❓
+168. Mapping tab показывает текущий MappingArtifactV3: branches[] + classify_rules + notes + built_at. JSON view. ⚠ *(frontend)*
 
-170. Agent Runs tab показывает список discovery_v2 запусков с trigger, status, cost_usd, tokens. Detail modal — tools_called JSONB полностью (waterfall туллов). ❓
+169. Action Log tab показывает timeline всех action_log записей: inbox_pull, discovery_start, discovery_done, apply, mapping_miss, webhook_received, manual_sync, connect, disconnect. ⚠ *(frontend)*
+
+170. Agent Runs tab показывает список discovery_v2 запусков с trigger, status, cost_usd, tokens. Detail modal — tools_called JSONB полностью (waterfall туллов). ⚠ *(frontend)*
 
 171. Куратор НЕ может edit'ить master через UI (deferred). ❓ deferred 📗 *(нужно до запуска?)*
 
@@ -427,13 +431,13 @@
 
 ## 28. PIM — Disconnect / cleanup
 
-174. Я как merchant disconnect'ю Shopify через `app/uninstalled` webhook → `shopify_integrations.disconnected_at` стампится. ❓
+174. Я как merchant disconnect'ю Shopify через `app/uninstalled` webhook → `shopify_integrations.disconnected_at` стампится (status=disconnected). ✅
 
-175. После disconnect inbox_items, master_products, catalog.products **НЕ удаляются** автоматически — данные сохраняются на случай reinstall. ❓
+175. После disconnect inbox_items, master_products, catalog.products **НЕ удаляются** автоматически — данные сохраняются на случай reinstall. ⚠ *(нет автоматического удаления = отсутствие code → нет negative-test unit-ом; integration test verifies retention)*
 
-176. Я как куратор могу soft-delete tenant полностью через cleanup-tenant-stale CLI → `catalog.tenants.deleted_at` стампится, FK cascade удаляет inbox/products/integrations. ❓ (cron не запущен)
+176. Я как куратор могу soft-delete tenant полностью через cleanup-tenant-stale CLI → `catalog.tenants.deleted_at` стампится, FK cascade удаляет inbox/products/integrations. ⚠ *(CLI cron не запущен — отдельный cmd, integration test required)*
 
-177. Disconnected tenant НЕ показывается в picker'е после signin. ❓
+177. Disconnected tenant НЕ показывается в picker'е после signin. ❌ *(не реализовано — `TenantsUseCase.List` проксирует `memberships.ListForUser` без фильтра по integration.status. Нужен refactor: join с integrations или second query + filter)*
 
 ## 29. Edge cases / failure modes
 
@@ -520,6 +524,52 @@
 
 ---
 
+## Catalog batch 1 — sec 16-28 (Alpha 0.6.0)
+
+**Прогон:** 19 новых unit-тестов + 16 ранее существующих = **35 catalog-сценариев покрыты unit-ом** (из ~80 в секциях 16-28).
+
+**Зелёные ✅ (подтверждены unit-тестами):**
+- Sec 16 — 103, 104, 106, 107 (inbox ingest + hash idempotency + UTF-8 + action_log)
+- Sec 19 — 125, 126 (unknown vertical mapping_miss + apply summary)
+- Sec 20 — 127, 128, 129, 130, 131, 132, 133, 134, 135 (create master + per-row classify + forgiving fallbacks + GTIN + match_key)
+- Sec 21 — 136, 137, 138, 139, 140, 141 (bind cascade SKU/GTIN/match_key + master immutability + listing)
+- Sec 22 — 143, 144 (synthetic SKU + junk rejection)
+- Sec 23 — 148 (SKU case-sensitive / GTIN digits / match_key lowercase)
+- Sec 24 — 149, 150, 151, 152, 154 (webhook in/out window + always-log + always-upsert)
+- Sec 25 — 155, 156, 159 (delete dispatch + master immutable + idempotent)
+- Sec 26 — 161, 162, 164 (manual sync bypass + log + idempotent)
+- Sec 28 — 174 (app/uninstalled stamps disconnected)
+
+**⚠ Backend частично / нужен другой слой:**
+- 105 — Shopify bulk 1000 SKU streaming (load test, не unit)
+- 121 — mapping_miss action_log entry (batch 2 с FakeAgentSender)
+- 124 — 3-pass cap на discovery triggers (batch 2)
+- 141 (uniqueness на real DB) — integration test
+- 146, 147 — atomicity + concurrent INSERT race (integration)
+- 153 — 50 webhook burst (load test)
+- 156 (deleted_at SQL stamp) — adapter-level, integration
+- 158 — V5 chat skips deleted_at (отдельный сервис `project_v5/backend/`)
+- 160 — HTTP route + X-Internal-Key middleware (handler-layer test)
+- 163 — full discovery cascade (batch 2)
+- 165-170 — Curator UI 5 табов (frontend `curator/`, playwright)
+- 175 — non-deletion на disconnect (integration retention test)
+- 176 — `cleanup-tenant-stale` CLI cron (отдельный cmd + integration)
+
+**❌ Красные (не реализовано в коде, нужен фикс):**
+- **177** — Disconnected tenant НЕ скрывается из picker. `TenantsUseCase.List` (`internal/usecases/auth_tenants.go:28`) просто проксирует `memberships.ListForUser` — никакой фильтрации по `integrations.status`. Нужен refactor: join / second query / filter в use-case.
+
+**🟡 Batch 2 (требует FakeAgentSender для unit-тестирования LLM agent loop):**
+- Sec 18 — 111, 112, 114, 115, 116, 117, 118, 119, 120 (discovery_v2 first_install full coverage)
+- Sec 19 — 122, 123 (narrow discovery + re-fetch)
+- Sc 113 — real-cost ~$0.04-0.06 — production observation, не unit
+
+**📗 Открытые продуктовые решения (catalog):**
+- 145 — content moderation для junk-имён
+- 157 — auto-cleanup inbox при listing delete
+- 171, 172, 173 — куратор может ручно edit'ить master / artifact / aliases
+
+---
+
 ## Файлы тестов
 
 ```
@@ -535,7 +585,13 @@ project_admin/backend/
 │   ├── auth_email_verify_test.go       NEW: 3 (100, 101, 102)
 │   ├── auth_tenants_test.go            NEW: 5 (66-70)
 │   ├── auth_shop_pending_link_test.go  NEW: 5 (57-60, 60b)
-│   └── auth_shopify_consent_test.go    NEW: 4 (52-55, red)
+│   ├── auth_shopify_consent_test.go    NEW: 4 (52-55, red)
+│   │   --- catalog batch 1 (Alpha 0.6.0) ---
+│   ├── inbox_test.go                   NEW: 5 (103, 104a, 104b, 106, 107)
+│   ├── apply_v2_test.go                +7 (121, 124, 125, 133, 137, 138, 139)
+│   ├── update_orchestrator_test.go     +2 (163, 164)
+│   ├── ingest_shopify_test.go          NEW: 4 (155, 156, 159, 174)
+│   └── match_key_test.go               +1 (148)
 ├── internal/handlers/
 │   └── auth_http_scenarios_test.go     NEW: 14 HTTP-layer scenarios
 └── e2e/

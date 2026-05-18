@@ -3,6 +3,7 @@ package usecases
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -218,6 +219,69 @@ func TestOnMappingMiss_NoDiscoveryWired_ReturnsError(t *testing.T) {
 	err := o.OnMappingMiss(context.Background(), "t-test", MappingMissDetails{Reason: "x"})
 	if err == nil {
 		t.Error("expected err when discovery wired as nil")
+	}
+}
+
+// TestScenario_163_ManualSync_CascadesToDiscovery_WhenArtifactNil verifies:
+// «Если нет artifact'а — ManualSync каскадно запустит discovery_v2
+// first_install».
+// LIMITATION: with discovery_v2=nil (the default in mkOrchestrator), apply_v2
+// returns an error "no artifact and discovery_v2 not wired" instead of
+// completing the cascade. The unit-testable assertion: ManualSync surfaces
+// that error, proving it routed through apply→cascade. Full cascade coverage
+// requires a wired DiscoveryV2 in batch 2.
+func TestScenario_163_ManualSync_CascadesToDiscovery_WhenArtifactNil(t *testing.T) {
+	o, _, _, _, _ := mkOrchestrator(nil) // nil artifact in fakeArtifact
+	_, err := o.ManualSync(context.Background(), "t-test")
+	if err == nil {
+		t.Fatal("expected err when artifact nil and discovery_v2 not wired")
+	}
+	if !strings.Contains(err.Error(), "discovery") && !strings.Contains(err.Error(), "no artifact") {
+		t.Errorf("err = %q, want mention of discovery cascade attempt", err)
+	}
+}
+
+// TestScenario_164_ManualSync_Idempotent_SecondRunFindsNothingNew verifies:
+// «Если ManualSync запущен повторно для того же tenant — вторая увидит уже
+// apply'нутые items (idempotent), новых писем в каталог не пишет».
+// LIMITATION: real concurrent ManualSync calls require goroutines + DB
+// serialization; the unit-testable property is the post-apply idempotency
+// (re-running on the same inbox produces zero new applies).
+func TestScenario_164_ManualSync_Idempotent_SecondRunFindsNothingNew(t *testing.T) {
+	o, inbox, writer, _, _ := mkOrchestrator(cosmeticsArtifact())
+	seedCosmeticsAlias(writer)
+
+	body, _ := json.Marshal(map[string]any{
+		"title":        "Cream",
+		"vendor":       "Brand",
+		"product_type": "Cream",
+		"variants":     []any{map[string]any{"sku": "MS-1"}},
+	})
+	inbox.items = append(inbox.items, &domain.InboxItem{
+		ID: "ms-1", TenantID: "t-test", SourceKind: domain.InboxSourceShopify,
+		ExternalID: "gid://1", Raw: body, FetchedAt: time.Now(),
+	})
+
+	res1, err := o.ManualSync(context.Background(), "t-test")
+	if err != nil {
+		t.Fatalf("first ManualSync: %v", err)
+	}
+	if res1.Applied != 1 {
+		t.Fatalf("first run applied = %d, want 1", res1.Applied)
+	}
+	listingsAfterFirst := len(writer.listings)
+
+	// Second run — same inbox, but apply marked the row applied → second
+	// ListUnapplied returns 0 items → res.Applied == 0.
+	res2, err := o.ManualSync(context.Background(), "t-test")
+	if err != nil {
+		t.Fatalf("second ManualSync: %v", err)
+	}
+	if res2.Applied != 0 || res2.Total != 0 {
+		t.Errorf("second run res = %+v, want applied=0 total=0 (idempotent)", res2)
+	}
+	if len(writer.listings) != listingsAfterFirst {
+		t.Errorf("listings grew on idempotent re-run: %d → %d", listingsAfterFirst, len(writer.listings))
 	}
 }
 
