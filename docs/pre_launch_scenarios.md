@@ -154,7 +154,7 @@
 
 59. Я как merchant на `/auth/install-complete` вижу страницу «We've installed your Shopify app. Sign in to start» с кнопками Google/Telegram/Email; frontend сохраняет `pending_link` в sessionStorage. ❓ *(frontend — не покрыто автотестами, проверять вручную)*
 
-60. Я как merchant выбираю любой метод входа (например Google) → после успешного signin frontend ConsumePendingLink → backend линкует мой user_id с tenant_id из challenge meta, добавляет membership. ⚠ usecase ✅ / HTTP route ❌ *(usecase `ConsumePendingShopLink` работает: `TestScenario_059_ConsumePendingShopLink_AttachesTenant` PASS. HTTP handler `HandleConsumePendingShopLink` существует в `handler_auth_magic.go:71` и unit-тестируется на http уровне. **НО на dev stand'е endpoint `/admin/api/auth/shop-pending-link/consume` НЕ ПОДКЛЮЧЁН в router'е** — `TestE2E_Scenario_060_PendingShopLinkConsume_NoAuth` падает: SPA fallback возвращает HTML вместо 401. Фикс: добавить `mux.HandleFunc(...)` в `cmd/server/main.go`)*
+60. Я как merchant выбираю любой метод входа (например Google) → после успешного signin frontend ConsumePendingLink → backend линкует мой user_id с tenant_id из challenge meta, добавляет membership. ✅ *(Alpha 0.8.0 — `mux.Handle("/admin/api/auth/shop-pending-link/consume", authMW(protected))` added в `cmd/server/main.go`. E2E подтверждается на dev stand'е после redeploy)*
 
   - 60b. Consume с неизвестным token / пустым user_id отклоняется. ✅ (unit — `TestScenario_060b_ConsumeWithUnknownToken_Rejects`)
   - 60c. Orphan challenge (никто не consume'ил) остаётся неиспользованным до TTL. ✅ (unit — `TestScenario_060_OrphanPendingShopLink_StaysUnconsumedUntilExpiry`)
@@ -207,7 +207,7 @@
 
 81. Я как приглашённый пользователь использую неизвестный token — `ErrInvalidCredentials`. ✅ (unit — `TestInvite_AcceptRejectsUnknownToken` + `TestInvite_PreviewUnknownToken`)
 
-82. Если mailer недоступен при Create — invitation row создаётся, но email не уходит. ❌ **Известный gap** — invitee никогда не узнает что был приглашён. Нужен retry-job или UI «отправить ещё раз». *(тест `TestScenario_082_InviteMailerFail_LeavesRowButNoRetry` падает: подтверждает row создаётся + email не уходит + нет Resend API. Фикс: добавить `InvitationsUseCase.Resend(invitationID)` + UI кнопка "Отправить ещё раз" в Settings → Members)*
+82. Если mailer недоступен при Create — invitation row создаётся, но email не уходит. ⚠ backend ✅ / frontend ❌ *(Alpha 0.8.0 — `InvitationsUseCase.Resend(invitationID)` + endpoint `POST /admin/api/auth/invitations/{id}/resend` готовы. Тест `TestScenario_082_InviteMailerFail_ResendRecoverable` PASS. **Остался UI:** кнопка «Отправить ещё раз» в Settings → Members. До unfreezing — invitee всё ещё в неведении после mailer-fail, но owner может перезвать пользователя другим способом и в БД row уже есть)*
 
 ## 13. 2FA — TOTP
 
@@ -223,7 +223,7 @@
 
 88. Я как пользователь ввожу неправильный TOTP код — `ErrInvalidCredentials`, могу retry. ✅ (unit — `TestTOTP_ConfirmBadCodeRejects` + `TestTOTP_VerifyDisabledErrors`)
 
-89. Я как пользователь могу выключить TOTP (Settings → Security → Disable 2FA) — **перед выключением фронт требует повторного ввода пароля + TOTP-кода** (re-auth, защита от ZB-takeover). ❌ *(тест `TestScenario_089_DisableTOTP_RequiresReAuth` падает: `TwoFactorUseCase.DisableTOTP(userID)` сейчас принимает только userID и unconditional clear'ит секрет. Атакующий с украденным session-token может выключить 2FA. Фикс: добавить аргумент `currentCode` (TOTP или password) + handler-side проверку перед DisableTOTP)*
+89. Я как пользователь могу выключить TOTP (Settings → Security → Disable 2FA) — **перед выключением фронт требует повторного ввода пароля + TOTP-кода** (re-auth, защита от session-takeover). ⚠ backend ✅ / frontend ❌ *(Alpha 0.8.0 — backend требует current TOTP code в теле запроса: `DisableTOTP(userID, code)`; пустой/неверный код → 401. Тест `TestScenario_089_DisableTOTP_RequiresReAuth` PASS. **Остался UI:** modal «введите TOTP-код для подтверждения» перед disable. **Внимание:** существующий фронт `SettingsPage` шлёт POST без body — кнопка вернёт 401 пока не доделан modal)*
 
 ## 14. 2FA — Email code
 
@@ -435,7 +435,7 @@
 
 176. Я как куратор могу soft-delete tenant полностью через cleanup-tenant-stale CLI → `catalog.tenants.deleted_at` стампится, FK cascade удаляет inbox/products/integrations. ⚠ *(CLI cron не запущен — отдельный cmd, integration test required)*
 
-177. Disconnected tenant НЕ показывается в picker'е после signin. ❌ *(не реализовано — `TenantsUseCase.List` проксирует `memberships.ListForUser` без фильтра по integration.status. Нужен refactor: join с integrations или second query + filter)*
+177. Disconnected tenant НЕ показывается в picker'е после signin. ✅ *(Alpha 0.8.0 — `user_tenants_repo.go::ListForUser` SQL расширен: tenant скрывается если ВСЕ его integrations в статусе `disconnected`. Tenant без integrations вообще (свежий manual signup) — показывается)*
 
 ## 29. Edge cases / failure modes
 

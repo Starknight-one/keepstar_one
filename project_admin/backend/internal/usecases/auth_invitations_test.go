@@ -82,6 +82,12 @@ func (f *fakeInvitations) CountRecentByInviter(_ context.Context, inviterID stri
 	}
 	return cnt, nil
 }
+func (f *fakeInvitations) GetByID(_ context.Context, id string) (*ports.Invitation, error) {
+	if inv, ok := f.byID[id]; ok {
+		return inv, nil
+	}
+	return nil, nil
+}
 
 func mkInvitesUC() (*InvitationsUseCase, *fakeInvitations, *statefulFakeAuth, *fakeMemberships, *fakeAdminCatalog, *fakeMailer) {
 	inv := newFakeInvitations()
@@ -302,35 +308,50 @@ func TestInvite_AcceptLoggedOutRejectsWeakPassword(t *testing.T) {
 // Pre-launch scenario verification (docs/pre_launch_scenarios.md sec 12)
 // =====================================================================
 
-// TestScenario_082_InviteMailerFail_RetryNeeded verifies:
+// TestScenario_082_InviteMailerFail_ResendRecoverable verifies:
 // «Если mailer недоступен при Create — invitation row создаётся, но email
-// не уходит. Известный gap — invitee никогда не узнает что был приглашён.
-// Нужен retry-job или UI "отправить ещё раз".» (sec 12, scenario 82)
+// не уходит. Resend API позволяет переотправить когда mailer восстановится.»
+// (sec 12, scenario 82)
 //
-// EXPECTED TO FAIL: scenario 82 NOT implemented. There is no Resend
-// invitation API and no background retry. This test verifies (a) the
-// invitation row IS created on mailer failure (recoverable state), and
-// (b) NO retry mechanism exists — which is the gap.
-func TestScenario_082_InviteMailerFail_LeavesRowButNoRetry(t *testing.T) {
+// Recover path added in Alpha 1.0.0: InvitationsUseCase.Resend(invitationID)
+// regenerates the token and re-sends the email. Original token (if any)
+// is implicitly invalidated by the rotation.
+func TestScenario_082_InviteMailerFail_ResendRecoverable(t *testing.T) {
 	uc, inv, auth, _, cat, mail := mkInvitesUC()
 	mail.fail = true
 	inviter, _ := auth.CreateUser(context.Background(), &domain.AdminUser{Email: "owner@x.com"})
 	cat.tenants["t-1"] = &domain.Tenant{ID: "t-1", Slug: "acme", Name: "Acme"}
 
-	// Create returns nil error even when mailer fails (best-effort).
+	// Initial Create: row persisted, mailer fails silently.
 	_ = uc.Create(context.Background(), "t-1", inviter.ID, "invited@x.com", "member")
-
-	// Row should be persisted so a future resend can use it.
 	if inv.createCnt != 1 {
 		t.Errorf("invitation row not persisted on mailer fail: createCnt=%d", inv.createCnt)
 	}
-	// No email actually sent (mailer rejected).
 	if len(mail.sent) != 0 {
-		t.Errorf("mail.fail=true but %d email captured (mock should reject)", len(mail.sent))
+		t.Errorf("mail.fail=true but %d email captured", len(mail.sent))
 	}
-	// Gap: there's no ResendInvitation or RetryFailedInvitation method on the
-	// InvitationsUseCase. Document the absence.
-	t.Errorf("scenario 82: no Resend/Retry path exists for invitations whose initial mailer.Send failed — invitee stranded")
+
+	// Find the persisted invitation ID.
+	var origID string
+	for id := range inv.byID {
+		origID = id
+		break
+	}
+	if origID == "" {
+		t.Fatal("no invitation row to resend")
+	}
+
+	// Mailer recovers; Resend re-emails the invite.
+	mail.fail = false
+	if err := uc.Resend(context.Background(), origID); err != nil {
+		t.Fatalf("Resend after mailer recovery: %v", err)
+	}
+	if len(mail.sent) != 1 {
+		t.Errorf("emails after Resend = %d, want 1", len(mail.sent))
+	}
+	if mail.sent[0].Kind != "invitation" || mail.sent[0].To != "invited@x.com" {
+		t.Errorf("resent mail wrong shape: %+v", mail.sent[0])
+	}
 }
 
 // TestScenario_072_InviteRateLimitEnforced verifies:

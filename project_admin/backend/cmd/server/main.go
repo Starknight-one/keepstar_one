@@ -469,11 +469,16 @@ func main() {
 	mux.HandleFunc("/admin/api/auth/telegram/callback", oauthHandler.HandleTelegramCallback)
 	mux.HandleFunc("/admin/api/auth/magic", magicLinkHandler.HandleConsume)
 
-	// Invitation preview + accept are public (token in URL is the auth). The
-	// create endpoint is protected below.
+	// Invitation preview + accept are public (token in URL is the auth).
+	// Resend is auth-required (re-emails an existing invite). Create is
+	// protected via the separate /admin/api/auth/invitations route below.
 	mux.HandleFunc("/admin/api/auth/invitations/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/accept") {
 			invitationsHandler.HandleAccept(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/resend") {
+			authMW(http.HandlerFunc(invitationsHandler.HandleResend)).ServeHTTP(w, r)
 			return
 		}
 		invitationsHandler.HandlePreview(w, r)
@@ -639,6 +644,7 @@ func main() {
 	mux.Handle("/admin/api/auth/sessions", authMW(protected))
 	mux.Handle("/admin/api/auth/sessions/", authMW(protected))
 	mux.Handle("/admin/api/auth/set-password", authMW(protected))
+	mux.Handle("/admin/api/auth/shop-pending-link/consume", authMW(protected))
 	mux.Handle("/admin/api/auth/tenants", authMW(protected))
 	mux.Handle("/admin/api/auth/tenants/select", authMW(protected))
 	mux.Handle("/admin/api/auth/invitations", authMW(protected))

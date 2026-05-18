@@ -198,7 +198,7 @@ func TestTOTP_DisableClearsState(t *testing.T) {
 	setup, _ := uc.SetupTOTP(context.Background(), user.ID, "u@x")
 	_ = uc.ConfirmTOTP(context.Background(), user.ID, generateCode(setup.Secret))
 
-	if err := uc.DisableTOTP(context.Background(), user.ID); err != nil {
+	if err := uc.DisableTOTP(context.Background(), user.ID, generateCode(setup.Secret)); err != nil {
 		t.Fatalf("DisableTOTP: %v", err)
 	}
 	if auth.enabled[user.ID] {
@@ -336,16 +336,10 @@ var _ ports.ChallengePort = (*fakeChallenges)(nil)
 // TestScenario_089_DisableTOTP_RequiresReAuth verifies:
 // «Я как пользователь могу выключить TOTP (Settings → Security → Disable
 // 2FA) — перед выключением фронт требует повторного ввода пароля + TOTP-
-// кода (re-auth, защита от ZB-takeover).» (sec 13, scenario 89)
+// кода (re-auth, защита от session-takeover).» (sec 13, scenario 89)
 //
-// EXPECTED TO FAIL: scenario 89 NOT implemented. TwoFactorUseCase.DisableTOTP
-// today takes only userID and unconditionally clears the secret + flips
-// totp_enabled_at=NULL. There is no password / TOTP-code re-auth gate.
-//
-// This test exercises the desired safe contract: DisableTOTP must require
-// either the current TOTP code OR a recent password re-auth before
-// proceeding. Until that's implemented, the gate is absent and TOTP can be
-// disabled by anyone holding a session token (cookie/JWT hijack scenarios).
+// Re-auth gate added in Alpha 1.0.0: DisableTOTP now requires the current
+// TOTP code as proof of possession. Empty code or wrong code → 401.
 func TestScenario_089_DisableTOTP_RequiresReAuth(t *testing.T) {
 	uc, auth, _, _, _ := mk2FAUC()
 	_, _ = auth.CreateUser(context.Background(), &domain.AdminUser{Email: "u@x", TenantID: "t1"})
@@ -354,9 +348,16 @@ func TestScenario_089_DisableTOTP_RequiresReAuth(t *testing.T) {
 	setup, _ := uc.SetupTOTP(context.Background(), user.ID, "u@x")
 	_ = uc.ConfirmTOTP(context.Background(), user.ID, generateCode(setup.Secret))
 
-	// Today DisableTOTP succeeds without any extra credentials.
-	// The SAFE contract: it should require a fresh code or password.
-	if err := uc.DisableTOTP(context.Background(), user.ID); err == nil {
-		t.Errorf("scenario 89: DisableTOTP succeeded without re-auth — gap (FE re-auth absent + BE doesn't enforce)")
+	// No code — must reject.
+	if err := uc.DisableTOTP(context.Background(), user.ID, ""); err == nil {
+		t.Error("DisableTOTP with empty code must reject (re-auth gate)")
+	}
+	// Wrong code — must reject.
+	if err := uc.DisableTOTP(context.Background(), user.ID, "000000"); err == nil {
+		t.Error("DisableTOTP with wrong code must reject (re-auth gate)")
+	}
+	// Correct fresh code — must succeed.
+	if err := uc.DisableTOTP(context.Background(), user.ID, generateCode(setup.Secret)); err != nil {
+		t.Errorf("DisableTOTP with valid code must succeed: %v", err)
 	}
 }

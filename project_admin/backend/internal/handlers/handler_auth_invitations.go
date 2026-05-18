@@ -60,6 +60,29 @@ func (h *InvitationsHandler) HandleCreate(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// HandleResend — authenticated. POST /admin/api/auth/invitations/{id}/resend.
+// Re-emails an existing invitation with a freshly-rotated token. Used when
+// the initial mailer.Send failed (sc 82) — invitee stranded.
+func (h *InvitationsHandler) HandleResend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	// Path: /admin/api/auth/invitations/{id}/resend → extract {id}.
+	path := strings.TrimPrefix(r.URL.Path, "/admin/api/auth/invitations/")
+	id := strings.TrimSuffix(path, "/resend")
+	if id == "" || id == path {
+		writeError(w, http.StatusBadRequest, "invitation id required in path")
+		return
+	}
+	if err := h.invites.Resend(r.Context(), id); err != nil {
+		h.log.Warn("invitation_resend_failed", "id", id, "error", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // HandlePreview is public — anyone with the token sees what they've been
 // invited to. No authentication required.
 func (h *InvitationsHandler) HandlePreview(w http.ResponseWriter, r *http.Request) {

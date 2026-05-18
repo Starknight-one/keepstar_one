@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
+	"keepstar-admin/internal/domain"
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/usecases"
 )
@@ -66,7 +68,8 @@ func (h *TwoFactorHandler) HandleConfirmTOTP(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// HandleDisableTOTP — authenticated. Clears secret + enabled flag.
+// HandleDisableTOTP — authenticated. Requires a current TOTP code in the body
+// as re-auth proof of possession (sc 89). Body: {"code":"123456"}.
 func (h *TwoFactorHandler) HandleDisableTOTP(w http.ResponseWriter, r *http.Request) {
 	if h.tf == nil {
 		writeError(w, http.StatusNotImplemented, "2fa not configured")
@@ -76,7 +79,15 @@ func (h *TwoFactorHandler) HandleDisableTOTP(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusMethodNotAllowed, "POST only")
 		return
 	}
-	if err := h.tf.DisableTOTP(r.Context(), UserID(r.Context())); err != nil {
+	var req struct {
+		Code string `json:"code"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := h.tf.DisableTOTP(r.Context(), UserID(r.Context()), req.Code); err != nil {
+		if errors.Is(err, domain.ErrInvalidCredentials) {
+			writeError(w, http.StatusUnauthorized, "invalid totp code")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

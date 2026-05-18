@@ -14,12 +14,19 @@ type UserTenantsRepo struct{ client *Client }
 func NewUserTenantsRepo(c *Client) *UserTenantsRepo { return &UserTenantsRepo{client: c} }
 
 func (r *UserTenantsRepo) ListForUser(ctx context.Context, userID string) ([]ports.UserTenantMembership, error) {
+	// Picker filter (scenario 177): hide tenants whose every integration is
+	// disconnected. Tenants with no integrations at all (fresh manual signups)
+	// still surface so the user can configure their first source.
 	rows, err := r.client.pool.Query(ctx,
 		`SELECT ut.tenant_id::text, COALESCE(t.slug, ''), COALESCE(t.name, ''), ut.role, ut.created_at
 		 FROM admin.user_tenants ut
 		 JOIN catalog.tenants t ON t.id = ut.tenant_id
 		 WHERE ut.user_id = $1
 		   AND t.deleted_at IS NULL
+		   AND (
+		     NOT EXISTS (SELECT 1 FROM admin.tenant_integrations WHERE tenant_id = t.id)
+		     OR EXISTS (SELECT 1 FROM admin.tenant_integrations WHERE tenant_id = t.id AND status != 'disconnected')
+		   )
 		 ORDER BY ut.created_at ASC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list user tenants: %w", err)

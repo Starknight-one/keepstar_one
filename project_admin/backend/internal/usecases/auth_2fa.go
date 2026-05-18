@@ -124,9 +124,27 @@ func (uc *TwoFactorUseCase) VerifyTOTP(ctx context.Context, userID, code, ua, ip
 	return uc.issuePair(ctx, userID, ua, ip)
 }
 
-// DisableTOTP clears the secret + enabled flag. Caller should re-authenticate
-// first (this is wired as a protected route).
-func (uc *TwoFactorUseCase) DisableTOTP(ctx context.Context, userID string) error {
+// DisableTOTP clears the secret + enabled flag. Requires the current TOTP
+// code as re-auth proof of possession (sc 89) — session hijack alone shouldn't
+// be enough to strip the second factor.
+func (uc *TwoFactorUseCase) DisableTOTP(ctx context.Context, userID, code string) error {
+	if code == "" {
+		return domain.ErrInvalidCredentials
+	}
+	enc, enabled, err := uc.users.GetTOTPSecret(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !enabled || enc == "" {
+		return errors.New("totp not enabled")
+	}
+	plain, err := uc.box.Open(enc)
+	if err != nil {
+		return fmt.Errorf("decrypt secret: %w", err)
+	}
+	if !totp.Verify(string(plain), code) {
+		return domain.ErrInvalidCredentials
+	}
 	return uc.users.DisableTOTP(ctx, userID)
 }
 

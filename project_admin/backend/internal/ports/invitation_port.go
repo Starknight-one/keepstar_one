@@ -42,4 +42,8 @@ type InvitationPort interface {
 	Preview(ctx context.Context, tokenHash string) (*InvitationPreview, error)
 	// CountRecentByInviter is used by the rate-limit check (max N per 24h).
 	CountRecentByInviter(ctx context.Context, inviterID string, since time.Time) (int, error)
+	// GetByID fetches an invitation row by primary key — used by Resend to
+	// pull the original recipient/tenant/role tuple. Returns (nil, nil) when
+	// no row matches.
+	GetByID(ctx context.Context, id string) (*Invitation, error)
 }

@@ -24,6 +24,26 @@ func (r *InvitationsRepo) Create(ctx context.Context, inv *ports.Invitation) err
 	).Scan(&inv.ID, &inv.CreatedAt)
 }
 
+func (r *InvitationsRepo) GetByID(ctx context.Context, id string) (*ports.Invitation, error) {
+	q := `SELECT id, tenant_id::text, email::text, role, token_hash,
+				 COALESCE(inviter_id::text, ''), expires_at, accepted_at, created_at
+		  FROM admin.invitations
+		  WHERE id = $1
+		  LIMIT 1`
+	var inv ports.Invitation
+	err := r.client.pool.QueryRow(ctx, q, id).Scan(
+		&inv.ID, &inv.TenantID, &inv.Email, &inv.Role, &inv.TokenHash,
+		&inv.InviterID, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get invitation by id: %w", err)
+	}
+	return &inv, nil
+}
+
 func (r *InvitationsRepo) FindActive(ctx context.Context, tokenHash string) (*ports.Invitation, error) {
 	q := `SELECT id, tenant_id::text, email::text, role, token_hash,
 				 COALESCE(inviter_id::text, ''), expires_at, accepted_at, created_at
