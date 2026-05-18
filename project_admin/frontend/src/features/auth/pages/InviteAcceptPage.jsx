@@ -4,6 +4,7 @@ import AuthShell from '../layout/AuthShell.jsx'
 import PillButton from '../layout/PillButton.jsx'
 import { useAuth } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
+import { postSignInPath } from '../postSignIn.js'
 
 // InviteAcceptPage is the landing page for `/auth/accept-invite?token=...`
 // linked from the invitation email. If the invitee is already signed in we
@@ -42,7 +43,7 @@ export default function InviteAcceptPage() {
       if (data?.access_token) {
         adoptSession(data, 'email')
       }
-      navigate('/auth/pick-workspace')
+      navigate(postSignInPath(data?.user))
     } catch (err) {
       setError(err.message || 'Could not accept invitation.')
       setAccepting(false)

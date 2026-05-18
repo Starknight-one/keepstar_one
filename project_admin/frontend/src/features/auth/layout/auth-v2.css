@@ -389,3 +389,33 @@
   font-size: 14px;
   margin-bottom: 16px;
 }
+
+/* Scenario 14: remember-me checkbox */
+.auth-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #4a5568;
+  cursor: pointer;
+  user-select: none;
+}
+.auth-remember input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #5BA4D9;
+}
+
+/* Scenario 39: text-style "Skip for now" secondary action under the form */
+.auth-link-button {
+  background: transparent;
+  border: none;
+  color: #5BA4D9;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 8px 0;
+  text-decoration: underline;
+}
+.auth-link-button:hover { color: #1f4868; }
+.auth-link-button:disabled { color: #9ca3af; cursor: not-allowed; }

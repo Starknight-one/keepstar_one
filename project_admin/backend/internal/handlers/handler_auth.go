@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"keepstar-admin/internal/domain"
 	"keepstar-admin/internal/logger"
@@ -142,4 +143,40 @@ func (h *AuthHandler) HandleGetTenant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, tenant)
+}
+
+// HandleSetPassword — POST /admin/api/auth/set-password
+// Body: {"password": "..."}
+// Auth-required. Lets a passwordless user (created via magic-link / OAuth)
+// define a password the first time. Returns 409 if the user already has
+// one (they should use the password-reset flow). Scenario 39.
+func (h *AuthHandler) HandleSetPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	uid := UserID(r.Context())
+	if uid == "" {
+		writeError(w, http.StatusUnauthorized, "auth required")
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := h.auth.SetPasswordForPasswordless(r.Context(), uid, req.Password); err != nil {
+		msg := err.Error()
+		// The "already set" guard is a 409 so the frontend can branch into
+		// the reset flow. Strength + length issues come back as 400.
+		if strings.Contains(msg, "password already set") {
+			writeError(w, http.StatusConflict, msg)
+			return
+		}
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

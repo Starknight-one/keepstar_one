@@ -105,37 +105,19 @@ func TestScenario_032_TelegramNewUser_CreatesTenantAndUser(t *testing.T) {
 	}
 }
 
-// TestScenario_033_TelegramExistingEmailUser_LinksTelegramID verifies:
-// «Я как существующий пользователь (email+пароль или Google) с тем же email
-// нажимаю Telegram — backend находит меня по email, линкует telegram_id,
-// показывает linked-баннер.» (sec 5, scenario 33)
+// TestScenario_033_TelegramExistingEmailUser_LinksTelegramID was the
+// original "Telegram → existing email user merge by email" scenario.
 //
-// EXPECTED TO FAIL: scenario 33 NOT implemented. The current code in
-// auth_telegram.go:findOrCreateOIDC has no email-cascade fallback — it only
-// keys off telegram_id and synthesises an @telegram.keepstar.local email for
-// new users, never linking to a pre-existing email account. Also,
-// telegram.OIDCUserInfo doesn't carry an Email field today, so even if the
-// cascade were added, Telegram would need email scope first.
+// MARKED N/A: Telegram OIDC scope does NOT expose email — the OIDCUserInfo
+// payload contains only sub / first_name / last_name / username / photo_url.
+// Without an email from Telegram there's no way to cascade onto an existing
+// account by email; the only stable identifier is telegram_id (scenario 34
+// covers the fast-path).
+//
+// Kept as t.Skip rather than deleted so future readers see the scenario was
+// considered and dropped on purpose, not forgotten.
 func TestScenario_033_TelegramExistingEmailUser_LinksTelegramID(t *testing.T) {
-	uc, auth, _, _, _ := mkTelegramUC(true)
-	existing, _ := auth.CreateUser(context.Background(), &domain.AdminUser{
-		Email: "alice@example.com", TenantID: "t-alice", Role: domain.AdminRoleOwner,
-	})
-
-	user, err := uc.findOrCreateOIDC(context.Background(), &telegram.OIDCUserInfo{
-		Sub:       "777222",
-		Username:  "alice_tg",
-		FirstName: "Alice",
-	})
-	if err != nil {
-		t.Fatalf("findOrCreateOIDC: %v", err)
-	}
-	if user.ID != existing.ID {
-		t.Errorf("expected merge with existing alice@example.com (id=%s); got %s. Telegram-email merge is the gap.", existing.ID, user.ID)
-	}
-	if len(auth.linkLog) != 1 || auth.linkLog[0] != existing.ID {
-		t.Errorf("LinkTelegramID not invoked on existing user: log=%v", auth.linkLog)
-	}
+	t.Skip("scenario 33 N/A — Telegram OIDC does not expose email scope; see docs/pre_launch_scenarios.md")
 }
 
 // TestScenario_034_TelegramExistingUser_FastPath verifies:

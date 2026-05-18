@@ -5,22 +5,50 @@ const AuthContext = createContext(null)
 
 const REFRESH_KEY = 'refresh_token'
 const LAST_METHOD_KEY = 'last_login_method'
+const REMEMBER_KEY = 'remember_me'
 // 15a: surface "Last time you signed in with X" on /signin so returning
 // users skip retyping. Stored client-side only (per-browser, no backend
 // endpoint) to avoid the anti-enumeration trap of an email→method lookup.
 const LAST_METHOD_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
-function setRefreshToken(t) {
-  if (t) localStorage.setItem(REFRESH_KEY, t)
+// Scenario 14: "Remember me" checkbox toggles storage strategy for the
+// refresh token. Backend always issues a 30-day refresh; what changes is
+// where the frontend keeps it:
+//   - remember=true  → localStorage (survives browser restart, 30 days)
+//   - remember=false → sessionStorage (cleared when the tab closes)
+// Access token always lives in apiClient (memory) so a closed-tab session
+// can't ride on a stolen localStorage entry alone.
+function setRefreshToken(t, remember) {
+  if (!t) return
+  // Always wipe both stores first to avoid drift when the user toggles
+  // remember between sessions.
+  sessionStorage.removeItem(REFRESH_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+  if (remember) {
+    localStorage.setItem(REFRESH_KEY, t)
+    localStorage.setItem(REMEMBER_KEY, '1')
+  } else {
+    sessionStorage.setItem(REFRESH_KEY, t)
+    localStorage.removeItem(REMEMBER_KEY)
+  }
 }
 
 function getRefreshToken() {
-  return localStorage.getItem(REFRESH_KEY)
+  return localStorage.getItem(REFRESH_KEY) || sessionStorage.getItem(REFRESH_KEY)
+}
+
+function getRememberMe() {
+  // Default to true so existing sessions (pre-feature) keep behaving like
+  // "remember me on". Users who explicitly uncheck the box flip this to false.
+  return localStorage.getItem(REMEMBER_KEY) !== '0'
 }
 
 function clearRefreshToken() {
   localStorage.removeItem(REFRESH_KEY)
+  sessionStorage.removeItem(REFRESH_KEY)
 }
+
+export { getRememberMe }
 
 // rememberLastMethod stores {method, email, ts} so the next /signin can show
 // the hint. Called at every successful auth-state install (login, signup,
@@ -87,7 +115,10 @@ export function AuthProvider({ children }) {
     try {
       const data = await api.post('/auth/sessions/refresh', { refresh_token: rt })
       setToken(data.access_token)
-      setRefreshToken(data.refresh_token)
+      // Preserve the user's remember-me choice across rotation — if they
+      // signed in with the box unchecked, the new refresh stays in
+      // sessionStorage too.
+      setRefreshToken(data.refresh_token, getRememberMe())
       scheduleRefresh(data.access_token)
     } catch (_) {
       clearToken()
@@ -116,7 +147,7 @@ export function AuthProvider({ children }) {
     }
   }, [scheduleRefresh])
 
-  async function login(email, password) {
+  async function login(email, password, remember = true) {
     const data = await api.post('/auth/login', { email, password })
     // 2FA gate — caller must hand pre_2fa_token to /2fa/verify/*. Do NOT
     // install any tokens here; the user isn't authenticated yet.
@@ -126,16 +157,16 @@ export function AuthProvider({ children }) {
       setToken(access)
       scheduleRefresh(access)
     }
-    if (data.refresh_token) setRefreshToken(data.refresh_token)
+    if (data.refresh_token) setRefreshToken(data.refresh_token, remember)
     setUser(data.user)
     rememberLastMethod('email', email)
     return data
   }
 
-  async function signup(email, password, companyName) {
+  async function signup(email, password, companyName, remember = true) {
     const data = await api.post('/auth/signup', { email, password, companyName })
     setToken(data.access_token || data.token)
-    if (data.refresh_token) setRefreshToken(data.refresh_token)
+    if (data.refresh_token) setRefreshToken(data.refresh_token, remember)
     setUser(data.user)
     scheduleRefresh(data.access_token || data.token)
     rememberLastMethod('email', email)
@@ -146,10 +177,14 @@ export function AuthProvider({ children }) {
   // magic-link / invite accept) and installs the tokens + user state exactly
   // as login() would have. `method` is one of 'email' | 'google' | 'telegram'
   // — feeds the 15a "last signed in with X" hint on /signin.
+  //
+  // OAuth/magic-link flows can't show a "remember me" checkbox (we're already
+  // mid-redirect), so they inherit whatever the user picked the last time on
+  // /signin via getRememberMe(). Default = true for first-ever OAuth users.
   function adoptSession(data, method) {
     const access = data.access_token || data.token
     setToken(access)
-    if (data.refresh_token) setRefreshToken(data.refresh_token)
+    if (data.refresh_token) setRefreshToken(data.refresh_token, getRememberMe())
     setUser(data.user)
     scheduleRefresh(access)
     if (method) rememberLastMethod(method, data?.user?.email)

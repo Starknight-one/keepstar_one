@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import AuthShell from '../layout/AuthShell.jsx'
 import { useAuth } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
+import { postSignInPath } from '../postSignIn.js'
 
 // OAuthLoadingPage catches Google's redirect back with ?code=…&state=…,
 // POSTs both to the backend, and installs the returned tokens. On any error
@@ -38,12 +39,15 @@ export default function OAuthLoadingPage() {
         // Auto-merge: backend attached google_sub to an existing email account.
         // Surface a "Welcome back" banner on the destination page so the user
         // sees what just happened instead of silently landing in a familiar inbox.
+        const base = postSignInPath(data?.user)
         const linked = data && data.linked_from_email
-        if (linked) {
+        if (linked && base === '/auth/pick-workspace') {
+          // Welcome-back banner only makes sense when landing on the picker —
+          // not when we're showing the set-password promo.
           const q = `?welcome_back=1&email=${encodeURIComponent(linked)}`
-          navigate(`/auth/pick-workspace${q}`, { replace: true })
+          navigate(`${base}${q}`, { replace: true })
         } else {
-          navigate('/auth/pick-workspace', { replace: true })
+          navigate(base, { replace: true })
         }
       })
       .catch((err) => {

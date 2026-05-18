@@ -338,10 +338,14 @@ func TestE2E_Scenario_032_TelegramStart(t *testing.T) {
 }
 
 // TestE2E_Scenario_038_ForgotPassword_AnyEmail_Returns200 verifies sec 6
-// scenario 38 + sec 15 scenario 97: /auth/forgot is always 200 (anti-
-// enumeration), regardless of whether the email exists.
+// scenario 38 + sec 15 scenario 97: /auth/password/forgot is always 200
+// (anti-enumeration), regardless of whether the email exists.
+//
+// Note: backend route is `/admin/api/auth/password/forgot` (matches
+// frontend ForgotPasswordPage). Earlier draft of this test hit the wrong
+// `/auth/forgot` path which falls through to the SPA — fake 200 from HTML.
 func TestE2E_Scenario_038_ForgotPassword_AnyEmail_Returns200(t *testing.T) {
-	resp, body := doRequest(t, http.MethodPost, "/admin/api/auth/forgot", map[string]string{
+	resp, body := doRequest(t, http.MethodPost, "/admin/api/auth/password/forgot", map[string]string{
 		"email": testEmail("forgot-unknown"),
 	}, nil)
 	if resp.StatusCode == http.StatusNotFound {
@@ -349,6 +353,10 @@ func TestE2E_Scenario_038_ForgotPassword_AnyEmail_Returns200(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status=%d, want 200 (anti-enum); body=%s", resp.StatusCode, body)
+	}
+	// Defend against SPA-fallback false-positive: real handler returns JSON.
+	if strings.HasPrefix(string(body), "<!DOCTYPE html>") {
+		t.Errorf("SPA fallback served instead of JSON — endpoint path wrong: body=%s", string(body)[:120])
 	}
 }
 

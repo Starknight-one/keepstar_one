@@ -4,6 +4,7 @@ import AuthShell from '../layout/AuthShell.jsx'
 import PillButton from '../layout/PillButton.jsx'
 import { useAuth, getLastMethod } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
+import { postSignInPath } from '../postSignIn.js'
 
 const METHOD_LABEL = {
   email: 'email',
@@ -16,6 +17,7 @@ export default function SignInPage() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(true)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [flags, setFlags] = useState({ google: false, email: false, telegram: { enabled: false } })
@@ -72,12 +74,12 @@ export default function SignInPage() {
     setError('')
     setLoading(true)
     try {
-      const data = await login(email, password)
+      const data = await login(email, password, remember)
       if (data?.requires_2fa) {
         navigate('/auth/2fa', { state: { pre2faToken: data.pre_2fa_token, email } })
         return
       }
-      navigate('/auth/pick-workspace')
+      navigate(postSignInPath(data?.user))
     } catch (err) {
       setError(err.message || 'Invalid email or password')
     } finally {
@@ -165,6 +167,15 @@ export default function SignInPage() {
             </div>
           )}
         </div>
+
+        <label className="auth-remember">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          <span>Remember me on this device</span>
+        </label>
 
         <PillButton variant="primary" block type="submit" disabled={loading}>
           {loading ? 'Signing in…' : 'Sign in'}

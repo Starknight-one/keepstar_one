@@ -11,6 +11,8 @@ import SessionExpiredPage from './features/auth/pages/SessionExpiredPage.jsx'
 import OAuthLoadingPage from './features/auth/pages/OAuthLoadingPage.jsx'
 import TelegramCallbackPage from './features/auth/pages/TelegramCallbackPage.jsx'
 import MagicLinkPage from './features/auth/pages/MagicLinkPage.jsx'
+import MagicLinkExpiredPage from './features/auth/pages/MagicLinkExpiredPage.jsx'
+import SetPasswordPromoPage from './features/auth/pages/SetPasswordPromoPage.jsx'
 import InstallCompletePage from './features/auth/pages/InstallCompletePage.jsx'
 import AuthErrorPage from './features/auth/pages/AuthErrorPage.jsx'
 import TwoFactorPage from './features/auth/pages/TwoFactorPage.jsx'
@@ -59,6 +61,8 @@ export default function App() {
       <Route path="/auth/google/callback" element={<OAuthLoadingPage />} />
       <Route path="/auth/telegram/callback" element={<TelegramCallbackPage />} />
       <Route path="/auth/magic" element={<MagicLinkPage />} />
+      <Route path="/auth/magic-expired" element={<MagicLinkExpiredPage />} />
+      <Route path="/auth/set-password-promo" element={<ProtectedRoute><SetPasswordPromoPage /></ProtectedRoute>} />
       <Route path="/auth/install-complete" element={<InstallCompletePage />} />
       <Route path="/auth/error" element={<AuthErrorPage />} />
       <Route path="/auth/2fa" element={<TwoFactorPage />} />

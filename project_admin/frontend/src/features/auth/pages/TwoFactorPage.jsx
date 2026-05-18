@@ -5,6 +5,7 @@ import PillButton from '../layout/PillButton.jsx'
 import CodeInput from '../layout/CodeInput.jsx'
 import { useAuth } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
+import { postSignInPath } from '../postSignIn.js'
 
 // TwoFactorPage finishes a login flow that returned requires_2fa:true. It
 // toggles between TOTP (default for users with an authenticator app) and an
@@ -44,7 +45,7 @@ export default function TwoFactorPage() {
         ? await authApi.verifyTOTP(code, pre2faToken)
         : await authApi.verifyEmail2FA(code, pre2faToken)
       adoptSession(data, 'email')
-      navigate('/auth/pick-workspace')
+      navigate(postSignInPath(data?.user))
     } catch (err) {
       setError(err.message || 'Invalid code')
     } finally {

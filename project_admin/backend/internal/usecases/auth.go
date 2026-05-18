@@ -232,6 +232,31 @@ func (uc *AuthUseCase) GetMe(ctx context.Context, userID string) (*domain.AdminU
 	return uc.auth.GetUserByID(ctx, userID)
 }
 
+// SetPasswordForPasswordless lets an authenticated user who currently has no
+// password (signed up via magic-link / OAuth) define one for the first time.
+// Refuses if a password already exists — those users go through the regular
+// password-reset flow.
+//
+// Scenario 39: shown as a one-shot promo after first magic-link / OAuth
+// sign-in so the user can fall back to email+password later.
+func (uc *AuthUseCase) SetPasswordForPasswordless(ctx context.Context, userID, newPassword string) error {
+	if err := validatePasswordStrength(newPassword); err != nil {
+		return err
+	}
+	user, err := uc.auth.GetUserByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("load user: %w", err)
+	}
+	if user.PasswordHash != "" {
+		return fmt.Errorf("password already set — use the reset flow")
+	}
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	return uc.auth.UpdatePasswordHash(ctx, userID, string(hashed))
+}
+
 func (uc *AuthUseCase) GetTenant(ctx context.Context, tenantID string) (*domain.Tenant, error) {
 	return uc.catalog.GetTenantByID(ctx, tenantID)
 }

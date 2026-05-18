@@ -44,6 +44,11 @@ export const authApi = {
   listSessions: () => api.get('/auth/sessions'),
   revokeSession: (id) => api.del(`/auth/sessions/${encodeURIComponent(id)}`),
 
+  // Scenario 39: passwordless user (magic-link / OAuth signup) sets their
+  // first password via the post-sign-in promo. Returns 409 if a password is
+  // already set — frontend redirects to the regular reset flow then.
+  setPassword: (password) => api.post('/auth/set-password', { password }),
+
   // Invitations. Create runs protected (current user is the inviter).
   // Preview + accept are public — the token in the URL is the credential.
   createInvite: (email, role) => api.post('/auth/invitations', { email, role }),

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import AuthShell from '../layout/AuthShell.jsx'
 import { useAuth } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
+import { postSignInPath } from '../postSignIn.js'
 
 // TelegramCallbackPage handles Telegram's Login Widget return.
 //
@@ -46,7 +47,7 @@ export default function TelegramCallbackPage() {
       .then((data) => {
         adoptSession(data, 'telegram')
         setStatus('Success — redirecting…')
-        navigate('/auth/pick-workspace', { replace: true })
+        navigate(postSignInPath(data?.user), { replace: true })
       })
       .catch((err) => {
         const reason = (err && err.message) || 'telegram_failed'

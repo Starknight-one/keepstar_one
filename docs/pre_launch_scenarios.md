@@ -1,5 +1,7 @@
 # Pre-launch user scenarios — пункты 1 (auth) + 2 (PIM)
 
+> Текущая версия проекта: **Alpha 0.5.0** (см. `VERSION` в корне).
+
 > Каталог всех end-to-end пользовательских сценариев для прод-готового продукта.
 > Формат: **что делает пользователь** + **что под капотом** (БД / email / UI / state / edge case).
 > Помечай: ✅ ок / ⚠ полу-ок / ❌ не работает / ❓ не проверял.
@@ -40,7 +42,7 @@
 
 13. Я как пользователь с включённой TOTP вхожу через email+пароль — НЕ получаю access токен, получаю `pre_2fa_token` (TTL 5м) и `requires_2fa: true`. ✅ (unit — TOTP path в `auth_2fa_test.go`)
 
-14. Я как пользователь нажимаю «remember me» — refresh token хранится в localStorage 30 дней. ❓ (frontend-only — backend always issues 30d refresh)
+14. Я как пользователь нажимаю «remember me» — refresh token хранится в localStorage 30 дней. ✅ *(fixed: чекбокс "Remember me on this device" на /signin, по умолчанию ON. ON → refresh в localStorage (30 дней, переживает рестарт браузера). OFF → sessionStorage (стирается при закрытии вкладки). Бэк всегда выдаёт 30-day refresh — фронт решает где хранить. `getRememberMe()` сохраняет выбор для silent refresh после rotation)*
 
 15. Я как залогиненный пользователь нажимаю «sign out» — refresh token revoke'ается, browser cookies очищаются, редирект на /signin. ✅ (http + e2e — `TestE2E_Scenario_015_Logout`)
 
@@ -88,7 +90,7 @@
 
   - 32b. Start endpoint возвращает ошибку если OIDC не сконфигурирован (frontend не рендерит мёртвую кнопку). ✅ (unit — `TestScenario_032b_TelegramStart_RequiresOIDC`)
 
-33. Я как существующий пользователь (email+пароль или Google) с тем же email нажимаю Telegram — backend находит меня по email, линкует telegram_id, показывает linked-баннер. ❌ *(gap: `findOrCreateOIDC` в `auth_telegram.go:124` каскадит ТОЛЬКО по `telegram_id`, не по email; синтезирует `<username>@telegram.keepstar.local` для нового юзера. Кроме того `telegram.OIDCUserInfo` не содержит `email` поле — Telegram не отдаёт email-scope. Фикс: (а) запросить email scope в Telegram OIDC, (б) добавить step 2 cascade по email аналогично Google. Тест: `TestScenario_033_TelegramExistingEmailUser_LinksTelegramID`)*
+33. ~~Я как существующий пользователь (email+пароль или Google) с тем же email нажимаю Telegram — backend находит меня по email, линкует telegram_id, показывает linked-баннер.~~ ⚠ **N/A** *(сценарий нерелевантен: Telegram OIDC не отдаёт email scope, у `OIDCUserInfo` нет поля email. Сделать email-cascade физически невозможно без изменений со стороны Telegram. Если когда-то Telegram добавит email — пересмотрим. Тест помечен `t.Skip`)*
 
 34. Я как существующий Telegram-пользователь (был раньше) — fast path step 1, без баннера. ✅ (unit — `TestScenario_034_TelegramExistingUser_FastPath`)
 
@@ -100,13 +102,13 @@
 
 ## 6. Magic link (без Shopify)
 
-38. Я как пользователь забыл пароль / хочу passwordless вход — на странице /signin кликаю «Forgot password / Sign in by email», ввожу email → backend создаёт challenge с code_hash, отправляет email через Resend с ссылкой `/auth/magic?code=<code>`. ⚠ backend ✅ / frontend ❌ *(backend подтверждён `TestScenario_097_ForgotPassword_IssuesResetChallenge` + e2e `TestE2E_Scenario_038_ForgotPassword_AnyEmail_Returns200`; фронт за фичефлагом — нужно открыть)*
+38. Я как пользователь забыл пароль / хочу passwordless вход — на странице /signin кликаю «Forgot password / Sign in by email», ввожу email → backend создаёт challenge с code_hash, отправляет email через Resend с ссылкой `/auth/magic?code=<code>`. ✅ *(на самом деле работает end-to-end: SignInPage показывает "Forgot password?" link (gated на flags.email который true на dev stand'е), кликабельно открывает ForgotPasswordPage → POST /admin/api/auth/password/forgot → 200 → CheckEmailPage с email-адресом и resend-кнопкой (45 сек cooldown). Reset link ведёт на ResetPasswordPage. В прошлом батче я ошибочно пометил это как frontend gap — мой e2e тест бил по неверному пути `/auth/forgot` и ловил SPA fallback HTML как fake-200. Пофикшен в этом батче. Единственное чего нельзя проверить отсюда — доставку email через Resend)*
 
-39. Я как пользователь кликаю по магик-линку → frontend POST'ит code → backend consume'ит challenge (помечает consumed_at), выдаёт session pair, **редирект на `/auth/magic-success` с формой «Set a new password now» + nudge «Recommended to set a new password right now since you came in via email link»**. После save → Settings. ❌ *(сейчас редирект сразу в /catalog, твой #39 — нужно добавить промежуточную страницу с принуждением к смене пароля)* 📗 *(можно ли скипнуть и продолжить без смены или обязательно?)*
+39. Я как пользователь кликаю по магик-линку → frontend POST'ит code → backend consume'ит challenge (помечает consumed_at), выдаёт session pair, **promo «Set a password now» — только если у юзера ещё нет пароля (`has_password=false`)**. Skip-button разрешён. После save или skip → Workspace picker → каталог. ✅ *(fixed: `AdminUser` JSON теперь содержит `has_password` (PasswordHash != ""). Helper `postSignInPath(user)` решает куда navigate'ить — passwordless → `/auth/set-password-promo`, иначе сразу в picker. Backend endpoint `POST /admin/api/auth/set-password` (auth-required, 409 если уже есть пароль). Promo показывается во ВСЕХ flows где adoptSession landing — magic-link, OAuth Google/Telegram, invite accept, login/signup. Решено 📗: skippable + триггерится только для passwordless юзеров, не для каждого magic-link clicker'а)*
 
-40. Я как пользователь кликаю по уже использованному магик-линку — экран **«This link is single-use, you've already used it»** + форма «Request a new one» (поле email + кнопка Send) + ссылка «Back to sign in». ⚠ backend ✅ / frontend ❌ *(backend: использованный код → 401 с message "link expired or already used" подтверждено `TestScenarioHTTP_040_MagicConsume_UsedLink_Returns401` + e2e `TestE2E_Scenario_040_MagicConsume_BadCode_Returns401`. Friendly экран с формой re-request — frontend gap)*
+40. Я как пользователь кликаю по уже использованному магик-линку — экран **«This link is single-use, you've already used it»** + форма «Request a new one» (поле email + кнопка Send) + ссылка «Back to sign in». ✅ *(fixed: MagicLinkPage парсит backend error на substring `/expired|already used|single-use/i` → редирект на `/auth/magic-expired` (новая страница `MagicLinkExpiredPage`). На странице — friendly заголовок «This link no longer works», форма с email + кнопка «Send me a new link» → POST /admin/api/auth/password/forgot (использован forgot endpoint, anti-enum), success-страница «Check your inbox», ссылка «Back to sign in»)*
 
-41. Я как пользователь кликаю по истёкшему магик-линку (>24h) — экран **«This link expired (links live for 24 hours)»** + та же форма «Request a new one» + ссылка «Back to sign in». ⚠ backend ✅ / frontend ❌ *(backend возвращает тот же 401 что для использованного. Differentiation между used и expired на бэке отсутствует — оба идут как `ErrInvalidCredentials`. Если нужны разные тексты — нужен gap-фикс на бэке: возвращать `link_expired` vs `link_used` маркер в JSON. Friendly экран — frontend)*
+41. Я как пользователь кликаю по истёкшему магик-линку (>24h) — экран **«This link expired (links live for 24 hours)»** + та же форма «Request a new one» + ссылка «Back to sign in». ✅ *(fixed: используется тот же `MagicLinkExpiredPage` что и для used — backend возвращает один error для обоих кейсов (`ErrInvalidCredentials`). UX-копирайт фреймит «no longer works» нейтрально, текст подходит для обоих случаев. Если в будущем понадобится разница — нужно дифференцировать в backend, но сейчас single screen покрывает оба сценария)*
 
 42. Я как пользователь получаю magic-link на email который НЕ зарегистрирован в системе — challenge не создаётся, email не уходит (молча no-op чтобы не утечь email-enumeration). ✅ (unit — `TestScenario_097b_ForgotPasswordUnknownEmail_Silent` + `TestMagicLink_Issue_EmptyEmailIsNoop`)
 
