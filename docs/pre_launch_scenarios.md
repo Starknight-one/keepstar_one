@@ -281,37 +281,35 @@
 
 ## 18. PIM — Discovery v2 (first_install)
 
-*Эта секция целиком покрывается batch 2 (требует FakeAgentSender — мок интерфейса AgentSender вместо живого Anthropic API; ~150 LOC scaffold).*
+111. Когда inbox_items наполнились впервые для нового tenant → apply_v2 видит artifact=NULL → cascade'ится в `discovery.Discover(trigger='first_install')`. ✅
 
-111. Когда inbox_items наполнились впервые для нового tenant → apply_v2 видит artifact=NULL → cascade'ится в `discovery.Discover(trigger='first_install')`. 🟡 batch 2
+112. Discovery agent запускается с Sonnet 4.6, $5 budget, 30 turns max, 10 min wallclock, prompt-cached system block. ✅
 
-112. Discovery agent запускается с Sonnet 4.6, $5 budget, 30 turns max, 10 min wallclock, prompt-cached system block. 🟡 batch 2
+113. Agent делает 5-15 tool calls (count_total, list_fields, sample_values, count_by, field_stats, peek_full_rows), стоит ~$0.04-0.06 для 50 SKU. ⚠ *(real cost — production observation, не unit; пайплайн юзает costForUsage и tokens — частично покрыт sc 115)*
 
-113. Agent делает 5-15 tool calls (count_total, list_fields, sample_values, count_by, field_stats, peek_full_rows), стоит ~$0.04-0.06 для 50 SKU. 🟡 batch 2 *(real-cost — production observation, не unit)*
+114. Agent коммитит artifact через `commit_artifact` tool → MappingArtifactV3 с branches[] (по одному per vertical) + classify_rules → сохраняется в `catalog.tenant_catalog_schema.mapping_artifact`. ✅
 
-114. Agent коммитит artifact через `commit_artifact` tool → MappingArtifactV3 с branches[] (по одному per vertical) + classify_rules → сохраняется в `catalog.tenant_catalog_schema.mapping_artifact`. 🟡 batch 2
+115. action_log пишет `discovery_start` (ok) и `discovery_done` (ok+committed:true). agent_runs хранит full timeline с tokens, cost, tool_calls JSONB. ✅
 
-115. action_log пишет `discovery_start` (ok) и `discovery_done` (ok+committed:true). agent_runs хранит full timeline с tokens, cost, tool_calls JSONB. 🟡 batch 2
+116. Если у tenant 10 SKU косметики — agent коммитит artifact с одним branch=cosmetics. ✅
 
-116. Если у tenant 10 SKU косметики — agent коммитит artifact с одним branch=cosmetics. 🟡 batch 2
+117. Если у tenant 10 cosmetics + 10 electronics — agent коммитит artifact с двумя branches и optionally classify_rules для disambiguation. ✅
 
-117. Если у tenant 10 cosmetics + 10 electronics — agent коммитит artifact с двумя branches и optionally classify_rules для disambiguation. 🟡 batch 2
+118. Если agent доходит до 90% от $5 budget — на следующем turn'е дополнительный nudge «force commit». ✅
 
-118. Если agent доходит до 90% от $5 budget — на следующем turn'е дополнительный nudge «force commit». 🟡 batch 2
+119. Если agent end_turn'ит без commit — до 3 nudge'ей «вы должны вызвать commit_artifact». Потом — fail. ✅
 
-119. Если agent end_turn'ит без commit — до 3 nudge'ей «вы должны вызвать commit_artifact». Потом — fail. 🟡 batch 2
-
-120. Если budget exhausted без commit — artifact_run помечается `budget_exhausted`, действующий artifact (если был) НЕ перезаписывается. 🟡 batch 2
+120. Если budget exhausted без commit — artifact_run помечается `budget_exhausted`, действующий artifact (если был) НЕ перезаписывается. ✅
 
 ## 19. PIM — Discovery v2 (mapping_miss / unknown_vertical)
 
-121. Когда apply_v2 натыкается на rule которая не может транформ'ить значение → wraps в mappingMissErr → action_log пишет `mapping_miss`, триггерит `discovery.Discover(trigger='mapping_miss')` с payload {inbox_item_id, offending_from, offending_to, reason}. ⚠ *(unit покрывает wrap + counter; action_log entry + cascade в discovery → batch 2)*
+121. Когда apply_v2 натыкается на rule которая не может транформ'ить значение → wraps в mappingMissErr → action_log пишет `mapping_miss`, триггерит `discovery.Discover(trigger='mapping_miss')` с payload {inbox_item_id, offending_from, offending_to, reason}. ✅
 
-122. Narrow discovery_v2 (mapping_miss) фокусируется на конкретном поле — system prompt инструктирует «не re-discover весь каталог», обычно 3-5 tool calls, $0.01. 🟡 batch 2
+122. Narrow discovery_v2 (mapping_miss) фокусируется на конкретном поле — system prompt инструктирует «не re-discover весь каталог», обычно 3-5 tool calls, $0.01. ✅ *(system prompt focus покрыт; «3-5 tool calls» — production observation)*
 
-123. После narrow discovery apply_v2 re-fetch'ит artifact и продолжает loop. 🟡 batch 2
+123. После narrow discovery apply_v2 re-fetch'ит artifact и продолжает loop. ✅
 
-124. Если за один apply-run сработало больше 3 mapping_miss подряд — дальнейшие НЕ триггерят discovery (защита от storm'а). ⚠ *(unit покрывает counter accumulation; 3-pass cap на discovery triggers → batch 2)*
+124. Если за один apply-run сработало больше 3 mapping_miss подряд — дальнейшие НЕ триггерят discovery (защита от storm'а). ✅
 
 125. Если row классифицируется в vertical для которого нет branch'a в artifact (например свежий tenant добавил товар категории furniture, а артефакт был cosmetics-only) → wraps в mapping_miss с trigger=unknown_vertical → narrow discovery добавляет недостающую branch. ✅ *(wrap + reason покрыт unit; addition of branch — batch 2)*
 
@@ -558,11 +556,6 @@
 **❌ Красные (не реализовано в коде, нужен фикс):**
 - **177** — Disconnected tenant НЕ скрывается из picker. `TenantsUseCase.List` (`internal/usecases/auth_tenants.go:28`) просто проксирует `memberships.ListForUser` — никакой фильтрации по `integrations.status`. Нужен refactor: join / second query / filter в use-case.
 
-**🟡 Batch 2 (требует FakeAgentSender для unit-тестирования LLM agent loop):**
-- Sec 18 — 111, 112, 114, 115, 116, 117, 118, 119, 120 (discovery_v2 first_install full coverage)
-- Sec 19 — 122, 123 (narrow discovery + re-fetch)
-- Sc 113 — real-cost ~$0.04-0.06 — production observation, не unit
-
 **📗 Открытые продуктовые решения (catalog):**
 - 145 — content moderation для junk-имён
 - 157 — auto-cleanup inbox при listing delete
@@ -591,7 +584,11 @@ project_admin/backend/
 │   ├── apply_v2_test.go                +7 (121, 124, 125, 133, 137, 138, 139)
 │   ├── update_orchestrator_test.go     +2 (163, 164)
 │   ├── ingest_shopify_test.go          NEW: 4 (155, 156, 159, 174)
-│   └── match_key_test.go               +1 (148)
+│   ├── match_key_test.go               +1 (148)
+│   │   --- catalog batch 2 (Alpha 0.7.0) ---
+│   └── discovery_v2_test.go            NEW: 12 (111, 112, 114, 115, 116,
+│                                             117, 118, 119, 120, 121+123,
+│                                             122, 124)
 ├── internal/handlers/
 │   └── auth_http_scenarios_test.go     NEW: 14 HTTP-layer scenarios
 └── e2e/
