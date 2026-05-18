@@ -4,6 +4,11 @@ import { api, setToken, clearToken } from '../../shared/api/apiClient.js'
 const AuthContext = createContext(null)
 
 const REFRESH_KEY = 'refresh_token'
+const LAST_METHOD_KEY = 'last_login_method'
+// 15a: surface "Last time you signed in with X" on /signin so returning
+// users skip retyping. Stored client-side only (per-browser, no backend
+// endpoint) to avoid the anti-enumeration trap of an email→method lookup.
+const LAST_METHOD_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 function setRefreshToken(t) {
   if (t) localStorage.setItem(REFRESH_KEY, t)
@@ -15,6 +20,32 @@ function getRefreshToken() {
 
 function clearRefreshToken() {
   localStorage.removeItem(REFRESH_KEY)
+}
+
+// rememberLastMethod stores {method, email, ts} so the next /signin can show
+// the hint. Called at every successful auth-state install (login, signup,
+// OAuth adopt, magic-link adopt).
+export function rememberLastMethod(method, email) {
+  if (!method) return
+  try {
+    localStorage.setItem(LAST_METHOD_KEY, JSON.stringify({
+      method, email: email || '', ts: Date.now(),
+    }))
+  } catch { /* localStorage full / disabled — silently skip */ }
+}
+
+// getLastMethod returns {method, email, ts} if recorded within 30 days, else null.
+export function getLastMethod() {
+  try {
+    const raw = localStorage.getItem(LAST_METHOD_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed?.method || !parsed?.ts) return null
+    if (Date.now() - parsed.ts > LAST_METHOD_TTL_MS) return null
+    return parsed
+  } catch {
+    return null
+  }
 }
 
 // Decode JWT exp (seconds) without verifying — we only need the timestamp to
@@ -97,6 +128,7 @@ export function AuthProvider({ children }) {
     }
     if (data.refresh_token) setRefreshToken(data.refresh_token)
     setUser(data.user)
+    rememberLastMethod('email', email)
     return data
   }
 
@@ -106,17 +138,21 @@ export function AuthProvider({ children }) {
     if (data.refresh_token) setRefreshToken(data.refresh_token)
     setUser(data.user)
     scheduleRefresh(data.access_token || data.token)
+    rememberLastMethod('email', email)
     return data
   }
 
-  // adoptSession takes a server auth response (from Google/Telegram OAuth) and
-  // installs the tokens + user state exactly as login() would have.
-  function adoptSession(data) {
+  // adoptSession takes a server auth response (from Google/Telegram OAuth /
+  // magic-link / invite accept) and installs the tokens + user state exactly
+  // as login() would have. `method` is one of 'email' | 'google' | 'telegram'
+  // — feeds the 15a "last signed in with X" hint on /signin.
+  function adoptSession(data, method) {
     const access = data.access_token || data.token
     setToken(access)
     if (data.refresh_token) setRefreshToken(data.refresh_token)
     setUser(data.user)
     scheduleRefresh(access)
+    if (method) rememberLastMethod(method, data?.user?.email)
   }
 
   async function logout() {

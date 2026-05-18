@@ -28,7 +28,7 @@ export default function MagicLinkPage() {
 
     authApi.magicConsume(code)
       .then((data) => {
-        adoptSession(data)
+        adoptSession(data, 'email')
         setStatus('Success — redirecting…')
         navigate('/auth/pick-workspace', { replace: true })
       })

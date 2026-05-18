@@ -344,3 +344,77 @@ func TestIssueTokens_PreTFAWhen2FAEnabled(t *testing.T) {
 	// pre2faTTL accessed indirectly via SetTwoFactor — leave to dedicated test.
 	_ = time.Minute
 }
+
+// =====================================================================
+// Pre-launch scenario verification (docs/pre_launch_scenarios.md sec 1)
+// =====================================================================
+
+// TestScenario_005_SignupGarbageCompanyName_SlugFallsBackToStore verifies:
+// «Я как пользователь регистрируюсь с companyName "!!!" (мусор) — slug
+// fallback'ается в `store`.» (sec 1, scenario 5)
+func TestScenario_005_SignupGarbageCompanyName_SlugFallsBackToStore(t *testing.T) {
+	uc, _, cat, _ := mkAuthUC()
+	if _, err := uc.Signup(context.Background(), SignupRequest{
+		Email: "junk@example.com", Password: "supersecret", CompanyName: "!!!",
+	}); err != nil {
+		t.Fatalf("Signup: %v", err)
+	}
+	if len(cat.createdLog) != 1 {
+		t.Fatalf("tenant not created")
+	}
+	if cat.createdLog[0].Slug != "store" {
+		t.Errorf("slug = %q, want 'store' (junk-name fallback)", cat.createdLog[0].Slug)
+	}
+}
+
+// TestScenario_006_SignupCompanyNameWithAmpersand_NormalizedSlug verifies:
+// «Я как пользователь регистрируюсь с companyName "Stone & Steel" — slug =
+// `stone-steel` (амперсанд нормализуется).» (sec 1, scenario 6)
+func TestScenario_006_SignupCompanyNameAmpersand_Normalized(t *testing.T) {
+	uc, _, cat, _ := mkAuthUC()
+	if _, err := uc.Signup(context.Background(), SignupRequest{
+		Email: "stone@example.com", Password: "supersecret", CompanyName: "Stone & Steel",
+	}); err != nil {
+		t.Fatalf("Signup: %v", err)
+	}
+	if len(cat.createdLog) != 1 {
+		t.Fatalf("tenant not created")
+	}
+	if cat.createdLog[0].Slug != "stone-steel" {
+		t.Errorf("slug = %q, want 'stone-steel'", cat.createdLog[0].Slug)
+	}
+}
+
+// TestScenario_007_SignupUppercaseEmail_StoredLowercaseAndCaseInsensitiveLogin verifies:
+// «Я как пользователь регистрируюсь с email в верхнем регистре `USER@X.com`
+// — в БД хранится lowercased; при следующем login регистро-нечувствительно.»
+// (sec 1, scenario 7)
+//
+// EXPECTED TO FAIL if Signup does NOT lowercase email on insert. Today's
+// AuthUseCase.Signup() passes Email through verbatim to CreateUser(),
+// relying on the adapter to lowercase. fakeAuth.CreateUser ALSO doesn't
+// lowercase the canonical stored key in this test (it lowercases for the
+// `users` map but stores u.Email as given). So the assertion below is the
+// document's contract — if it fails, signup is leaking the original case.
+func TestScenario_007_SignupUppercaseEmail_StoredAndLoginCaseInsensitive(t *testing.T) {
+	uc, auth, _, _ := mkAuthUC()
+	if _, err := uc.Signup(context.Background(), SignupRequest{
+		Email: "USER@X.COM", Password: "supersecret", CompanyName: "Acme",
+	}); err != nil {
+		t.Fatalf("Signup: %v", err)
+	}
+	stored, err := auth.GetUserByEmail(context.Background(), "user@x.com")
+	if err != nil {
+		t.Fatalf("GetUserByEmail(lowercased): %v", err)
+	}
+	if stored.Email != "user@x.com" {
+		t.Errorf("scenario 7: stored email = %q, want 'user@x.com' (lowercased)", stored.Email)
+	}
+	// Login with the original case AND with all-lowercase must both work.
+	if _, err := uc.Login(context.Background(), LoginRequest{Email: "USER@X.COM", Password: "supersecret"}); err != nil {
+		t.Errorf("Login(uppercase): %v", err)
+	}
+	if _, err := uc.Login(context.Background(), LoginRequest{Email: "user@x.com", Password: "supersecret"}); err != nil {
+		t.Errorf("Login(lowercase): %v", err)
+	}
+}

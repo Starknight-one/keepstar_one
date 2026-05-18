@@ -43,7 +43,7 @@ export default function TwoFactorPage() {
       const data = mode === 'totp'
         ? await authApi.verifyTOTP(code, pre2faToken)
         : await authApi.verifyEmail2FA(code, pre2faToken)
-      adoptSession(data)
+      adoptSession(data, 'email')
       navigate('/auth/pick-workspace')
     } catch (err) {
       setError(err.message || 'Invalid code')

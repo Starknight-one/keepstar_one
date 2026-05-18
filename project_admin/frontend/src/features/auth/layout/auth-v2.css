@@ -378,3 +378,14 @@
     padding: 48px 24px;
   }
 }
+
+/* 15a: returning-user hint on /signin */
+.auth-last-method-hint {
+  background: rgba(91, 164, 217, 0.10);
+  border: 1px solid rgba(91, 164, 217, 0.30);
+  color: #1f4868;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}

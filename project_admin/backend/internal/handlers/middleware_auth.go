@@ -11,14 +11,16 @@ import (
 type contextKey string
 
 const (
-	ctxUserID   contextKey = "uid"
-	ctxTenantID contextKey = "tid"
-	ctxRole     contextKey = "role"
+	ctxUserID    contextKey = "uid"
+	ctxTenantID  contextKey = "tid"
+	ctxRole      contextKey = "role"
+	ctxSessionID contextKey = "sid"
 )
 
-func UserID(ctx context.Context) string   { v, _ := ctx.Value(ctxUserID).(string); return v }
-func TenantID(ctx context.Context) string { v, _ := ctx.Value(ctxTenantID).(string); return v }
-func Role(ctx context.Context) string     { v, _ := ctx.Value(ctxRole).(string); return v }
+func UserID(ctx context.Context) string    { v, _ := ctx.Value(ctxUserID).(string); return v }
+func TenantID(ctx context.Context) string  { v, _ := ctx.Value(ctxTenantID).(string); return v }
+func Role(ctx context.Context) string      { v, _ := ctx.Value(ctxRole).(string); return v }
+func SessionID(ctx context.Context) string { v, _ := ctx.Value(ctxSessionID).(string); return v }
 
 func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -47,11 +49,13 @@ func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 			uid, _ := claims["uid"].(string)
 			tid, _ := claims["tid"].(string)
 			role, _ := claims["role"].(string)
+			sid, _ := claims["sid"].(string)
 
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, ctxUserID, uid)
 			ctx = context.WithValue(ctx, ctxTenantID, tid)
 			ctx = context.WithValue(ctx, ctxRole, role)
+			ctx = context.WithValue(ctx, ctxSessionID, sid)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

@@ -55,6 +55,7 @@ export default function SettingsPage() {
     <div>
       <h1 className="page-title">Settings</h1>
       <div style={{ marginBottom: 16 }}>
+        <a href="/settings/sessions" className="settings-tab-link">Active sessions →</a>
         <a href="/settings/api-keys" className="settings-tab-link">API access →</a>
       </div>
       <form className="settings-form" onSubmit={handleSave}>

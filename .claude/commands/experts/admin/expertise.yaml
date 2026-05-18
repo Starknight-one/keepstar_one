@@ -313,7 +313,7 @@ active_workstreams:
     - "shopify/client.go (1302 LOC) — owned by catalog expert; admin only via OAuth glue"
     - "catalog_adapter.go (1293 LOC) — catalog domain"
     - "canvas_adapter.go (870 LOC) — split candidate when more design system features land"
-    - "catalog_migrations.go (793 LOC) — catalog domain"
+    - "catalog_migrations.go (849 LOC) — catalog domain"
     - "cmd/server/main.go (777 LOC) — DI bootstrap with all routes; shrank with catalog-v2 cut-over (removed 13 adapter wires for legacy merge/candidate/junk/staging flows); 2026-05-15 evening: NewShopifyIngester now also takes catalogV2Writer + actionLogAdapter (for products/delete soft-delete + webhook_received logging)"
     - "shopify_v2.go (614 LOC) — catalog domain (install flow + CompleteOAuth 4-return)"
     - "CanvasPage.jsx (785 LOC) — frontend; growth signal as canvas matures"

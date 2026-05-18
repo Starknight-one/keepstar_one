@@ -235,7 +235,7 @@ shopify_integration:
     install_url: "InstallURL(shop, redirectURI, state)"
     exchange: "ExchangeCodeForToken(ctx, shop, code)"
     hmac_verify: "VerifyInstallHMAC(q) for install callback, VerifyWebhookHMAC(body, sig) for webhooks"
-  v2_use_case: "ShopifyV2UseCase (project_admin/.../usecases/shopify_v2.go — 614 LOC, was 1069 before purge). Entry funcs: StartOAuth, StartInstallEntry (unauthed App-URL entry), CompleteOAuth, HandleWebhook, SetInboxIngester (required wire — panics if nil), SetInstallCompletionHook, Client (exposes underlying *shopify.Client for HMAC verification)."
+  v2_use_case: "ShopifyV2UseCase (project_admin/.../usecases/shopify_v2.go — 623 LOC, was 1069 before purge). Entry funcs: StartOAuth, StartInstallEntry (unauthed App-URL entry), CompleteOAuth, HandleWebhook, SetInboxIngester (required wire — panics if nil), SetInstallCompletionHook, Client (exposes underlying *shopify.Client for HMAC verification)."
   oauth_callback:
     complete_oauth: "CompleteOAuth(ctx, shop, code, state, query) → (*Integration, flowKind string, pendingToken string, error). 4 return values since 2026-05-13; pendingToken non-empty when shop has no owner email."
     pending_link_redirect: "When pendingToken != '' → /auth/install-complete?shop=...&pending_link=<token>; install flow with email → /auth/install-complete?shop=...; connect flow → /integrations?connected=shopify&id=..."
@@ -299,7 +299,7 @@ usecases_inventory:
   enrichment:
     - "enrichment.go (509) — LLM-driven master product enrichment (PIM fields, descriptions). Untouched by catalog-v2 rebuild."
   shopify_v2:
-    - "shopify_v2.go (614, was 1069 before legacy purge) — ShopifyV2UseCase {StartOAuth, StartInstallEntry, CompleteOAuth, HandleWebhook, SetInboxIngester, SetInstallCompletionHook, Client, runBulkProductsAndWait, bulkPullProductsAsInboxItems, mergeChildrenIntoProduct, classifyChild}"
+    - "shopify_v2.go (623, was 1069 before legacy purge) — ShopifyV2UseCase {StartOAuth, StartInstallEntry, CompleteOAuth, HandleWebhook, SetInboxIngester, SetInstallCompletionHook, Client, runBulkProductsAndWait, bulkPullProductsAsInboxItems, mergeChildrenIntoProduct, classifyChild}"
   basic_crud:
     - "products.go — listing CRUD"
     - "stock.go — stock_quantity updates"
@@ -400,7 +400,7 @@ related_experts:
 active_workstreams:
   tracker: "docs/CATALOG_GAPS.md + docs/PRE_LAUNCH_TASKS.md + docs/CATALOG_V2_TEST_SPEC.md"
   recent_milestones:
-    - "Structured-discovering-lollipop rebuild (2026-05-15 evening, UNCOMMITTED): MappingArtifactV3 (branches+classify_rules); vertical_aliases table; master_products.gtin+normalized_match_key; products.tenant_overrides JSONB; MatchOrCreateMaster 3-stage cascade; immutable masters on bind; products/delete soft-delete webhook; new helpers classify_vertical.go + match_key.go + mapping_artifact_v3.go"
+    - "Structured-discovering-lollipop rebuild (2026-05-15 evening, commit d2f2d1c): MappingArtifactV3 (branches+classify_rules); vertical_aliases table; master_products.gtin+normalized_match_key; products.tenant_overrides JSONB; MatchOrCreateMaster 3-stage cascade; immutable masters on bind; products/delete soft-delete webhook; new helpers classify_vertical.go + match_key.go + mapping_artifact_v3.go"
     - "Legacy code purge (2026-05-15, commit 62a2e36) — 23 files deleted, shopify_v2.go -455 LOC; inbox ingester is now required"
     - "Catalog-v2 ShopifyIngester wired to install + webhook, forgiving vertical fallback (2026-05-15, commit 8ddaaa5)"
     - "Curator TenantDetailPage rebuilt for 6-step flow (2026-05-15, commit 5e85ad6)"
@@ -411,7 +411,7 @@ active_workstreams:
     - "project_admin/.../shopify/client.go (1302 LOC) — Shopify API; split candidate (products/orders/webhooks/oauth)"
     - "project_admin/.../catalog_adapter.go (1293 LOC) — admin write-side DB; split candidate"
     - "project_admin/.../canvas_adapter.go (870 LOC)"
-    - "project_admin/.../catalog_migrations.go (862 LOC) — adds vertical_aliases, gtin/normalized_match_key, tenant_overrides, pg_trgm GIN, normalized_match_key backfill"
+    - "project_admin/.../catalog_migrations.go (849 LOC) — adds vertical_aliases, gtin/normalized_match_key, tenant_overrides, pg_trgm GIN, normalized_match_key backfill"
     - "project_v5/.../postgres_catalog.go (727 LOC) — V5 read-side; master_cosmetics JOIN + tier3-precedence merge"
     - "project_admin/.../apply_v2.go (~660 LOC, up from 548) — classify+cascade rebuild"
     - "project_admin/.../shopify_v2.go (623 LOC)"

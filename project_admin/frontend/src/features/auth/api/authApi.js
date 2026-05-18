@@ -37,6 +37,13 @@ export const authApi = {
   listTenants: () => api.get('/auth/tenants'),
   selectTenant: (tenantID) => api.post('/auth/tenants/select', { tenant_id: tenantID }),
 
+  // Active sessions (refresh-token families) for Settings → Sessions.
+  // Each row carries parsed device + geo + a current_session marker so the UI
+  // can highlight "this device" and let the user kill stale sessions from
+  // other browsers / devices.
+  listSessions: () => api.get('/auth/sessions'),
+  revokeSession: (id) => api.del(`/auth/sessions/${encodeURIComponent(id)}`),
+
   // Invitations. Create runs protected (current user is the inviter).
   // Preview + accept are public — the token in the URL is the credential.
   createInvite: (email, role) => api.post('/auth/invitations', { email, role }),

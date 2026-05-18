@@ -33,7 +33,7 @@ export default function OAuthLoadingPage() {
 
     authApi.googleCallback(code, state)
       .then((data) => {
-        adoptSession(data)
+        adoptSession(data, 'google')
         setStatus('Success — redirecting…')
         // Auto-merge: backend attached google_sub to an existing email account.
         // Surface a "Welcome back" banner on the destination page so the user

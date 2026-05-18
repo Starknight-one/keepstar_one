@@ -84,6 +84,7 @@ type AuthResponse struct {
 }
 
 func (uc *AuthUseCase) Signup(ctx context.Context, req SignupRequest) (*AuthResponse, error) {
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" || req.Password == "" || req.CompanyName == "" {
 		return nil, fmt.Errorf("email, password, and companyName are required")
 	}
@@ -139,6 +140,7 @@ func (uc *AuthUseCase) Signup(ctx context.Context, req SignupRequest) (*AuthResp
 }
 
 func (uc *AuthUseCase) Login(ctx context.Context, req LoginRequest) (*AuthResponse, error) {
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" || req.Password == "" {
 		return nil, fmt.Errorf("email and password are required")
 	}
@@ -158,6 +160,7 @@ func (uc *AuthUseCase) Login(ctx context.Context, req LoginRequest) (*AuthRespon
 // LoginWithMeta is the same as Login but threads user-agent + IP into the new
 // session row so session list shows useful device metadata.
 func (uc *AuthUseCase) LoginWithMeta(ctx context.Context, req LoginRequest, ua, ip string) (*AuthResponse, error) {
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" || req.Password == "" {
 		return nil, fmt.Errorf("email and password are required")
 	}

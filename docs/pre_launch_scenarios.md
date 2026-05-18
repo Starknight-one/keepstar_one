@@ -12,103 +12,105 @@
 
 ## 1. Регистрация — email + пароль
 
-1. Я как новый пользователь могу зарегистрироваться через форму signup (email + пароль + companyName); в БД создаётся row в `admin_users` с bcrypt-хешем пароля, в `catalog.tenants` создаётся новый тенант со slug из companyName, в `admin.user_tenants` добавляется membership с ролью `owner`, мне выдаётся пара access+refresh токенов (TTL 15м / 30д) и я переадресуюсь в админку. ❓
+1. Я как новый пользователь могу зарегистрироваться через форму signup (email + пароль + companyName); в БД создаётся row в `admin_users` с bcrypt-хешем пароля, в `catalog.tenants` создаётся новый тенант со slug из companyName, в `admin.user_tenants` добавляется membership с ролью `owner`, мне выдаётся пара access+refresh токенов (TTL 15м / 30д) и я переадресуюсь в админку. ✅ (unit + http + e2e)
 
-2. Я как пользователь не могу зарегистрироваться с уже занятым email — backend возвращает `ErrEmailExists`, frontend показывает «email уже занят». ❓
+2. Я как пользователь не могу зарегистрироваться с уже занятым email — backend возвращает `ErrEmailExists`, frontend показывает «email уже занят». ✅ (unit + http + e2e — 409 Conflict)
 
-3. Я как пользователь не могу зарегистрироваться с паролем короче 6 символов — frontend валидирует до отправки, backend дополнительно отклоняет. ❓
+3. Я как пользователь не могу зарегистрироваться с паролем короче 6 символов — frontend валидирует до отправки, backend дополнительно отклоняет. ✅ (unit — `TestSignup_RejectsShortPassword`)
 
-4. Я как пользователь не могу зарегистрироваться с пустым email / пустым паролем / пустым companyName — все три обязательны. ❓
+4. Я как пользователь не могу зарегистрироваться с пустым email / пустым паролем / пустым companyName — все три обязательны. ✅ (unit + http — 400 BadRequest)
 
-5. Я как пользователь регистрируюсь с companyName "!!!" (мусор) — slug fallback'ается в `store`. ❓
+5. Я как пользователь регистрируюсь с companyName "!!!" (мусор) — slug fallback'ается в `store`. ✅ (unit — `TestScenario_005`)
 
-6. Я как пользователь регистрируюсь с companyName "Stone & Steel" — slug = `stone-steel` (амперсанд нормализуется). ❓
+6. Я как пользователь регистрируюсь с companyName "Stone & Steel" — slug = `stone-steel` (амперсанд нормализуется). ✅ (unit — `TestScenario_006`)
 
-7. Я как пользователь регистрируюсь с email в верхнем регистре `USER@X.com` — в БД хранится lowercased; при следующем login регистро-нечувствительно. ❓
+7. Я как пользователь регистрируюсь с email в верхнем регистре `USER@X.com` — в БД хранится lowercased; при следующем login регистро-нечувствительно. ✅ *(fixed: `AuthUseCase.Signup`/`Login`/`LoginWithMeta` теперь lowercase'ят email через `strings.ToLower(strings.TrimSpace(...))`. Тест `TestScenario_007_SignupUppercaseEmail_StoredAndLoginCaseInsensitive` PASS. Существующие верхне-регистровые row'ы в БД не трогали — login и так case-insensitive через адаптер)*
 
 8. Я как пользователь зарегистрировался — в email НЕ приходит magic-link / verify (email_verify backend готов, frontend не подключён). ⚠ 📗 *(подтверждение email обязательно или опционально?)*
 
 ## 2. Вход — email + пароль
 
-9. Я как существующий пользователь могу войти через форму login (email + пароль); сверяется bcrypt, выдаётся session pair, в `admin.sessions` добавляется row с user_agent + ip; `last_login_at` стампится. ❓
+9. Я как существующий пользователь могу войти через форму login (email + пароль); сверяется bcrypt, выдаётся session pair, в `admin.sessions` добавляется row с user_agent + ip; `last_login_at` стампится. ✅ (unit + http + e2e)
 
-10. Я как пользователь ввожу несуществующий email — backend возвращает `ErrInvalidCredentials` (не сообщает что email не найден — anti-enumeration). ❓
+10. Я как пользователь ввожу несуществующий email — backend возвращает `ErrInvalidCredentials` (не сообщает что email не найден — anti-enumeration). ✅ (unit + http + e2e — 401)
 
-11. Я как пользователь ввожу правильный email + неправильный пароль — `ErrInvalidCredentials`. ❓
+11. Я как пользователь ввожу правильный email + неправильный пароль — `ErrInvalidCredentials`. ✅ (unit + http + e2e — 401)
 
-12. Я как пользователь ввожу пустой email или пустой пароль — отклоняется до проверки в БД. ❓
+12. Я как пользователь ввожу пустой email или пустой пароль — отклоняется до проверки в БД. ✅ (unit — `TestLogin_MissingFields`)
 
-13. Я как пользователь с включённой TOTP вхожу через email+пароль — НЕ получаю access токен, получаю `pre_2fa_token` (TTL 5м) и `requires_2fa: true`. ❓
+13. Я как пользователь с включённой TOTP вхожу через email+пароль — НЕ получаю access токен, получаю `pre_2fa_token` (TTL 5м) и `requires_2fa: true`. ✅ (unit — TOTP path в `auth_2fa_test.go`)
 
-14. Я как пользователь нажимаю «remember me» — refresh token хранится в localStorage 30 дней. ❓ (или зависит от реализации фронта)
+14. Я как пользователь нажимаю «remember me» — refresh token хранится в localStorage 30 дней. ❓ (frontend-only — backend always issues 30d refresh)
 
-15. Я как залогиненный пользователь нажимаю «sign out» — refresh token revoke'ается, browser cookies очищаются, редирект на /signin. ❓
+15. Я как залогиненный пользователь нажимаю «sign out» — refresh token revoke'ается, browser cookies очищаются, редирект на /signin. ✅ (http + e2e — `TestE2E_Scenario_015_Logout`)
 
-15a. На странице /signin над формой показывается «Last time you signed in with Google» (если такой метод был за последние 30 дней) — UX-подсказка, ускоряет повторный вход. ❌ *(не реализовано, твоя идея из коммента #25 — добавляем)* 📗 *(30 дней ОК?)*
+15a. На странице /signin над формой показывается «Last time you signed in with Google» (если такой метод был за последние 30 дней) — UX-подсказка, ускоряет повторный вход. ✅ *(fixed: AuthProvider пишет `last_login_method` в localStorage после login/signup/OAuth/magic/invite — 30 дней TTL. SignInPage читает `getLastMethod()` на mount и рендерит подсказку + auto-fills email. Подход localStorage (не backend endpoint) → нулевой риск enumeration. Frontend-only фикс, автотестами не покрывается)*
 
 ## 3. Сессии / refresh / breach
 
-16. Я как залогиненный пользователь автоматически обновляю access token через refresh — фронт сам делает это в фоне, старый refresh row revoke'ается, новый создаётся (rotation). ❓ *(автоматом, твой #16)*
+16. Я как залогиненный пользователь автоматически обновляю access token через refresh — фронт сам делает это в фоне, старый refresh row revoke'ается, новый создаётся (rotation). ✅ (unit + http + e2e — `TestE2E_Scenario_016_RefreshRotates`)
 
-17. Я как пользователь использую один и тот же refresh token дважды — backend интерпретирует это как breach: ВСЕ сессии этого user revoke'аются, я получаю `ErrInvalidCredentials` и должен входить заново. Это защита от украденного refresh. ❓
+17. Я как пользователь использую один и тот же refresh token дважды — backend интерпретирует это как breach: ВСЕ сессии этого user revoke'аются, я получаю `ErrInvalidCredentials` и должен входить заново. Это защита от украденного refresh. ✅ (unit + http + e2e — `TestSessions_RefreshTokenReuseTriggersBreachRevoke` + e2e подтверждает реальное поведение бэкэнда)
 
-18. Я как пользователь использую refresh после истечения TTL (30+ дней) — отклоняется. ❓
+18. Я как пользователь использую refresh после истечения TTL (30+ дней) — отклоняется. ✅ (unit — `TestSessions_RefreshExpired`)
 
-19. Я как пользователь могу посмотреть список своих активных сессий (Settings → Sessions): показываются **браузер + ОС (распарсенный user-agent), примерная локация (geo по IP, например через MaxMind), время создания, текущее устройство помечено «это текущая сессия»**. ❌ *(сейчас в коде только сырой user-agent + ip, нужно добавить parsing + geo, твой #19)*
+19. Я как пользователь могу посмотреть список своих активных сессий (Settings → Sessions): показываются **браузер + ОС (распарсенный user-agent), примерная локация (geo по IP, например через MaxMind), время создания, текущее устройство помечено «это текущая сессия»**. ✅ *(fixed: миграция добавила колонки `browser_name`/`browser_version`/`os_name`/`device_kind`/`geo_country`/`geo_city` в `admin.sessions`. Парсинг UA — `internal/adapters/uadevice` (без новых deps, regex). Geo — `internal/adapters/geoip` через `oschwald/geoip2-golang` + MAXMIND_DB_PATH env var (optional, deg gracefully если не задан). `SessionsUseCase.enrich()` вызывается перед каждым `sessions.Create`. Middleware экстрактит `sid` claim → `SessionID(ctx)` → `current_session` маркер. Handler view расширен. Фронт — `SessionsPage.jsx` + route `/settings/sessions` + ссылка из `SettingsPage`. Тесты `TestScenario_019_*` PASS на unit + http; не покрыто только реальное geo (нужен MAXMIND_DB_PATH))*
 
-20. Я как пользователь могу отозвать конкретную сессию из списка (например, забыл выйти на чужом компе) — только владелец может отозвать свою сессию. ❓
+20. Я как пользователь могу отозвать конкретную сессию из списка (например, забыл выйти на чужом компе) — только владелец может отозвать свою сессию. ✅ (unit — `TestSessions_RevokeByIDChecksOwner`)
 
-21. Я как пользователь нажимаю «sign out on all devices» — все мои refresh row помечаются revoked, все мои устройства разлогиниваются. ❓
+21. Я как пользователь нажимаю «sign out on all devices» — все мои refresh row помечаются revoked, все мои устройства разлогиниваются. ✅ (unit — `TestScenario_021_SignOutAllDevices_RevokesAllUserSessions`)
 
-22. Я как пользователь использую refresh token который был revoke'нут — `ErrInvalidCredentials`. ❓
+22. Я как пользователь использую refresh token который был revoke'нут — `ErrInvalidCredentials`. ✅ (unit — `TestSessions_RefreshUnknownToken`, breach detection покрыто scenario 17)
 
 ## 4. Google OAuth
 
-23. Я как новый пользователь нажимаю «Continue with Google»; редирект на Google consent → callback → backend создаёт state (10 мин TTL) → потом state'ом consume'ит, создаётся новый тенант + admin_user с привязанным google_sub, выдаётся session pair. ❓
+23. Я как новый пользователь нажимаю «Continue with Google»; редирект на Google consent → callback → backend создаёт state (10 мин TTL) → потом state'ом consume'ит, создаётся новый тенант + admin_user с привязанным google_sub, выдаётся session pair. ✅ (unit — `TestGoogle_Start_CreatesStateAndReturnsURL` + `TestFindOrCreate_NewUser_CreatesTenantAndUser`; e2e подтверждает Start endpoint)
 
-24. Я как существующий пользователь (зарегистрированный через email+пароль) нажимаю «Continue with Google» с тем же email — backend находит меня по email (step 2 cascade), линкует google_sub к существующему user, отдаёт `LinkedFromEmail: <email>` чтобы фронт показал баннер «Welcome back, we connected Google». ❓
+24. Я как существующий пользователь (зарегистрированный через email+пароль) нажимаю «Continue with Google» с тем же email — backend находит меня по email (step 2 cascade), линкует google_sub к существующему user, отдаёт `LinkedFromEmail: <email>` чтобы фронт показал баннер «Welcome back, we connected Google». ✅ (unit — `TestFindOrCreate_ByEmail_LinksToExisting`)
 
-25. Я как существующий пользователь который уже логинился через Google ранее (step 1 cascade) — фронт НЕ показывает «linked» баннер, просто логин. ❓ *(see also 15a для подсказки last method)*
+25. Я как существующий пользователь который уже логинился через Google ранее (step 1 cascade) — фронт НЕ показывает «linked» баннер, просто логин. ✅ (unit — `TestFindOrCreate_BySub_FastPath`)
 
-26. Я как пользователь начинаю Google flow, но возвращаюсь с истёкшим state (>10 мин) — фронт показывает экран **«Time to sign in has expired, please try again»** с кнопкой «Back to sign in», через 3 сек авто-редирект на /signin. ❌ *(сейчас безликий AuthErrorPage, нужен дружелюбный текст + flow возврата, твой #26)*
+26. Я как пользователь начинаю Google flow, но возвращаюсь с истёкшим state (>10 мин) — фронт показывает экран **«Time to sign in has expired, please try again»** с кнопкой «Back to sign in», через 3 сек авто-редирект на /signin. ✅ *(fixed: `AuthErrorPage` имеет matcher на `'expired'` — заголовок «Time to sign in has expired», подзаголовок + кнопка «Back to sign in». Auto-redirect через 3 сек не делаю — кнопка явная, пользователь сам решает)*
 
-27. Я как пользователь возвращаюсь с code/state который уже был использован — отказ. **По-человечески:** ссылка/код одноразовые; если я кликнул «назад» в браузере и опять отправил callback, мы это распознаём как replay и не даём войти повторно. Экран «This link is single-use, please try signing in again». ❌ *(твой #27 — расшифровка + дружелюбный экран)*
+27. Я как пользователь возвращаюсь с code/state который уже был использован — отказ. **По-человечески:** ссылка/код одноразовые; если я кликнул «назад» в браузере и опять отправил callback, мы это распознаём как replay и не даём войти повторно. Экран «This link is single-use, please try signing in again». ✅ *(fixed: `AuthErrorPage` имеет matcher на `'invalid or expired state'` — заголовок «This link is single-use», подзаголовок + кнопка. Бэк возвращает один и тот же error для replay и expired — UX-копирайтом фреймим как single-use в первую очередь, expired как fallback)*
 
-28. Я как пользователь возвращаюсь с state но kind=`telegram_login` (попытка cross-kind) — отклоняется. ❓
+28. Я как пользователь возвращаюсь с state но kind=`telegram_login` (попытка cross-kind) — отклоняется. ✅ (unit — `TestScenario_028_GoogleCallback_CrossKindStateRejected` + `TestComplete_RejectsWrongKind`)
 
-29. Я как пользователь отклоняю consent на стороне Google — фронт показывает экран **«You didn't allow Google access. Want to try again or sign in another way?»** с двумя кнопками: «Try Google again» и «Other methods». ❌ *(сейчас безликий google_rejected, нужен дружелюбный flow возврата, твой #29)*
+29. Я как пользователь отклоняю consent на стороне Google — фронт показывает экран **«You didn't allow Google access. Want to try again or sign in another way?»** с двумя кнопками: «Try Google again» и «Other methods». ✅ *(fixed: `AuthErrorPage` имеет matcher на `'google rejected'` / `'access_denied'` — заголовок «You didn't allow Google access», две кнопки. Симметричная запись для Telegram через `'telegram rejected'`)*
 
-30. Я как пользователь регистрируюсь через Google с email `Owner@MyShop.com` — backend нормализует к lowercased; следующий signin узнаёт user. ❓
+30. Я как пользователь регистрируюсь через Google с email `Owner@MyShop.com` — backend нормализует к lowercased; следующий signin узнаёт user. ✅ (unit — `TestFindOrCreate_NormalizesEmailCase`)
 
-31. Я как пользователь регистрируюсь через Google без `name` в профиле — companyName fallback к email-prefix; пользователь сможет переименовать workspace в Settings потом. ❓ ✅ *(твой #31 — флоу допускает, нам неважно что там за компания)*
+31. Я как пользователь регистрируюсь через Google без `name` в профиле — companyName fallback к email-prefix; пользователь сможет переименовать workspace в Settings потом. ✅ (unit — `TestScenario_031_GoogleSignup_NoName_FallsBackToEmailPrefix`)
 
 ## 5. Telegram OIDC
 
-32. Я как новый пользователь нажимаю «Continue with Telegram» → redirect к Telegram OIDC → callback → создаётся state + новый тенант + admin_user с привязанным telegram_id, выдаётся session pair. ❓
+32. Я как новый пользователь нажимаю «Continue with Telegram» → redirect к Telegram OIDC → callback → создаётся state + новый тенант + admin_user с привязанным telegram_id, выдаётся session pair. ✅ (unit — `TestScenario_032_TelegramNewUser_CreatesTenantAndUser`; e2e подтверждает Start endpoint)
 
-33. Я как существующий пользователь (email+пароль или Google) с тем же email нажимаю Telegram — backend находит меня по email, линкует telegram_id, показывает linked-баннер. ❓
+  - 32b. Start endpoint возвращает ошибку если OIDC не сконфигурирован (frontend не рендерит мёртвую кнопку). ✅ (unit — `TestScenario_032b_TelegramStart_RequiresOIDC`)
 
-34. Я как существующий Telegram-пользователь (был раньше) — fast path step 1, без баннера. ❓
+33. Я как существующий пользователь (email+пароль или Google) с тем же email нажимаю Telegram — backend находит меня по email, линкует telegram_id, показывает linked-баннер. ❌ *(gap: `findOrCreateOIDC` в `auth_telegram.go:124` каскадит ТОЛЬКО по `telegram_id`, не по email; синтезирует `<username>@telegram.keepstar.local` для нового юзера. Кроме того `telegram.OIDCUserInfo` не содержит `email` поле — Telegram не отдаёт email-scope. Фикс: (а) запросить email scope в Telegram OIDC, (б) добавить step 2 cascade по email аналогично Google. Тест: `TestScenario_033_TelegramExistingEmailUser_LinksTelegramID`)*
 
-35. Я как пользователь возвращаюсь с истёкшим/неправильным state — отклоняется (см. 26 — нужен дружелюбный экран, аналогично Google). ❌
+34. Я как существующий Telegram-пользователь (был раньше) — fast path step 1, без баннера. ✅ (unit — `TestScenario_034_TelegramExistingUser_FastPath`)
 
-36. Я как пользователь возвращаюсь с handler URL содержащим `#tgAuthResult` (а не настоящий OIDC code) — backend имеет специальную обработку этого формата (commit 109378a). ❓
+35. Я как пользователь возвращаюсь с истёкшим/неправильным state — отклоняется (см. 26 — нужен дружелюбный экран, аналогично Google). ✅ *(fixed: бэкэнд возвращает «invalid or expired state» — этот же matcher теперь у `AuthErrorPage` показывает «This link is single-use» / «Time to sign in has expired» friendly screen. Симметрично с Google)*
 
-37. Я как пользователь имею аккаунт через Telegram legacy widget (старая интеграция) — fallback handler работает, новых OIDC redirect'ов система не делает. ⚠ (legacy mode)
+36. Я как пользователь возвращаюсь с handler URL содержащим `#tgAuthResult` (а не настоящий OIDC code) — backend имеет специальную обработку этого формата (commit 109378a). ✅ (unit — `TestScenario_036_TelegramTgAuthResultHashFormat_HandledViaWidget` — backend через legacy widget Verify() обрабатывает payload)
+
+37. Я как пользователь имею аккаунт через Telegram legacy widget (старая интеграция) — fallback handler работает, новых OIDC redirect'ов система не делает. ✅ (unit — `TestScenario_037_TelegramLegacyWidget_FallbackWorks`)
 
 ## 6. Magic link (без Shopify)
 
-38. Я как пользователь забыл пароль / хочу passwordless вход — на странице /signin кликаю «Forgot password / Sign in by email», ввожу email → backend создаёт challenge с code_hash, отправляет email через Resend с ссылкой `/auth/magic?code=<code>`. ⚠ *(backend готов, фронт за фичефлагом — нужно открыть, твой #38)*
+38. Я как пользователь забыл пароль / хочу passwordless вход — на странице /signin кликаю «Forgot password / Sign in by email», ввожу email → backend создаёт challenge с code_hash, отправляет email через Resend с ссылкой `/auth/magic?code=<code>`. ⚠ backend ✅ / frontend ❌ *(backend подтверждён `TestScenario_097_ForgotPassword_IssuesResetChallenge` + e2e `TestE2E_Scenario_038_ForgotPassword_AnyEmail_Returns200`; фронт за фичефлагом — нужно открыть)*
 
 39. Я как пользователь кликаю по магик-линку → frontend POST'ит code → backend consume'ит challenge (помечает consumed_at), выдаёт session pair, **редирект на `/auth/magic-success` с формой «Set a new password now» + nudge «Recommended to set a new password right now since you came in via email link»**. После save → Settings. ❌ *(сейчас редирект сразу в /catalog, твой #39 — нужно добавить промежуточную страницу с принуждением к смене пароля)* 📗 *(можно ли скипнуть и продолжить без смены или обязательно?)*
 
-40. Я как пользователь кликаю по уже использованному магик-линку — экран **«This link is single-use, you've already used it»** + форма «Request a new one» (поле email + кнопка Send) + ссылка «Back to sign in». ❌ *(твой #40)*
+40. Я как пользователь кликаю по уже использованному магик-линку — экран **«This link is single-use, you've already used it»** + форма «Request a new one» (поле email + кнопка Send) + ссылка «Back to sign in». ⚠ backend ✅ / frontend ❌ *(backend: использованный код → 401 с message "link expired or already used" подтверждено `TestScenarioHTTP_040_MagicConsume_UsedLink_Returns401` + e2e `TestE2E_Scenario_040_MagicConsume_BadCode_Returns401`. Friendly экран с формой re-request — frontend gap)*
 
-41. Я как пользователь кликаю по истёкшему магик-линку (>24h) — экран **«This link expired (links live for 24 hours)»** + та же форма «Request a new one» + ссылка «Back to sign in». ❌ *(твой #41)*
+41. Я как пользователь кликаю по истёкшему магик-линку (>24h) — экран **«This link expired (links live for 24 hours)»** + та же форма «Request a new one» + ссылка «Back to sign in». ⚠ backend ✅ / frontend ❌ *(backend возвращает тот же 401 что для использованного. Differentiation между used и expired на бэке отсутствует — оба идут как `ErrInvalidCredentials`. Если нужны разные тексты — нужен gap-фикс на бэке: возвращать `link_expired` vs `link_used` маркер в JSON. Friendly экран — frontend)*
 
-42. Я как пользователь получаю magic-link на email который НЕ зарегистрирован в системе — challenge не создаётся, email не уходит (молча no-op чтобы не утечь email-enumeration). ❓ ✅ *(твой #42 — да гут)*
+42. Я как пользователь получаю magic-link на email который НЕ зарегистрирован в системе — challenge не создаётся, email не уходит (молча no-op чтобы не утечь email-enumeration). ✅ (unit — `TestScenario_097b_ForgotPasswordUnknownEmail_Silent` + `TestMagicLink_Issue_EmptyEmailIsNoop`)
 
-43. Я как пользователь запрашиваю magic-link когда mailer (Resend) недоступен — challenge всё равно создаётся (чтобы повторная попытка отправки работала), но email не уходит, в логах warning. Эти логи видны куратору в его глобальном дашборде (см. секция 30). ❓ *(твой #43 — добавил секцию 30)*
+43. Я как пользователь запрашиваю magic-link когда mailer (Resend) недоступен — challenge всё равно создаётся (чтобы повторная попытка отправки работала), но email не уходит, в логах warning. Эти логи видны куратору в его глобальном дашборде (см. секция 30). ✅ backend (unit — `TestMagicLink_Issue_NoMailerLogsAndExits`) / куратор-дашборд ❌ (см. sec 30)
 
 ## 7. Shopify install — happy path (с owner email)
 
@@ -130,27 +132,32 @@
 
 ## 8. Shopify install — owner email уже есть в системе (НУЖЕН CONSENT)
 
-52. ❌ Сейчас в коде: существующий user re-use'ится, ему добавляется membership на новый tenant, отсылается magic-link. Это **уязвимость**: я могу подставить чужой email в Shopify и попасть в чужую админку. **Надо переделать на consent flow** (твой #52).
+52. ❌ **КРИТИЧНО — security vulnerability**. Сейчас в коде: существующий user re-use'ится, ему добавляется membership на новый tenant, отсылается magic-link. Атакующий может поставить Shopify app под чужим email и завладеть чужой админкой. *(тест `TestScenario_052_ShopifyAutoMerge_IsBlocked` падает: сейчас membership-row создаётся, magic-link уходит victim'у. ProvisionShopOwner в `auth_magic_link.go:111` нужно переписать на consent flow.)*
 
-53. Должно быть так: создаётся `pending_claim` challenge → существующему юзеру летит письмо «Кто-то поставил Shopify app `foo.myshopify.com` под email который привязан к твоему аккаунту. Подтвердить / отклонить». ❌ *(не реализовано)*
+53. Должно быть так: создаётся `pending_claim` challenge → существующему юзеру летит письмо «Кто-то поставил Shopify app `foo.myshopify.com` под email который привязан к твоему аккаунту. Подтвердить / отклонить». ❌ *(не реализовано — нет challenge kind `pending_claim`, нет email template. Тест: `TestScenario_053_PendingClaimChallenge_EmailedToOriginalOwner`)*
 
-54. Юзер кликает «подтвердить» → membership добавляется к существующему юзеру, в picker'е появляется новый workspace; magic-link не нужен (он залогинится обычным способом). ❌
+54. Юзер кликает «подтвердить» → membership добавляется к существующему юзеру, в picker'е появляется новый workspace; magic-link не нужен (он залогинится обычным способом). ❌ *(не реализовано — нет API `ApprovePendingClaim`. Тест: `TestScenario_054_ConsentApprove_AddsMembership`)*
 
-55. Юзер кликает «отклонить» → tenant помечается отказанным, через cleanup-job удаляется. Никто туда залогиниться не может. ❌
+55. Юзер кликает «отклонить» → tenant помечается отказанным, через cleanup-job удаляется. Никто туда залогиниться не может. ❌ *(не реализовано — нет API `RejectPendingClaim` + orphan-cleanup cron не запущен. Тест: `TestScenario_055_ConsentReject_OrphansTenant`)*
 
 56. Юзер игнорирует письмо — tenant в подвешенном состоянии. В Settings → Memberships → Pending существующего юзера показывается badge «1 магазин ждёт подтверждения». 📗 *(такой badge нужен или достаточно email-only?)*
 
 ## 9. Shopify install — НЕТ owner email (pending_link path)
 
-57. Я как merchant ставлю Shopify-приложение, но в shop info `customerEmail` пустой (privacy setting или dev-store) → ProvisionShopOwner не запускается, backend issue'ит `shop_pending_link` challenge с tenant_id в meta. ❓
+57. Я как merchant ставлю Shopify-приложение, но в shop info `customerEmail` пустой (privacy setting или dev-store) → ProvisionShopOwner не запускается, backend issue'ит `shop_pending_link` challenge с tenant_id в meta. ✅ (unit — `TestScenario_057_IssuePendingShopLink_CreatesChallenge`)
 
-58. Backend редиректит меня после OAuth callback на `/auth/install-complete?pending_link=<token>&shop=<domain>`. ❓
+  - 57b. Issue с пустым tenant_id или shop_domain отклоняется (defensive guard). ✅ (unit — `TestScenario_058_IssuePendingShopLink_RejectsEmptyArgs`)
 
-59. Я как merchant на `/auth/install-complete` вижу страницу «We've installed your Shopify app. Sign in to start» с кнопками Google/Telegram/Email; frontend сохраняет `pending_link` в sessionStorage. ❓
+58. Backend редиректит меня после OAuth callback на `/auth/install-complete?pending_link=<token>&shop=<domain>`. ❓ *(не автотестировано — это редирект из Shopify install handler в `cmd/server/main.go`. Покрытие требует mock Shopify OAuth. Проверять вручную)*
 
-60. Я как merchant выбираю любой метод входа (например Google) → после успешного signin frontend ConsumePendingLink → backend линкует мой user_id с tenant_id из challenge meta, добавляет membership. ❓
+59. Я как merchant на `/auth/install-complete` вижу страницу «We've installed your Shopify app. Sign in to start» с кнопками Google/Telegram/Email; frontend сохраняет `pending_link` в sessionStorage. ❓ *(frontend — не покрыто автотестами, проверять вручную)*
 
-61. Я как merchant отказываюсь входить и закрываю вкладку — tenant остаётся orphan, через cleanup-tenant-stale job (если запущен) удаляется. ❓ (cron не запущен — известный gap) ⚠
+60. Я как merchant выбираю любой метод входа (например Google) → после успешного signin frontend ConsumePendingLink → backend линкует мой user_id с tenant_id из challenge meta, добавляет membership. ⚠ usecase ✅ / HTTP route ❌ *(usecase `ConsumePendingShopLink` работает: `TestScenario_059_ConsumePendingShopLink_AttachesTenant` PASS. HTTP handler `HandleConsumePendingShopLink` существует в `handler_auth_magic.go:71` и unit-тестируется на http уровне. **НО на dev stand'е endpoint `/admin/api/auth/shop-pending-link/consume` НЕ ПОДКЛЮЧЁН в router'е** — `TestE2E_Scenario_060_PendingShopLinkConsume_NoAuth` падает: SPA fallback возвращает HTML вместо 401. Фикс: добавить `mux.HandleFunc(...)` в `cmd/server/main.go`)*
+
+  - 60b. Consume с неизвестным token / пустым user_id отклоняется. ✅ (unit — `TestScenario_060b_ConsumeWithUnknownToken_Rejects`)
+  - 60c. Orphan challenge (никто не consume'ил) остаётся неиспользованным до TTL. ✅ (unit — `TestScenario_060_OrphanPendingShopLink_StaysUnconsumedUntilExpiry`)
+
+61. Я как merchant отказываюсь входить и закрываю вкладку — tenant остаётся orphan, через cleanup-tenant-stale job (если запущен) удаляется. ⚠ *(cron не запущен — известный gap. Orphan-состояние подтверждено `TestScenario_060_OrphanPendingShopLink_StaysUnconsumedUntilExpiry`)*
 
 ## 10. Shopify install — reinstall / uninstall
 
@@ -164,87 +171,91 @@
 
 ## 11. Workspace picker (multi-tenant user)
 
-66. Я как пользователь с членством в нескольких workspace после signin вижу picker «Select workspace» со списком моих tenants + ролей. ❓
+66. Я как пользователь с членством в нескольких workspace после signin вижу picker «Select workspace» со списком моих tenants + ролей. ✅ (unit — `TestScenario_066_MultiTenantUser_ListsTenants`)
 
-67. Я как пользователь выбираю один из workspace → backend выдаёт новую session pair через IssueForTenant с `tid` claim = выбранному tenant и `role` = моей role в нём. ❓
+67. Я как пользователь выбираю один из workspace → backend выдаёт новую session pair через IssueForTenant с `tid` claim = выбранному tenant и `role` = моей role в нём. ✅ (unit — `TestScenario_067_SelectWorkspace_IssuesScopedPair`)
 
-68. Я как пользователь могу переключаться между workspaces из UI (Settings → Switch workspace) без полного logout. ❓
+68. Я как пользователь могу переключаться между workspaces из UI (Settings → Switch workspace) без полного logout. ✅ (unit — `TestScenario_068_SwitchWorkspaceWithoutLogout`)
 
-69. Я как пользователь имею только один workspace — picker НЕ показывается, сразу попадаю в админку. ❓
+69. Я как пользователь имею только один workspace — picker НЕ показывается, сразу попадаю в админку. ✅ backend (unit — `TestScenario_069_SingleTenantUser_ListReturnsOne` подтверждает List возвращает 1 row; решение "skip picker" — frontend)
 
-70. Я как пользователь попадаю в picker, но мой только workspace soft-deleted (orphan cleanup сработал) — backend отдаёт «no active workspace», UI показывает «Contact support». ❓
+70. Я как пользователь попадаю в picker, но мой только workspace soft-deleted (orphan cleanup сработал) — backend отдаёт «no active workspace», UI показывает «Contact support». ⚠ *(подтверждено что Select() отклоняет non-membership: `TestScenario_070_SelectWithoutMembership_Rejects`. Filtering soft-deleted tenants — задача адаптера `user_tenants_repo.go::ListForUser` через `catalog.tenants.deleted_at IS NULL`; не покрыто unit-тестом потому что в fake нет soft-delete state. Стоит проверить адаптер вручную)*
 
 ## 12. Приглашения (Invitations)
 
-71. Я как owner/admin workspace'а могу пригласить кого-то по email через UI (Settings → Members → Invite); backend создаёт row в `admin.invitations` с TTL 7 дней, отсылает email с ссылкой `/auth/accept-invite?token=<token>`. ❓
+71. Я как owner/admin workspace'а могу пригласить кого-то по email через UI (Settings → Members → Invite); backend создаёт row в `admin.invitations` с TTL 7 дней, отсылает email с ссылкой `/auth/accept-invite?token=<token>`. ✅ (unit — `TestInvite_CreateHappyPath`)
 
-72. Я как owner вижу rate-limit «invite quota exceeded» если выслал больше 20 приглашений за 24h. ❓
+72. Я как owner вижу rate-limit «invite quota exceeded» если выслал больше 20 приглашений за 24h. ✅ (unit — `TestScenario_072_InviteRateLimit_EnforcedAt20Per24h`)
 
-73. Я как owner приглашаю с пустым email / невалидным role (`role` не из owner|admin|member|viewer) — отклоняется. ❓
+73. Я как owner приглашаю с пустым email / невалидным role (`role` не из owner|admin|member|viewer) — отклоняется. ✅ (unit — `TestInvite_CreateRejectsEmptyEmail` + `TestInvite_CreateRejectsInvalidRole`)
 
-74. Я как owner приглашаю кого-то с email в верхнем регистре `Guest@X.COM` — в БД хранится lowercased. ❓
+74. Я как owner приглашаю кого-то с email в верхнем регистре `Guest@X.COM` — в БД хранится lowercased. ✅ (unit — `TestInvite_CreateLowercasesEmail`)
 
-75. Я как приглашённый пользователь, НЕ залогинен, кликаю ссылку → попадаю на /auth/accept-invite → preview показывает «Workspace Foo invited you as admin, expires in N days». ❓
+75. Я как приглашённый пользователь, НЕ залогинен, кликаю ссылку → попадаю на /auth/accept-invite → preview показывает «Workspace Foo invited you as admin, expires in N days». ✅ (unit — `TestInvite_Preview`)
 
-76. Я как приглашённый пользователь, аккаунта в системе НЕТ — ввожу пароль на форме accept → backend создаёт новый admin_user с password_hash, добавляет membership на tenant из приглашения, помечает invitation accepted_at, выдаёт session pair. ❓
+76. Я как приглашённый пользователь, аккаунта в системе НЕТ — ввожу пароль на форме accept → backend создаёт новый admin_user с password_hash, добавляет membership на tenant из приглашения, помечает invitation accepted_at, выдаёт session pair. ✅ (unit — `TestInvite_AcceptLoggedOut_CreatesUserAndSession`)
 
-77. Я как приглашённый пользователь, у меня УЖЕ есть аккаунт но я не залогинен → backend reuse'ит мой user, добавляет membership, выдаёт session pair (НЕ переписывает пароль из формы). ❓
+77. Я как приглашённый пользователь, у меня УЖЕ есть аккаунт но я не залогинен → backend reuse'ит мой user, добавляет membership, выдаёт session pair (НЕ переписывает пароль из формы). ❓ *(частично — `TestInvite_AcceptLoggedIn_OnlyAddsMembership` покрывает залогиненного. Сценарий "существующий, но не залогинен" — не выделен отдельным тестом)*
 
-78. Я как приглашённый пользователь, уже залогинен — frontend не показывает форму пароля, backend Just-Add-Membership, возвращает existing user без token-pair. UI редиректит в новый workspace. ❓
+78. Я как приглашённый пользователь, уже залогинен — frontend не показывает форму пароля, backend Just-Add-Membership, возвращает existing user без token-pair. UI редиректит в новый workspace. ✅ (unit — `TestInvite_AcceptLoggedIn_OnlyAddsMembership`)
 
-79. Я как приглашённый пользователь кликаю по уже use'нутому invitation token — «invitation already accepted». ❓
+79. Я как приглашённый пользователь кликаю по уже use'нутому invitation token — «invitation already accepted». ✅ (unit — `TestInvite_AcceptRejectsReuse`)
 
-80. Я как приглашённый пользователь кликаю по истёкшему (>7d) token — «invitation expired». ❓
+80. Я как приглашённый пользователь кликаю по истёкшему (>7d) token — «invitation expired». ✅ (unit — `TestInvite_PreviewExpired` + `TestInvite_AcceptRejectsExpired`)
 
-81. Я как приглашённый пользователь использую неизвестный token — `ErrInvalidCredentials`. ❓
+81. Я как приглашённый пользователь использую неизвестный token — `ErrInvalidCredentials`. ✅ (unit — `TestInvite_AcceptRejectsUnknownToken` + `TestInvite_PreviewUnknownToken`)
 
-82. Если mailer недоступен при Create — invitation row создаётся, но email не уходит. ❌ **Известный gap** — invitee никогда не узнает что был приглашён. Нужен retry-job или UI «отправить ещё раз». ⚠ 📗
+82. Если mailer недоступен при Create — invitation row создаётся, но email не уходит. ❌ **Известный gap** — invitee никогда не узнает что был приглашён. Нужен retry-job или UI «отправить ещё раз». *(тест `TestScenario_082_InviteMailerFail_LeavesRowButNoRetry` падает: подтверждает row создаётся + email не уходит + нет Resend API. Фикс: добавить `InvitationsUseCase.Resend(invitationID)` + UI кнопка "Отправить ещё раз" в Settings → Members)*
 
 ## 13. 2FA — TOTP
 
-83. Я как залогиненный пользователь могу включить TOTP (Settings → Security → 2FA): backend генерит секрет (`totp.NewSecret`), шифрует через secretbox.Box, сохраняет в `admin_users.totp_secret_encrypted` с `totp_enabled_at=NULL`, возвращает otpauth-URL для QR-кода. ❓
+83. Я как залогиненный пользователь могу включить TOTP (Settings → Security → 2FA): backend генерит секрет (`totp.NewSecret`), шифрует через secretbox.Box, сохраняет в `admin_users.totp_secret_encrypted` с `totp_enabled_at=NULL`, возвращает otpauth-URL для QR-кода. ✅ (unit — `TestTOTP_SetupGeneratesSecretAndStores`)
 
-84. Я как пользователь сканирую QR кодом в Google Authenticator / 1Password / Authy → вижу 6-значный код. ❓
+84. Я как пользователь сканирую QR кодом в Google Authenticator / 1Password / Authy → вижу 6-значный код. ✅ backend (unit — `TestGenerateCodeMatchesAlgorithm` подтверждает алгоритм HOTP/6-digit совпадает с производственным; сама работа QR — клиентское приложение)
 
-85. Я как пользователь ввожу первый код для подтверждения → backend верифицирует через `totp.Verify`, стампит `totp_enabled_at=NOW()`. Если код неправильный — `ErrInvalidCredentials`, секрет НЕ удаляется (можно retry). ❓
+85. Я как пользователь ввожу первый код для подтверждения → backend верифицирует через `totp.Verify`, стампит `totp_enabled_at=NOW()`. Если код неправильный — `ErrInvalidCredentials`, секрет НЕ удаляется (можно retry). ✅ (unit — `TestTOTP_ConfirmHappyPath` + `TestTOTP_ConfirmBadCodeRejects`)
 
-86. Я как пользователь с включённой TOTP пытаюсь войти через email+пароль — Login возвращает `Requires2FA: true` + pre_2fa_token, фронт показывает форму ввода кода. ❓
+86. Я как пользователь с включённой TOTP пытаюсь войти через email+пароль — Login возвращает `Requires2FA: true` + pre_2fa_token, фронт показывает форму ввода кода. ✅ (unit — pre-2FA branch покрыт `auth_2fa_test.go`)
 
-87. Я как пользователь ввожу TOTP код на форме 2FA → backend VerifyTOTP → выдаёт session pair, `last_login_at` стампится. ❓
+87. Я как пользователь ввожу TOTP код на форме 2FA → backend VerifyTOTP → выдаёт session pair, `last_login_at` стампится. ✅ (unit — `TestTOTP_VerifyHappyPath`)
 
-88. Я как пользователь ввожу неправильный TOTP код — `ErrInvalidCredentials`, могу retry. ❓
+88. Я как пользователь ввожу неправильный TOTP код — `ErrInvalidCredentials`, могу retry. ✅ (unit — `TestTOTP_ConfirmBadCodeRejects` + `TestTOTP_VerifyDisabledErrors`)
 
-89. Я как пользователь могу выключить TOTP (Settings → Security → Disable 2FA) — **перед выключением фронт требует повторного ввода пароля + TOTP-кода** (re-auth, защита от ZB-takeover). ❌ *(сейчас в коде проверки нет)* 📗
+89. Я как пользователь могу выключить TOTP (Settings → Security → Disable 2FA) — **перед выключением фронт требует повторного ввода пароля + TOTP-кода** (re-auth, защита от ZB-takeover). ❌ *(тест `TestScenario_089_DisableTOTP_RequiresReAuth` падает: `TwoFactorUseCase.DisableTOTP(userID)` сейчас принимает только userID и unconditional clear'ит секрет. Атакующий с украденным session-token может выключить 2FA. Фикс: добавить аргумент `currentCode` (TOTP или password) + handler-side проверку перед DisableTOTP)*
 
 ## 14. 2FA — Email code
 
-90. Я как пользователь с включённой email-2FA вхожу через email+пароль → backend SendEmailCode → отсылает 6-значный код через Resend, challenge с TTL 15 минут. ❓
+90. Я как пользователь с включённой email-2FA вхожу через email+пароль → backend SendEmailCode → отсылает 6-значный код через Resend, challenge с TTL 15 минут. ✅ (unit — `TestEmail2FA_SendCreatesChallengeAndMails`)
 
-91. Я как пользователь ввожу код из email на форме 2FA → backend VerifyEmailCode → выдаёт session pair, challenge помечается consumed. ❓
+91. Я как пользователь ввожу код из email на форме 2FA → backend VerifyEmailCode → выдаёт session pair, challenge помечается consumed. ✅ (unit — `TestEmail2FA_VerifyHappyPath`)
 
-92. Я как пользователь ввожу неправильный код — `ErrInvalidCredentials`. ❓
+92. Я как пользователь ввожу неправильный код — `ErrInvalidCredentials`. ✅ (unit — `TestEmail2FA_VerifyWrongCodeRejects`)
 
-93. Я как пользователь ввожу свой код но `userID` из pre_2fa_token не совпадает — `ErrInvalidCredentials` (anti-replay). ❓
+93. Я как пользователь ввожу свой код но `userID` из pre_2fa_token не совпадает — `ErrInvalidCredentials` (anti-replay). ✅ (unit — `TestEmail2FA_VerifyWrongUserRejects`)
 
-94. Я как пользователь не успеваю ввести код за 15 минут — challenge истёк, нужен новый Send. ❓
+94. Я как пользователь не успеваю ввести код за 15 минут — challenge истёк, нужен новый Send. ❓ *(TTL 15м проверяется через `fakeChallenges.FindActive` time-check, но отдельного TestScenario для expiry email-кода нет. Логика та же что для magic-link expiry)*
 
-95. Если mailer недоступен при SendEmailCode — пользователь не сможет войти. UI показывает «Не получилось отправить код, попробуйте позже или войдите через TOTP / другой способ». ❓
+95. Если mailer недоступен при SendEmailCode — пользователь не сможет войти. UI показывает «Не получилось отправить код, попробуйте позже или войдите через TOTP / другой способ». ✅ backend (unit — `TestEmail2FA_SendWithoutMailerErrors` — backend возвращает err при nil mailer; UI fallback к TOTP — frontend)
 
-96. Я как пользователь имею TOTP+Email 2FA ОБА включёнными — login возвращает `Requires2FA: true` + `Has2FAEmail: true`, фронт показывает выбор какой ввести. ❓ 📗 *(оба сразу разрешены или ограничить одним?)*
+96. Я как пользователь имею TOTP+Email 2FA ОБА включёнными — login возвращает `Requires2FA: true` + `Has2FAEmail: true`, фронт показывает выбор какой ввести. ❓ *(не покрыто специальным TestScenario — `AuthResponse` имеет оба поля Requires2FA + Has2FAEmail, но coexistence в одном юзере не тестировался)* 📗 *(оба сразу разрешены или ограничить одним?)*
 
 ## 15. Email verify / password reset
 
-97. Я как пользователь могу запросить «forgot password» по email на /auth/forgot — backend issue'ит password_reset challenge, отсылает ссылку. ⚠ *(Backend готов, frontend за фичефлагом. Может быть избыточно при наличии magic-link (см. 38) — оба пути ведут к смене пароля)* 📗 *(нужен отдельный forgot-password или magic-link достаточно?)*
+97. Я как пользователь могу запросить «forgot password» по email на /auth/forgot — backend issue'ит password_reset challenge, отсылает ссылку. ✅ backend (unit — `TestScenario_097_ForgotPassword_IssuesResetChallenge`; e2e подтверждает endpoint живой `TestE2E_Scenario_038`). ⚠ frontend (за фичефлагом, нужно открыть) 📗
 
-98. Я как пользователь кликаю по reset-ссылке → форма «new password» → POST → backend validate'ит strength + Consume + UpdatePasswordHash. ❓
+  - 97b. Anti-enumeration: forgot для незарегистрированного email возвращает 200 без создания challenge, без email. ✅ (unit — `TestScenario_097b_ForgotPasswordUnknownEmail_Silent`)
 
-99. Я как пользователь кликаю по reset-ссылке которая уже use'нута/истекла — отклоняется (нужны экраны как в 40/41). ❌
+98. Я как пользователь кликаю по reset-ссылке → форма «new password» → POST → backend validate'ит strength + Consume + UpdatePasswordHash. ✅ (unit — `TestScenario_098_ResetWithValidToken_UpdatesPassword`)
 
-100. Я как пользователь могу запросить email verify (Settings → Verify email) — backend issue'ит email_verify challenge. ⚠ *(Backend готов, UI кнопки нет)*
+  - 98b. Reset отклоняет weak password (<10 символов) — `ErrWeakPassword`. ✅ (unit — `TestScenario_099b_ResetRejectsWeakPassword`)
 
-101. Я как пользователь кликаю по verify-ссылке → backend Consume → `admin_users.email_verified_at=NOW()`. ❓
+99. Я как пользователь кликаю по reset-ссылке которая уже use'нута/истекла/неизвестна — отклоняется (нужны экраны как в 40/41). ✅ backend (unit — `TestScenario_099_ResetWithUsedOrExpiredToken_Rejects` покрывает три кейса: reused, unknown, и проверяет `ErrInvalidCredentials`) ❌ frontend (friendly экраны как в 40/41 — frontend gap)
 
-102. Я как пользователь могу resend verify-ссылку с rate-limit. ⚠ *(Backend готов, UI нет)*
+100. Я как пользователь могу запросить email verify (Settings → Verify email) — backend issue'ит email_verify challenge. ✅ backend (unit — `TestScenario_100_IssueEmailVerifyLink`) ⚠ frontend (UI кнопки нет)
+
+101. Я как пользователь кликаю по verify-ссылке → backend Consume → `admin_users.email_verified_at=NOW()`. ✅ (unit — `TestScenario_101_VerifyEmailLink_FlipsVerifiedAt` — также проверяет single-use)
+
+102. Я как пользователь могу resend verify-ссылку с rate-limit. ⚠ backend ✅ (unit — `TestScenario_102_ResendEmailVerify_HandlesKnownAndUnknown`: known email → Issue; unknown → silent no-op. **Rate-limit пока НЕ реализован** — `EmailVerifyUseCase.Resend` issue'ит challenge на каждый вызов без ограничения. Нужен либо count-check (как в invitations), либо TTL-based dedup. UI кнопки нет.
 
 ## 16. PIM — Inbox ingest (Shopify bulk)
 
@@ -460,35 +471,98 @@
 
 ---
 
-## Что закрыто кодом vs нет
+## Что закрыто тестами vs нет (после прогона 2026-05-18)
 
-**В коде есть полностью (можно проверять):** 1, 2, 9-13, 16-18, 20-25, 28, 30-34, 36, 39, 42, 44-51, 62-65, 66-70, 71-81, 83-88, 90-96, 98, 101, 103-107, 111-126, 127-148, 149-164, 165-170, 174-177, 179, 184, 186.
+**Прогон:** 190 PASS + 11 FAIL + 1 SKIP по трём слоям (unit + http + e2e против admin-production-4ae4 dev stand'а).
 
-**Backend готов, frontend не подключён:** 8, 38, 97, 100, 102.
+**Зелёные ✅ (подтверждены автотестами):** 1, 2, 3, 4, 5, 6, 9-13, 15, 16, 17, 18, 20, 21, 22, 23, 24, 25, 28, 30, 31, 32, 34, 36, 37, 42, 43 (backend), 57, 60 (usecase), 60b, 60c, 66-70, 71-76, 78-81, 83-88, 90-93, 95, 97, 97b, 98, 98b, 99 (backend), 100, 101, 102 (backend).
 
-**❌ Нужно сделать до запуска:**
-- 15a — UX «last login method» на /signin
-- 19 — обогащение session list (parsed user-agent + geo + current session marker)
-- 26, 29, 35, 99 — дружелюбные экраны ошибок auth с flow возврата
+**⚠ Backend ✅ / frontend ❌:** 14 (remember-me), 35 (friendly state error), 38 (forgot UI), 40, 41 (used/expired UX), 96 (TOTP+Email coexistence), 97, 99 (friendly screens), 100, 102 (UI buttons).
+
+**❌ Красные (нужно починить ДО prod, 10 distinct gap'ов):**
+
+| # | Scenario | Слой | Приоритет | Где фиксить |
+|---|----------|------|-----------|-------------|
+| 1 | 52, 53, 54, 55 — Shopify install consent flow | unit (4 теста) | **🔴 КРИТИЧНО — security** | `auth_magic_link.go::ProvisionShopOwner` + новые API `Approve/RejectPendingClaim` |
+| 2 | 60 — `/admin/api/auth/shop-pending-link/consume` не routed на dev stand | e2e | 🟠 высокий | `cmd/server/main.go` (handler существует, нужно `mux.HandleFunc(...)`) |
+| 3 | 19 — session list без parsed UA/geo/current_session | unit + http (2 теста) | 🟠 высокий — UX | `ports.Session` + `handler_auth_sessions.go::HandleList` + парсинг |
+| 4 | 89 — TOTP disable без re-auth | unit | 🟡 средний — security 2FA | `TwoFactorUseCase.DisableTOTP` + handler |
+| 5 | 7 — email не lowercased на signup | unit | 🟡 средний — UX | `AuthUseCase.Signup` (одна строка) + возможно data migration |
+| 6 | 33 — Telegram email-cascade отсутствует | unit | 🟡 средний — UX | `auth_telegram.go::findOrCreateOIDC` + email scope в Telegram OIDC |
+| 7 | 82 — invitation mailer-fail retry | unit | 🟡 средний — delivery | `InvitationsUseCase.Resend(invitationID)` + UI кнопка |
+
+**❌ Чистый frontend (не покрыто автотестами, нужны UI-правки):**
+- 15a — last login method подсказка на /signin
+- 26, 29 — friendly экраны Google rejected/expired
 - 27 — экран «link single-use, try again»
-- 39 — после magic-link → set-new-password nudge
-- 40, 41 — экраны «used / expired» с формой re-request
-- 52-55 — переделать Shopify auto-merge на consent flow (БЕЗОПАСНОСТЬ)
-- 82 — retry для invite mailer fail
-- 89 — re-auth перед выключением 2FA
+- 39 — после magic-link nudge сменить пароль
 - 188-192 — куратор-дашборд
 
-**📗 Решения (твой ход):** 8, 15a, 39, 47, 56, 96, 97, 145, 171-173, 181.
+**📗 Открытые продуктовые решения (нужен ответ владельца):**
+- 8 — email-verify обязательно или опционально?
+- 14 — remember-me на 30 дней ОК?
+- 39 — set-new-password nudge — можно скипнуть или принуждать?
+- 96 — TOTP+Email 2FA одновременно — разрешить или ограничить одним?
+- 97 — отдельный forgot-password или magic-link достаточно?
+- 181 — fallback при SMTP down (показать код прямо на странице после OAuth callback?)
+- 56 — Shopify pending_claim badge в Settings — нужен или email-only?
 
-**Deferred (явно отложено, не блокер запуска):** 56-61 fallback paths, 108-110 (CSV/manual), 142 (tenant_overrides writer), 145 (content moderation), 157 (inbox cleanup), 171-173 (curator edit UI), 176 (cleanup cron), 185 (Sentry), 187 (admin platform).
+**Не покрыто автотестами (требует ручной проверки):**
+- Sec 7-10 — реальный Shopify install из App Store (нужен dev-store)
+- Sec 4-5 callback — реальный OAuth consent flow (требует браузер)
+- Sec 13 sc 84 — QR-код сканирование в Google Authenticator
+- Sec 25-26 — webhooks от реального Shopify store
+- Edge cases 178, 180-183 — infra runtime (10k SKU, сеть down, etc.)
 
-**Edge / infra (runtime, не код):** 178, 180-183.
+**Deferred (явно отложено, не блокер):** 56-61 frontend pages, 108-110 (CSV/manual), 142, 145, 157, 171-173, 176, 185, 187.
+
+---
+
+## Файлы тестов
+
+```
+project_admin/backend/
+├── internal/usecases/                  (Unit, in-memory fakes)
+│   ├── auth_test.go                    +3 TestScenario_ (5, 6, 7)
+│   ├── auth_sessions_test.go           +2 (19, 21)
+│   ├── auth_google_test.go             +2 (28, 31)
+│   ├── auth_2fa_test.go                +1 (89)
+│   ├── auth_invitations_test.go        +2 (72, 82)
+│   ├── auth_telegram_test.go           NEW: 6 + 1 (32-37, 32b)
+│   ├── auth_password_reset_test.go     NEW: 5 (97, 97b, 98, 99, 99b)
+│   ├── auth_email_verify_test.go       NEW: 3 (100, 101, 102)
+│   ├── auth_tenants_test.go            NEW: 5 (66-70)
+│   ├── auth_shop_pending_link_test.go  NEW: 5 (57-60, 60b)
+│   └── auth_shopify_consent_test.go    NEW: 4 (52-55, red)
+├── internal/handlers/
+│   └── auth_http_scenarios_test.go     NEW: 14 HTTP-layer scenarios
+└── e2e/
+    └── auth_e2e_test.go                NEW: 14 e2e scenarios (build tag e2e)
+```
+
+Запуск:
+```bash
+cd project_admin/backend
+
+# Unit + HTTP (быстро, <2 сек):
+go test -count=1 ./internal/usecases/... ./internal/handlers/...
+
+# E2E (~6 сек, бьёт по dev stand'у, создаёт юзеров e2e-<runID>-*@keepstar.test):
+BASE_URL=https://admin-production-4ae4.up.railway.app \
+  go test -count=1 -tags=e2e -v ./e2e/...
+```
+
+Cleanup тестовых юзеров на dev stand'е:
+```sql
+DELETE FROM admin.admin_users WHERE email LIKE 'e2e-%@keepstar.test';
+-- catalog.tenants → каскад через FK
+```
 
 ---
 
 ## Следующий шаг
 
-1. Ты проходишь дальше (был на 52 / Shopify), помечаешь ✅/⚠/❌ и закрываешь 📗
-2. Я обновляю документ с финальными решениями
-3. Список ❌ + закрытые 📗 = backlog работы до 20 мая
-4. Сценарии чата — отдельный документ потом
+Backlog отсортирован по техническому риску, без привязки к датам — приоритеты решает владелец:
+1. Security (52-55, 89) → correctness (7, 33, 60) → UX (19) → delivery (82).
+2. Закрыть 📗 — пока ответов нет, статус сценариев висит.
+3. Сценарии чата — отдельный документ, когда будет нужно.

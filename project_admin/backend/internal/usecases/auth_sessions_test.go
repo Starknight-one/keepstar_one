@@ -274,3 +274,75 @@ func TestSessions_IssueForTenantUsesPassedTenant(t *testing.T) {
 		}
 	}
 }
+
+// =====================================================================
+// Pre-launch scenario verification (docs/pre_launch_scenarios.md sec 3)
+// =====================================================================
+
+// TestScenario_019_SessionList_IncludesParsedUAAndGeo verifies:
+// «Я как пользователь могу посмотреть список своих активных сессий
+// (Settings → Sessions): показываются браузер + ОС (распарсенный
+// user-agent), примерная локация (geo по IP), время создания, текущее
+// устройство помечено "это текущая сессия".» (sec 3, scenario 19)
+//
+// Geo enrichment requires MAXMIND_DB_PATH at runtime — not exercised in
+// unit tests (left empty here). Current-device marker is verified at
+// HTTP-layer (`auth_http_scenarios_test.go`) since it relies on the
+// `sid` claim flowing through middleware.
+func TestScenario_019_SessionList_IncludesParsedUAAndGeo(t *testing.T) {
+	uc, _, auth := mkSessionsUC()
+	user, _ := auth.CreateUser(context.Background(), &domain.AdminUser{Email: "u@x", TenantID: "t1"})
+	_, _ = uc.Issue(context.Background(), user, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "203.0.113.5")
+
+	got, err := uc.List(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(got))
+	}
+	s := got[0]
+	if s.BrowserName != "Chrome" {
+		t.Errorf("BrowserName=%q, want Chrome", s.BrowserName)
+	}
+	if s.BrowserVersion != "120" {
+		t.Errorf("BrowserVersion=%q, want 120", s.BrowserVersion)
+	}
+	if s.OSName != "macOS 10.15.7" {
+		t.Errorf("OSName=%q, want 'macOS 10.15.7'", s.OSName)
+	}
+	if s.DeviceKind != "desktop" {
+		t.Errorf("DeviceKind=%q, want desktop", s.DeviceKind)
+	}
+	// Raw fields still preserved for debug / forensics.
+	if s.UserAgent == "" || s.IP != "203.0.113.5" {
+		t.Errorf("raw UA/IP lost: ua=%q ip=%q", s.UserAgent, s.IP)
+	}
+}
+
+// TestScenario_021_SignOutAllDevices_RevokesAllUserSessions verifies:
+// «Я как пользователь нажимаю "sign out on all devices" — все мои refresh
+// row помечаются revoked, все мои устройства разлогиниваются.»
+// (sec 3, scenario 21)
+func TestScenario_021_SignOutAllDevices_RevokesAllUserSessions(t *testing.T) {
+	_, sess, auth := mkSessionsUC()
+	user, _ := auth.CreateUser(context.Background(), &domain.AdminUser{Email: "u@x", TenantID: "t1"})
+	uc, _, _ := mkSessionsUC()
+	uc.sessions = sess // re-bind so subsequent Issue lands in sess we'll inspect
+
+	_, _ = uc.Issue(context.Background(), user, "device-A", "1.1.1.1")
+	_, _ = uc.Issue(context.Background(), user, "device-B", "2.2.2.2")
+	_, _ = uc.Issue(context.Background(), user, "device-C", "3.3.3.3")
+
+	if err := sess.RevokeAllForUser(context.Background(), user.ID); err != nil {
+		t.Fatalf("RevokeAllForUser: %v", err)
+	}
+
+	got, err := uc.List(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("after sign-out-all: %d active sessions remain, want 0", len(got))
+	}
+}

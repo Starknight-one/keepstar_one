@@ -13,6 +13,7 @@ import (
 
 	"github.com/joho/godotenv"
 	anthropicAdapter "keepstar-admin/internal/adapters/anthropic"
+	"keepstar-admin/internal/adapters/geoip"
 	googleAdapter "keepstar-admin/internal/adapters/google"
 	telegramAdapter "keepstar-admin/internal/adapters/telegram"
 	openaiAdapter "keepstar-admin/internal/adapters/openai"
@@ -168,6 +169,19 @@ func main() {
 	)
 	authUC.SetSessions(sessionsUC)
 	authUC.SetMemberships(userTenantsRepo)
+
+	// GeoIP — Settings → Sessions enrichment. Optional: when MAXMIND_DB_PATH
+	// is unset or the .mmdb file is missing, sessionsUC.geo stays nil and
+	// the geo_country/geo_city columns sit empty. GeoLite2 license is free
+	// but requires a manual download from MaxMind.
+	if geoDB, err := geoip.Open(os.Getenv("MAXMIND_DB_PATH")); err != nil {
+		log.Warn("geoip_open_failed", "error", err)
+	} else if geoDB != nil {
+		sessionsUC.SetGeoIP(geoDB)
+		log.Info("geoip_initialized", "path", os.Getenv("MAXMIND_DB_PATH"))
+	} else {
+		log.Info("geoip_not_configured", "hint", "set MAXMIND_DB_PATH for geo enrichment")
+	}
 
 	// Google OAuth — optional, activates only when env has all three keys.
 	var googleAuthUC *usecases.GoogleAuthUseCase

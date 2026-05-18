@@ -47,25 +47,44 @@ func (h *SessionsHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uid := UserID(r.Context())
+	currentSID := SessionID(r.Context())
 	sess, err := h.sessions.List(r.Context(), uid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list failed")
 		return
 	}
-	// Strip token hash before returning.
+	// Strip token hash; expose parsed device + geo + current-session marker.
 	type view struct {
-		ID        string `json:"id"`
-		UserAgent string `json:"user_agent"`
-		IP        string `json:"ip"`
-		CreatedAt string `json:"created_at"`
-		ExpiresAt string `json:"expires_at"`
+		ID             string `json:"id"`
+		UserAgent      string `json:"user_agent"`
+		IP             string `json:"ip"`
+		Browser        string `json:"browser"`
+		BrowserVersion string `json:"browser_version"`
+		OS             string `json:"os"`
+		DeviceKind     string `json:"device_kind"`
+		Geo            string `json:"geo"`
+		GeoCountry     string `json:"geo_country"`
+		GeoCity        string `json:"geo_city"`
+		CreatedAt      string `json:"created_at"`
+		ExpiresAt      string `json:"expires_at"`
+		CurrentSession bool   `json:"current_session"`
 	}
 	out := make([]view, 0, len(sess))
 	for _, s := range sess {
+		geo := s.GeoCity
+		if geo != "" && s.GeoCountry != "" {
+			geo = s.GeoCity + ", " + s.GeoCountry
+		} else if geo == "" {
+			geo = s.GeoCountry
+		}
 		out = append(out, view{
 			ID: s.ID, UserAgent: s.UserAgent, IP: s.IP,
-			CreatedAt: s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			ExpiresAt: s.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+			Browser: s.BrowserName, BrowserVersion: s.BrowserVersion,
+			OS: s.OSName, DeviceKind: s.DeviceKind,
+			Geo: geo, GeoCountry: s.GeoCountry, GeoCity: s.GeoCity,
+			CreatedAt:      s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			ExpiresAt:      s.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+			CurrentSession: currentSID != "" && s.ID == currentSID,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

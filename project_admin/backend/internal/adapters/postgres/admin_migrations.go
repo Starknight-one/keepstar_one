@@ -253,6 +253,16 @@ func (c *Client) runAdminAuthV2Migrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user_active
 			ON admin.sessions(user_id) WHERE revoked_at IS NULL;`,
 
+		// Parsed device + geo enrichment for Settings → Sessions UI.
+		// Filled at session create time from the User-Agent header and IP via
+		// MaxMind GeoLite2 (optional — geo columns stay NULL when DB not configured).
+		`ALTER TABLE admin.sessions ADD COLUMN IF NOT EXISTS browser_name TEXT;`,
+		`ALTER TABLE admin.sessions ADD COLUMN IF NOT EXISTS browser_version TEXT;`,
+		`ALTER TABLE admin.sessions ADD COLUMN IF NOT EXISTS os_name TEXT;`,
+		`ALTER TABLE admin.sessions ADD COLUMN IF NOT EXISTS device_kind TEXT;`,
+		`ALTER TABLE admin.sessions ADD COLUMN IF NOT EXISTS geo_country TEXT;`,
+		`ALTER TABLE admin.sessions ADD COLUMN IF NOT EXISTS geo_city TEXT;`,
+
 		// codes / tokens for email_verify, password_reset, totp_setup, email_2fa, magic_link
 		`CREATE TABLE IF NOT EXISTS admin.auth_challenges (
 			id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),

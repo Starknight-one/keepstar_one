@@ -40,7 +40,7 @@ export default function InviteAcceptPage() {
     try {
       const data = await authApi.acceptInvite(token, user ? '' : password)
       if (data?.access_token) {
-        adoptSession(data)
+        adoptSession(data, 'email')
       }
       navigate('/auth/pick-workspace')
     } catch (err) {

@@ -2,8 +2,14 @@ import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import AuthShell from '../layout/AuthShell.jsx'
 import PillButton from '../layout/PillButton.jsx'
-import { useAuth } from '../AuthProvider.jsx'
+import { useAuth, getLastMethod } from '../AuthProvider.jsx'
 import { authApi } from '../api/authApi.js'
+
+const METHOD_LABEL = {
+  email: 'email',
+  google: 'Google',
+  telegram: 'Telegram',
+}
 
 export default function SignInPage() {
   const { login } = useAuth()
@@ -15,9 +21,19 @@ export default function SignInPage() {
   const [flags, setFlags] = useState({ google: false, email: false, telegram: { enabled: false } })
   const [googleLoading, setGoogleLoading] = useState(false)
   const [telegramLoading, setTelegramLoading] = useState(false)
+  const [lastMethod, setLastMethod] = useState(null)
 
   useEffect(() => {
     authApi.config().then(setFlags).catch(() => {})
+    // 15a: surface "Last time you signed in with X" hint (per-browser,
+    // 30-day TTL, no backend lookup so no email-enumeration leak).
+    const last = getLastMethod()
+    if (last) {
+      setLastMethod(last)
+      if (last.email && !email) setEmail(last.email)
+    }
+    // We intentionally read storage once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Browser bfcache restores the page with stale loading=true when user hits Back.
@@ -73,6 +89,13 @@ export default function SignInPage() {
     <AuthShell>
       <h1>Welcome back</h1>
       <p>Sign in to your Keepstar One workspace.</p>
+
+      {lastMethod && METHOD_LABEL[lastMethod.method] && (
+        <div className="auth-last-method-hint">
+          Last time you signed in with <strong>{METHOD_LABEL[lastMethod.method]}</strong>
+          {lastMethod.email && <> as <strong>{lastMethod.email}</strong></>}.
+        </div>
+      )}
 
       {flags.google || flags.telegram.enabled ? (
         <>

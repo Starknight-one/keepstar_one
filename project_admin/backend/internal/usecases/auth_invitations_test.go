@@ -297,3 +297,65 @@ func TestInvite_AcceptLoggedOutRejectsWeakPassword(t *testing.T) {
 		t.Error("expected err on weak password")
 	}
 }
+
+// =====================================================================
+// Pre-launch scenario verification (docs/pre_launch_scenarios.md sec 12)
+// =====================================================================
+
+// TestScenario_082_InviteMailerFail_RetryNeeded verifies:
+// «Если mailer недоступен при Create — invitation row создаётся, но email
+// не уходит. Известный gap — invitee никогда не узнает что был приглашён.
+// Нужен retry-job или UI "отправить ещё раз".» (sec 12, scenario 82)
+//
+// EXPECTED TO FAIL: scenario 82 NOT implemented. There is no Resend
+// invitation API and no background retry. This test verifies (a) the
+// invitation row IS created on mailer failure (recoverable state), and
+// (b) NO retry mechanism exists — which is the gap.
+func TestScenario_082_InviteMailerFail_LeavesRowButNoRetry(t *testing.T) {
+	uc, inv, auth, _, cat, mail := mkInvitesUC()
+	mail.fail = true
+	inviter, _ := auth.CreateUser(context.Background(), &domain.AdminUser{Email: "owner@x.com"})
+	cat.tenants["t-1"] = &domain.Tenant{ID: "t-1", Slug: "acme", Name: "Acme"}
+
+	// Create returns nil error even when mailer fails (best-effort).
+	_ = uc.Create(context.Background(), "t-1", inviter.ID, "invited@x.com", "member")
+
+	// Row should be persisted so a future resend can use it.
+	if inv.createCnt != 1 {
+		t.Errorf("invitation row not persisted on mailer fail: createCnt=%d", inv.createCnt)
+	}
+	// No email actually sent (mailer rejected).
+	if len(mail.sent) != 0 {
+		t.Errorf("mail.fail=true but %d email captured (mock should reject)", len(mail.sent))
+	}
+	// Gap: there's no ResendInvitation or RetryFailedInvitation method on the
+	// InvitationsUseCase. Document the absence.
+	t.Errorf("scenario 82: no Resend/Retry path exists for invitations whose initial mailer.Send failed — invitee stranded")
+}
+
+// TestScenario_072_InviteRateLimitEnforced verifies:
+// «Я как owner вижу rate-limit "invite quota exceeded" если выслал больше
+// 20 приглашений за 24h.» (sec 12, scenario 72)
+//
+// The unit test confirms the COUNT-based limit gate fires. CountRecentByInviter
+// is a port method; the fake counts all rows (no time filter), so the gate
+// trips at 20 even though our fake doesn't replicate the 24h cutoff exactly.
+func TestScenario_072_InviteRateLimit_EnforcedAt20Per24h(t *testing.T) {
+	uc, _, auth, _, cat, _ := mkInvitesUC()
+	owner, _ := auth.CreateUser(context.Background(), &domain.AdminUser{Email: "o@x"})
+	cat.tenants["t-1"] = &domain.Tenant{ID: "t-1", Slug: "a", Name: "A"}
+
+	for i := 0; i < 20; i++ {
+		email := strings.Replace("guest-N@x.com", "N", strings.Trim(time.Now().Format(".000"), "."), 1)
+		email = strings.Replace(email, ".", "", -1) + "-" + strings.Repeat("a", i+1) + "@x.com"
+		if err := uc.Create(context.Background(), "t-1", owner.ID, email, "member"); err != nil {
+			t.Fatalf("invite #%d: %v", i, err)
+		}
+	}
+
+	// 21st should be rejected.
+	err := uc.Create(context.Background(), "t-1", owner.ID, "overflow@x.com", "member")
+	if err == nil {
+		t.Error("scenario 72: 21st invitation must be rejected by rate limit")
+	}
+}

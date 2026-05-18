@@ -8,6 +8,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"keepstar-admin/internal/adapters/geoip"
+	"keepstar-admin/internal/adapters/uadevice"
 	"keepstar-admin/internal/domain"
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
@@ -20,6 +22,7 @@ import (
 type SessionsUseCase struct {
 	sessions   ports.SessionPort
 	users      ports.AuthPort
+	geo        *geoip.Reader // optional; nil-safe Lookup keeps geo cols empty when unset
 	secret     string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
@@ -30,6 +33,25 @@ func NewSessionsUseCase(s ports.SessionPort, u ports.AuthPort, secret string, ac
 	return &SessionsUseCase{
 		sessions: s, users: u, secret: secret,
 		accessTTL: accessTTL, refreshTTL: refreshTTL, log: log,
+	}
+}
+
+// SetGeoIP wires a MaxMind GeoLite2 reader. Pass nil to disable geo (default).
+func (uc *SessionsUseCase) SetGeoIP(g *geoip.Reader) { uc.geo = g }
+
+// enrich populates the parsed device + geo fields from the raw UserAgent/IP
+// already set on sess. Idempotent — call before Create. Safe with nil geo.
+func (uc *SessionsUseCase) enrich(sess *ports.Session) {
+	info := uadevice.Parse(sess.UserAgent)
+	sess.BrowserName = info.BrowserName
+	sess.BrowserVersion = info.BrowserVersion
+	sess.OSName = info.OSName
+	sess.DeviceKind = info.DeviceKind
+	if uc.geo != nil {
+		if r, err := uc.geo.Lookup(sess.IP); err == nil {
+			sess.GeoCountry = r.Country
+			sess.GeoCity = r.City
+		}
 	}
 }
 
@@ -51,6 +73,7 @@ func (uc *SessionsUseCase) Issue(ctx context.Context, user *domain.AdminUser, ua
 		IP:        ip,
 		ExpiresAt: time.Now().Add(uc.refreshTTL),
 	}
+	uc.enrich(sess)
 	if err := uc.sessions.Create(ctx, sess); err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
@@ -108,6 +131,7 @@ func (uc *SessionsUseCase) Refresh(ctx context.Context, refreshToken, ua, ip str
 		IP:        ip,
 		ExpiresAt: time.Now().Add(uc.refreshTTL),
 	}
+	uc.enrich(newSess)
 	if err := uc.sessions.Create(ctx, newSess); err != nil {
 		return nil, err
 	}
@@ -180,6 +204,7 @@ func (uc *SessionsUseCase) IssueForTenant(ctx context.Context, user *domain.Admi
 		IP:        ip,
 		ExpiresAt: time.Now().Add(uc.refreshTTL),
 	}
+	uc.enrich(sess)
 	if err := uc.sessions.Create(ctx, sess); err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}

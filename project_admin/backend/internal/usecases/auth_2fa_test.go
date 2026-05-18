@@ -328,3 +328,35 @@ func TestGenerateCodeMatchesAlgorithm(t *testing.T) {
 // --- silence unused-import warning ---
 
 var _ ports.ChallengePort = (*fakeChallenges)(nil)
+
+// =====================================================================
+// Pre-launch scenario verification (docs/pre_launch_scenarios.md sec 13)
+// =====================================================================
+
+// TestScenario_089_DisableTOTP_RequiresReAuth verifies:
+// «Я как пользователь могу выключить TOTP (Settings → Security → Disable
+// 2FA) — перед выключением фронт требует повторного ввода пароля + TOTP-
+// кода (re-auth, защита от ZB-takeover).» (sec 13, scenario 89)
+//
+// EXPECTED TO FAIL: scenario 89 NOT implemented. TwoFactorUseCase.DisableTOTP
+// today takes only userID and unconditionally clears the secret + flips
+// totp_enabled_at=NULL. There is no password / TOTP-code re-auth gate.
+//
+// This test exercises the desired safe contract: DisableTOTP must require
+// either the current TOTP code OR a recent password re-auth before
+// proceeding. Until that's implemented, the gate is absent and TOTP can be
+// disabled by anyone holding a session token (cookie/JWT hijack scenarios).
+func TestScenario_089_DisableTOTP_RequiresReAuth(t *testing.T) {
+	uc, auth, _, _, _ := mk2FAUC()
+	_, _ = auth.CreateUser(context.Background(), &domain.AdminUser{Email: "u@x", TenantID: "t1"})
+	user, _ := auth.GetUserByEmail(context.Background(), "u@x")
+
+	setup, _ := uc.SetupTOTP(context.Background(), user.ID, "u@x")
+	_ = uc.ConfirmTOTP(context.Background(), user.ID, generateCode(setup.Secret))
+
+	// Today DisableTOTP succeeds without any extra credentials.
+	// The SAFE contract: it should require a fresh code or password.
+	if err := uc.DisableTOTP(context.Background(), user.ID); err == nil {
+		t.Errorf("scenario 89: DisableTOTP succeeded without re-auth — gap (FE re-auth absent + BE doesn't enforce)")
+	}
+}

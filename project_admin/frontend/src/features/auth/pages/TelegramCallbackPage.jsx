@@ -44,7 +44,7 @@ export default function TelegramCallbackPage() {
 
     authApi.telegramCallback(payload)
       .then((data) => {
-        adoptSession(data)
+        adoptSession(data, 'telegram')
         setStatus('Success — redirecting…')
         navigate('/auth/pick-workspace', { replace: true })
       })

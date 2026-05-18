@@ -256,3 +256,54 @@ func TestComplete_RejectsWrongKind(t *testing.T) {
 		t.Error("expected err on kind mismatch")
 	}
 }
+
+// =====================================================================
+// Pre-launch scenario verification (docs/pre_launch_scenarios.md sec 4)
+// =====================================================================
+
+// TestScenario_028_GoogleStateWithTelegramKind_Rejected verifies:
+// «Я как пользователь возвращаюсь с state но kind=`telegram_login`
+// (попытка cross-kind) — отклоняется.» (sec 4, scenario 28)
+//
+// Already covered logically by TestComplete_RejectsWrongKind; this aliased
+// test name lets the scenario report match the document 1-to-1.
+func TestScenario_028_GoogleCallback_CrossKindStateRejected(t *testing.T) {
+	uc, _, _, _, state := mkGoogleUC()
+	_ = state.Create(context.Background(), &ports.OAuthLoginState{
+		State:     "xkind",
+		Kind:      "telegram_login",
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	})
+	_, err := uc.Complete(context.Background(), "code", "xkind", "", "")
+	if err == nil {
+		t.Fatal("scenario 28: cross-kind state must be rejected by Google callback")
+	}
+	if !strings.Contains(err.Error(), "state kind mismatch") {
+		t.Errorf("err = %q, want 'state kind mismatch'", err.Error())
+	}
+}
+
+// TestScenario_031_GoogleSignupWithoutName_FallsBackToEmailPrefix verifies:
+// «Я как пользователь регистрируюсь через Google без `name` в профиле —
+// companyName fallback к email-prefix; пользователь сможет переименовать
+// workspace в Settings потом.» (sec 4, scenario 31)
+//
+// Already covered by TestFindOrCreate_NewUser_FallsBackToEmailPrefixWhenNameEmpty;
+// re-stated here with the scenario-numbered name for the test report.
+func TestScenario_031_GoogleSignup_NoName_FallsBackToEmailPrefix(t *testing.T) {
+	uc, _, cat, _, _ := mkGoogleUC()
+	if _, _, err := uc.findOrCreate(context.Background(), &google.UserInfo{
+		Sub:   "no-name-sub",
+		Email: "anon@store.example.com",
+		Name:  "",
+	}); err != nil {
+		t.Fatalf("findOrCreate: %v", err)
+	}
+	if len(cat.createdLog) != 1 {
+		t.Fatalf("tenant not created")
+	}
+	if cat.createdLog[0].Slug != "anon" {
+		t.Errorf("scenario 31: slug = %q, want 'anon' (email-prefix fallback)", cat.createdLog[0].Slug)
+	}
+}

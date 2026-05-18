@@ -27,6 +27,7 @@ import CSVUploadPage from './features/integrations/CSVUploadPage.jsx'
 import ShopifyConnectPage from './features/integrations/ShopifyConnectPage.jsx'
 import SettingsPage from './features/settings/SettingsPage.jsx'
 import ApiKeysPage from './features/settings/ApiKeysPage.jsx'
+import SessionsPage from './features/settings/SessionsPage.jsx'
 import CanvasPage from './features/canvas/CanvasPage.jsx'
 import WidgetPage from './features/widget/WidgetPage.jsx'
 import ConversationsPage from './features/conversations/ConversationsPage.jsx'
@@ -93,6 +94,7 @@ export default function App() {
         <Route path="canvas" element={<CanvasPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="settings/api-keys" element={<ApiKeysPage />} />
+        <Route path="settings/sessions" element={<SessionsPage />} />
         <Route path="billing" element={<BillingPage />} />
       </Route>
     </Routes>
