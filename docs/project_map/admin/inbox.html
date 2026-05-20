@@ -1,0 +1,1062 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Admin · inbox slice — information flow</title>
+<style>
+  :root {
+    --blue: #5BA4D9;
+    --orange: #F0924A;
+    --green: #4FB286;
+    --gray: #8a8f99;
+    --yellow: #E8C547;
+    --red: #C8553D;
+    --bg: #11151c;
+    --panel: #1a1f29;
+    --panel2: #232a36;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --border: #2c3340;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, system-ui, sans-serif; }
+  #app { display: grid; grid-template-columns: 1fr 360px; grid-template-rows: 48px 1fr; height: 100vh; }
+  header {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 16px;
+    padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  header input[type=search] {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 4px; width: 200px; font: inherit;
+  }
+  header .filters { display: flex; gap: 8px; font-size: 12px; color: var(--muted); }
+  header .filters label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  header .filters input { margin: 0; }
+  #cy { background: var(--bg); }
+  aside {
+    background: var(--panel); border-left: 1px solid var(--border);
+    padding: 16px; overflow-y: auto;
+  }
+  aside .empty { color: var(--muted); font-style: italic; }
+  aside h2 { margin: 0 0 4px 0; font-size: 14px; font-weight: 600; }
+  aside .type-chip {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #11151c; margin-bottom: 12px;
+  }
+  aside .file { color: var(--muted); font-size: 11px; font-family: ui-monospace, Menlo, monospace; margin-bottom: 12px; word-break: break-all; }
+  aside .sig { background: var(--panel2); padding: 8px 10px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text); margin-bottom: 12px; white-space: pre-wrap; }
+  aside .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 14px; margin-bottom: 4px; }
+  aside .impact { background: rgba(240, 146, 74, 0.1); border-left: 3px solid var(--orange); padding: 8px 10px; border-radius: 0 4px 4px 0; font-size: 12px; color: var(--text); margin-bottom: 8px; }
+  aside ul { margin: 4px 0 8px 0; padding-left: 18px; color: var(--text); font-size: 12px; }
+  aside ul li { margin-bottom: 2px; cursor: pointer; }
+  aside ul li:hover { color: var(--orange); }
+  aside .summary { color: var(--text); font-size: 12px; margin-bottom: 10px; }
+  aside table.io { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 6px; }
+  aside table.io th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 6px 3px 0; vertical-align: top; width: 70px; font-family: ui-monospace, Menlo, monospace; }
+  aside table.io td { padding: 3px 0; vertical-align: top; font-family: ui-monospace, Menlo, monospace; color: var(--text); }
+  aside table.io td .desc { font-family: -apple-system, system-ui, sans-serif; color: var(--muted); font-size: 11px; margin-top: 1px; }
+  aside .io-section { background: var(--panel2); border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; }
+  aside .io-section .label { margin-top: 0; }
+  .legend {
+    position: absolute; bottom: 12px; left: 12px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 12px; font-size: 11px; color: var(--muted);
+  }
+  .legend .row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .legend .swatch { width: 12px; height: 12px; border-radius: 2px; }
+  .legend .line { width: 16px; height: 2px; }
+  .legend .dashed { background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 8px); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>admin · <span style="color: var(--orange)">inbox</span></h1>
+    <span class="sub">universal raw-data buffer · 4 sources → catalog.inbox_items → discovery_v2 + apply_v2</span>
+    <span class="spacer"></span>
+    <div class="filters">
+      <label><input type="checkbox" data-type="handler" checked /> handler</label>
+      <label><input type="checkbox" data-type="usecase-caller" checked /> caller</label>
+      <label><input type="checkbox" data-type="usecase" checked /> usecase</label>
+      <label><input type="checkbox" data-type="port" checked /> port</label>
+      <label><input type="checkbox" data-type="adapter" checked /> adapter</label>
+      <label><input type="checkbox" data-type="domain" checked /> domain</label>
+      <label><input type="checkbox" data-type="table" checked /> table</label>
+    </div>
+    <input type="search" id="search" placeholder="search nodes…" />
+  </header>
+  <div id="cy"></div>
+  <aside id="sidebar">
+    <div class="empty">Click a node to see details.<br><br>Drag to pan. Scroll to zoom. Click empty space to deselect.</div>
+  </aside>
+  <div class="legend">
+    <div class="row"><span class="swatch" style="background:var(--orange)"></span> handler (HTTP entry)</div>
+    <div class="row"><span class="swatch" style="background:var(--blue)"></span> usecase / caller</div>
+    <div class="row"><span class="swatch" style="background:var(--green)"></span> port (interface)</div>
+    <div class="row"><span class="swatch" style="background:var(--gray)"></span> adapter (impl)</div>
+    <div class="row"><span class="swatch" style="background:var(--yellow)"></span> domain type</div>
+    <div class="row"><span class="swatch" style="background:var(--red)"></span> DB table</div>
+    <div class="row" style="margin-top:6px"><span class="line" style="background:var(--text)"></span> calls</div>
+    <div class="row"><span class="line dashed"></span> implements / uses</div>
+  </div>
+</div>
+
+<script type="application/json" id="graph-data">
+{
+  "slice": "inbox",
+  "title": "Inbox — universal raw-data buffer",
+  "summary": "Single write entry point for tenant source data (Shopify bulk / CSV / Sheets / manual UI) into catalog.inbox_items. Downstream: discovery_v2 reads via 6 narrow agent tools; apply_v2 consumes applied_at IS NULL rows; curator UI peeks rows by ID.",
+  "nodes": [
+    {
+      "id": "h:sync_now",
+      "type": "handler",
+      "label": "POST /catalog/v2/sync-now/{tenant}",
+      "sig": "func (h *CatalogV2Handler) HandleSyncNow(w, r)",
+      "file": "internal/handlers/handler_catalog_v2.go:33",
+      "summary": "Manual full-resync trigger. Pulls fresh Shopify bulk, writes to inbox, runs apply.",
+      "impact": "Если ломается — merchant не может вручную перетянуть каталог из Shopify. Падает кнопка «Sync now» в admin UI.",
+      "io": {
+        "in": [
+          {"name": "tenant_id", "type": "string (URL path suffix)", "desc": "Извлекается из /sync-now/{tenant_id}"},
+          {"name": "method", "type": "POST (others rejected 405)", "desc": ""}
+        ],
+        "out": [
+          {"name": "body", "type": "*SyncResult JSON", "desc": "{ inbox: {total, inserted, ...}, apply: {...} }"},
+          {"name": "status", "type": "200 ok / 400 missing tenant / 500 sync failed", "desc": ""}
+        ]
+      }
+    },
+    {
+      "id": "h:discover",
+      "type": "handler",
+      "label": "POST /catalog/v2/discover/{tenant}",
+      "sig": "func (h *CatalogV2Handler) HandleDiscover(w, r)",
+      "file": "internal/handlers/handler_catalog_v2.go:55",
+      "summary": "Triggers discovery_v2 agent run. Agent introspects inbox JSONB via 6 narrow tools.",
+      "impact": "Если ломается — каталог нового tenant'a не классифицируется (vertical / mapping). Импорт встаёт в очереди inbox.",
+      "io": {
+        "in": [
+          {"name": "tenant_id", "type": "string (URL path suffix)", "desc": ""},
+          {"name": "body", "type": "{ trigger: string, payload: json.RawMessage }", "desc": "Опционально — что запустило discovery"}
+        ],
+        "out": [
+          {"name": "body", "type": "*MappingArtifact JSON", "desc": "Что агент понял про каталог — vertical, fields mapping, confidence"}
+        ]
+      }
+    },
+    {
+      "id": "h:csv_import",
+      "type": "handler",
+      "label": "POST /integrations/csv/import",
+      "sig": "func (h *CSVIntegrationsHandler) HandleImport(w, r)",
+      "file": "internal/handlers/handler_integrations_csv.go:71",
+      "summary": "Принимает CSV upload, разбирает на rows, отправляет в CSVIngester.",
+      "impact": "Если ломается — merchant не может загрузить каталог из CSV/Sheets. Один из трёх каналов залива.",
+      "io": {
+        "in": [
+          {"name": "file", "type": "multipart CSV upload", "desc": "Сам файл от merchant'a"},
+          {"name": "tenant_id", "type": "string (auth context)", "desc": ""},
+          {"name": "natural_id_field", "type": "string (form)", "desc": "Какая колонка SKU/handle для дедупа"}
+        ],
+        "out": [
+          {"name": "body", "type": "*IngestResult JSON", "desc": "{ inbox: counts, apply: counts }"}
+        ]
+      }
+    },
+    {
+      "id": "h:webhook",
+      "type": "handler",
+      "label": "POST /webhooks/shopify",
+      "sig": "func (h *ShopifyHandler) HandleWebhook(w, r)",
+      "file": "internal/handlers/handler_integrations_shopify.go:142",
+      "summary": "Принимает Shopify product/update webhook. Передаёт в orchestrator.OnWebhook.",
+      "impact": "Если ломается — изменения каталога у merchant'a в Shopify не приезжают к нам в real-time. Каталог дрейфует.",
+      "io": {
+        "in": [
+          {"name": "headers", "type": "X-Shopify-Topic, X-Shopify-Hmac-Sha256, X-Shopify-Shop-Domain", "desc": "HMAC проверяется"},
+          {"name": "body", "type": "Shopify product JSON", "desc": "Один продукт в полном Shopify-формате"}
+        ],
+        "out": [
+          {"name": "status", "type": "200 (всегда после HMAC, иначе 401)", "desc": "Shopify ретраит 5xx"}
+        ]
+      }
+    },
+
+    {
+      "id": "uc:shopify_ingester",
+      "type": "usecase-caller",
+      "label": "ShopifyIngester.IngestBulk",
+      "sig": "func (i *ShopifyIngester) IngestBulk(ctx, tenantID, jsonlReader) (*IngestResult, error)",
+      "file": "internal/usecases/ingest_shopify.go",
+      "summary": "Парсит Shopify bulk JSONL, кормит в InboxUseCase.WriteFromShopifyBulk, потом дёргает apply.",
+      "impact": "Главный канал заливки для Shopify-merchant'ов.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"},
+          {"name": "jsonlReader", "type": "io.Reader", "desc": "Stream Shopify bulk JSONL"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*IngestResult", "desc": "{ Inbox *InboxWriteResult, Apply *ApplyResult }"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:csv_ingester",
+      "type": "usecase-caller",
+      "label": "CSVIngester.IngestReader",
+      "sig": "func (i *CSVIngester) IngestReader(ctx, tenantID, source, reader, naturalIDField) (*IngestResult, error)",
+      "file": "internal/usecases/ingest_csv.go:32",
+      "summary": "Парсит CSV-поток в строки → WriteFromCSV или WriteFromSheets в зависимости от source.",
+      "impact": "Главный канал для не-Shopify merchant'ов (Google Sheets экспорт, ручные CSV).",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"},
+          {"name": "source", "type": "domain.InboxSourceKind", "desc": "только csv | sheets"},
+          {"name": "reader", "type": "io.Reader", "desc": "CSV-поток"},
+          {"name": "naturalIDField", "type": "string", "desc": "имя колонки SKU/handle для дедупа"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*IngestResult"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:orch_manual",
+      "type": "usecase-caller",
+      "label": "UpdateOrchestrator.ManualSync",
+      "sig": "func (o *UpdateOrchestrator) ManualSync(ctx, tenantID) (*SyncResult, error)",
+      "file": "internal/usecases/update_orchestrator.go",
+      "summary": "Координатор: Shopify ingest → write inbox → apply_v2. Дёргается кнопкой «Sync now».",
+      "impact": "Без него ручной resync невозможен.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*SyncResult", "desc": "Сводный результат ingest+apply"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:orch_webhook",
+      "type": "usecase-caller",
+      "label": "UpdateOrchestrator.OnWebhook",
+      "sig": "func (o *UpdateOrchestrator) OnWebhook(ctx, ev WebhookEvent) (action string, err error)",
+      "file": "internal/usecases/update_orchestrator.go:92",
+      "summary": "Абсорбирует webhook-событие в inbox (через WriteManual), потом применяет если вне rate-window.",
+      "impact": "Real-time канал обновлений из Shopify. Если ломается — мы догоняем только при следующем ManualSync.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "ev", "type": "WebhookEvent", "desc": "{ TenantID, ExternalID, Topic, Payload }"}
+        ],
+        "out": [
+          {"name": "action", "type": "string", "desc": "\"applied\" | \"buffered\" (rate-window)"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:apply_v2",
+      "type": "usecase-caller",
+      "label": "ApplyV2 — consumer",
+      "sig": "uc.inbox.ListUnapplied(...) + uc.inbox.MarkApplied(...)",
+      "file": "internal/usecases/apply_v2.go:138",
+      "summary": "Читает unapplied rows из inbox, превращает в master/listings, помечает applied_at.",
+      "impact": "Это «трансляция» inbox → master. Без неё данные лежат сырыми и не появляются в каталоге.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*ApplyResult", "desc": "{ Processed, Skipped, Errors }"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:discovery_tools",
+      "type": "usecase-caller",
+      "label": "DiscoveryV2 — agent tools",
+      "sig": "6 tools: list_fields, sample_values, count_by, field_stats, peek_full_rows, count_total",
+      "file": "internal/usecases/discovery_v2_tools.go:194",
+      "summary": "Тулзы LLM-агента, который копается в inbox JSONB чтобы понять схему tenant'a. Все read-only.",
+      "impact": "Без них агент не сможет автоматически разобраться в новой структуре данных.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"},
+          {"name": "tool_args", "type": "varies per tool", "desc": "JSON args от LLM"}
+        ],
+        "out": [
+          {"name": "tool_result", "type": "compact JSON", "desc": "Зависит от тула: counts / samples / stats / fields"}
+        ]
+      }
+    },
+
+    {
+      "id": "uc:write_shopify",
+      "type": "usecase",
+      "label": "InboxUseCase.WriteFromShopifyBulk",
+      "sig": "func (uc *InboxUseCase) WriteFromShopifyBulk(ctx, tenantID, items []ShopifyItem) (*InboxWriteResult, error)",
+      "file": "internal/usecases/inbox.go:58",
+      "classification": "mutate (bulk write)",
+      "summary": "Принимает []ShopifyItem (GID + raw JSONL). Считает payload_hash, упаковывает в []domain.InboxItem, кидает в BulkUpsert. Пустой GID → счётчик errors.",
+      "impact": "Hot path для Shopify-каталога. Каждый product update проходит здесь.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"},
+          {"name": "items", "type": "[]ShopifyItem", "desc": "{ GID string; Raw json.RawMessage } — GID станет external_id"}
+        ],
+        "out": [
+          {"name": "res", "type": "*InboxWriteResult", "desc": "{ Total, Inserted, Updated, Unchanged, Errors }"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:write_csv",
+      "type": "usecase",
+      "label": "InboxUseCase.WriteFromCSV",
+      "sig": "func (uc *InboxUseCase) WriteFromCSV(ctx, tenantID, rows []CSVRow) (*InboxWriteResult, error)",
+      "file": "internal/usecases/inbox.go:99",
+      "classification": "mutate (bulk write)",
+      "summary": "Тонкая обёртка над writeFromMapRows с source=csv.",
+      "impact": "Канал заливки для CSV-merchant'ов.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"},
+          {"name": "rows", "type": "[]CSVRow", "desc": "{ NaturalID string; Fields map[string]string }"}
+        ],
+        "out": [
+          {"name": "res", "type": "*InboxWriteResult"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:write_sheets",
+      "type": "usecase",
+      "label": "InboxUseCase.WriteFromSheets",
+      "sig": "func (uc *InboxUseCase) WriteFromSheets(ctx, tenantID, rows []CSVRow) (*InboxWriteResult, error)",
+      "file": "internal/usecases/inbox.go:104",
+      "classification": "mutate (bulk write)",
+      "summary": "Идентичен WriteFromCSV, только source=sheets (для Google Sheets экспортов).",
+      "impact": "Канал для Google Sheets merchant'ов.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"},
+          {"name": "rows", "type": "[]CSVRow"}
+        ],
+        "out": [
+          {"name": "res", "type": "*InboxWriteResult"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:write_manual",
+      "type": "usecase",
+      "label": "InboxUseCase.WriteManual",
+      "sig": "func (uc *InboxUseCase) WriteManual(ctx, tenantID, externalID, fields map[string]any) (*InboxWriteResult, error)",
+      "file": "internal/usecases/inbox.go:110",
+      "classification": "mutate (single write)",
+      "summary": "Для in-admin «add product manually» формы И для абсорбции webhook-событий. externalID передаёт caller.",
+      "impact": "Точка входа для ручного ввода + всех Shopify webhook'ов.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"},
+          {"name": "externalID", "type": "string", "desc": "UUID для manual / Shopify GID для webhook"},
+          {"name": "fields", "type": "map[string]any", "desc": "Произвольный набор полей продукта"}
+        ],
+        "out": [
+          {"name": "res", "type": "*InboxWriteResult", "desc": "Total=1; Inserted=1 или Unchanged=1"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+
+    {
+      "id": "p:upsert",
+      "type": "port",
+      "label": "InboxPort.Upsert",
+      "sig": "Upsert(ctx, item *domain.InboxItem) (changed bool, err error)",
+      "file": "internal/ports/inbox_port.go:29",
+      "classification": "mutate",
+      "summary": "Idempotent на (tenant_id, source_kind, external_id). changed=true если новая или payload_hash отличается. При смене контента — сбрасывает applied_at в NULL чтобы apply_v2 подхватил снова.",
+      "impact": "Сердце inbox: всё в итоге пишется через Upsert или BulkUpsert.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "item", "type": "*domain.InboxItem", "desc": "Caller считает PayloadHash сам"}
+        ],
+        "out": [
+          {"name": "changed", "type": "bool", "desc": "true = новая или payload_hash другой"},
+          {"name": "err", "type": "error"}
+        ],
+        "sql": "INSERT INTO catalog.inbox_items ... ON CONFLICT (tenant_id, source_kind, external_id) DO UPDATE ..."
+      }
+    },
+    {
+      "id": "p:bulk_upsert",
+      "type": "port",
+      "label": "InboxPort.BulkUpsert",
+      "sig": "BulkUpsert(ctx, items []*domain.InboxItem) (changed int, err error)",
+      "file": "internal/ports/inbox_port.go:39",
+      "classification": "mutate (batched)",
+      "summary": "Батчевая версия Upsert. UNNEST под капотом, чанки если большая пачка. Возвращает count rows с реально изменённым content'ом.",
+      "impact": "Hot path для Shopify bulk imports. Производительность зависит от размера чанка.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "items", "type": "[]*domain.InboxItem", "desc": "Rows с пустыми TenantID/ExternalID/SourceKind молча пропускаются"}
+        ],
+        "out": [
+          {"name": "changed", "type": "int", "desc": "Count новых ИЛИ изменённых (caller рапортует как Inserted)"},
+          {"name": "err", "type": "error"}
+        ],
+        "sql": "INSERT INTO catalog.inbox_items SELECT ... FROM input (UNNEST) ON CONFLICT ..."
+      }
+    },
+    {
+      "id": "p:mark_applied",
+      "type": "port",
+      "label": "InboxPort.MarkApplied",
+      "sig": "MarkApplied(ctx, itemID string) error",
+      "file": "internal/ports/inbox_port.go:44",
+      "classification": "mutate",
+      "summary": "Ставит applied_at=NOW() на конкретный item. Дёргается apply_v2 после успешного write в master.",
+      "impact": "Если ломается — apply_v2 будет крутить одни и те же rows бесконечно.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "itemID", "type": "string", "desc": "PK catalog.inbox_items.id"}
+        ],
+        "out": [
+          {"name": "err", "type": "error", "desc": "non-nil если row не найдена"}
+        ],
+        "sql": "UPDATE catalog.inbox_items SET applied_at=NOW() WHERE id=$1"
+      }
+    },
+    {
+      "id": "p:delete_tenant",
+      "type": "port",
+      "label": "InboxPort.DeleteByTenant",
+      "sig": "DeleteByTenant(ctx, tenantID string) error",
+      "file": "internal/ports/inbox_port.go:48",
+      "classification": "mutate",
+      "summary": "Удаляет все inbox rows для tenant. Используется на disconnect / full re-import.",
+      "impact": "Опасная операция. Если позвать случайно — теряем raw данные tenant'a (но master цел).",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"}
+        ],
+        "out": [
+          {"name": "err", "type": "error"}
+        ],
+        "sql": "DELETE FROM catalog.inbox_items WHERE tenant_id=$1"
+      }
+    },
+    {
+      "id": "p:get_by_id",
+      "type": "port",
+      "label": "InboxPort.GetByID",
+      "sig": "GetByID(ctx, itemID string) (*domain.InboxItem, error)",
+      "file": "internal/ports/inbox_port.go:53",
+      "classification": "read",
+      "summary": "Возвращает одну полную inbox row. Для curator detail view.",
+      "impact": "Используется куратором при ручной проверке item'a.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "itemID", "type": "string"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*domain.InboxItem", "desc": "полная row, raw JSON включён"},
+          {"name": "err", "type": "error"}
+        ],
+        "sql": "SELECT ... FROM catalog.inbox_items WHERE id=$1"
+      }
+    },
+    {
+      "id": "p:list_unapplied",
+      "type": "port",
+      "label": "InboxPort.ListUnapplied",
+      "sig": "ListUnapplied(ctx, tenantID, limit, offset int) ([]*domain.InboxItem, error)",
+      "file": "internal/ports/inbox_port.go:58",
+      "classification": "read",
+      "summary": "Streams rows где applied_at IS NULL. Order: fetched_at ASC (FIFO). Пагинация limit/offset.",
+      "impact": "Главный канал чтения для apply_v2. Если медленный — apply_v2 тормозит.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"},
+          {"name": "limit", "type": "int", "desc": "≤0 → дефолт 100"},
+          {"name": "offset", "type": "int", "desc": "<0 → 0"}
+        ],
+        "out": [
+          {"name": "↩", "type": "[]*domain.InboxItem", "desc": "FIFO по fetched_at"},
+          {"name": "err", "type": "error"}
+        ],
+        "sql": "SELECT ... WHERE tenant_id=$1 AND applied_at IS NULL ORDER BY fetched_at ASC LIMIT/OFFSET"
+      }
+    },
+    {
+      "id": "p:count_total",
+      "type": "port",
+      "label": "InboxPort.CountTotal",
+      "sig": "CountTotal(ctx, tenantID string) (int, error)",
+      "file": "internal/ports/inbox_port.go:61",
+      "classification": "read (agent tool)",
+      "summary": "Просто COUNT(*) для tenant. Cheap.",
+      "impact": "Agent смотрит сколько вообще данных есть.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantID", "type": "string"}
+        ],
+        "out": [
+          {"name": "↩", "type": "int"},
+          {"name": "err", "type": "error"}
+        ],
+        "sql": "SELECT COUNT(*) FROM catalog.inbox_items WHERE tenant_id=$1"
+      }
+    },
+    {
+      "id": "p:list_fields",
+      "type": "port",
+      "label": "InboxPort.ListFields",
+      "sig": "ListFields(ctx, tenantID string, limit int) ([]string, error)",
+      "file": "internal/ports/inbox_port.go:71",
+      "classification": "read (agent tool)",
+      "summary": "Distinct top-level JSONB keys across all rows. Tool `list_fields`.",
+      "impact": "Agent узнаёт «какие вообще поля есть в моём каталоге».",
+      "io": {
+        "in": [
+          {"name": "tenantID", "type": "string"},
+          {"name": "limit", "type": "int"}
+        ],
+        "out": [
+          {"name": "↩", "type": "[]string", "desc": "имена JSONB top-level keys"},
+          {"name": "err", "type": "error"}
+        ],
+        "sql": "SELECT DISTINCT jsonb_object_keys(raw) FROM catalog.inbox_items WHERE tenant_id=$1 LIMIT $2"
+      }
+    },
+    {
+      "id": "p:sample_values",
+      "type": "port",
+      "label": "InboxPort.SampleValues",
+      "sig": "SampleValues(ctx, tenantID, field string, limit int) ([]string, error)",
+      "file": "internal/ports/inbox_port.go:75",
+      "classification": "read (agent tool)",
+      "summary": "Distinct stringified values для top-level field. Tool `sample_values`.",
+      "impact": "Agent смотрит как выглядят значения в конкретном поле.",
+      "io": {
+        "in": [
+          {"name": "tenantID", "type": "string"},
+          {"name": "field", "type": "string", "desc": "имя top-level JSONB key"},
+          {"name": "limit", "type": "int"}
+        ],
+        "out": [
+          {"name": "↩", "type": "[]string", "desc": "distinct values, stringified"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "p:count_by",
+      "type": "port",
+      "label": "InboxPort.CountBy",
+      "sig": "CountBy(ctx, tenantID, field string, maxBuckets int) (map[string]int, error)",
+      "file": "internal/ports/inbox_port.go:80",
+      "classification": "read (agent tool)",
+      "summary": "Распределение value→count, top-N по частоте. Tool `count_by`.",
+      "impact": "Agent видит, какие категории/бренды доминируют.",
+      "io": {
+        "in": [
+          {"name": "tenantID", "type": "string"},
+          {"name": "field", "type": "string"},
+          {"name": "maxBuckets", "type": "int", "desc": "cap top-N по frequency"}
+        ],
+        "out": [
+          {"name": "↩", "type": "map[string]int", "desc": "value → count"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "p:field_stats",
+      "type": "port",
+      "label": "InboxPort.FieldStats",
+      "sig": "FieldStats(ctx, tenantID, field string, sampleN int) (*domain.InboxFieldStats, error)",
+      "file": "internal/ports/inbox_port.go:85",
+      "classification": "read (agent tool)",
+      "summary": "Компактная статистика одного поля: non-null, distinct, samples, numeric range, length range. Tool `field_stats`.",
+      "impact": "Agent делает выводы о типе поля (число / строка / категориальное).",
+      "io": {
+        "in": [
+          {"name": "tenantID", "type": "string"},
+          {"name": "field", "type": "string"},
+          {"name": "sampleN", "type": "int"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*domain.InboxFieldStats", "desc": "compact stats: non-null, distinct, samples, ranges"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "p:peek_full",
+      "type": "port",
+      "label": "InboxPort.PeekFullRows",
+      "sig": "PeekFullRows(ctx, tenantID string, limit int) ([]*domain.InboxItem, error)",
+      "file": "internal/ports/inbox_port.go:91",
+      "classification": "read (HEAVY agent tool)",
+      "summary": "До `limit` полных raw rows. ТЯЖЁЛЫЙ — весь payload, дует контекст. Usecase должен ограничивать ~10 вызовов на run.",
+      "impact": "Без него агент слепой на «структуру вложенных объектов», но злоупотребление съедает токены.",
+      "io": {
+        "in": [
+          {"name": "tenantID", "type": "string"},
+          {"name": "limit", "type": "int", "desc": "ОЧЕНЬ важно — caller должен ставить small"}
+        ],
+        "out": [
+          {"name": "↩", "type": "[]*domain.InboxItem", "desc": "ПОЛНЫЙ raw payload — много токенов"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+
+    {
+      "id": "a:inbox_adapter",
+      "type": "adapter",
+      "label": "InboxAdapter (postgres)",
+      "sig": "12 methods, 1:1 with InboxPort",
+      "file": "internal/adapters/postgres/inbox_adapter.go:25",
+      "summary": "Postgres-реализация InboxPort. Все запросы через pgx, idempotent через ON CONFLICT (tenant_id, source_kind, external_id). 436 строк.",
+      "impact": "Единственная реализация. Если упадёт postgres — встают все 4 канала залива."
+    },
+
+    {
+      "id": "p:action_log",
+      "type": "port",
+      "label": "TenantActionLogPort.Log",
+      "sig": "Log(ctx, entry *TenantActionLogEntry) error",
+      "file": "internal/ports/tenant_action_log_port.go",
+      "classification": "mutate (best-effort)",
+      "summary": "Inbox.recordPull пишет одну row на batch ingest (action='inbox_pull', payload=counts).",
+      "impact": "Аудитный след для merchant: сколько строк пришло, сколько изменилось, ошибки. Сбой не блокирует ingest.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "entry", "type": "*TenantActionLogEntry", "desc": "{ TenantID, Action='inbox_pull', Status, Payload json }"}
+        ],
+        "out": [
+          {"name": "err", "type": "error", "desc": "Логируется но НЕ пробрасывается caller'у"}
+        ]
+      }
+    },
+
+    {
+      "id": "d:inbox_item",
+      "type": "domain",
+      "label": "domain.InboxItem",
+      "sig": "{ ID, TenantID, SourceKind, ExternalID, Raw json.RawMessage, PayloadHash, FetchedAt, AppliedAt *time.Time }",
+      "file": "internal/domain/inbox.go:22",
+      "summary": "Mirrors одну row of catalog.inbox_items. AppliedAt=nil → ещё не применено.",
+      "impact": "Главный тип данных всего среза."
+    },
+    {
+      "id": "d:source_kind",
+      "type": "domain",
+      "label": "domain.InboxSourceKind",
+      "sig": "string enum: \"shopify\" | \"csv\" | \"sheets\" | \"manual\"",
+      "file": "internal/domain/inbox.go:12",
+      "summary": "Соответствует CHECK constraint в catalog.inbox_items.source_kind.",
+      "impact": "Расширяется → добавить новый канал (например, Wildberries) = новый enum + новый ingester."
+    },
+    {
+      "id": "d:field_stats",
+      "type": "domain",
+      "label": "domain.InboxFieldStats",
+      "sig": "{ Field, NonNullCount, DistinctCount, SampleValues, MinNumeric, MaxNumeric, MinLength, MaxLength }",
+      "file": "internal/domain/inbox.go:38",
+      "summary": "Компактная сводка одного поля для discovery agent. Дешёво в токенах.",
+      "impact": "Формат входа в LLM-prompt. Меняешь поля → меняется промпт агента."
+    },
+
+    {
+      "id": "t:inbox_items",
+      "type": "table",
+      "label": "catalog.inbox_items",
+      "sig": "PRIMARY KEY (id), UNIQUE (tenant_id, source_kind, external_id)",
+      "file": "db/migrations/* (catalog schema)",
+      "summary": "Универсальный raw-data буфер. JSONB raw, payload_hash для change detection, applied_at для apply_v2.",
+      "impact": "Если деградирует — деградируют все каналы импорта и discovery, и apply."
+    },
+    {
+      "id": "t:action_log",
+      "type": "table",
+      "label": "core.tenant_action_log",
+      "sig": "append-only audit log",
+      "file": "db/migrations/*",
+      "summary": "Per-tenant аудит действий. inbox.recordPull добавляет action='inbox_pull' с counts payload.",
+      "impact": "Источник для admin UI «история операций tenant'a»."
+    }
+  ],
+  "edges": [
+    {"from": "h:sync_now", "to": "uc:orch_manual", "kind": "calls", "label": "tenantID"},
+    {"from": "h:discover", "to": "uc:discovery_tools", "kind": "calls", "label": "tenantID, trigger"},
+    {"from": "h:csv_import", "to": "uc:csv_ingester", "kind": "calls", "label": "tenantID, io.Reader"},
+    {"from": "h:webhook", "to": "uc:orch_webhook", "kind": "calls", "label": "WebhookEvent"},
+
+    {"from": "uc:orch_manual", "to": "uc:shopify_ingester", "kind": "calls", "label": "JSONL stream"},
+    {"from": "uc:orch_manual", "to": "uc:apply_v2", "kind": "calls"},
+    {"from": "uc:orch_webhook", "to": "uc:write_manual", "kind": "calls", "label": "externalID, fields"},
+    {"from": "uc:orch_webhook", "to": "uc:apply_v2", "kind": "calls"},
+
+    {"from": "uc:shopify_ingester", "to": "uc:write_shopify", "kind": "calls", "label": "[]ShopifyItem"},
+    {"from": "uc:csv_ingester", "to": "uc:write_csv", "kind": "calls", "label": "[]CSVRow"},
+    {"from": "uc:csv_ingester", "to": "uc:write_sheets", "kind": "calls", "label": "[]CSVRow"},
+
+    {"from": "uc:write_shopify", "to": "p:bulk_upsert", "kind": "calls", "label": "[]*InboxItem"},
+    {"from": "uc:write_csv", "to": "p:bulk_upsert", "kind": "calls", "label": "[]*InboxItem"},
+    {"from": "uc:write_sheets", "to": "p:bulk_upsert", "kind": "calls", "label": "[]*InboxItem"},
+    {"from": "uc:write_manual", "to": "p:upsert", "kind": "calls", "label": "*InboxItem"},
+
+    {"from": "uc:write_shopify", "to": "p:action_log", "kind": "calls"},
+    {"from": "uc:write_csv", "to": "p:action_log", "kind": "calls"},
+    {"from": "uc:write_sheets", "to": "p:action_log", "kind": "calls"},
+    {"from": "uc:write_manual", "to": "p:action_log", "kind": "calls"},
+
+    {"from": "uc:apply_v2", "to": "p:list_unapplied", "kind": "calls", "label": "tenantID, limit, offset"},
+    {"from": "uc:apply_v2", "to": "p:mark_applied", "kind": "calls", "label": "itemID"},
+
+    {"from": "uc:discovery_tools", "to": "p:count_total", "kind": "calls"},
+    {"from": "uc:discovery_tools", "to": "p:list_fields", "kind": "calls"},
+    {"from": "uc:discovery_tools", "to": "p:sample_values", "kind": "calls"},
+    {"from": "uc:discovery_tools", "to": "p:count_by", "kind": "calls"},
+    {"from": "uc:discovery_tools", "to": "p:field_stats", "kind": "calls"},
+    {"from": "uc:discovery_tools", "to": "p:peek_full", "kind": "calls"},
+
+    {"from": "p:upsert", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:bulk_upsert", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:mark_applied", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:delete_tenant", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:get_by_id", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:list_unapplied", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:count_total", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:list_fields", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:sample_values", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:count_by", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:field_stats", "to": "a:inbox_adapter", "kind": "implements"},
+    {"from": "p:peek_full", "to": "a:inbox_adapter", "kind": "implements"},
+
+    {"from": "a:inbox_adapter", "to": "t:inbox_items", "kind": "writes", "label": "INSERT/UPDATE/DELETE"},
+    {"from": "p:action_log", "to": "t:action_log", "kind": "writes", "label": "INSERT"},
+
+    {"from": "uc:write_shopify", "to": "d:inbox_item", "kind": "uses"},
+    {"from": "uc:write_csv", "to": "d:inbox_item", "kind": "uses"},
+    {"from": "uc:write_sheets", "to": "d:inbox_item", "kind": "uses"},
+    {"from": "uc:write_manual", "to": "d:inbox_item", "kind": "uses"},
+    {"from": "uc:write_shopify", "to": "d:source_kind", "kind": "uses"},
+    {"from": "uc:write_csv", "to": "d:source_kind", "kind": "uses"},
+    {"from": "uc:write_sheets", "to": "d:source_kind", "kind": "uses"},
+    {"from": "uc:write_manual", "to": "d:source_kind", "kind": "uses"},
+    {"from": "p:field_stats", "to": "d:field_stats", "kind": "uses"}
+  ]
+}
+</script>
+
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+<script>
+const data = JSON.parse(document.getElementById('graph-data').textContent);
+
+const TYPE_COLORS = {
+  handler: '#F0924A',
+  'usecase-caller': '#5BA4D9',
+  usecase: '#5BA4D9',
+  port: '#4FB286',
+  adapter: '#8a8f99',
+  domain: '#E8C547',
+  table: '#C8553D'
+};
+const TYPE_SHAPES = {
+  handler: 'round-rectangle',
+  'usecase-caller': 'round-rectangle',
+  usecase: 'round-rectangle',
+  port: 'round-rectangle',
+  adapter: 'round-rectangle',
+  domain: 'round-hexagon',
+  table: 'round-diamond'
+};
+
+const elements = [
+  ...data.nodes.map(n => ({
+    data: { id: n.id, label: n.label, type: n.type, ...n }
+  })),
+  ...data.edges.map((e, i) => ({
+    data: { id: 'e' + i, source: e.from, target: e.to, kind: e.kind }
+  }))
+];
+
+const cy = cytoscape({
+  container: document.getElementById('cy'),
+  elements,
+  style: [
+    {
+      selector: 'node',
+      style: {
+        'background-color': n => TYPE_COLORS[n.data('type')] || '#888',
+        'shape': n => TYPE_SHAPES[n.data('type')] || 'round-rectangle',
+        'label': 'data(label)',
+        'color': '#11151c',
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'text-wrap': 'wrap',
+        'text-max-width': '160px',
+        'font-size': '10px',
+        'font-weight': '600',
+        'width': 'label',
+        'height': 'label',
+        'padding': '10px',
+        'border-width': 1,
+        'border-color': '#11151c'
+      }
+    },
+    {
+      selector: 'node:selected',
+      style: {
+        'border-width': 3,
+        'border-color': '#fff'
+      }
+    },
+    {
+      selector: 'node.faded',
+      style: { 'opacity': 0.55 }
+    },
+    {
+      selector: 'node.focus',
+      style: {
+        'border-width': 4,
+        'border-color': '#fff',
+        'shadow-blur': 20,
+        'shadow-color': '#F0924A',
+        'shadow-opacity': 0.8
+      }
+    },
+    {
+      selector: 'node.neighbor',
+      style: {
+        'border-width': 2.5,
+        'border-color': '#F0924A'
+      }
+    },
+    {
+      selector: 'edge',
+      style: {
+        'curve-style': 'bezier',
+        'target-arrow-shape': 'triangle',
+        'arrow-scale': 1.0,
+        'width': 1.5,
+        'line-color': '#5a6373',
+        'target-arrow-color': '#5a6373',
+        'opacity': 0.7
+      }
+    },
+    {
+      selector: 'edge[kind = "implements"], edge[kind = "uses"]',
+      style: {
+        'line-style': 'dashed',
+        'line-color': '#7a8290',
+        'target-arrow-color': '#7a8290',
+        'opacity': 0.4
+      }
+    },
+    {
+      selector: 'edge[kind = "writes"]',
+      style: {
+        'line-color': '#C8553D',
+        'target-arrow-color': '#C8553D',
+        'width': 2
+      }
+    },
+    {
+      selector: 'edge.highlight',
+      style: {
+        'line-color': '#F0924A',
+        'target-arrow-color': '#F0924A',
+        'width': 3,
+        'opacity': 1
+      }
+    },
+    {
+      selector: 'edge.faded',
+      style: { 'opacity': 0.35 }
+    },
+    {
+      selector: 'edge[label]',
+      style: {
+        'label': 'data(label)',
+        'font-size': '9px',
+        'color': '#9aa3b2',
+        'text-background-color': '#11151c',
+        'text-background-opacity': 0.85,
+        'text-background-padding': '2px',
+        'text-rotation': 'autorotate',
+        'font-family': 'ui-monospace, Menlo, monospace'
+      }
+    }
+  ],
+  layout: {
+    name: 'dagre',
+    rankDir: 'LR',
+    nodeSep: 30,
+    rankSep: 90,
+    edgeSep: 10
+  },
+  wheelSensitivity: 0.2,
+  minZoom: 0.2,
+  maxZoom: 3
+});
+
+const sidebar = document.getElementById('sidebar');
+
+function renderSidebar(node) {
+  if (!node) {
+    sidebar.innerHTML = '<div class="empty">Click a node to see details.<br><br>Drag to pan. Scroll to zoom. Click empty space to deselect.</div>';
+    return;
+  }
+  const d = node.data();
+  const color = TYPE_COLORS[d.type];
+  const callers = cy.edges(`[target = "${d.id}"]`).sources();
+  const callees = cy.edges(`[source = "${d.id}"]`).targets();
+
+  let html = '';
+  html += `<div class="type-chip" style="background:${color}">${d.type}</div>`;
+  html += `<h2>${d.label}</h2>`;
+  if (d.file) html += `<div class="file">${d.file}</div>`;
+  if (d.sig) html += `<div class="sig">${d.sig}</div>`;
+  if (d.classification) {
+    html += `<div class="label">Classification</div><div class="summary"><b>${d.classification}</b></div>`;
+  }
+  if (d.summary) {
+    html += `<div class="label">What it does</div><div class="summary">${d.summary}</div>`;
+  }
+  if (d.io && (d.io.in?.length || d.io.out?.length)) {
+    html += `<div class="io-section">`;
+    if (d.io.in?.length) {
+      html += `<div class="label">IN — что приходит</div><table class="io">`;
+      d.io.in.forEach(p => {
+        html += `<tr><th>${p.name}</th><td>${p.type}${p.desc ? `<div class="desc">${p.desc}</div>` : ''}</td></tr>`;
+      });
+      html += `</table>`;
+    }
+    if (d.io.out?.length) {
+      html += `<div class="label">OUT — что уходит</div><table class="io">`;
+      d.io.out.forEach(p => {
+        html += `<tr><th>${p.name || '↩'}</th><td>${p.type}${p.desc ? `<div class="desc">${p.desc}</div>` : ''}</td></tr>`;
+      });
+      html += `</table>`;
+    }
+    if (d.io.sql) {
+      html += `<div class="label">SQL</div><div class="sig">${d.io.sql}</div>`;
+    }
+    html += `</div>`;
+  }
+  if (d.impact) {
+    html += `<div class="label">Business impact</div><div class="impact">${d.impact}</div>`;
+  }
+  if (callers.length) {
+    html += `<div class="label">Called by (${callers.length})</div><ul>`;
+    callers.forEach(c => html += `<li data-id="${c.id()}">${c.data('label')}</li>`);
+    html += '</ul>';
+  }
+  if (callees.length) {
+    html += `<div class="label">Calls (${callees.length})</div><ul>`;
+    callees.forEach(c => html += `<li data-id="${c.id()}">${c.data('label')}</li>`);
+    html += '</ul>';
+  }
+  sidebar.innerHTML = html;
+  sidebar.querySelectorAll('li[data-id]').forEach(li => {
+    li.addEventListener('click', () => {
+      const n = cy.getElementById(li.dataset.id);
+      n.select();
+      cy.animate({ center: { eles: n }, zoom: Math.max(cy.zoom(), 1) }, { duration: 300 });
+      highlightConnected(n);
+      renderSidebar(n);
+    });
+  });
+}
+
+function highlightConnected(node) {
+  cy.elements().removeClass('highlight').removeClass('faded').removeClass('focus').removeClass('neighbor');
+  if (!node) return;
+  const connectedEdges = node.connectedEdges();
+  const connectedNodes = connectedEdges.connectedNodes();
+  const focusSet = node.union(connectedNodes).union(connectedEdges);
+  cy.elements().not(focusSet).addClass('faded');
+  node.addClass('focus');
+  connectedNodes.not(node).addClass('neighbor');
+  connectedEdges.addClass('highlight');
+}
+
+cy.on('tap', 'node', (evt) => {
+  const node = evt.target;
+  highlightConnected(node);
+  renderSidebar(node);
+});
+
+cy.on('tap', (evt) => {
+  if (evt.target === cy) {
+    cy.elements().removeClass('highlight').removeClass('faded').removeClass('focus').removeClass('neighbor');
+    cy.nodes().unselect();
+    renderSidebar(null);
+  }
+});
+
+document.querySelectorAll('header .filters input').forEach(cb => {
+  cb.addEventListener('change', () => {
+    const type = cb.dataset.type;
+    const nodes = cy.nodes(`[type = "${type}"]`);
+    if (cb.checked) {
+      nodes.style('display', 'element');
+    } else {
+      nodes.style('display', 'none');
+    }
+  });
+});
+
+document.getElementById('search').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) {
+    cy.nodes().removeClass('faded');
+    return;
+  }
+  cy.nodes().forEach(n => {
+    const hit = n.data('label').toLowerCase().includes(q) ||
+                (n.data('file') || '').toLowerCase().includes(q);
+    n.toggleClass('faded', !hit);
+  });
+});
+</script>
+</body>
+</html>
