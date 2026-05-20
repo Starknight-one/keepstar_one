@@ -28,6 +28,16 @@ type InboxPort interface {
 	// it up again.
 	Upsert(ctx context.Context, item *domain.InboxItem) (changed bool, err error)
 
+	// BulkUpsert is the batched form of Upsert: same idempotency key and
+	// same ON CONFLICT semantics, but the whole slice is sent as one
+	// statement (UNNEST under the hood), in chunks if large. Returns the
+	// number of rows that were either brand-new OR whose payload_hash
+	// differed from what was already stored — i.e. the count callers should
+	// report as "Inserted" in InboxWriteResult. Rows with empty TenantID /
+	// ExternalID / SourceKind are skipped silently; if the caller needs
+	// per-row error attribution, use Upsert.
+	BulkUpsert(ctx context.Context, items []*domain.InboxItem) (changed int, err error)
+
 	// MarkApplied stamps applied_at=NOW() on a specific item. Called by
 	// apply_v2 after successfully writing the master/listing rows derived
 	// from this inbox item.

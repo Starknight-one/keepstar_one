@@ -52,30 +52,38 @@ type ShopifyItem struct {
 }
 
 // WriteFromShopifyBulk ingests a slice of Shopify products. external_id is
-// the Shopify GID (stable, globally unique inside Shopify).
+// the Shopify GID (stable, globally unique inside Shopify). Rows with
+// empty GID are counted as errors and skipped; everything else goes
+// through one batched UNNEST upsert (see InboxPort.BulkUpsert).
 func (uc *InboxUseCase) WriteFromShopifyBulk(ctx context.Context, tenantID string, items []ShopifyItem) (*InboxWriteResult, error) {
 	res := &InboxWriteResult{Total: len(items)}
+	rows := make([]*domain.InboxItem, 0, len(items))
 	for _, it := range items {
 		if it.GID == "" {
 			res.Errors++
 			continue
 		}
-		changed, err := uc.upsert(ctx, tenantID, domain.InboxSourceShopify, it.GID, it.Raw)
-		switch {
-		case err != nil:
-			res.Errors++
-			uc.llog.Warn("inbox_shopify_upsert_failed", "tenant", tenantID, "gid", it.GID, "error", err)
-		case changed:
-			res.Updated++
-		default:
-			res.Unchanged++
+		raw := it.Raw
+		if len(raw) == 0 {
+			raw = json.RawMessage("null")
 		}
+		rows = append(rows, &domain.InboxItem{
+			TenantID:    tenantID,
+			SourceKind:  domain.InboxSourceShopify,
+			ExternalID:  it.GID,
+			Raw:         raw,
+			PayloadHash: hashContent(raw),
+		})
 	}
-	// Inserted count is approximate — both "new row" and "existing row with
-	// different hash" return changed=true. Refine if needed by extending
-	// InboxPort to return the distinction.
-	res.Inserted = res.Updated
-	res.Updated = 0
+	changed, err := uc.inbox.BulkUpsert(ctx, rows)
+	if err != nil {
+		uc.llog.Warn("inbox_shopify_bulk_upsert_failed", "tenant", tenantID, "rows", len(rows), "error", err)
+		res.Errors += len(rows)
+		uc.recordPull(ctx, tenantID, "shopify", res)
+		return res, err
+	}
+	res.Inserted = changed
+	res.Unchanged = len(rows) - changed
 	uc.recordPull(ctx, tenantID, "shopify", res)
 	return res, nil
 }
@@ -121,6 +129,7 @@ func (uc *InboxUseCase) WriteManual(ctx context.Context, tenantID, externalID st
 
 func (uc *InboxUseCase) writeFromMapRows(ctx context.Context, tenantID string, source domain.InboxSourceKind, rows []CSVRow) (*InboxWriteResult, error) {
 	res := &InboxWriteResult{Total: len(rows)}
+	items := make([]*domain.InboxItem, 0, len(rows))
 	for _, r := range rows {
 		raw, err := json.Marshal(r.Fields)
 		if err != nil {
@@ -131,19 +140,23 @@ func (uc *InboxUseCase) writeFromMapRows(ctx context.Context, tenantID string, s
 		if extID == "" {
 			extID = hashContent(raw)
 		}
-		changed, err := uc.upsert(ctx, tenantID, source, extID, raw)
-		switch {
-		case err != nil:
-			res.Errors++
-			uc.llog.Warn("inbox_csv_upsert_failed", "tenant", tenantID, "ext_id", extID, "error", err)
-		case changed:
-			res.Updated++
-		default:
-			res.Unchanged++
-		}
+		items = append(items, &domain.InboxItem{
+			TenantID:    tenantID,
+			SourceKind:  source,
+			ExternalID:  extID,
+			Raw:         raw,
+			PayloadHash: hashContent(raw),
+		})
 	}
-	res.Inserted = res.Updated
-	res.Updated = 0
+	changed, err := uc.inbox.BulkUpsert(ctx, items)
+	if err != nil {
+		uc.llog.Warn("inbox_csv_bulk_upsert_failed", "tenant", tenantID, "rows", len(items), "error", err)
+		res.Errors += len(items)
+		uc.recordPull(ctx, tenantID, string(source), res)
+		return res, err
+	}
+	res.Inserted = changed
+	res.Unchanged = len(items) - changed
 	uc.recordPull(ctx, tenantID, string(source), res)
 	return res, nil
 }

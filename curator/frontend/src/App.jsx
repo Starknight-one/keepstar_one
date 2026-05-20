@@ -18,6 +18,7 @@ import TenantsPage from './pages/TenantsPage.jsx'
 import TenantDetailPage from './pages/TenantDetailPage.jsx'
 import MasterCatalogPage from './pages/MasterCatalogPage.jsx'
 import MasterDetailPage from './pages/MasterDetailPage.jsx'
+import PendingPage from './pages/PendingPage.jsx'
 import ChatsPage from './pages/ChatsPage.jsx'
 import ChatDetailPage from './pages/ChatDetailPage.jsx'
 
@@ -30,6 +31,7 @@ function Layout({ user, onLogout, children }) {
           <div className="nav-section">Operations</div>
           <NavLink to="/tenants" className={({ isActive }) => isActive ? 'active' : ''}>Tenants</NavLink>
           <NavLink to="/master" className={({ isActive }) => isActive ? 'active' : ''}>Master Catalog</NavLink>
+          <NavLink to="/pending" className={({ isActive }) => isActive ? 'active' : ''}>Pending Approval</NavLink>
 
           <div className="nav-section">Activity</div>
           <NavLink to="/audit" className={({ isActive }) => isActive ? 'active' : ''}>Audit</NavLink>
@@ -84,6 +86,7 @@ export default function App() {
         <Route path="/tenants/:id" element={<TenantDetailPage />} />
         <Route path="/master" element={<MasterCatalogPage />} />
         <Route path="/master/:id" element={<MasterDetailPage />} />
+        <Route path="/pending" element={<PendingPage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/chats" element={<ChatsPage />} />
         <Route path="/chats/:sessionId" element={<ChatDetailPage />} />

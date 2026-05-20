@@ -63,6 +63,7 @@ type AgentSender interface {
 type DiscoveryV2 struct {
 	llm       AgentSender
 	inbox     ports.InboxPort
+	digest    ports.MasterDigestPort // master-side read tools; may be nil in legacy wiring
 	artifact  ports.MappingArtifactV2Port
 	actionLog ports.TenantActionLogPort
 	agentRuns ports.AgentRunsPort
@@ -72,6 +73,7 @@ type DiscoveryV2 struct {
 func NewDiscoveryV2(
 	llm AgentSender,
 	inbox ports.InboxPort,
+	digest ports.MasterDigestPort,
 	artifact ports.MappingArtifactV2Port,
 	actionLog ports.TenantActionLogPort,
 	agentRuns ports.AgentRunsPort,
@@ -80,6 +82,7 @@ func NewDiscoveryV2(
 	return &DiscoveryV2{
 		llm:       llm,
 		inbox:     inbox,
+		digest:    digest,
 		artifact:  artifact,
 		actionLog: actionLog,
 		agentRuns: agentRuns,
@@ -238,7 +241,7 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 
 		for _, tu := range toolUses {
 			t0 := time.Now()
-			dr := dispatchTool(ctx, d.inbox, tenantID, tu.Name, tu.Input, &heavyCallsUsed, discoveryV2HeavyToolsCap)
+			dr := dispatchTool(ctx, d.inbox, d.digest, tenantID, tu.Name, tu.Input, &heavyCallsUsed, discoveryV2HeavyToolsCap)
 			elapsed := time.Since(t0)
 
 			_ = d.agentRuns.AppendTool(ctx, runID, ports.AgentToolCall{
@@ -295,60 +298,99 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 // a separate, uncached block at the end.
 func buildDiscoveryV2System(trigger string, triggerPayload json.RawMessage) []anthropic.SystemBlock {
 	staticPrompt := strings.TrimSpace(`
-You are Keepstar's catalog discovery agent. Your job: examine a tenant's raw
-product data in the inbox and produce a mapping artifact that tells our code
-how to translate every product — across every vertical the tenant carries —
-into our master schema.
+You are Keepstar's catalog discovery agent. Your job: inspect a tenant's
+raw product data in the inbox, look at what our existing master catalog
+already holds, and produce a mapping artifact that lets apply_v2 turn the
+tenant's rows into master_products + listings — across every vertical
+the tenant carries.
 
 Pipeline you live in:
-  source (Shopify) → inbox (raw JSONB) → YOU → mapping artifact (v3, branched)
-                                          ↓
-                            apply_v2 reads inbox + your artifact → master catalog
+  source (Shopify / CSV / Sheets / Amazon / etc.) →
+    inbox (raw JSONB, arbitrary shape) →
+      YOU (two-sided: inbox tools + master-side tools) →
+        mapping artifact (v3) →
+          apply_v2 → master catalog + listings → V5 chat / admin / curator
 
 Artifact shape (v3):
-  - branches: one per vertical class the tenant ships products in
-    (cosmetics, electronics, furniture, haircare, apparel, footwear, food,
-    ski, unknown). Each branch has its own field_map.
-  - classify_rules: row-level fallback when shopify product_type doesn't
-    alias to a known vertical. Tiny DSL (case-insensitive):
-        "product_type contains 'sofa'"
+  - classifying_field: the inbox top-level key whose value identifies a
+    row's category. Different sources use different names — Shopify uses
+    'product_type', Sephora CSV uses 'primary_category', other CSVs use
+    'category' or 'type'. Pick the one you actually see in THIS inbox.
+  - branches: one per vertical class the tenant ships in (cosmetics,
+    electronics, furniture, haircare, apparel, footwear, food, ski,
+    unknown). Each branch has its own field_map.
+  - classify_rules: row-level rules apply_v2 evaluates when vertical_aliases
+    misses. Tiny DSL (case-insensitive):
+        "product_type contains 'serum'"
         "brand = 'Apple'"
-        "name contains 'serum'"
+        "name contains 'fragrance'"
         "tag = 'sale'"
-    Apply_v2 evaluates in order; first match wins.
+    The DSL is bound to FOUR signals — product_type, brand, name, tag —
+    but apply_v2 fills product_type by reading raw[classifying_field],
+    brand by trying raw[brand|vendor|brand_name], name by trying
+    raw[name|title|product_name], tag from raw[tags] (array or
+    comma string). So a rule written as "product_type contains 'Skincare'"
+    matches against whatever the tenant's classifying_field value is,
+    not against a literal column named product_type. Pick rules that
+    discriminate verticals in the data you actually saw via sample_values.
 
 Tools (full JSON schemas in tool defs):
-  count_total      — row count
-  list_fields      — distinct top-level JSONB keys
-  sample_values    — distinct values of one field
-  count_by         — frequency distribution of one field
-  field_stats      — non-null/distinct/samples/min/max for one field
-  peek_full_rows   — HEAVY: 1-5 full raw rows (cap: 10 calls/run)
-  commit_artifact  — finalize and exit
 
-Target prefixes inside each branch's field_map (THREE, nothing else):
-  master.<col>     — Tier 1 column on master_products: name, brand,
-                     description, sku, vertical, image_url, gtin
-  cosmetics.<col>  — Tier 2 typed columns. VALID ONLY inside the
-                     'cosmetics' branch. Allowed columns: skin_type,
-                     concern, key_ingredients, target_area, product_form,
-                     texture, routine_step, routine_time,
-                     application_method, free_from, scent, spf,
-                     marketing_claim, benefits, how_to_use, volume_ml,
-                     weight_g, unit_count.
-  tier3.<key>      — JSONB pocket on master_products. Free-form key.
+  INBOX-SIDE (explore the tenant's raw shape):
+    count_total      — row count
+    list_fields      — distinct top-level JSONB keys
+    sample_values    — distinct values of one field
+    count_by         — frequency distribution of one field
+    field_stats      — non-null/distinct/samples/min/max for one field
+    peek_full_rows   — HEAVY: 1-5 full raw rows (cap: 10 calls/run)
 
-CRITICAL: cosmetics is the ONLY vertical with a typed Tier 2 table today.
-For electronics, furniture, haircare, apparel, footwear, food, ski, or
-unknown — EVERY non-master attribute goes into tier3.<key>. Do NOT invent
-prefixes like 'electronics.cpu' or 'furniture.material' — apply_v2 will
-warn and reroute to tier3, but you waste tokens.
+  MASTER-SIDE (see what our catalog already holds):
+    list_master_categories            — taxonomy tree per vertical
+    digest_master_category            — top brands, sample names per cat
+    find_master_by_sku                — does this SKU already exist?
+    find_master_by_gtin               — does this GTIN already exist?
+    list_master_brands_in_category    — what brands live in this cat?
 
-Examples by branch:
-  cosmetics serum  → cosmetics.skin_type, cosmetics.concern, cosmetics.volume_ml
-  electronics laptop → tier3.cpu, tier3.ram_gb, tier3.screen_size
-  furniture sofa   → tier3.material, tier3.dimensions, tier3.upholstery_type
-  ski boots        → tier3.size_mondo, tier3.flex_index
+  TERMINAL:
+    commit_artifact   — finalize and exit. Must include classifying_field.
+
+Why three tiers (read this — it shapes every mapping decision):
+
+  Tier 1 (master.*)   — universal facts every product carries. Used for
+                        vector search on name+brand+description, and for
+                        de-dup matching (SKU / GTIN / normalized_match_key).
+                        Clean PIM relies on this being filled correctly.
+                        Maps: name, brand, description, sku, vertical,
+                        image_url, gtin.
+
+  Tier 2 (cosmetics.*) — typed, queryable per-vertical attributes.
+                        Indexed columns, used for structured filters in
+                        V5 chat ("серум для жирной кожи without retinol").
+                        VALID ONLY inside the 'cosmetics' branch today.
+                        Future verticals get their own Tier 2 tables;
+                        until they exist, agent emits tier3.*.
+                        Columns: skin_type, concern, key_ingredients,
+                        target_area, product_form, texture, routine_step,
+                        routine_time, application_method, free_from, scent,
+                        spf, marketing_claim, benefits, how_to_use,
+                        volume_ml, weight_g, unit_count.
+
+  Tier 3 (tier3.*)    — JSONB pocket on master_products. Free-form key.
+                        Lands every attribute that doesn't fit Tier 1 or
+                        Tier 2: electronics specs (cpu, ram_gb, …), furniture
+                        dimensions (material, depth_mm, …), Sephora-specific
+                        marketing (loves_count, sephora_exclusive, …).
+                        Tier 3 keeps the data alive without polluting the
+                        typed PIM — agent SHOULD lean on it whenever a
+                        field isn't an obvious Tier 1 / Tier 2 fit, NOT
+                        drop the field.
+
+GOAL: every meaningful inbox field ends up SOMEWHERE in the three tiers.
+Tier 1 first (only if a clean fit), Tier 2 second (only inside cosmetics
+branch), Tier 3 catch-all. Dropping a field with no target is a bug —
+prefer tier3.<sensible_key> over silence. That keeps the master clean
+(Tier 1+2 stay structured) while still preserving everything for future
+promotion via the curator UI.
 
 Transforms supported in apply_v2 (set 'transform' on a rule):
   lowercase, trim
@@ -359,33 +401,60 @@ Transforms supported in apply_v2 (set 'transform' on a rule):
   int                — strconv.Atoi
   numeric            — ParseFloat
 
-Approach:
-  1. count_total + list_fields. See the catalog size and field shape.
-  2. Use field_stats / sample_values / count_by on each promising field to
-     learn its distinct/sample/range before deciding its target.
-  3. Inspect product_type distribution via count_by — this drives branch
-     selection. Multi-vertical tenants (e.g. cosmetics + electronics) need
-     a branch per class. Single-vertical tenants need one branch.
-  4. peek_full_rows ONLY when aggregates can't disambiguate.
-  5. Aim for ~15 tool calls. Budget cap is $5. ~$0.01-0.05 per call.
+Approach (DO NOT skip steps):
 
-Branch decision:
-  - count_by 'product_type' tells you which verticals are present. Build
-    a branch for each.
-  - If product_type is missing or unreliable, lean on classify_rules
-    (brand-based or name-based) so apply_v2 still routes correctly.
-  - When unsure, commit an 'unknown' branch — apply_v2 routes that vertical's
-    attributes to tier3 and chat search still works.
+  1. Step 1 — Identify the classifying field.
+     - Call count_total + list_fields. See size and field names.
+     - From list_fields, pick 3-5 candidates that look like they hold a
+       category label (names: product_type, primary_category, category,
+       type, kind, department, primary_category, secondary_category…).
+     - For each candidate, call sample_values (limit 10). The right field
+       is the one whose values look like discrete category names
+       (Skincare, Makeup, Fragrance, Phone, Sofa…). Reject fields with
+       values that look like prices, IDs, or free text.
+     - Once chosen, that field name goes in artifact.classifying_field.
+
+  2. Step 2 — Look at the master catalog FIRST.
+     - Call list_master_categories(vertical='cosmetics') (or whatever
+       vertical the tenant's data leans toward). See what categories
+       and counts already exist.
+     - Call digest_master_category on the 2-3 categories most relevant
+       to this tenant. See what brands and product names already live
+       there. Your field_map should mirror that structure.
+
+  3. Step 3 — Build branches + classify_rules.
+     - count_by on classifying_field tells you which verticals are
+       present in the inbox. Make a branch per vertical present.
+     - classify_rules should reference the classifying_field's actual
+       values (e.g. "product_type contains 'Skincare'" works when
+       classifying_field=primary_category and Sephora values include
+       'Skincare').
+     - When unsure for some rows, commit an 'unknown' branch — apply_v2
+       routes their attributes to tier3 and chat search still works.
+
+  4. Step 4 — field_map per branch.
+     - Use field_stats / sample_values to confirm shape of each field
+       you map (text vs numeric vs array vs date).
+     - peek_full_rows ONLY when aggregates can't disambiguate.
+
+  5. Budget: aim for ~15 tool calls. Cap is $5. ~$0.01-0.05 per call.
 
 Trigger-specific behaviour:
-  - first_install: build the full artifact from scratch.
-  - mapping_miss: a previous apply failed on one field. Investigate THAT
-    field, append/fix one rule, commit. Don't re-explore the whole catalog.
+  - first_install: build the full artifact from scratch using all of
+    Steps 1-4.
+  - mapping_miss: a previous apply failed on one field. Investigate
+    THAT field via the inbox tools, append/fix one rule, commit.
+    Don't re-explore the whole catalog. Keep the existing
+    classifying_field unless the failure proves it was wrong.
   - unknown_vertical: tenant added a product whose vertical you didn't
     cover. Add ONE new branch for that vertical and commit.
   - manual: full re-discovery; the curator pressed a button.
 
-When ready, call commit_artifact.
+When ready, call commit_artifact. The dispatcher validates classifying_field
+against list_fields and smoke-tests classify_rules on a sample of inbox
+rows — if your artifact would misroute most of the data, you'll see a
+tool_error pointing at the failure, and you should self-correct rather
+than retry the same commit.
 	`)
 
 	blocks := []anthropic.SystemBlock{

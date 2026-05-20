@@ -27,26 +27,42 @@ func newHashingInbox() *hashingInbox {
 }
 
 func (h *hashingInbox) Upsert(_ context.Context, item *domain.InboxItem) (bool, error) {
+	return h.upsertOne(item), nil
+}
+
+// BulkUpsert mirrors the real adapter: loops over the batch and reports
+// the count of new-or-changed rows. Same per-row semantics as Upsert.
+func (h *hashingInbox) BulkUpsert(_ context.Context, items []*domain.InboxItem) (int, error) {
+	changed := 0
+	for _, it := range items {
+		if h.upsertOne(it) {
+			changed++
+		}
+	}
+	return changed, nil
+}
+
+func (h *hashingInbox) upsertOne(item *domain.InboxItem) bool {
 	h.upsertCalls++
 	for _, existing := range h.items {
 		if existing.TenantID != item.TenantID || existing.SourceKind != item.SourceKind || existing.ExternalID != item.ExternalID {
 			continue
 		}
 		if existing.PayloadHash == item.PayloadHash {
-			return false, nil
+			return false
 		}
 		existing.Raw = item.Raw
 		existing.PayloadHash = item.PayloadHash
 		existing.AppliedAt = nil
 		delete(h.applied, existing.ID)
-		return true, nil
+		return true
 	}
 	if item.ID == "" {
 		item.ID = item.ExternalID
 	}
 	cp := *item
 	h.items = append(h.items, &cp)
-	return true, nil
+	return true
 }
 
 // TestScenario_103_ShopifyBulk_CreatesInboxItem_WithPayloadHash verifies:

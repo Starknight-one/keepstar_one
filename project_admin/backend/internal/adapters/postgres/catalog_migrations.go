@@ -838,6 +838,48 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 					'[^[:alnum:][:space:]]', '', 'g'),
 				'\s+', ' ', 'g'))
 			WHERE normalized_match_key IS NULL;`,
+
+		// --- pending approval scaffolding (bundled milestone) ---
+		// New mastered rows + enrichments to existing mastered rows are
+		// staged for 30 days before they become production-visible. Curator
+		// (Vlad) approves/rejects via UI; expired rows are swept by a
+		// background runner. Existing master_products default to 'approved'
+		// so the migration is non-disruptive.
+		`CREATE TABLE IF NOT EXISTS catalog.master_pending_changes (
+			id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			master_product_id     UUID NOT NULL REFERENCES catalog.master_products(id) ON DELETE CASCADE,
+			op_kind               TEXT NOT NULL CHECK (op_kind IN ('enrich_array_union','enrich_scalar_fill')),
+			field_name            TEXT NOT NULL,
+			pending_value         JSONB NOT NULL,
+			source_inbox_item_id  UUID REFERENCES catalog.inbox_items(id) ON DELETE SET NULL,
+			tenant_id             UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			status                TEXT NOT NULL DEFAULT 'pending'
+			                      CHECK (status IN ('pending','approved','rejected','expired')),
+			created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			expires_at            TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '30 days',
+			decided_at            TIMESTAMPTZ,
+			decided_by            TEXT,
+			decided_reason        TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_master_pending_changes_master_status
+			ON catalog.master_pending_changes(master_product_id, status);`,
+		`CREATE INDEX IF NOT EXISTS idx_master_pending_changes_tenant_status
+			ON catalog.master_pending_changes(tenant_id, status);`,
+		`CREATE INDEX IF NOT EXISTS idx_master_pending_changes_expires
+			ON catalog.master_pending_changes(expires_at) WHERE status='pending';`,
+
+		// Whole-master staging flags. Master rows created by first apply for
+		// a tenant land here as 'pending_approval' until curator approves.
+		// Existing rows keep 'approved' by default (non-disruptive).
+		`ALTER TABLE catalog.master_products
+			ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'approved'
+				CHECK (approval_status IN ('approved','pending_approval','rejected','expired')),
+			ADD COLUMN IF NOT EXISTS pending_approval_expires_at TIMESTAMPTZ,
+			ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
+			ADD COLUMN IF NOT EXISTS approved_by TEXT;`,
+		`CREATE INDEX IF NOT EXISTS idx_master_products_pending_approval
+			ON catalog.master_products(approval_status, pending_approval_expires_at)
+			WHERE approval_status='pending_approval';`,
 	)
 
 	for i, m := range migrations {

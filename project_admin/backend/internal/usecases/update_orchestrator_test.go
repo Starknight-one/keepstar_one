@@ -30,6 +30,20 @@ func (u *upsertingInbox) Upsert(_ context.Context, item *domain.InboxItem) (bool
 	return true, nil
 }
 
+func (u *upsertingInbox) BulkUpsert(ctx context.Context, items []*domain.InboxItem) (int, error) {
+	changed := 0
+	for _, it := range items {
+		c, err := u.Upsert(ctx, it)
+		if err != nil {
+			return changed, err
+		}
+		if c {
+			changed++
+		}
+	}
+	return changed, nil
+}
+
 // fakeRateLimit implements ApplyRateLimitPort. Returns the seeded time and
 // records each query so tests can verify the orchestrator consults the port.
 type fakeRateLimit struct {

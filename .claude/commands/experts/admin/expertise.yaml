@@ -24,11 +24,11 @@ overview:
 architecture:
   pattern: "Hexagonal — proper ports + adapters, multiple usecase packages, ~30 handlers"
   backend_structure:
-    cmd_server: "project_admin/backend/cmd/server/main.go (777 LOC) — DI bootstrap, all routes"
+    cmd_server: "project_admin/backend/cmd/server/main.go (854 LOC) — DI bootstrap, all routes; 2026-05-20 added MasterDigestAdapter into DiscoveryV2 wire + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker (catalog domain)"
     cmd_crawler: "project_admin/backend/cmd/crawler/main.go (608 LOC) — JSON-LD scraper for catalog seed (catalog expert covers details)"
     domain: "project_admin/backend/internal/domain/ — AdminUser, Tenant, Membership, Invitation, Session, Challenge, MagicLink, Invoice, Preferences, TenantPreset, TenantComponent, DesignToken, BillingOverview, AuditEntry"
     ports: "project_admin/backend/internal/ports/ — AuthPort, SessionsPort, BillingPort, CanvasPort, AdminCatalogPort, etc."
-    adapters: "project_admin/backend/internal/adapters/postgres/ + adapters/{anthropic, google, openai, resend, smtp, shopify, telegram, totp}/ — most distinct adapter types in the project"
+    adapters: "project_admin/backend/internal/adapters/postgres/ + adapters/{anthropic, google, openai, resend, smtp, shopify, telegram, totp, uadevice, geoip}/ — most distinct adapter types in the project. uadevice (regex UA parser, no deps) and geoip (optional MaxMind GeoLite2 wrapper) added 2026-05-18 for sessions enrichment."
     usecases: "project_admin/backend/internal/usecases/ — auth (11 files), billing, canvas, plus catalog usecases (catalog expert covers)"
     handlers: "project_admin/backend/internal/handlers/ — ~30 handler files; auth has 8 alone"
     crypto: "internal/crypto/secretbox/ — symmetric encryption for stored OAuth tokens, etc."
@@ -42,10 +42,12 @@ auth:
   domain_user:
     type: "domain.AdminUser {ID, Email, EmailVerified, PasswordHash, CreatedAt, ...}"
     table: "admin.users"
+    json_marshal: "domain/admin_user_json.go — custom MarshalJSON. PasswordHash stays json:'-' (never serialized); has_password bool surfaces (PasswordHash != '') for frontend to route passwordless users to /auth/set-password-promo."
   methods:
     email_password:
       file: "internal/usecases/auth.go (AuthUseCase)"
-      flow: "Signup(req) → bcrypt hash → INSERT user → issueTokens(); Login(req) → SELECT by email → bcrypt verify → issueTokens or pre-2FA token"
+      flow: "Signup(req) → email lowercased+trimmed (2026-05-18) → bcrypt hash → INSERT user → issueTokens(); Login(req) → email lowercased → SELECT by email → bcrypt verify → issueTokens or pre-2FA token"
+      set_password_for_passwordless: "SetPasswordForPasswordless(ctx, userID, newPwd) (2026-05-18) — refuses with 409 if PasswordHash already non-empty. Lets users who signed up via OAuth/magic-link add a password later. Handler: HandleSetPassword on protected mux at POST /admin/api/auth/set-password."
       tokens:
         access: "JWT signed with jwtSecret; short TTL"
         refresh: "via SessionsUseCase; persisted in admin.sessions"
@@ -54,6 +56,7 @@ auth:
       file: "internal/usecases/auth_2fa.go (TwoFactorUseCase)"
       adapter: "internal/adapters/totp/ — TOTP HMAC-SHA1 (Google Authenticator compatible)"
       flow: "Login with 2FA enabled → returns pre-2FA token + needs_2fa=true → POST /auth/2fa/verify with 6-digit code → exchanges for full tokens"
+      disable_requires_code: "DisableTOTP(ctx, userID, code) (Alpha 0.8.0, sc 89) — re-auth proof of possession: decrypts the stored secret via secretbox, totp.Verify(code) must pass before clearing. Empty code or wrong code → domain.ErrInvalidCredentials → 401. Handler reads {\"code\":\"123456\"} body. Closes a hijacked-session-strips-2FA hole."
     google_oauth:
       file: "internal/usecases/auth_google.go"
       adapter: "internal/adapters/google/ — Google OAuth2 client"
@@ -87,14 +90,22 @@ auth:
       file: "internal/usecases/auth_invitations.go"
       table: "admin.invitations"
       flow: "Owner POST /invitations with email + role → challenge code → email → invitee accepts → joins tenant via UserTenantsPort (memberships)"
+      methods:
+        - "Create(tenantID, inviterID, email, role) — emits row + sends invite mail (rate-limited via CountRecentByInviter)"
+        - "ListForTenant(tenantID) — pending + accepted invites; powers Settings → Members page"
+        - "Resend(invitationID) (Alpha 0.8.0, sc 82) — closes 'mailer.Send failed and invitee stranded'. Looks up row via InvitationPort.GetByID; refuses if missing or already accepted (ErrInvalidCredentials → 400). Mints fresh token, INSERTS a new row (old row stays as audit), re-sends invitation email. Old token is implicitly invalidated because FindActive lookups go through the new hash."
+        - "Preview(token) / Accept(token, password) — public; token in URL is the credential"
+      ports_additions: "InvitationPort.GetByID(id) — added 2026-05-19 for Resend; returns (nil, nil) on no-rows."
     sessions:
       file: "internal/usecases/auth_sessions.go (SessionsUseCase)"
-      table: "admin.sessions {id, user_id, refresh_token_hash, ua, ip, last_seen_at, expires_at, ...}"
+      table: "admin.sessions {id, user_id, refresh_token_hash, ua, ip, browser_name, browser_version, os_name, device_kind, geo_country, geo_city, last_seen_at, expires_at, ...} — browser_*/os_name/device_kind/geo_* added 2026-05-18 migration"
+      enrichment: "SessionsUseCase.enrich() called on every create — UA → uadevice.Parse → browser+os+device, IP → geoip.Lookup → country+city (best-effort; geoip nil if GEOIP_DB_PATH unset)"
+      current_session_marker: "Access JWT carries sid claim (2026-05-18); middleware extracts it; ListActive marks the row with matching sid as current_session=true for /settings/sessions UI"
       methods:
-        - "Issue(userID, ua, ip) — create session row + return refresh"
+        - "Issue(userID, ua, ip) — create session row (with enrich) + return refresh"
         - "Refresh(refreshToken) — verify, rotate, return new pair"
         - "Revoke(sessionID) — kill specific"
-        - "ListActive(userID) — for /auth/sessions UI"
+        - "ListActive(userID, currentSID) — for /settings/sessions UI; flags current row"
     tenants:
       file: "internal/usecases/auth_tenants.go"
       ports: "UserTenantsPort (memberships)"
@@ -124,11 +135,15 @@ routes_overview:
       - "POST /admin/api/auth/telegram/callback — HMAC widget payload verify; called from TelegramCallbackPage.jsx after parsing the #tgAuthResult fragment"
     protected:
       - "POST /admin/api/auth/shop-pending-link/consume (2026-05-13) — auth-required; body {token}; returns {tenant_id}; attaches orphan Shopify tenant to signed-in user"
+      - "POST /admin/api/auth/set-password (2026-05-18) — auth-required; sets password for OAuth/magic-link-only users; 409 if hash already set"
       - "GET  /auth/me"
       - "POST /auth/logout"
-      - "GET  /auth/sessions, DELETE /auth/sessions/{id}"
-      - "GET  /auth/tenants, POST /auth/tenants/switch"
-      - "GET  /auth/invitations, POST /auth/invitations, POST /auth/invitations/{code}/accept"
+      - "GET  /auth/sessions (lists with current_session flag), DELETE /auth/sessions/{id}"
+      - "GET  /auth/tenants, POST /auth/tenants/select"
+      - "GET  /admin/api/auth/invitations (Alpha 0.8.1) — ListForTenant; powers Members page"
+      - "POST /admin/api/auth/invitations — Create"
+      - "POST /admin/api/auth/invitations/{id}/resend (Alpha 0.8.0) — auth-required Resend; mounted on the otherwise-public /invitations/ subtree with an explicit authMW wrap on the resend suffix"
+      - "POST /admin/api/auth/invitations/{token}/accept — public (token = credential)"
   billing:
     - "GET  /admin/api/billing/overview — current plan, usage, invoices summary"
     - "GET  /admin/api/billing/invoices?limit=N"
@@ -213,7 +228,9 @@ frontend_features:
   layout:
     purpose: "App shell, sidebar, header, route registration"
   auth:
-    pages: "SignInPage, SignUpPage, MagicLinkPage, ForgotPasswordPage, ResetPasswordPage, PasswordChangedPage, TwoFactorPage, VerifyEmailPage, CheckEmailPage, OAuthLoadingPage, TelegramCallbackPage (handles #tgAuthResult hash → POST /telegram/callback), InstallCompletePage, WorkspacePickerPage, InviteAcceptPage, SessionExpiredPage, AuthErrorPage"
+    pages: "SignInPage (Remember-me checkbox + 'Last signed in with X' hint, 30d localStorage TTL), SignUpPage, MagicLinkPage (substring-matches expired/already-used/single-use errors → redirects to /auth/magic-expired), MagicLinkExpiredPage (2026-05-18; email-input form, posts to /password/forgot anti-enum), ForgotPasswordPage, ResetPasswordPage, PasswordChangedPage, SetPasswordPromoPage (2026-05-18; offered when has_password=false; skip button), TwoFactorPage, VerifyEmailPage, CheckEmailPage, OAuthLoadingPage (linked_from_email → /auth/pick-workspace?welcome_back=1), TelegramCallbackPage (handles #tgAuthResult hash → POST /telegram/callback), InstallCompletePage, WorkspacePickerPage, InviteAcceptPage, SessionExpiredPage, AuthErrorPage (substring-matches backend reasons → friendly titles + flows; covers expired/single-use/consent-rejection)"
+    helpers: "postSignInPath(user) (2026-05-18) — routes has_password=false users to /auth/set-password-promo, others to /auth/pick-workspace. Consumed by Login, Signup, OAuth, magic-link Consume, invite Accept, 2FA verify (6 entry points)."
+    provider: "AuthProvider.adoptSession(data, method) threads sign-in method through OAuth/magic/invite for the 'Last signed in with X' hint. setRefreshToken(refresh, rememberMe) writes to localStorage (rememberMe=true, default) or sessionStorage (rememberMe=false, cleared on tab close); backend always issues 30-day refresh — storage decides persistence."
     hooks: "hooks/useTelegramWidget.js — defined but NO LONGER imported by any page (Sign{In,Up} switched to redirect flow in 109378a). Safe to delete on next sweep. Earlier useTelegramLogin.js attempt was reverted in 2f354fb."
     flow: "On mount → GET /auth/me. 401 → render Login. Success → render Layout shell. Telegram path: SignInPage.handleTelegram → authApi.telegramStart() → window.location.href = url → return to /auth/telegram/callback with #tgAuthResult → TelegramCallbackPage decodes + posts payload → adoptSession + /auth/pick-workspace."
     install_complete_page: "Two paths: (1) happy path (?shop=…) — magic link emailed, show 'check inbox'; (2) pending-link path (?pending_link=TOKEN&shop=…) — stashes token in sessionStorage under 'keepstar.pending_shop_link', shows 'sign in to attach store' UI"
@@ -229,7 +246,7 @@ frontend_features:
   conversations:
     purpose: "View past chat sessions for a tenant — used for QA/debugging"
   settings:
-    purpose: "Tenant settings, preferences, members"
+    pages: "SettingsPage (/settings index), ApiKeysPage (/settings/api-keys), SessionsPage (/settings/sessions; lists ListActive with browser/os/device/geo + 'this device' badge from current_session + Revoke), SecurityPage (/settings/security, Alpha 0.8.1) — 2FA enable/disable UI (Disable prompts for current TOTP code per Alpha 0.8.0 sc 89), MembersPage (/settings/members, Alpha 0.8.1) — invitations table with pending/accepted/expired status + per-row Resend (sc 82) + Invite form"
   traces:
     purpose: "Chat trace browser (waterfall view of pipeline runs); calls /admin/api/traces"
   widget:
@@ -257,6 +274,8 @@ env_vars:
     - "INTERNAL_KEY (legacy alias)"
     - "TELEGRAM_OAUTH_REDIRECT_URL — overrides Telegram OIDC redirect_uri; if omitted, falls back to AUTH_PUBLIC_BASE_URL+/auth/telegram/callback"
     - "AUTH_PUBLIC_BASE_URL (alias: PUBLIC_BASE_URL) — scheme+host of admin frontend; used to auto-derive Telegram redirect URI and origin param"
+    - "MAXMIND_DB_PATH (2026-05-18) — path to MaxMind GeoLite2-City.mmdb; if unset, geoip.Open returns nil → sessionsUC.geo stays nil and geo_country/geo_city sit empty. UA-only enrichment still runs."
+    - "KEEPSTAR_DAILY_SOURCE_PULL (2026-05-20) — set to '1' to enable the daily catalog re-sync ticker (CronDailySourcePull, catalog domain). Off by default — dev/test runs don't burn LLM tokens nightly. Requires ANTHROPIC_API_KEY at boot (catalogV2Orchestrator nil-check)."
 
 invariants:
   - "Auth tokens (refresh) are HASHED at rest in admin.sessions. Plaintext only in HTTP layer."
@@ -269,6 +288,11 @@ invariants:
   - "Canvas presets in DRAFT status are tenant-private; V4 reads only PUBLISHED. Forking a published preset creates a new DRAFT row (no in-place edit of live)."
   - "Memberships (UserTenantsPort) gate cross-tenant access — JWT carries UserID, but every protected handler must check membership for the requested TenantID before reading/writing."
   - "Internal-key endpoints (X-Internal-Key) MUST be unreachable without the header — accidentally allowing them through middleware_auth = privilege escalation."
+  - "SetPasswordForPasswordless MUST reject (409) when PasswordHash is already set — otherwise it silently overwrites password for users with both an existing password and an OAuth/magic-link path. has_password JSON field is the ONLY frontend-visible signal of password presence; PasswordHash itself is json:'-'."
+  - "Remember-me storage choice is frontend-only: backend always issues a 30-day refresh token regardless. If a future flow needs short-lived sessions, the token TTL must change server-side — flipping localStorage→sessionStorage alone does NOT shorten validity, it only forces re-login on tab close."
+  - "current_session marker depends on the sid JWT claim. New auth flows that mint access tokens MUST include sid (the session row id) or every session appears as 'not current' in the UI."
+  - "DisableTOTP MUST require the current TOTP code (Alpha 0.8.0, sc 89). Re-enabling code-less disable would let any session-hijack hand the attacker full account access by stripping the second factor. Both handler (HandleDisableTOTP) and usecase (DisableTOTP) enforce; bypassing either re-opens the hole."
+  - "Resend invitation creates a NEW row rather than rotating in-place — old row stays as an audit trail but its token is dead once FindActive sees the fresh hash. Resending many times grows the table; rely on TTL or future prune (no automatic prune today)."
 
 gotchas:
   - "Resend HTTP API is the active mailer — SMTP adapter exists but hangs silently on Railway (commit dab0629). New mail flows MUST use resend port; SMTP only for local dev."
@@ -298,6 +322,12 @@ related_experts:
 active_workstreams:
   tracker: "docs/PRE_LAUNCH_TASKS.md (auth + admin sections), docs/CATALOG_GAPS.md (catalog UI in admin)"
   recent_milestones:
+    - "Alpha 0.9.0 — Phase C integration tests (2026-05-19, commit 4e7614f): sc 156 + 141 covered against real Postgres in project_admin/backend/internal/integration_test/ (listings_test.go, soft_delete_test.go, dbtest.go bootstrap)."
+    - "Alpha 0.8.1 — Phase E frontend (2026-05-19, commit 6bf3629): SecurityPage + MembersPage added under /settings/{security,members}; MembersPage wires listInvitations + resendInvitation + createInvite. App.jsx route table grew."
+    - "Alpha 0.8.0 — auth gaps batch 3 (2026-05-19, commit 1373b9d): backend for sc 60/82/89/177 — DisableTOTP now requires current code (sc 89, 401 on miss), InvitationsUseCase.Resend + InvitationPort.GetByID + POST /invitations/{id}/resend (sc 82), authApi.disableTOTP signature changed to accept code, authApi.listInvitations + resendInvitation added."
+    - "Alpha 0.7.0 / 0.6.0 — catalog batches (2026-05-19, commits 8835895 + 8c6ff65): catalog-domain — owned by catalog expert."
+    - "Alpha 0.5.1 — auth gaps batch 2 (2026-05-18, commit f412cea): Remember-me checkbox (storage = localStorage|sessionStorage), Telegram OIDC email-cascade marked N/A (no email scope), forgot/reset flow verified end-to-end (test path fix), Set-Password promo for passwordless users (has_password JSON + SetPasswordForPasswordless + HandleSetPassword + postSignInPath + SetPasswordPromoPage), friendly MagicLinkExpiredPage."
+    - "Alpha 0.1.0 — auth pre-launch scenarios + 5 gap fixes (2026-05-18, commit 29391d8): email lowercase/trim, 'Last signed in with X' hint, parsed UA + GeoLite2 enrichment + current_session marker (sid claim) in sessions list, AuthErrorPage substring-matches backend reasons, Google/Telegram consent rejection handling. New adapters uadevice + geoip; admin.sessions migration adds browser_*/os_name/device_kind/geo_*; new SessionsPage at /settings/sessions. Versioning scheme established (VERSION file + git tag + commit prefix)."
     - "Catalog-v2 cut-over (2026-05-15, commit 62a2e36): main.go DI shrank — no more candidatesAdapter/masterVariantsAdapter/mappingArtifactAdapter/mergeReportsAdapter/mergeApplyTxAdapter/shopifyStagingAdapter wiring; harvester_lite/discovery_agent/merge_apply/junk_detector usecases deleted. New wiring: inboxAdapter, tenant_action_log, agent_runs, catalogV2Writer, applyRateLimit + InboxUseCase + DiscoveryV2 + ApplyV2 + UpdateOrchestrator + ShopifyIngester. New internal mount: /admin/api/catalog/v2/{sync-now,discover}/ behind internalMW."
     - "Telegram #tgAuthResult fragment flow (2026-05-14, commit 109378a): correct understanding that oauth.telegram.org/auth is NOT real OIDC. TelegramCallbackPage parses fragment, posts widget payload to legacy HMAC endpoint. OIDCClient.Exchange + /oidc/callback route remain in tree but are dead."
     - "Telegram popup attempt rolled back (2026-05-14, commit 2f354fb): reverted ce3acb7..d1edd33 (useTelegramLogin hook, numeric bot_id fix); popup didn't work. useTelegramWidget.js (the iframe hook) remains but is now unused."
@@ -314,6 +344,6 @@ active_workstreams:
     - "catalog_adapter.go (1293 LOC) — catalog domain"
     - "canvas_adapter.go (870 LOC) — split candidate when more design system features land"
     - "catalog_migrations.go (849 LOC) — catalog domain"
-    - "cmd/server/main.go (777 LOC) — DI bootstrap with all routes; shrank with catalog-v2 cut-over (removed 13 adapter wires for legacy merge/candidate/junk/staging flows); 2026-05-15 evening: NewShopifyIngester now also takes catalogV2Writer + actionLogAdapter (for products/delete soft-delete + webhook_received logging)"
+    - "cmd/server/main.go (854 LOC, up from 777) — DI bootstrap; 2026-05-20: MasterDigestAdapter wired into DiscoveryV2 ctor + CronDailySourcePull behind KEEPSTAR_DAILY_SOURCE_PULL env (catalog domain); 2026-05-15 evening: NewShopifyIngester takes catalogV2Writer + actionLogAdapter (products/delete soft-delete + webhook_received logging)"
     - "shopify_v2.go (614 LOC) — catalog domain (install flow + CompleteOAuth 4-return)"
     - "CanvasPage.jsx (785 LOC) — frontend; growth signal as canvas matures"

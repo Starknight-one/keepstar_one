@@ -149,7 +149,7 @@ func mkDiscovery() (*DiscoveryV2, *fakeAgentSender, *fakeInbox, *capturingArtifa
 	artifact := &capturingArtifact{}
 	runs := newFakeAgentRunsPort()
 	log := &fakeActionLog{}
-	d := NewDiscoveryV2(sender, inbox, artifact, log, runs, logger.New("error"))
+	d := NewDiscoveryV2(sender, inbox, nil, artifact, log, runs, logger.New("error"))
 	return d, sender, inbox, artifact, runs, log
 }
 
@@ -524,7 +524,7 @@ func TestScenario_121and123_MappingMiss_ActionLogAndArtifactRefetch(t *testing.T
 	log := &fakeActionLog{}
 	llog := logger.New("error")
 
-	discovery := NewDiscoveryV2(sender, inbox, artifact, log, runs, llog)
+	discovery := NewDiscoveryV2(sender, inbox, nil, artifact, log, runs, llog)
 	writer := newFakeWriter()
 	seedCosmeticsAlias(writer)
 	apply := NewApplyV2(inbox, artifact, writer, log, discovery, llog)
@@ -610,7 +610,7 @@ func TestScenario_124_MappingMiss_3PassCapOnDiscoveryTriggers(t *testing.T) {
 	runs := newFakeAgentRunsPort()
 	log := &fakeActionLog{}
 	llog := logger.New("error")
-	discovery := NewDiscoveryV2(sender, inbox, artifact, log, runs, llog)
+	discovery := NewDiscoveryV2(sender, inbox, nil, artifact, log, runs, llog)
 	writer := newFakeWriter()
 	seedCosmeticsAlias(writer)
 	apply := NewApplyV2(inbox, artifact, writer, log, discovery, llog)
@@ -661,7 +661,7 @@ func TestScenario_111_FirstInstall_CascadesFromApply_WhenArtifactNil(t *testing.
 	log := &fakeActionLog{}
 	llog := logger.New("error")
 
-	discovery := NewDiscoveryV2(sender, inbox, artifact, log, runs, llog)
+	discovery := NewDiscoveryV2(sender, inbox, nil, artifact, log, runs, llog)
 	writer := newFakeWriter()
 	seedCosmeticsAlias(writer)
 	apply := NewApplyV2(inbox, artifact, writer, log, discovery, llog)

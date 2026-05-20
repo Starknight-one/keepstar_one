@@ -74,6 +74,115 @@ func (a *InboxAdapter) Upsert(ctx context.Context, item *domain.InboxItem) (bool
 	return changed, nil
 }
 
+// bulkUpsertBatchSize caps one server-side INSERT. ~500 inbox rows fit
+// comfortably under Postgres' parameter limits and Neon's per-statement
+// resource limits while still cutting the 8.5k-row Sephora seed from
+// ~8500 roundtrips down to ~17. Tune up only if profiling shows the SQL
+// CPU dominates the network savings.
+const bulkUpsertBatchSize = 500
+
+// BulkUpsert: same per-row semantics as Upsert, but one SQL per batch of
+// rows. Implementation strategy:
+//
+//   - Group input by batches of bulkUpsertBatchSize.
+//   - Per batch: pass 5 parallel text[] arrays through UNNEST. A CTE
+//     `prior` LEFT JOINs the input keys against the existing table so we
+//     can compute changed-vs-unchanged from the OLD payload_hash before
+//     the upsert rewrites it. The INSERT … ON CONFLICT DO UPDATE block
+//     is the same one Upsert uses.
+//
+// Returns the number of rows that were either brand-new or whose
+// payload_hash differed from the stored value — i.e. the number that
+// callers should report as "Inserted" in InboxWriteResult. Rows missing
+// any of tenant_id/source_kind/external_id are silently skipped (caller
+// is expected to pre-validate; Upsert is the path for per-row error
+// attribution).
+func (a *InboxAdapter) BulkUpsert(ctx context.Context, items []*domain.InboxItem) (int, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
+	totalChanged := 0
+	for start := 0; start < len(items); start += bulkUpsertBatchSize {
+		end := min(start+bulkUpsertBatchSize, len(items))
+		c, err := a.bulkUpsertBatch(ctx, items[start:end])
+		if err != nil {
+			return totalChanged, fmt.Errorf("inbox bulk upsert batch [%d:%d]: %w", start, end, err)
+		}
+		totalChanged += c
+	}
+	return totalChanged, nil
+}
+
+func (a *InboxAdapter) bulkUpsertBatch(ctx context.Context, batch []*domain.InboxItem) (int, error) {
+	tids := make([]string, 0, len(batch))
+	sks := make([]string, 0, len(batch))
+	eids := make([]string, 0, len(batch))
+	raws := make([]string, 0, len(batch))
+	phs := make([]string, 0, len(batch))
+	for _, it := range batch {
+		if it == nil || it.TenantID == "" || it.ExternalID == "" || it.SourceKind == "" {
+			continue
+		}
+		raw := it.Raw
+		if len(raw) == 0 {
+			raw = json.RawMessage("null")
+		}
+		tids = append(tids, it.TenantID)
+		sks = append(sks, string(it.SourceKind))
+		eids = append(eids, it.ExternalID)
+		raws = append(raws, string(raw))
+		phs = append(phs, it.PayloadHash)
+	}
+	if len(tids) == 0 {
+		return 0, nil
+	}
+
+	var changed int
+	err := a.client.pool.QueryRow(ctx, `
+		WITH input AS (
+			SELECT
+				t.tid::uuid AS tid,
+				t.sk        AS sk,
+				t.eid       AS eid,
+				t.raw::jsonb AS raw,
+				t.ph        AS ph,
+				t.ord       AS ord
+			FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
+				WITH ORDINALITY AS t(tid, sk, eid, raw, ph, ord)
+		),
+		prior AS (
+			SELECT i.ord, ii.payload_hash AS old_hash
+			FROM input i
+			LEFT JOIN catalog.inbox_items ii
+				ON ii.tenant_id   = i.tid
+				AND ii.source_kind = i.sk
+				AND ii.external_id = i.eid
+		),
+		ins AS (
+			INSERT INTO catalog.inbox_items (tenant_id, source_kind, external_id, raw, payload_hash, fetched_at)
+			SELECT tid, sk, eid, raw, ph, NOW() FROM input
+			ON CONFLICT (tenant_id, source_kind, external_id) DO UPDATE
+			SET fetched_at  = NOW(),
+			    raw         = CASE WHEN inbox_items.payload_hash = EXCLUDED.payload_hash
+			                       THEN inbox_items.raw ELSE EXCLUDED.raw END,
+			    payload_hash = EXCLUDED.payload_hash,
+			    applied_at  = CASE WHEN inbox_items.payload_hash = EXCLUDED.payload_hash
+			                       THEN inbox_items.applied_at ELSE NULL END
+		)
+		-- Per Postgres docs: a data-modifying CTE without RETURNING still
+		-- executes exactly once. The prior CTE was snapshotted BEFORE the
+		-- upsert, so this count reflects pre-upsert state: brand-new keys
+		-- plus existing keys whose payload_hash differs from input.
+		SELECT COUNT(*)::int FROM input i
+		JOIN prior p ON p.ord = i.ord
+		WHERE p.old_hash IS NULL OR p.old_hash <> i.ph
+	`, tids, sks, eids, raws, phs).Scan(&changed)
+	if err != nil {
+		return 0, fmt.Errorf("inbox bulk upsert exec: %w", err)
+	}
+	return changed, nil
+}
+
 func (a *InboxAdapter) MarkApplied(ctx context.Context, itemID string) error {
 	tag, err := a.client.pool.Exec(ctx, `
 		UPDATE catalog.inbox_items

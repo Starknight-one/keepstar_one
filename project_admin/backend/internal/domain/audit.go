@@ -33,13 +33,21 @@ const (
 type AuditAction string
 
 const (
-	AuditActionCreate       AuditAction = "create"
-	AuditActionUpdate       AuditAction = "update"
-	AuditActionDelete       AuditAction = "delete"
-	AuditActionRename       AuditAction = "rename"
-	AuditActionPromote      AuditAction = "promote"
-	AuditActionMerge        AuditAction = "merge"
-	AuditActionMergeRevert  AuditAction = "merge_revert"
+	AuditActionCreate      AuditAction = "create"
+	AuditActionUpdate      AuditAction = "update"
+	AuditActionDelete      AuditAction = "delete"
+	AuditActionRename      AuditAction = "rename"
+	AuditActionPromote     AuditAction = "promote"
+	AuditActionMerge       AuditAction = "merge"
+	AuditActionMergeRevert AuditAction = "merge_revert"
+	// Approval lifecycle actions for the pending-approval staging flow.
+	// AuditActionApprove fires when curator approves a pending master or a
+	// pending field-level change; AuditActionReject when they reject;
+	// AuditActionExpire is emitted by the sweeper that transitions
+	// 30-day-stale pending rows to status='expired'.
+	AuditActionApprove AuditAction = "approve"
+	AuditActionReject  AuditAction = "reject"
+	AuditActionExpire  AuditAction = "expire"
 )
 
 // FieldChange records a single field's old → new transition. Used in

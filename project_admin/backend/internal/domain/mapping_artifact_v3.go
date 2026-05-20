@@ -16,11 +16,20 @@ import (
 //
 // Stored in catalog.tenant_catalog_schema.mapping_artifact JSONB.
 type MappingArtifactV3 struct {
-	Version       int              `json:"version"` // 3
-	Branches      []VerticalBranch `json:"branches"`
-	ClassifyRules []ClassifyRule   `json:"classify_rules,omitempty"`
-	Notes         string           `json:"notes,omitempty"`
-	BuiltAt       time.Time        `json:"built_at"`
+	Version int `json:"version"` // 3
+	// ClassifyingField names the inbox top-level key that holds the
+	// tenant's category value (e.g. "product_type" for Shopify,
+	// "primary_category" for Sephora CSV). Apply_v2's classifyContextFromRaw
+	// reads raw[ClassifyingField] as the input to vertical lookup and
+	// classify_rules. Discovery_v2 picks this in its Step 1 by inspecting
+	// list_fields + sample values. Empty → legacy artifact, apply_v2 falls
+	// back to a hardcoded synonym list (product_type / productType /
+	// primary_category / category / type).
+	ClassifyingField string           `json:"classifying_field,omitempty"`
+	Branches         []VerticalBranch `json:"branches"`
+	ClassifyRules    []ClassifyRule   `json:"classify_rules,omitempty"`
+	Notes            string           `json:"notes,omitempty"`
+	BuiltAt          time.Time        `json:"built_at"`
 }
 
 // VerticalBranch is the per-class rule set. apply_v2 picks one branch per

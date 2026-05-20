@@ -125,6 +125,23 @@ export default function SettingsPage() {
           </label>
         </div>
 
+        <div className="settings-section">
+          <h2 className="settings-section-title">Sync</h2>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={settings?.dailySyncEnabled || false}
+              onChange={(e) => setSettings({ ...settings, dailySyncEnabled: e.target.checked })}
+            />
+            <span>Sync my Shopify data daily</span>
+          </label>
+          <p className="settings-hint">
+            When on, our background job once a day re-applies your Shopify
+            inbox. Use this as a safety net on top of the webhook subscription —
+            new products that webhooks missed will still land. Off by default.
+          </p>
+        </div>
+
         {message && (
           <div className={message === 'Settings saved' ? 'auth-success' : 'auth-error'}>
             {message}

@@ -98,6 +98,18 @@ func main() {
 	protected.HandleFunc("/curator/master/products", h.ListMasterProducts)
 	protected.HandleFunc("/curator/master/products/", h.GetMasterProduct)
 
+	// Pending approval surface (2026-05-20 bundled milestone).
+	//   GET  /curator/pending/tree                — categories tree with counts
+	//   GET  /curator/pending/category/{id}        — cards in one category
+	//   GET  /curator/pending/master/{id}          — master detail + changes
+	//   POST /curator/pending/approve              — bulk approve
+	//   POST /curator/pending/reject               — bulk reject
+	protected.HandleFunc("/curator/pending/tree", h.ListPendingTree)
+	protected.HandleFunc("/curator/pending/category/", h.ListPendingCategory)
+	protected.HandleFunc("/curator/pending/master/", h.GetPendingMaster)
+	protected.HandleFunc("/curator/pending/approve", h.ApprovePending)
+	protected.HandleFunc("/curator/pending/reject", h.RejectPending)
+
 	// V5 chat / trace inspection (chunk 13). Reads v5_chat_sessions +
 	// v5_chat_session_traces from the shared Neon DB.
 	//   GET /curator/chats                                 — list (filters)
@@ -119,6 +131,11 @@ func main() {
 	mux.Handle("/curator/tenants/", auth(protected))
 	mux.Handle("/curator/master/products", auth(protected))
 	mux.Handle("/curator/master/products/", auth(protected))
+	mux.Handle("/curator/pending/tree", auth(protected))
+	mux.Handle("/curator/pending/category/", auth(protected))
+	mux.Handle("/curator/pending/master/", auth(protected))
+	mux.Handle("/curator/pending/approve", auth(protected))
+	mux.Handle("/curator/pending/reject", auth(protected))
 	mux.Handle("/curator/chats", auth(protected))
 	mux.Handle("/curator/chats/", auth(protected))
 

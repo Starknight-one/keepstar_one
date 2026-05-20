@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>V5 · pipeline slice — chat turn execution</title>
+<style>
+  :root {
+    --blue: #5BA4D9;
+    --orange: #F0924A;
+    --green: #4FB286;
+    --gray: #8a8f99;
+    --yellow: #E8C547;
+    --red: #C8553D;
+    --bg: #11151c;
+    --panel: #1a1f29;
+    --panel2: #232a36;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --border: #2c3340;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, system-ui, sans-serif; }
+  #app { display: grid; grid-template-columns: 1fr 360px; grid-template-rows: 48px 1fr; height: 100vh; }
+  header {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 16px;
+    padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  header input[type=search] {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 4px; width: 200px; font: inherit;
+  }
+  header .filters { display: flex; gap: 8px; font-size: 12px; color: var(--muted); }
+  header .filters label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  header .filters input { margin: 0; }
+  #cy { background: var(--bg); }
+  aside {
+    background: var(--panel); border-left: 1px solid var(--border);
+    padding: 16px; overflow-y: auto;
+  }
+  aside .empty { color: var(--muted); font-style: italic; }
+  aside h2 { margin: 0 0 4px 0; font-size: 14px; font-weight: 600; }
+  aside .type-chip {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #11151c; margin-bottom: 12px;
+  }
+  aside .file { color: var(--muted); font-size: 11px; font-family: ui-monospace, Menlo, monospace; margin-bottom: 12px; word-break: break-all; }
+  aside .sig { background: var(--panel2); padding: 8px 10px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text); margin-bottom: 12px; white-space: pre-wrap; }
+  aside .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 14px; margin-bottom: 4px; }
+  aside .impact { background: rgba(240, 146, 74, 0.1); border-left: 3px solid var(--orange); padding: 8px 10px; border-radius: 0 4px 4px 0; font-size: 12px; color: var(--text); margin-bottom: 8px; }
+  aside ul { margin: 4px 0 8px 0; padding-left: 18px; color: var(--text); font-size: 12px; }
+  aside ul li { margin-bottom: 2px; cursor: pointer; }
+  aside ul li:hover { color: var(--orange); }
+  aside .summary { color: var(--text); font-size: 12px; margin-bottom: 10px; }
+  aside table.io { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 6px; }
+  aside table.io th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 6px 3px 0; vertical-align: top; width: 70px; font-family: ui-monospace, Menlo, monospace; }
+  aside table.io td { padding: 3px 0; vertical-align: top; font-family: ui-monospace, Menlo, monospace; color: var(--text); }
+  aside table.io td .desc { font-family: -apple-system, system-ui, sans-serif; color: var(--muted); font-size: 11px; margin-top: 1px; }
+  aside .io-section { background: var(--panel2); border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; }
+  aside .io-section .label { margin-top: 0; }
+  .legend {
+    position: absolute; bottom: 12px; left: 12px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 12px; font-size: 11px; color: var(--muted);
+  }
+  .legend .row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .legend .swatch { width: 12px; height: 12px; border-radius: 2px; }
+  .legend .line { width: 16px; height: 2px; }
+  .legend .dashed { background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 8px); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>v5 · <span style="color: var(--orange)">pipeline</span></h1>
+    <span class="sub">chat turn execution · POST /api/v1/pipeline → Agent1 (planner) → microcontext → Agent2 (renderer) → engine materialise → response</span>
+    <span class="spacer"></span>
+    <div class="filters">
+      <label><input type="checkbox" data-type="handler" checked /> handler</label>
+      <label><input type="checkbox" data-type="usecase-caller" checked /> caller</label>
+      <label><input type="checkbox" data-type="usecase" checked /> usecase</label>
+      <label><input type="checkbox" data-type="port" checked /> port</label>
+      <label><input type="checkbox" data-type="adapter" checked /> adapter</label>
+      <label><input type="checkbox" data-type="domain" checked /> domain</label>
+      <label><input type="checkbox" data-type="table" checked /> table</label>
+    </div>
+    <input type="search" id="search" placeholder="search nodes…" />
+  </header>
+  <div id="cy"></div>
+  <aside id="sidebar">
+    <div class="empty">Click a node to see details.<br><br>Drag to pan. Scroll to zoom. Click empty space to deselect.</div>
+  </aside>
+  <div class="legend">
+    <div class="row"><span class="swatch" style="background:var(--orange)"></span> handler (HTTP entry)</div>
+    <div class="row"><span class="swatch" style="background:var(--blue)"></span> usecase / caller</div>
+    <div class="row"><span class="swatch" style="background:var(--green)"></span> port (interface)</div>
+    <div class="row"><span class="swatch" style="background:var(--gray)"></span> adapter (impl)</div>
+    <div class="row"><span class="swatch" style="background:var(--yellow)"></span> domain type</div>
+    <div class="row"><span class="swatch" style="background:var(--red)"></span> DB table</div>
+    <div class="row" style="margin-top:6px"><span class="line" style="background:var(--text)"></span> calls</div>
+    <div class="row"><span class="line dashed"></span> implements / uses</div>
+  </div>
+</div>
+
+<script type="application/json" id="graph-data">
+{
+  "slice": "pipeline",
+  "title": "V5 pipeline — chat turn execution",
+  "summary": "Single chat-turn flow. HTTP POST /api/v1/pipeline → PipelineExecute orchestrates Agent1 (data retrieval, 3 tools) → composeMicrocontext (one-line signal) → Agent2 (scene-graph renderer, visual_assembly tool) → engine materialise/resolve/replicate → PrefetchBuilder (drill-target preset) → persistTrace (span tree). Read via Anthropic LLM + Postgres state/catalog/trace adapters.",
+  "nodes": [
+    {
+      "id": "h:pipeline",
+      "type": "handler",
+      "label": "POST /api/v1/pipeline",
+      "sig": "func (h *PipelineHandler) Pipeline(w, r)",
+      "file": "project_v5/backend/internal/handlers/handler_pipeline.go:65",
+      "summary": "Главный chat-turn entry. Парсит запрос, дёргает PipelineExecute.Execute, после — асинхронно persistTrace.",
+      "impact": "Если ломается — весь chat встаёт. Виджет не получает ни одного ответа от LLM.",
+      "io": {
+        "in": [
+          {"name": "method", "type": "POST (others rejected 405)", "desc": ""},
+          {"name": "body", "type": "{ session_id, tenant_slug, user_message, request_id }", "desc": "JSON; request_id для идемпотентности trace"}
+        ],
+        "out": [
+          {"name": "body", "type": "PipelineExecuteResponse JSON", "desc": "{ scene_graph, microcontext, view_kind, usage }"},
+          {"name": "status", "type": "200 ok / 400 bad json / 500 pipeline error", "desc": ""}
+        ]
+      }
+    },
+    {
+      "id": "h:session_init",
+      "type": "handler",
+      "label": "POST /api/v1/session/init",
+      "sig": "func (h *SessionHandler) Init(w, r)",
+      "file": "project_v5/backend/internal/handlers/handler_session.go:38",
+      "summary": "Создаёт новую chat session, инициализирует пустой state в Postgres.",
+      "impact": "Если ломается — невозможно начать новый разговор; виджет не может загрузиться у нового посетителя.",
+      "io": {
+        "in": [
+          {"name": "body", "type": "{ tenant_slug }", "desc": ""}
+        ],
+        "out": [
+          {"name": "body", "type": "{ session_id, state }", "desc": "session_id для последующих /pipeline вызовов"}
+        ]
+      }
+    },
+    {
+      "id": "h:session_get",
+      "type": "handler",
+      "label": "GET /api/v1/session/{id}",
+      "sig": "func (h *SessionHandler) Get(w, r)",
+      "file": "project_v5/backend/internal/handlers/handler_session.go:75",
+      "summary": "Debug endpoint — возвращает полный SessionState (current, view, history, deltas).",
+      "impact": "Если ломается — debug в Curator UI не работает. Production chat не страдает.",
+      "io": {
+        "in": [
+          {"name": "id", "type": "string (URL path)", "desc": "session_id"}
+        ],
+        "out": [
+          {"name": "body", "type": "SessionState JSON", "desc": "Полная shape со state, conversation_history, deltas"}
+        ]
+      }
+    },
+
+    {
+      "id": "uc:pipeline_exec",
+      "type": "usecase-caller",
+      "label": "PipelineExecute.Execute",
+      "sig": "func (uc *PipelineExecute) Execute(ctx, req) (*PipelineExecuteResponse, error)",
+      "file": "project_v5/backend/internal/usecases/pipeline_execute.go:76",
+      "summary": "Координатор chat-turn: загружает state → Agent1 → composeMicrocontext → Agent2 → PrefetchBuilder → собирает response.",
+      "impact": "Сердце chat-engine. Если ломается — никакой turn не отрабатывает.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "req", "type": "PipelineExecuteRequest", "desc": "{ SessionID, TenantSlug, UserMessage, RequestID, SpanCollector }"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*PipelineExecuteResponse", "desc": "{ SceneGraph, Microcontext, ViewKind, Usage }"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:agent1",
+      "type": "usecase-caller",
+      "label": "Agent1Execute.Execute",
+      "sig": "func (uc *Agent1Execute) Execute(ctx, req) (*Agent1ExecuteResponse, error)",
+      "file": "project_v5/backend/internal/usecases/agent1_execute.go:90",
+      "summary": "Планировщик: понимает запрос → выбирает tool (catalog_search / state_filter / history_lookup) → возвращает результат + новые products в state.",
+      "impact": "Без Agent1 чат не знает что искать. Каталог недоступен для LLM.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "req", "type": "Agent1ExecuteRequest", "desc": "{ SessionID, TenantSlug, UserMessage, State, History }"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*Agent1ExecuteResponse", "desc": "{ ToolCall, ToolResult, NewProducts, Microcontext, Usage }"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:agent2",
+      "type": "usecase-caller",
+      "label": "Agent2Execute.Execute",
+      "sig": "func (uc *Agent2Execute) Execute(ctx, req) (*Agent2ExecuteResponse, error)",
+      "file": "project_v5/backend/internal/usecases/agent2_execute.go:90",
+      "summary": "Рендерер: получает результат Agent1 + microcontext → дёргает visual_assembly tool → возвращает Document (scene-graph) с забиндженными данными.",
+      "impact": "Без Agent2 нет UI. Бэк бы вернул сырой product list — фронт не знает как нарисовать.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "req", "type": "Agent2ExecuteRequest", "desc": "{ SessionID, Microcontext, A1Result, FormationTree, History }"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*Agent2ExecuteResponse", "desc": "{ Document, ViewKind, Usage }"},
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "uc:microcontext",
+      "type": "usecase-caller",
+      "label": "composeMicrocontext",
+      "sig": "func composeMicrocontext(a1 *Agent1ExecuteResponse) string",
+      "file": "project_v5/backend/internal/usecases/pipeline_execute.go:182",
+      "summary": "Превращает результат Agent1 (tool name + count + sample) в одну строку-сигнал для Agent2: «нашли 12 кремов с витамином C».",
+      "impact": "Если ломается — Agent2 не знает что Agent1 сделал, рендерит фигню или пустоту.",
+      "io": {
+        "in": [
+          {"name": "a1", "type": "*Agent1ExecuteResponse"}
+        ],
+        "out": [
+          {"name": "↩", "type": "string", "desc": "Краткий сигнал, что произошло на Agent1"}
+        ]
+      }
+    },
+    {
+      "id": "uc:prefetch",
+      "type": "usecase-caller",
+      "label": "PrefetchBuilder.Build",
+      "sig": "func (b *PrefetchBuilder) Build(ctx, ...) (*PrefetchResult, error)",
+      "file": "project_v5/backend/internal/usecases/prefetch.go:37",
+      "summary": "Материализует drill-target preset (например, detail view для первого продукта) — чтобы при клике юзера не было round-trip к серверу.",
+      "impact": "Без prefetch'a drill-down добавляет +1 LLM-вызов на каждый клик. UX медленнее, но работает.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "state", "type": "*SessionState"},
+          {"name": "viewKind", "type": "string", "desc": "list / detail / compare"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*PrefetchResult", "desc": "Materialized preset, готов к моментальному показу"}
+        ]
+      }
+    },
+    {
+      "id": "uc:persist_trace",
+      "type": "usecase-caller",
+      "label": "PipelineHandler.persistTrace",
+      "sig": "func (h *PipelineHandler) persistTrace(ctx, span *SpanCollector, ...)",
+      "file": "project_v5/backend/internal/handlers/handler_pipeline.go:124",
+      "summary": "Фоновый INSERT span-tree в v5_chat_session_traces после ответа клиенту. Идемпотентен по (session_id, request_id).",
+      "impact": "Если ломается — Curator UI не видит waterfall запросов. Production chat работает, но debug слепой.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context (detached)"},
+          {"name": "span", "type": "*SpanCollector"},
+          {"name": "session_id, request_id, tenant_id", "type": "string"}
+        ],
+        "out": [
+          {"name": "err", "type": "(logged not propagated)"}
+        ]
+      }
+    },
+
+    {
+      "id": "uc:a1_prompt",
+      "type": "usecase",
+      "label": "Agent1PromptCache.GetOrBuild",
+      "sig": "func (c *Agent1PromptCache) GetOrBuild(ctx, tenantSlug) (string, error)",
+      "file": "project_v5/backend/internal/usecases/agent1_prompt_cache.go:40",
+      "classification": "read + cache",
+      "summary": "Кеширует system prompt Agent1: статичная часть + tenant-specific catalog digest (категории/филды/values).",
+      "impact": "Если ломается — каждый turn пересобирает digest (дорого, +500ms +тысячи токенов).",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantSlug", "type": "string"}
+        ],
+        "out": [
+          {"name": "↩", "type": "string", "desc": "Готовый system prompt для Anthropic"}
+        ]
+      }
+    },
+    {
+      "id": "uc:a1_state",
+      "type": "usecase",
+      "label": "buildRenderedSubsetFromState",
+      "sig": "func buildRenderedSubsetFromState(state *SessionState) ([]Product, error)",
+      "file": "project_v5/backend/internal/usecases/agent1_execute.go:334",
+      "classification": "read",
+      "summary": "Выдёргивает из state.Current.Data текущие отрендеренные продукты — чтобы LLM мог сослаться на «первый» / «тот синий».",
+      "impact": "Без него LLM теряет привязку к видимому списку — отвечает «который вы имеете в виду?»",
+      "io": {
+        "in": [
+          {"name": "state", "type": "*SessionState"}
+        ],
+        "out": [
+          {"name": "↩", "type": "[]Product", "desc": "Подмножество продуктов, видимых юзеру сейчас"}
+        ]
+      }
+    },
+    {
+      "id": "uc:a2_prompt",
+      "type": "usecase",
+      "label": "PromptCache.GetOrBuild (Agent2)",
+      "sig": "func (c *PromptCache) GetOrBuild(ctx, tenantSlug) (string, error)",
+      "file": "project_v5/backend/internal/usecases/prompt_cache.go:46",
+      "classification": "read + cache",
+      "summary": "Кеширует system prompt Agent2: база + preset catalog (доступные шаблоны: list, detail, compare …) + field definitions.",
+      "impact": "Без кеша — каждый turn пересчитывает preset/fields секцию. Дорого по токенам.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "tenantSlug", "type": "string"}
+        ],
+        "out": [
+          {"name": "↩", "type": "string"}
+        ]
+      }
+    },
+    {
+      "id": "uc:a2_tree",
+      "type": "usecase",
+      "label": "buildFormationTreeBlock",
+      "sig": "func buildFormationTreeBlock(doc *Document) string",
+      "file": "project_v5/backend/internal/usecases/agent2_execute.go:142",
+      "classification": "read",
+      "summary": "Сериализует текущий Document в компактный tree_map (preset_in_use, instances, literals, data_count) для modify-режима Agent2.",
+      "impact": "Без него Agent2 в modify-режиме не знает что уже на экране — рисует с нуля вместо точечной правки.",
+      "io": {
+        "in": [
+          {"name": "doc", "type": "*engine.Document"}
+        ],
+        "out": [
+          {"name": "↩", "type": "string", "desc": "JSON tree_map для LLM"}
+        ]
+      }
+    },
+
+    {
+      "id": "tool:catalog_search",
+      "type": "usecase",
+      "label": "CatalogSearchTool",
+      "sig": "func (t *CatalogSearchTool) Run(ctx, args) (*ToolResult, error)",
+      "file": "project_v5/backend/internal/tools/tool_catalog_search.go:30",
+      "classification": "Agent1 tool · hybrid retrieval",
+      "summary": "Hybrid поиск: keyword ILIKE + pgvector cosine, мерж через RRF. Возвращает top-N продуктов.",
+      "impact": "Главный путь к каталогу. Если деградирует до keyword-only — релевантность падает (V5 регрессия из недавнего фикса).",
+      "io": {
+        "in": [
+          {"name": "query", "type": "string"},
+          {"name": "filters", "type": "map[string]any", "desc": "category, price_range, etc."},
+          {"name": "limit", "type": "int"}
+        ],
+        "out": [
+          {"name": "products", "type": "[]Product"},
+          {"name": "count", "type": "int"}
+        ]
+      }
+    },
+    {
+      "id": "tool:state_filter",
+      "type": "usecase",
+      "label": "StateFilterTool",
+      "sig": "func (t *StateFilterTool) Run(ctx, args) (*ToolResult, error)",
+      "file": "project_v5/backend/internal/tools/tool_state_filter.go:16",
+      "classification": "Agent1 tool · in-memory filter",
+      "summary": "Фильтрует уже загруженный список (state.Current.Data) — без хода в БД. «Покажи только до 5000₽» из уже отрендеренных.",
+      "impact": "Без него follow-up фильтры повторно бьют в каталог. Дороже, медленнее, но работает.",
+      "io": {
+        "in": [
+          {"name": "criteria", "type": "map[string]any", "desc": "поля для фильтрации"}
+        ],
+        "out": [
+          {"name": "products", "type": "[]Product", "desc": "подмножество текущего state"}
+        ]
+      }
+    },
+    {
+      "id": "tool:history_lookup",
+      "type": "usecase",
+      "label": "HistoryLookupTool",
+      "sig": "func (t *HistoryLookupTool) Run(ctx, args) (*ToolResult, error)",
+      "file": "project_v5/backend/internal/tools/tool_history_lookup.go:15",
+      "classification": "Agent1 tool · session history",
+      "summary": "Ищет паттерн в session deltas — «что я искал 3 шага назад». Read-only по conversation_history + deltas.",
+      "impact": "Если ломается — теряется навигация назад по разговору. Не critical, но раздражает юзера.",
+      "io": {
+        "in": [
+          {"name": "pattern", "type": "string"}
+        ],
+        "out": [
+          {"name": "matches", "type": "[]Delta"}
+        ]
+      }
+    },
+    {
+      "id": "tool:visual_assembly",
+      "type": "usecase",
+      "label": "VisualAssemblyTool",
+      "sig": "func (t *VisualAssemblyTool) Run(ctx, args) (*ToolResult, error)",
+      "file": "project_v5/backend/internal/tools/tool_visual_assembly.go:27",
+      "classification": "Agent2 tool · scene-graph renderer",
+      "summary": "Единственный tool Agent2: принимает preset_id + bindings + ops → дёргает engine.Materialise → ResolveAndInline → ExpandReplicates → возвращает финальный Document.",
+      "impact": "Без него Agent2 не может сгенерить UI. Виджет получит пустой scene-graph.",
+      "io": {
+        "in": [
+          {"name": "preset", "type": "string", "desc": "id шаблона (list / detail / compare …)"},
+          {"name": "bindings", "type": "map[string]any", "desc": "$ref → product fields"},
+          {"name": "ops", "type": "[]Op", "desc": "create_node / modify / apply_preset / bind / replicate"}
+        ],
+        "out": [
+          {"name": "document", "type": "*engine.Document", "desc": "Готовый scene-graph для виджета"}
+        ]
+      }
+    },
+
+    {
+      "id": "eng:materialise",
+      "type": "usecase",
+      "label": "engine.Materialise",
+      "sig": "func Materialise(preset *Preset, components []*Component) (*Document, error)",
+      "file": "project_v5/backend/internal/engine/materialise.go:32",
+      "classification": "engine step 1",
+      "summary": "Сливает preset (шаблон) + использованные компоненты в один Document. Создаёт начальное дерево.",
+      "impact": "Если ломается — visual_assembly не может построить ни одного UI.",
+      "io": {
+        "in": [
+          {"name": "preset", "type": "*Preset"},
+          {"name": "components", "type": "[]*Component"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*Document"}
+        ]
+      }
+    },
+    {
+      "id": "eng:resolve_inline",
+      "type": "usecase",
+      "label": "engine.ResolveAndInline",
+      "sig": "func ResolveAndInline(doc *Document) error",
+      "file": "project_v5/backend/internal/engine/resolve_inline.go:27",
+      "classification": "engine step 2",
+      "summary": "Раскрывает каждый RefNode в deep-clone компонента. После — в дереве нет $ref, только конкретные ноды.",
+      "impact": "Без неё $ref остаются на месте — фронт не знает что рендерить.",
+      "io": {
+        "in": [
+          {"name": "doc", "type": "*Document"}
+        ],
+        "out": [
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+    {
+      "id": "eng:expand_replicates",
+      "type": "usecase",
+      "label": "engine.ExpandReplicates",
+      "sig": "func ExpandReplicates(doc *Document, data []map[string]any) error",
+      "file": "project_v5/backend/internal/engine/replicate.go",
+      "classification": "engine step 3",
+      "summary": "Клонит replicate-помеченный subtree один раз на каждый элемент data (12 продуктов → 12 product card nodes).",
+      "impact": "Без неё карточка одна на 12 продуктов — список не рендерится.",
+      "io": {
+        "in": [
+          {"name": "doc", "type": "*Document"},
+          {"name": "data", "type": "[]map[string]any"}
+        ],
+        "out": [
+          {"name": "err", "type": "error"}
+        ]
+      }
+    },
+
+    {
+      "id": "p:llm",
+      "type": "port",
+      "label": "LLMPort.ChatWithToolsCached",
+      "sig": "ChatWithToolsCached(ctx, messages, system, tools, cacheCfg) (*LLMResponse, error)",
+      "file": "project_v5/backend/internal/ports/llm_port.go:42",
+      "classification": "mutate (external call)",
+      "summary": "Главная точка вызова Anthropic. Применяет cache_control hints согласно CacheConfig (system / tools / conversation prefixes).",
+      "impact": "Если ломается — оба агента не работают. Если cache_control сбит — токены биллятся full price (5× дороже).",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "messages", "type": "[]LLMMessage"},
+          {"name": "system", "type": "string"},
+          {"name": "tools", "type": "[]ToolDef"},
+          {"name": "cacheCfg", "type": "CacheConfig", "desc": "где ставить ephemeral cache hints"}
+        ],
+        "out": [
+          {"name": "↩", "type": "*LLMResponse", "desc": "{ Content, ToolCalls, Usage (incl. cache stats) }"}
+        ]
+      }
+    },
+    {
+      "id": "p:llm_count",
+      "type": "port",
+      "label": "LLMPort.CountInputTokens",
+      "sig": "CountInputTokens(ctx, messages, system, tools) (int, error)",
+      "file": "project_v5/backend/internal/ports/llm_port.go:42",
+      "classification": "read",
+      "summary": "Замеряет размер input — нужно чтобы решить, можно ли поставить cache_control (порог 4500 токенов).",
+      "impact": "Если ломается — нельзя определить, тянет ли prompt кеш. Cache hits падают.",
+      "io": {
+        "in": [
+          {"name": "ctx", "type": "context.Context"},
+          {"name": "messages", "type": "[]LLMMessage"},
+          {"name": "system", "type": "string"},
+          {"name": "tools", "type": "[]ToolDef"}
+        ],
+        "out": [
+          {"name": "↩", "type": "int", "desc": "input tokens"}
+        ]
+      }
+    },
+    {
+      "id": "p:catalog",
+      "type": "port",
+      "label": "CatalogPort",
+      "sig": "ListProducts / VectorSearch / BuildCatalogDigest",
+      "file": "project_v5/backend/internal/ports/catalog_port.go:49",
+      "classification": "read",
+      "summary": "Чтение каталога для catalog_search tool и для digest в Agent1 system prompt.",
+      "impact": "Если ломается — Agent1 не находит продукты. Чат отвечает «не нашёл».",
+      "io": {
+        "in": [
+          {"name": "tenantSlug", "type": "string"},
+          {"name": "query / filters / embedding", "type": "varies"}
+        ],
+        "out": [
+          {"name": "↩", "type": "[]Product"}
+        ],
+        "sql": "SELECT … FROM catalog.master_products JOIN catalog.master_variants … WHERE tenant_id=$1 …"
+      }
+    },
+    {
+      "id": "p:state",
+      "type": "port",
+      "label": "StatePort",
+      "sig": "GetState / UpdateData / UpdateTemplate / AppendConversation",
+      "file": "project_v5/backend/internal/ports/state_port.go:12",
+      "classification": "read+mutate",
+      "summary": "CRUD по session state. Каждый turn читает state в начале, пишет обновления в конце.",
+      "impact": "Сердце сессии. Если ломается — все turn'ы падают.",
+      "io": {
+        "in": [
+          {"name": "sessionID", "type": "string"},
+          {"name": "delta", "type": "varies", "desc": "data / template / conversation"}
+        ],
+        "out": [
+          {"name": "state", "type": "*SessionState", "desc": "for reads"}
+        ],
+        "sql": "SELECT/UPDATE v5_chat_sessions; INSERT v5_chat_conversation_history"
+      }
+    },
+    {
+      "id": "p:trace",
+      "type": "port",
+      "label": "TracePort.SaveTrace",
+      "sig": "SaveTrace(ctx, row *TraceRow) error",
+      "file": "project_v5/backend/internal/ports/trace_port.go:9",
+      "classification": "mutate",
+      "summary": "Сохраняет span-tree одного turn'a. Idempotent на (session_id, request_id) — ретраи безопасны.",
+      "impact": "Если ломается — нет наблюдаемости в Curator. Production chat работает, но debug слепой.",
+      "io": {
+        "in": [
+          {"name": "row", "type": "*TraceRow", "desc": "{ SessionID, RequestID, TenantID, Spans, LatencyMs, Tokens*, Status }"}
+        ],
+        "out": [
+          {"name": "err", "type": "error"}
+        ],
+        "sql": "INSERT INTO v5_chat_session_traces ... ON CONFLICT (session_id, request_id) DO NOTHING"
+      }
+    },
+    {
+      "id": "p:embedding",
+      "type": "port",
+      "label": "EmbeddingPort.Embed",
+      "sig": "Embed(ctx, text string) ([]float32, error)",
+      "file": "project_v5/backend/internal/ports/embedding_port.go:6",
+      "classification": "mutate (external)",
+      "summary": "Генерит OpenAI embedding для query — нужно catalog_search чтобы делать pgvector cosine.",
+      "impact": "Если ломается — catalog_search деградирует до keyword-only. Релевантность падает, но чат живёт.",
+      "io": {
+        "in": [
+          {"name": "text", "type": "string"}
+        ],
+        "out": [
+          {"name": "↩", "type": "[]float32", "desc": "embedding vector"}
+        ]
+      }
+    },
+
+    {
+      "id": "a:anthropic",
+      "type": "adapter",
+      "label": "AnthropicAdapter",
+      "sig": "Client wraps SDK + model id + pricing",
+      "file": "project_v5/backend/internal/adapters/anthropic/client.go:23",
+      "summary": "Postgres-аналог для LLM: единственная реализация LLMPort. Файлы: client.go (init), chat.go (ChatWithToolsCached + CountInputTokens + buildMessageNewParams).",
+      "impact": "Если ломается — все LLM-вызовы падают. Чат полностью встаёт."
+    },
+    {
+      "id": "a:catalog_pg",
+      "type": "adapter",
+      "label": "CatalogAdapter (postgres)",
+      "sig": "Реализует CatalogPort",
+      "file": "project_v5/backend/internal/adapters/postgres/postgres_catalog.go:29",
+      "summary": "Читает catalog.* schema (общий с admin/curator). master_products + master_variants + master_cosmetics + filters_index.",
+      "impact": "Единственная реализация. Падает Postgres → Agent1 не может искать каталог."
+    },
+    {
+      "id": "a:state_pg",
+      "type": "adapter",
+      "label": "StateAdapter (postgres)",
+      "sig": "Реализует StatePort",
+      "file": "project_v5/backend/internal/adapters/postgres/postgres_state.go:29",
+      "summary": "CRUD по v5_chat_sessions, v5_chat_conversation_history, v5_chat_deltas. Single source of truth для session state.",
+      "impact": "Падает → ни один turn не отрабатывает. Виджет получает 500."
+    },
+    {
+      "id": "a:trace_pg",
+      "type": "adapter",
+      "label": "TraceAdapter (postgres)",
+      "sig": "Реализует TracePort",
+      "file": "project_v5/backend/internal/adapters/postgres/postgres_trace.go:13",
+      "summary": "INSERT в v5_chat_session_traces со span tree + aggregated metrics (latency, tokens, cost).",
+      "impact": "Падает → Curator UI слепой по trace'ам. Чат работает."
+    },
+
+    {
+      "id": "d:state",
+      "type": "domain",
+      "label": "domain.SessionState",
+      "sig": "{ SessionID, Current, View, Actions, ConversationHistory, Step }",
+      "file": "project_v5/backend/internal/domain/state.go:81",
+      "summary": "Полная shape session state. Каждый turn читает в начале, пишет в конце.",
+      "impact": "Расширяется → меняется DB schema + StateAdapter + миграция."
+    },
+    {
+      "id": "d:state_current",
+      "type": "domain",
+      "label": "domain.StateCurrent",
+      "sig": "{ Data, Meta, Template }",
+      "file": "project_v5/backend/internal/domain/state.go:44",
+      "summary": "Активная зона state: Data (продукты), Meta (count/fields/aliases), Template (текущий scene-graph).",
+      "impact": "Это что видит юзер прямо сейчас. Сломать = сломать рендер."
+    },
+    {
+      "id": "d:llm_message",
+      "type": "domain",
+      "label": "domain.LLMMessage",
+      "sig": "{ Role, Content, ToolCalls, ToolResult }",
+      "file": "project_v5/backend/internal/domain/llm_message.go:19",
+      "summary": "Формат сообщения, который передаётся в LLMPort. Wire format между нашим кодом и Anthropic adapter.",
+      "impact": "Меняешь поля → меняется и Anthropic adapter, и оба агента."
+    },
+    {
+      "id": "d:tool_call",
+      "type": "domain",
+      "label": "domain.ToolCall",
+      "sig": "{ ID, Name, Input map[string]any }",
+      "file": "project_v5/backend/internal/domain/llm_message.go:4",
+      "summary": "Маппинг LLM tool_use блока на имя tool'a + аргументы. Дёргается через Registry.",
+      "impact": "Сломать → tool dispatch не работает, оба агента в холостую."
+    },
+    {
+      "id": "d:llm_usage",
+      "type": "domain",
+      "label": "domain.LLMUsage",
+      "sig": "{ InputTokens, OutputTokens, CacheCreation, CacheRead, Cost, Model }",
+      "file": "project_v5/backend/internal/domain/llm_usage.go:24",
+      "summary": "Учёт стоимости одного LLM-вызова. Cache stats отдельно — видно эффект prompt caching.",
+      "impact": "Без него непонятно сколько стоит один turn. Billing вслепую."
+    },
+    {
+      "id": "d:span",
+      "type": "domain",
+      "label": "domain.SpanCollector",
+      "sig": "Accumulates request waterfall with parent tracking",
+      "file": "project_v5/backend/internal/domain/span.go:52",
+      "summary": "Собирает иерархическое дерево span'ов в одном turn'е. После — persistTrace пишет в БД.",
+      "impact": "Сломать → теряем observability. Curator UI пустой."
+    },
+    {
+      "id": "d:document",
+      "type": "domain",
+      "label": "engine.Document",
+      "sig": "{ Version, Themes, Variables, Children []Node }",
+      "file": "project_v5/backend/internal/engine/document.go:33",
+      "summary": "Корень scene-graph v9. То что Agent2 строит и что фронт рендерит.",
+      "impact": "Меняется schema → меняются и engine ops, и SceneGraphRenderer на фронте."
+    },
+    {
+      "id": "d:tree_map",
+      "type": "domain",
+      "label": "engine.TreeMap",
+      "sig": "{ PresetInUse, Instances, Literals, DataCount }",
+      "file": "project_v5/backend/internal/engine/tree_map.go:14",
+      "summary": "Компактный summary текущего Document для Agent2 в modify-режиме. LLM видит его вместо raw scene-graph.",
+      "impact": "Без TreeMap Agent2 не может точечно править ноды — рисует с нуля."
+    },
+    {
+      "id": "d:product",
+      "type": "domain",
+      "label": "domain.Product",
+      "sig": "{ ID, Name, Price, Images, Rating, SKU, SkinType, Concern, … }",
+      "file": "project_v5/backend/internal/domain/product.go:13",
+      "summary": "Полная shape продукта. Возвращается catalog_search; биндится в scene-graph через $ref.",
+      "impact": "Изменение полей → миграция каталога + binding в Agent2."
+    },
+    {
+      "id": "d:trace_row",
+      "type": "domain",
+      "label": "domain.TraceRow",
+      "sig": "{ SessionID, RequestID, TenantID, Spans, LatencyMs, Tokens*, Status }",
+      "file": "project_v5/backend/internal/domain/trace.go:19",
+      "summary": "DB-level shape одного trace'а. Что persistTrace пишет в v5_chat_session_traces.",
+      "impact": "Меняешь поля → миграция таблицы и Curator UI."
+    },
+    {
+      "id": "d:tool_ctx",
+      "type": "domain",
+      "label": "domain.ToolContext",
+      "sig": "{ SessionID, TenantSlug, TurnID }",
+      "file": "project_v5/backend/internal/domain/tool_context.go:11",
+      "summary": "Минимальный контекст, который передаётся в каждый tool. Чтобы tool знал, в чьей сессии работает.",
+      "impact": "Без него tool'ы не могут резолвить session/tenant — multi-tenancy ломается."
+    },
+
+    {
+      "id": "t:sessions",
+      "type": "table",
+      "label": "v5_chat_sessions",
+      "sig": "PRIMARY KEY (id); JSONB current/view/meta/template; conversation_history JSONB[]",
+      "file": "project_v5/backend/db/migrations/*",
+      "summary": "Главная таблица V5 chat. Одна row на session, всё state живёт здесь (включая историю и deltas).",
+      "impact": "Деградирует → весь V5 чат деградирует."
+    },
+    {
+      "id": "t:traces",
+      "type": "table",
+      "label": "v5_chat_session_traces",
+      "sig": "UNIQUE (session_id, request_id); JSONB spans; aggregated metrics",
+      "file": "project_v5/backend/db/migrations/*",
+      "summary": "Per-turn span trees + latency/tokens/cost. Источник для Curator waterfall view.",
+      "impact": "Падает → Curator не видит истории запросов. Production chat не страдает."
+    },
+    {
+      "id": "t:catalog",
+      "type": "table",
+      "label": "catalog.master_* (shared)",
+      "sig": "master_products, master_variants, master_cosmetics, filters_index",
+      "file": "project_v5/backend/db/migrations/* (catalog schema, общий с admin)",
+      "summary": "Каталог tenant'ов. Читается только Agent1 (catalog_search). Пишется через admin (apply_v2).",
+      "impact": "Падает → catalog_search не работает, Agent1 не находит продуктов."
+    }
+  ],
+  "edges": [
+    {"from": "h:pipeline", "to": "uc:pipeline_exec", "kind": "calls", "label": "req"},
+    {"from": "h:pipeline", "to": "uc:persist_trace", "kind": "calls", "label": "after response"},
+    {"from": "h:session_init", "to": "p:state", "kind": "calls", "label": "create"},
+    {"from": "h:session_get", "to": "p:state", "kind": "calls", "label": "GetState"},
+
+    {"from": "uc:pipeline_exec", "to": "p:state", "kind": "calls", "label": "GetState"},
+    {"from": "uc:pipeline_exec", "to": "uc:agent1", "kind": "calls", "label": "user_message + state"},
+    {"from": "uc:pipeline_exec", "to": "uc:microcontext", "kind": "calls", "label": "a1 result"},
+    {"from": "uc:pipeline_exec", "to": "uc:agent2", "kind": "calls", "label": "microcontext + state"},
+    {"from": "uc:pipeline_exec", "to": "uc:prefetch", "kind": "calls", "label": "after Agent2"},
+    {"from": "uc:pipeline_exec", "to": "d:span", "kind": "uses"},
+
+    {"from": "uc:agent1", "to": "uc:a1_prompt", "kind": "calls"},
+    {"from": "uc:agent1", "to": "uc:a1_state", "kind": "calls"},
+    {"from": "uc:agent1", "to": "p:llm", "kind": "calls", "label": "ChatWithToolsCached"},
+    {"from": "uc:agent1", "to": "p:llm_count", "kind": "calls"},
+    {"from": "uc:agent1", "to": "tool:catalog_search", "kind": "calls"},
+    {"from": "uc:agent1", "to": "tool:state_filter", "kind": "calls"},
+    {"from": "uc:agent1", "to": "tool:history_lookup", "kind": "calls"},
+    {"from": "uc:agent1", "to": "p:state", "kind": "calls", "label": "AppendConversation"},
+
+    {"from": "uc:agent2", "to": "uc:a2_prompt", "kind": "calls"},
+    {"from": "uc:agent2", "to": "uc:a2_tree", "kind": "calls"},
+    {"from": "uc:agent2", "to": "p:llm", "kind": "calls", "label": "ChatWithToolsCached"},
+    {"from": "uc:agent2", "to": "p:llm_count", "kind": "calls"},
+    {"from": "uc:agent2", "to": "tool:visual_assembly", "kind": "calls"},
+    {"from": "uc:agent2", "to": "p:state", "kind": "calls", "label": "UpdateTemplate"},
+
+    {"from": "tool:catalog_search", "to": "p:catalog", "kind": "calls", "label": "VectorSearch"},
+    {"from": "tool:catalog_search", "to": "p:embedding", "kind": "calls"},
+    {"from": "tool:state_filter", "to": "p:state", "kind": "calls", "label": "GetState"},
+    {"from": "tool:history_lookup", "to": "p:state", "kind": "calls", "label": "history+deltas"},
+
+    {"from": "tool:visual_assembly", "to": "eng:materialise", "kind": "calls"},
+    {"from": "eng:materialise", "to": "eng:resolve_inline", "kind": "calls"},
+    {"from": "eng:resolve_inline", "to": "eng:expand_replicates", "kind": "calls"},
+
+    {"from": "uc:prefetch", "to": "tool:visual_assembly", "kind": "calls", "label": "drill preset"},
+
+    {"from": "uc:persist_trace", "to": "p:trace", "kind": "calls", "label": "*TraceRow"},
+
+    {"from": "p:llm", "to": "a:anthropic", "kind": "implements"},
+    {"from": "p:llm_count", "to": "a:anthropic", "kind": "implements"},
+    {"from": "p:catalog", "to": "a:catalog_pg", "kind": "implements"},
+    {"from": "p:state", "to": "a:state_pg", "kind": "implements"},
+    {"from": "p:trace", "to": "a:trace_pg", "kind": "implements"},
+
+    {"from": "a:catalog_pg", "to": "t:catalog", "kind": "writes", "label": "SELECT"},
+    {"from": "a:state_pg", "to": "t:sessions", "kind": "writes", "label": "INSERT/UPDATE"},
+    {"from": "a:trace_pg", "to": "t:traces", "kind": "writes", "label": "INSERT"},
+
+    {"from": "uc:pipeline_exec", "to": "d:state", "kind": "uses"},
+    {"from": "uc:agent1", "to": "d:llm_message", "kind": "uses"},
+    {"from": "uc:agent1", "to": "d:tool_call", "kind": "uses"},
+    {"from": "uc:agent2", "to": "d:llm_message", "kind": "uses"},
+    {"from": "uc:agent2", "to": "d:tool_call", "kind": "uses"},
+    {"from": "uc:agent2", "to": "d:tree_map", "kind": "uses"},
+    {"from": "uc:a2_tree", "to": "d:tree_map", "kind": "uses"},
+    {"from": "tool:catalog_search", "to": "d:product", "kind": "uses"},
+    {"from": "tool:visual_assembly", "to": "d:document", "kind": "uses"},
+    {"from": "p:llm", "to": "d:llm_usage", "kind": "uses"},
+    {"from": "uc:persist_trace", "to": "d:trace_row", "kind": "uses"},
+    {"from": "tool:catalog_search", "to": "d:tool_ctx", "kind": "uses"},
+    {"from": "tool:state_filter", "to": "d:tool_ctx", "kind": "uses"},
+    {"from": "tool:history_lookup", "to": "d:tool_ctx", "kind": "uses"},
+    {"from": "tool:visual_assembly", "to": "d:tool_ctx", "kind": "uses"},
+    {"from": "uc:pipeline_exec", "to": "d:state_current", "kind": "uses"}
+  ]
+}
+</script>
+
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+<script>
+const data = JSON.parse(document.getElementById('graph-data').textContent);
+
+const TYPE_COLORS = {
+  handler: '#F0924A',
+  'usecase-caller': '#5BA4D9',
+  usecase: '#5BA4D9',
+  port: '#4FB286',
+  adapter: '#8a8f99',
+  domain: '#E8C547',
+  table: '#C8553D'
+};
+const TYPE_SHAPES = {
+  handler: 'round-rectangle',
+  'usecase-caller': 'round-rectangle',
+  usecase: 'round-rectangle',
+  port: 'round-rectangle',
+  adapter: 'round-rectangle',
+  domain: 'round-hexagon',
+  table: 'round-diamond'
+};
+
+const elements = [
+  ...data.nodes.map(n => ({
+    data: { id: n.id, label: n.label, type: n.type, ...n }
+  })),
+  ...data.edges.map((e, i) => ({
+    data: { id: 'e' + i, source: e.from, target: e.to, kind: e.kind }
+  }))
+];
+
+const cy = cytoscape({
+  container: document.getElementById('cy'),
+  elements,
+  style: [
+    {
+      selector: 'node',
+      style: {
+        'background-color': n => TYPE_COLORS[n.data('type')] || '#888',
+        'shape': n => TYPE_SHAPES[n.data('type')] || 'round-rectangle',
+        'label': 'data(label)',
+        'color': '#11151c',
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'text-wrap': 'wrap',
+        'text-max-width': '160px',
+        'font-size': '10px',
+        'font-weight': '600',
+        'width': 'label',
+        'height': 'label',
+        'padding': '10px',
+        'border-width': 1,
+        'border-color': '#11151c'
+      }
+    },
+    {
+      selector: 'node:selected',
+      style: {
+        'border-width': 3,
+        'border-color': '#fff'
+      }
+    },
+    {
+      selector: 'node.faded',
+      style: { 'opacity': 0.55 }
+    },
+    {
+      selector: 'node.focus',
+      style: {
+        'border-width': 4,
+        'border-color': '#fff',
+        'shadow-blur': 20,
+        'shadow-color': '#F0924A',
+        'shadow-opacity': 0.8
+      }
+    },
+    {
+      selector: 'node.neighbor',
+      style: {
+        'border-width': 2.5,
+        'border-color': '#F0924A'
+      }
+    },
+    {
+      selector: 'edge',
+      style: {
+        'curve-style': 'bezier',
+        'target-arrow-shape': 'triangle',
+        'arrow-scale': 1.0,
+        'width': 1.5,
+        'line-color': '#5a6373',
+        'target-arrow-color': '#5a6373',
+        'opacity': 0.7
+      }
+    },
+    {
+      selector: 'edge[kind = "implements"], edge[kind = "uses"]',
+      style: {
+        'line-style': 'dashed',
+        'line-color': '#7a8290',
+        'target-arrow-color': '#7a8290',
+        'opacity': 0.4
+      }
+    },
+    {
+      selector: 'edge[kind = "writes"]',
+      style: {
+        'line-color': '#C8553D',
+        'target-arrow-color': '#C8553D',
+        'width': 2
+      }
+    },
+    {
+      selector: 'edge.highlight',
+      style: {
+        'line-color': '#F0924A',
+        'target-arrow-color': '#F0924A',
+        'width': 3,
+        'opacity': 1
+      }
+    },
+    {
+      selector: 'edge.faded',
+      style: { 'opacity': 0.35 }
+    },
+    {
+      selector: 'edge[label]',
+      style: {
+        'label': 'data(label)',
+        'font-size': '9px',
+        'color': '#9aa3b2',
+        'text-background-color': '#11151c',
+        'text-background-opacity': 0.85,
+        'text-background-padding': '2px',
+        'text-rotation': 'autorotate',
+        'font-family': 'ui-monospace, Menlo, monospace'
+      }
+    }
+  ],
+  layout: {
+    name: 'dagre',
+    rankDir: 'LR',
+    nodeSep: 30,
+    rankSep: 90,
+    edgeSep: 10
+  },
+  wheelSensitivity: 0.2,
+  minZoom: 0.2,
+  maxZoom: 3
+});
+
+const sidebar = document.getElementById('sidebar');
+
+function renderSidebar(node) {
+  if (!node) {
+    sidebar.innerHTML = '<div class="empty">Click a node to see details.<br><br>Drag to pan. Scroll to zoom. Click empty space to deselect.</div>';
+    return;
+  }
+  const d = node.data();
+  const color = TYPE_COLORS[d.type];
+  const callers = cy.edges(`[target = "${d.id}"]`).sources();
+  const callees = cy.edges(`[source = "${d.id}"]`).targets();
+
+  let html = '';
+  html += `<div class="type-chip" style="background:${color}">${d.type}</div>`;
+  html += `<h2>${d.label}</h2>`;
+  if (d.file) html += `<div class="file">${d.file}</div>`;
+  if (d.sig) html += `<div class="sig">${d.sig}</div>`;
+  if (d.classification) {
+    html += `<div class="label">Classification</div><div class="summary"><b>${d.classification}</b></div>`;
+  }
+  if (d.summary) {
+    html += `<div class="label">What it does</div><div class="summary">${d.summary}</div>`;
+  }
+  if (d.io && (d.io.in?.length || d.io.out?.length)) {
+    html += `<div class="io-section">`;
+    if (d.io.in?.length) {
+      html += `<div class="label">IN — что приходит</div><table class="io">`;
+      d.io.in.forEach(p => {
+        html += `<tr><th>${p.name}</th><td>${p.type}${p.desc ? `<div class="desc">${p.desc}</div>` : ''}</td></tr>`;
+      });
+      html += `</table>`;
+    }
+    if (d.io.out?.length) {
+      html += `<div class="label">OUT — что уходит</div><table class="io">`;
+      d.io.out.forEach(p => {
+        html += `<tr><th>${p.name || '↩'}</th><td>${p.type}${p.desc ? `<div class="desc">${p.desc}</div>` : ''}</td></tr>`;
+      });
+      html += `</table>`;
+    }
+    if (d.io.sql) {
+      html += `<div class="label">SQL</div><div class="sig">${d.io.sql}</div>`;
+    }
+    html += `</div>`;
+  }
+  if (d.impact) {
+    html += `<div class="label">Business impact</div><div class="impact">${d.impact}</div>`;
+  }
+  if (callers.length) {
+    html += `<div class="label">Called by (${callers.length})</div><ul>`;
+    callers.forEach(c => html += `<li data-id="${c.id()}">${c.data('label')}</li>`);
+    html += '</ul>';
+  }
+  if (callees.length) {
+    html += `<div class="label">Calls (${callees.length})</div><ul>`;
+    callees.forEach(c => html += `<li data-id="${c.id()}">${c.data('label')}</li>`);
+    html += '</ul>';
+  }
+  sidebar.innerHTML = html;
+  sidebar.querySelectorAll('li[data-id]').forEach(li => {
+    li.addEventListener('click', () => {
+      const n = cy.getElementById(li.dataset.id);
+      n.select();
+      cy.animate({ center: { eles: n }, zoom: Math.max(cy.zoom(), 1) }, { duration: 300 });
+      highlightConnected(n);
+      renderSidebar(n);
+    });
+  });
+}
+
+function highlightConnected(node) {
+  cy.elements().removeClass('highlight').removeClass('faded').removeClass('focus').removeClass('neighbor');
+  if (!node) return;
+  const connectedEdges = node.connectedEdges();
+  const connectedNodes = connectedEdges.connectedNodes();
+  const focusSet = node.union(connectedNodes).union(connectedEdges);
+  cy.elements().not(focusSet).addClass('faded');
+  node.addClass('focus');
+  connectedNodes.not(node).addClass('neighbor');
+  connectedEdges.addClass('highlight');
+}
+
+cy.on('tap', 'node', (evt) => {
+  const node = evt.target;
+  highlightConnected(node);
+  renderSidebar(node);
+});
+
+cy.on('tap', (evt) => {
+  if (evt.target === cy) {
+    cy.elements().removeClass('highlight').removeClass('faded').removeClass('focus').removeClass('neighbor');
+    cy.nodes().unselect();
+    renderSidebar(null);
+  }
+});
+
+document.querySelectorAll('header .filters input').forEach(cb => {
+  cb.addEventListener('change', () => {
+    const type = cb.dataset.type;
+    const nodes = cy.nodes(`[type = "${type}"]`);
+    if (cb.checked) {
+      nodes.style('display', 'element');
+    } else {
+      nodes.style('display', 'none');
+    }
+  });
+});
+
+document.getElementById('search').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) {
+    cy.nodes().removeClass('faded');
+    return;
+  }
+  cy.nodes().forEach(n => {
+    const hit = n.data('label').toLowerCase().includes(q) ||
+                (n.data('file') || '').toLowerCase().includes(q);
+    n.toggleClass('faded', !hit);
+  });
+});
+</script>
+</body>
+</html>

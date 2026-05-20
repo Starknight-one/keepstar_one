@@ -115,11 +115,12 @@ func main() {
 	agentRuns := postgres.NewAgentRunsAdapter(db, lg)
 	artifactAdapter := postgres.NewMappingArtifactV2Adapter(db, lg)
 	writer := postgres.NewCatalogV2WriterAdapter(db, lg)
+	digest := postgres.NewMasterDigestAdapter(db, lg)
 	rateLimit := postgres.NewApplyRateLimitAdapter(db, lg)
 	agentClient := anthropicAdapter.NewAgentClient(cfg.AnthropicAPIKey, "claude-sonnet-4-6")
 
 	inboxUC := usecases.NewInboxUseCase(inboxAdapter, actionLog, lg)
-	discovery := usecases.NewDiscoveryV2(agentClient, inboxAdapter, artifactAdapter, actionLog, agentRuns, lg)
+	discovery := usecases.NewDiscoveryV2(agentClient, inboxAdapter, digest, artifactAdapter, actionLog, agentRuns, lg)
 	apply := usecases.NewApplyV2(inboxAdapter, artifactAdapter, writer, actionLog, discovery, lg)
 	_ = usecases.NewUpdateOrchestrator(inboxUC, apply, discovery, actionLog, rateLimit, lg)
 

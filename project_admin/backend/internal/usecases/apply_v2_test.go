@@ -27,6 +27,9 @@ func newFakeInbox(items ...*domain.InboxItem) *fakeInbox {
 func (f *fakeInbox) Upsert(_ context.Context, _ *domain.InboxItem) (bool, error) {
 	panic("fakeInbox.Upsert not implemented")
 }
+func (f *fakeInbox) BulkUpsert(_ context.Context, _ []*domain.InboxItem) (int, error) {
+	panic("fakeInbox.BulkUpsert not implemented")
+}
 func (f *fakeInbox) MarkApplied(_ context.Context, id string) error {
 	f.applied[id] = true
 	return nil
@@ -103,10 +106,14 @@ type fakeWriter struct {
 	tier3      map[string]map[string]any
 	listings   []*ports.ListingUpsert
 	aliases    map[string]string // lowercased product_type → vertical
+	// enrichRequests records every EnrichExistingMaster call payload —
+	// tests assert that bind path stages pending changes here and that
+	// create path does NOT.
+	enrichRequests []ports.EnrichRequest
 
-	createCalls       int
-	bindCalls         int
-	softDeleteCalls   []softDeleteCall
+	createCalls     int
+	bindCalls       int
+	softDeleteCalls []softDeleteCall
 }
 
 type softDeleteCall struct {
@@ -175,6 +182,13 @@ func (w *fakeWriter) UpsertListing(_ context.Context, lst *ports.ListingUpsert) 
 	w.listings = append(w.listings, &cp)
 	return "listing-" + lst.SourceID, nil
 }
+func (w *fakeWriter) BulkUpsertListing(_ context.Context, items []ports.ListingUpsert) (int, error) {
+	for i := range items {
+		cp := items[i]
+		w.listings = append(w.listings, &cp)
+	}
+	return len(items), nil
+}
 func (w *fakeWriter) LookupVertical(_ context.Context, pt string) (string, bool, error) {
 	v, ok := w.aliases[strings.ToLower(strings.TrimSpace(pt))]
 	return v, ok, nil
@@ -182,6 +196,45 @@ func (w *fakeWriter) LookupVertical(_ context.Context, pt string) (string, bool,
 func (w *fakeWriter) SoftDeleteListing(_ context.Context, tenantID, source, sourceID string) error {
 	w.softDeleteCalls = append(w.softDeleteCalls, softDeleteCall{tenantID, source, sourceID})
 	return nil
+}
+func (w *fakeWriter) EnrichExistingMaster(_ context.Context, items []ports.EnrichRequest) (int, error) {
+	for _, r := range items {
+		cp := r
+		// Defensive copy of maps so test mutations don't leak between calls.
+		if r.Scalars != nil {
+			cp.Scalars = make(map[string]any, len(r.Scalars))
+			for k, v := range r.Scalars {
+				cp.Scalars[k] = v
+			}
+		}
+		if r.Arrays != nil {
+			cp.Arrays = make(map[string][]string, len(r.Arrays))
+			for k, v := range r.Arrays {
+				cp.Arrays[k] = append([]string(nil), v...)
+			}
+		}
+		w.enrichRequests = append(w.enrichRequests, cp)
+	}
+	// Mirror the adapter contract: return the count of rows that would be
+	// inserted into master_pending_changes (one per scalar entry + one per
+	// array element). Tests can assert this is zero on the create path.
+	n := 0
+	for _, r := range items {
+		for _, v := range r.Scalars {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+				continue
+			}
+			n++
+		}
+		for _, arr := range r.Arrays {
+			for _, elem := range arr {
+				if strings.TrimSpace(elem) != "" {
+					n++
+				}
+			}
+		}
+	}
+	return n, nil
 }
 
 type fakeActionLog struct {

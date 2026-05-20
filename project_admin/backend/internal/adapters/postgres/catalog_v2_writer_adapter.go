@@ -101,18 +101,33 @@ func (a *CatalogV2WriterAdapter) MatchOrCreateMaster(ctx context.Context, mp *po
 		imagesJSON = b
 	}
 
+	// approval_status: caller opts the row into staging by setting
+	// CreateAsPending. Existing tenants that pre-date this flag keep the
+	// default 'approved' so legacy seed paths don't suddenly disappear from
+	// production. expires_at is only populated on the pending branch.
+	approvalStatus := "approved"
+	if mp.CreateAsPending {
+		approvalStatus = "pending_approval"
+	}
+
 	var id string
 	err := a.client.pool.QueryRow(ctx, `
 		INSERT INTO catalog.master_products
 			(sku, name, brand, description, vertical, images, owner_tenant_id,
-			 gtin, normalized_match_key, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NULLIF($8,''), NULLIF($9,''), NOW(), NOW())
+			 gtin, normalized_match_key,
+			 approval_status, pending_approval_expires_at,
+			 created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NULLIF($8,''), NULLIF($9,''),
+			 $10,
+			 CASE WHEN $10 = 'pending_approval' THEN NOW() + INTERVAL '30 days' ELSE NULL END,
+			 NOW(), NOW())
 		ON CONFLICT (sku) DO NOTHING
 		RETURNING id::text
 	`,
 		mp.SKU, mp.Name, mp.Brand, mp.Description, mp.Vertical,
 		string(imagesJSON), nullableUUID(mp.OwnerTenantID),
 		mp.GTIN, mp.NormalizedMatchKey,
+		approvalStatus,
 	).Scan(&id)
 
 	if err == nil {
@@ -301,6 +316,161 @@ func (a *CatalogV2WriterAdapter) UpsertCosmetics(ctx context.Context, masterID s
 	return nil
 }
 
+// enrichBulkBatchSize caps one INSERT-SELECT. Same number as inbox
+// BulkUpsert — keeps batch behaviour predictable across the codebase.
+const enrichBulkBatchSize = 500
+
+// EnrichExistingMaster stages field-level changes against existing master
+// rows. The caller (apply_v2) collects EnrichRequest entries on the bind
+// path; this adapter unpacks each request into one row per scalar field
+// and one row per proposed array element, then writes them all in a
+// single UNNEST-driven INSERT per chunk.
+//
+// Dedup: a NOT EXISTS subquery on (master_product_id, field_name, op_kind,
+// pending_value, status='pending') silently drops repeats so re-running
+// apply over identical inbox rows is a no-op — no pending pile-up.
+//
+// Empty-target gating (the "fill only when empty scalars" / "set-union
+// only new elements" rules) is enforced at APPROVE time, not write time:
+// caller can stage everything safely and curator UI shows only the
+// elements that would actually change the master on approval. This keeps
+// the INSERT path one statement long and avoids per-row SELECTs.
+func (a *CatalogV2WriterAdapter) EnrichExistingMaster(ctx context.Context, items []ports.EnrichRequest) (int, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
+
+	// Flatten input into 6 parallel slices: one row per (master, field, value).
+	masterIDs := make([]string, 0, len(items)*4)
+	tenantIDs := make([]string, 0, len(items)*4)
+	sourceItemIDs := make([]string, 0, len(items)*4)
+	opKinds := make([]string, 0, len(items)*4)
+	fieldNames := make([]string, 0, len(items)*4)
+	pendingValues := make([]string, 0, len(items)*4)
+
+	for _, req := range items {
+		if req.MasterProductID == "" || req.TenantID == "" {
+			continue
+		}
+		for field, val := range req.Scalars {
+			if field == "" || isEmptyScalar(val) {
+				continue
+			}
+			b, err := json.Marshal(val)
+			if err != nil {
+				continue
+			}
+			masterIDs = append(masterIDs, req.MasterProductID)
+			tenantIDs = append(tenantIDs, req.TenantID)
+			sourceItemIDs = append(sourceItemIDs, req.SourceInboxItemID)
+			opKinds = append(opKinds, "enrich_scalar_fill")
+			fieldNames = append(fieldNames, field)
+			pendingValues = append(pendingValues, string(b))
+		}
+		for field, arr := range req.Arrays {
+			if field == "" {
+				continue
+			}
+			for _, elem := range arr {
+				elem = strings.TrimSpace(elem)
+				if elem == "" {
+					continue
+				}
+				b, err := json.Marshal(elem)
+				if err != nil {
+					continue
+				}
+				masterIDs = append(masterIDs, req.MasterProductID)
+				tenantIDs = append(tenantIDs, req.TenantID)
+				sourceItemIDs = append(sourceItemIDs, req.SourceInboxItemID)
+				opKinds = append(opKinds, "enrich_array_union")
+				fieldNames = append(fieldNames, field)
+				pendingValues = append(pendingValues, string(b))
+			}
+		}
+	}
+
+	if len(masterIDs) == 0 {
+		return 0, nil
+	}
+
+	inserted := 0
+	for start := 0; start < len(masterIDs); start += enrichBulkBatchSize {
+		end := min(start+enrichBulkBatchSize, len(masterIDs))
+		n, err := a.enrichInsertBatch(ctx,
+			masterIDs[start:end], tenantIDs[start:end], sourceItemIDs[start:end],
+			opKinds[start:end], fieldNames[start:end], pendingValues[start:end])
+		if err != nil {
+			return inserted, fmt.Errorf("enrich existing master batch [%d:%d]: %w", start, end, err)
+		}
+		inserted += n
+	}
+	return inserted, nil
+}
+
+func (a *CatalogV2WriterAdapter) enrichInsertBatch(
+	ctx context.Context,
+	masterIDs, tenantIDs, sourceItemIDs, opKinds, fieldNames, pendingValues []string,
+) (int, error) {
+	var inserted int
+	err := a.client.pool.QueryRow(ctx, `
+		WITH input AS (
+			SELECT
+				t.master_id::uuid                              AS master_id,
+				t.tenant_id::uuid                              AS tenant_id,
+				NULLIF(t.source_item_id, '')::uuid             AS source_item_id,
+				t.op_kind                                       AS op_kind,
+				t.field_name                                    AS field_name,
+				t.pending_value::jsonb                          AS pending_value
+			FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+				AS t(master_id, tenant_id, source_item_id, op_kind, field_name, pending_value)
+		),
+		ins AS (
+			INSERT INTO catalog.master_pending_changes
+				(master_product_id, tenant_id, source_inbox_item_id,
+				 op_kind, field_name, pending_value)
+			SELECT i.master_id, i.tenant_id, i.source_item_id,
+			       i.op_kind, i.field_name, i.pending_value
+			FROM input i
+			WHERE NOT EXISTS (
+				SELECT 1 FROM catalog.master_pending_changes p
+				WHERE p.master_product_id = i.master_id
+				  AND p.field_name        = i.field_name
+				  AND p.op_kind           = i.op_kind
+				  AND p.pending_value     = i.pending_value
+				  AND p.status            = 'pending'
+			)
+			RETURNING 1
+		)
+		SELECT COUNT(*)::int FROM ins
+	`, masterIDs, tenantIDs, sourceItemIDs, opKinds, fieldNames, pendingValues).Scan(&inserted)
+	if err != nil {
+		return 0, fmt.Errorf("enrich insert exec: %w", err)
+	}
+	return inserted, nil
+}
+
+// isEmptyScalar drops nil, "", and 0 from scalar fill proposals. We use a
+// loose definition here: zero ints and empty strings are not interesting
+// to stage. Callers that want to explicitly stage 0 should use Arrays or
+// wrap in a pointer type that carries presence separately.
+func isEmptyScalar(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t) == ""
+	case int:
+		return t == 0
+	case int64:
+		return t == 0
+	case float64:
+		return t == 0
+	}
+	return false
+}
+
 // MergeTier3 merges (top-level overwrite) a JSON patch into
 // master_products.tier3. Existing keys not in patch survive.
 func (a *CatalogV2WriterAdapter) MergeTier3(ctx context.Context, masterID string, patch map[string]any) error {
@@ -367,6 +537,102 @@ func (a *CatalogV2WriterAdapter) UpsertListing(ctx context.Context, lst *ports.L
 		return "", fmt.Errorf("upsert listing exec: %w", err)
 	}
 	return id, nil
+}
+
+// listingBulkBatchSize caps one INSERT-SELECT for catalog.products. Matches
+// inbox + enrich batch size so the bulk-write story is uniform across the
+// admin postgres adapter.
+const listingBulkBatchSize = 500
+
+// BulkUpsertListing batches the same INSERT … ON CONFLICT semantics as
+// UpsertListing but issues one statement per ~500 rows via UNNEST. Caller
+// passes the raw slice; the adapter chunks. Returns the total RETURNING
+// row count — every row in catalog.products that was inserted or updated
+// by the call.
+func (a *CatalogV2WriterAdapter) BulkUpsertListing(ctx context.Context, items []ports.ListingUpsert) (int, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
+	written := 0
+	for start := 0; start < len(items); start += listingBulkBatchSize {
+		end := min(start+listingBulkBatchSize, len(items))
+		n, err := a.bulkUpsertListingBatch(ctx, items[start:end])
+		if err != nil {
+			return written, fmt.Errorf("bulk upsert listing batch [%d:%d]: %w", start, end, err)
+		}
+		written += n
+	}
+	return written, nil
+}
+
+func (a *CatalogV2WriterAdapter) bulkUpsertListingBatch(ctx context.Context, batch []ports.ListingUpsert) (int, error) {
+	tenantIDs := make([]string, 0, len(batch))
+	masterIDs := make([]string, 0, len(batch))
+	titles := make([]string, 0, len(batch))
+	prices := make([]int, 0, len(batch))
+	currencies := make([]string, 0, len(batch))
+	stocks := make([]int, 0, len(batch))
+	sourceSystems := make([]string, 0, len(batch))
+	sourceIDs := make([]string, 0, len(batch))
+	for _, lst := range batch {
+		if lst.TenantID == "" || lst.MasterProductID == "" {
+			continue
+		}
+		currency := lst.Currency
+		if currency == "" {
+			currency = "USD"
+		}
+		tenantIDs = append(tenantIDs, lst.TenantID)
+		masterIDs = append(masterIDs, lst.MasterProductID)
+		titles = append(titles, lst.CustomTitle)
+		prices = append(prices, lst.Price)
+		currencies = append(currencies, currency)
+		stocks = append(stocks, lst.Stock)
+		sourceSystems = append(sourceSystems, lst.SourceSystem)
+		sourceIDs = append(sourceIDs, lst.SourceID)
+	}
+	if len(tenantIDs) == 0 {
+		return 0, nil
+	}
+	var written int
+	err := a.client.pool.QueryRow(ctx, `
+		WITH input AS (
+			SELECT
+				t.tenant_id::uuid          AS tenant_id,
+				t.master_id::uuid          AS master_id,
+				t.title                     AS title,
+				t.price                     AS price,
+				t.currency                  AS currency,
+				t.stock                     AS stock,
+				t.source_system             AS source_system,
+				t.source_id                 AS source_id
+			FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[], $6::int[], $7::text[], $8::text[])
+				AS t(tenant_id, master_id, title, price, currency, stock, source_system, source_id)
+		),
+		ins AS (
+			INSERT INTO catalog.products
+				(tenant_id, master_product_id, name, price, currency, stock_quantity,
+				 source_system, source_id, created_at, updated_at)
+			SELECT tenant_id, master_id, title, price, currency, stock,
+			       source_system, source_id, NOW(), NOW()
+			FROM input
+			ON CONFLICT (tenant_id, master_product_id) DO UPDATE
+			SET name           = COALESCE(NULLIF(EXCLUDED.name, ''), products.name),
+			    price          = EXCLUDED.price,
+			    currency       = COALESCE(NULLIF(EXCLUDED.currency, ''), products.currency),
+			    stock_quantity = EXCLUDED.stock_quantity,
+			    source_system  = COALESCE(NULLIF(EXCLUDED.source_system, ''), products.source_system),
+			    source_id      = COALESCE(NULLIF(EXCLUDED.source_id, ''), products.source_id),
+			    deleted_at     = NULL,
+			    updated_at     = NOW()
+			RETURNING 1
+		)
+		SELECT COUNT(*)::int FROM ins
+	`, tenantIDs, masterIDs, titles, prices, currencies, stocks, sourceSystems, sourceIDs).Scan(&written)
+	if err != nil {
+		return 0, fmt.Errorf("bulk upsert listing exec: %w", err)
+	}
+	return written, nil
 }
 
 // ----- internal helpers -----

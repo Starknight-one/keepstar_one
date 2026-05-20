@@ -410,19 +410,22 @@ func main() {
 	// so old routes keep working until step 10 cleanup.
 	// -------------------------------------------------------------------
 	var catalogV2Handler *handlers.CatalogV2Handler
+	var catalogV2Orchestrator *usecases.UpdateOrchestrator
 	if cfg.AnthropicAPIKey != "" {
 		inboxAdapter := postgres.NewInboxAdapter(dbClient, log)
 		actionLogAdapter := postgres.NewTenantActionLogAdapter(dbClient, log)
 		agentRunsAdapter := postgres.NewAgentRunsAdapter(dbClient, log)
 		mappingArtifactV2Adapter := postgres.NewMappingArtifactV2Adapter(dbClient, log)
 		catalogV2Writer := postgres.NewCatalogV2WriterAdapter(dbClient, log)
+		masterDigestAdapter := postgres.NewMasterDigestAdapter(dbClient, log)
 		rateLimitAdapter := postgres.NewApplyRateLimitAdapter(dbClient, log)
 
 		v2AgentClient := anthropicAdapter.NewAgentClient(cfg.AnthropicAPIKey, "claude-sonnet-4-6")
 		inboxUC := usecases.NewInboxUseCase(inboxAdapter, actionLogAdapter, log)
-		discoveryV2 := usecases.NewDiscoveryV2(v2AgentClient, inboxAdapter, mappingArtifactV2Adapter, actionLogAdapter, agentRunsAdapter, log)
+		discoveryV2 := usecases.NewDiscoveryV2(v2AgentClient, inboxAdapter, masterDigestAdapter, mappingArtifactV2Adapter, actionLogAdapter, agentRunsAdapter, log)
 		applyV2 := usecases.NewApplyV2(inboxAdapter, mappingArtifactV2Adapter, catalogV2Writer, actionLogAdapter, discoveryV2, log)
 		orchestrator := usecases.NewUpdateOrchestrator(inboxUC, applyV2, discoveryV2, actionLogAdapter, rateLimitAdapter, log)
+		catalogV2Orchestrator = orchestrator
 
 		// Ingesters — Shopify is wired into ShopifyV2UseCase below so that
 		// real Shopify installs route through the new flow (inbox →
@@ -777,8 +780,65 @@ func main() {
 	if integrationsUC != nil {
 		_ = integrationsUC.StartOAuthStateSweeper(bgCtx)
 	}
-	// Periodic resync removed with legacy cut-over (curator-driven pivot
-	// 2026-04-27). Webhook + curator-triggered re-run cover sync gaps.
+	// Daily catalog re-sync, gated by env-var so dev runs don't burn tokens
+	// every 24 hours. Reads all tenant IDs from catalog.tenants and calls
+	// orchestrator.ManualSync per tenant. Source-side pull (Shopify Bulk,
+	// Sheets fetch, etc.) is followup — this MVP only re-applies the inbox
+	// state webhooks already populated.
+	if os.Getenv("KEEPSTAR_DAILY_SOURCE_PULL") == "1" && catalogV2Orchestrator != nil {
+		// Per-tenant opt-in via settings.daily_sync_enabled — default false.
+		// Owners toggle this from admin UI on the tenant settings page.
+		// Filter is part of the SQL so cron never wakes up tenants that
+		// did not explicitly opt in (Shopify-installed merchants who want
+		// once-a-day re-sync on top of their webhook subscription).
+		listTenants := func(ctx context.Context) ([]string, error) {
+			// JSON key matches domain.TenantSettings.DailySyncEnabled
+			// json tag (camelCase, like every other field on that struct).
+			rows, err := dbClient.Pool().Query(ctx, `
+				SELECT id::text FROM catalog.tenants
+				WHERE COALESCE(settings->>'dailySyncEnabled', 'false') = 'true'
+				ORDER BY created_at
+			`)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			var ids []string
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					return nil, err
+				}
+				ids = append(ids, id)
+			}
+			return ids, rows.Err()
+		}
+		dailyPull := usecases.NewCronDailySourcePull(catalogV2Orchestrator, listTenants, log)
+		go func() {
+			// Stagger first tick by 1 minute so server startup isn't immediately
+			// followed by a heavyweight pass.
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-time.After(1 * time.Minute):
+			}
+			if err := dailyPull.RunOnce(bgCtx); err != nil {
+				log.Warn("daily_source_pull_initial_run_failed", "error", err)
+			}
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-bgCtx.Done():
+					return
+				case <-ticker.C:
+					if err := dailyPull.RunOnce(bgCtx); err != nil {
+						log.Warn("daily_source_pull_tick_failed", "error", err)
+					}
+				}
+			}
+		}()
+	}
 
 	go func() {
 		log.Info("admin_server_starting", "addr", addr)

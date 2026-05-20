@@ -142,14 +142,28 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 		if len(items) == 0 {
 			break
 		}
+		// Per-batch accumulators. applyOne handles master + cosmetics +
+		// tier3 + enrich-staging row-by-row (those write paths are not yet
+		// batched). Listings are the high-frequency write and DO batch
+		// here — one BulkUpsertListing call per inbox page instead of
+		// N per-row UpsertListing.
+		pendingListings := make([]ports.ListingUpsert, 0, len(items))
+		pendingItemIDs := make([]string, 0, len(items))
 		for _, item := range items {
 			res.Total++
-			err := uc.applyOne(ctx, tenantID, artifact, item)
+			listing, err := uc.applyOne(ctx, tenantID, artifact, item)
 			if err == nil {
-				if mErr := uc.inbox.MarkApplied(ctx, item.ID); mErr != nil {
-					uc.log.Warn("apply_v2_mark_applied_failed", "item", item.ID, "error", mErr)
+				if listing != nil {
+					pendingListings = append(pendingListings, *listing)
+					pendingItemIDs = append(pendingItemIDs, item.ID)
+				} else {
+					// applyOne returned (nil, nil) — benign skip, mark
+					// applied so we don't re-touch the row next pass.
+					if mErr := uc.inbox.MarkApplied(ctx, item.ID); mErr != nil {
+						uc.log.Warn("apply_v2_mark_applied_failed", "item", item.ID, "error", mErr)
+					}
+					res.Applied++
 				}
-				res.Applied++
 				continue
 			}
 			// Failure path.
@@ -176,6 +190,28 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 			}
 			uc.log.Warn("apply_v2_item_failed", "tenant", tenantID, "item", item.ID, "error", err)
 		}
+
+		// Flush the batch's listings in one bulk INSERT. On error, every
+		// item in this page is treated as errored — apply will retry next
+		// pass (rows aren't MarkApplied'd).
+		if len(pendingListings) > 0 {
+			if _, err := uc.writer.BulkUpsertListing(ctx, pendingListings); err != nil {
+				res.Errors += len(pendingListings)
+				if res.FirstError == "" {
+					res.FirstError = err.Error()
+				}
+				uc.log.Warn("apply_v2_bulk_listing_failed",
+					"tenant", tenantID, "rows", len(pendingListings), "error", err)
+			} else {
+				res.Applied += len(pendingListings)
+				for _, itemID := range pendingItemIDs {
+					if mErr := uc.inbox.MarkApplied(ctx, itemID); mErr != nil {
+						uc.log.Warn("apply_v2_mark_applied_failed", "item", itemID, "error", mErr)
+					}
+				}
+			}
+		}
+
 		if len(items) < applyV2BatchSize {
 			break
 		}
@@ -200,17 +236,22 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 }
 
 // applyOne runs the transformation+write pipeline for a single inbox item.
-// Returns an error wrapping errMappingMiss when the failure is recoverable
-// via narrow discovery (transform fail, unknown target prefix, branch
-// missing for a freshly-encountered vertical).
-func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *domain.MappingArtifactV3, item *domain.InboxItem) error {
+// Returns the prepared ListingUpsert (caller flushes a whole batch in one
+// BulkUpsertListing call) and an error wrapping errMappingMiss when the
+// failure is recoverable via narrow discovery (transform fail, unknown
+// target prefix, branch missing for a freshly-encountered vertical).
+// Returns (nil, nil) for benign skips that produced no listing.
+func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *domain.MappingArtifactV3, item *domain.InboxItem) (*ports.ListingUpsert, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(item.Raw, &raw); err != nil {
-		return fmt.Errorf("apply_v2: parse raw json: %w", err)
+		return nil, fmt.Errorf("apply_v2: parse raw json: %w", err)
 	}
 
-	// --- Step 1: classify the row's vertical.
-	cctx := classifyContextFromRaw(raw)
+	// --- Step 1: classify the row's vertical. classifyContextFromRaw reads
+	// art.ClassifyingField (set by discovery_v2 in its Step 1) to pull the
+	// tenant-specific classifying value from raw; falls back to a synonym
+	// list for legacy artifacts.
+	cctx := classifyContextFromRaw(raw, art)
 	vertical, classifySource := ClassifyVertical(ctx, uc.writer, art.ClassifyRules, cctx)
 
 	// --- Step 2: pick the artifact branch matching that vertical.
@@ -219,7 +260,7 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 		// No branch covers this vertical — fire a narrow discovery so the
 		// agent adds one. apply_v2's caller catches mapping_miss and queues
 		// the run; on the next pass FindBranch will succeed.
-		return wrapMiss(item.ID, "", "branch."+vertical,
+		return nil, wrapMiss(item.ID, "", "branch."+vertical,
 			fmt.Sprintf("no artifact branch for vertical %q (classified via %s); agent must add it", vertical, classifySource))
 	}
 
@@ -241,12 +282,12 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 		}
 		transformed, err := applyV2Transform(val, rule.Transform)
 		if err != nil {
-			return wrapMiss(item.ID, rule.From, rule.To, fmt.Sprintf("transform %q failed: %v", rule.Transform, err))
+			return nil, wrapMiss(item.ID, rule.From, rule.To, fmt.Sprintf("transform %q failed: %v", rule.Transform, err))
 		}
 		switch {
 		case strings.HasPrefix(rule.To, "master."):
 			if err := assignMasterField(mp, strings.TrimPrefix(rule.To, "master."), transformed); err != nil {
-				return wrapMiss(item.ID, rule.From, rule.To, err.Error())
+				return nil, wrapMiss(item.ID, rule.From, rule.To, err.Error())
 			}
 		case strings.HasPrefix(rule.To, "cosmetics."):
 			if vertical != "cosmetics" {
@@ -260,7 +301,7 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 				continue
 			}
 			if err := assignCosmeticsField(cosmetics, strings.TrimPrefix(rule.To, "cosmetics."), transformed); err != nil {
-				return wrapMiss(item.ID, rule.From, rule.To, err.Error())
+				return nil, wrapMiss(item.ID, rule.From, rule.To, err.Error())
 			}
 			hasCosmetics = true
 		case strings.HasPrefix(rule.To, "tier3."):
@@ -297,7 +338,7 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 					continue
 				}
 			}
-			return wrapMiss(item.ID, rule.From, rule.To, "unknown target prefix")
+			return nil, wrapMiss(item.ID, rule.From, rule.To, "unknown target prefix")
 		}
 	}
 
@@ -307,7 +348,7 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 	// --- Step 5: signal check. No name AND no SKU = junk row.
 	if mp.Name == "" && mp.SKU == "" {
 		uc.log.Warn("apply_v2_reject_no_signal", "tenant", tenantID, "item", item.ID)
-		return wrapMiss(item.ID, "", "master.name|master.sku",
+		return nil, wrapMiss(item.ID, "", "master.name|master.sku",
 			"row produced neither name nor sku; cannot create or match a master")
 	}
 	// If we have a name but no SKU, synthesize a stable per-source key. The
@@ -321,15 +362,20 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 	// case automatically.
 	mp.NormalizedMatchKey = NormalizeMatchKey(mp.Brand, mp.Name)
 
-	// --- Step 6: cascade or insert. Adapter is responsible for atomicity.
+	// --- Step 6: cascade or insert. New masters land as pending_approval —
+	// adapter sets approval_status + 30-day expiry on the INSERT branch only.
+	// Bind path is unaffected.
+	mp.CreateAsPending = true
 	masterID, wasCreated, err := uc.writer.MatchOrCreateMaster(ctx, mp)
 	if err != nil {
-		return fmt.Errorf("apply_v2: match or create master: %w", err)
+		return nil, fmt.Errorf("apply_v2: match or create master: %w", err)
 	}
 
 	// --- Step 7: Tier 2 + tier3 writes happen ONLY when we created the master.
-	// On bind, master_products is immutable; per-tenant attribute differences
-	// will eventually land in listing.tenant_overrides (column reserved).
+	// On bind, master_products is immutable; instead we stage proposed
+	// scalar fills + array unions in catalog.master_pending_changes via
+	// EnrichExistingMaster so the curator can approve/reject before any
+	// master row mutates.
 	if wasCreated {
 		if vertical == "cosmetics" && hasCosmetics {
 			if err := uc.writer.UpsertCosmetics(ctx, masterID, cosmetics); err != nil {
@@ -340,19 +386,40 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 					uc.log.Warn("apply_v2_cosmetics_fallback_to_tier3",
 						"tenant", tenantID, "master", masterID)
 				} else {
-					return fmt.Errorf("apply_v2: upsert cosmetics: %w", err)
+					return nil, fmt.Errorf("apply_v2: upsert cosmetics: %w", err)
 				}
 			}
 		}
 		if len(tier3) > 0 {
 			if err := uc.writer.MergeTier3(ctx, masterID, tier3); err != nil {
-				return fmt.Errorf("apply_v2: merge tier3: %w", err)
+				return nil, fmt.Errorf("apply_v2: merge tier3: %w", err)
+			}
+		}
+	} else {
+		// Bind path: stage proposed changes against the existing master.
+		// The adapter dedups against pending rows (NOT EXISTS on
+		// master_id × field × op_kind × value) so re-applies are no-ops.
+		// Empty / zero-value scalars and empty arrays are dropped at the
+		// adapter (see isEmptyScalar / TrimSpace check in the enrich path).
+		req := ports.EnrichRequest{
+			MasterProductID:   masterID,
+			TenantID:          tenantID,
+			SourceInboxItemID: item.ID,
+			Scalars:           buildEnrichScalars(mp, cosmetics, vertical, tier3),
+			Arrays:            buildEnrichArrays(cosmetics, vertical),
+		}
+		if len(req.Scalars) > 0 || len(req.Arrays) > 0 {
+			if _, err := uc.writer.EnrichExistingMaster(ctx, []ports.EnrichRequest{req}); err != nil {
+				return nil, fmt.Errorf("apply_v2: enrich existing master: %w", err)
 			}
 		}
 	}
 
-	// --- Step 8: always upsert the listing.
-	if _, err := uc.writer.UpsertListing(ctx, &ports.ListingUpsert{
+	// --- Step 8: hand the prepared listing back to ApplyForTenant, which
+	// batches every applyOne result in one BulkUpsertListing per inbox page.
+	// Per-row UpsertListing is dead-code on this path; only the manual /
+	// shopify ingest paths still call writer.UpsertListing directly.
+	return &ports.ListingUpsert{
 		TenantID:        tenantID,
 		MasterProductID: masterID,
 		Price:           listingPrice,
@@ -361,46 +428,59 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 		CustomTitle:     listingTitle,
 		SourceSystem:    string(item.SourceKind),
 		SourceID:        item.ExternalID,
-	}); err != nil {
-		return fmt.Errorf("apply_v2: upsert listing: %w", err)
-	}
-
-	return nil
+	}, nil
 }
 
-// classifyContextFromRaw plucks the four signals ClassifyVertical needs out
-// of a Shopify-shaped raw inbox payload. Field names follow Shopify
-// (product_type / vendor / title / tags); other source kinds will need
-// their own extractor when added.
-func classifyContextFromRaw(raw map[string]any) ClassifyContext {
+// classifyContextFromRaw plucks the four signals ClassifyVertical needs
+// out of an arbitrary raw inbox payload. Discovery_v2 records the
+// tenant-specific classifying field name in artifact.ClassifyingField at
+// commit time; this extractor reads it as the primary source of the
+// ProductType signal, then falls back to a small synonym list for legacy
+// artifacts and for Brand/Name where the artifact doesn't yet pin a name.
+//
+// Synonyms are intentionally small: they cover the common-source shapes
+// we've seen in production (Shopify, Sephora CSV) without baking
+// tenant-specific knowledge into Go. Tenants with exotic field names get
+// classified correctly by discovery filling ClassifyingField at runtime.
+func classifyContextFromRaw(raw map[string]any, art *domain.MappingArtifactV3) ClassifyContext {
 	c := ClassifyContext{}
-	if v := getPath(raw, "product_type"); v != nil {
-		if s, ok := asString(v); ok {
+
+	// ProductType — primary: artifact's classifying_field; fallback:
+	// common synonyms across Shopify / CSV / Sheets shapes.
+	if art != nil && art.ClassifyingField != "" {
+		if s, ok := asString(getPath(raw, art.ClassifyingField)); ok {
 			c.ProductType = s
 		}
-	} else if v := getPath(raw, "productType"); v != nil {
-		if s, ok := asString(v); ok {
-			c.ProductType = s
+	}
+	if c.ProductType == "" {
+		for _, k := range []string{"product_type", "productType", "primary_category", "category", "type", "kind", "department"} {
+			if s, ok := asString(getPath(raw, k)); ok && s != "" {
+				c.ProductType = s
+				break
+			}
 		}
 	}
-	if v := getPath(raw, "vendor"); v != nil {
-		if s, ok := asString(v); ok {
+
+	// Brand — synonym list. brand_name covers Sephora CSV; vendor covers
+	// Shopify; brand is the canonical name.
+	for _, k := range []string{"brand", "vendor", "brand_name", "manufacturer", "maker"} {
+		if s, ok := asString(getPath(raw, k)); ok && s != "" {
 			c.Brand = s
-		}
-	} else if v := getPath(raw, "brand"); v != nil {
-		if s, ok := asString(v); ok {
-			c.Brand = s
+			break
 		}
 	}
-	if v := getPath(raw, "title"); v != nil {
-		if s, ok := asString(v); ok {
+
+	// Name — synonym list. product_name covers Sephora CSV; title covers
+	// Shopify; name is canonical.
+	for _, k := range []string{"name", "title", "product_name", "display_name"} {
+		if s, ok := asString(getPath(raw, k)); ok && s != "" {
 			c.Name = s
-		}
-	} else if v := getPath(raw, "name"); v != nil {
-		if s, ok := asString(v); ok {
-			c.Name = s
+			break
 		}
 	}
+
+	// Tags — supports both array and comma-string forms. Shopify-only
+	// field in practice; left as a fallback signal.
 	if v := getPath(raw, "tags"); v != nil {
 		switch t := v.(type) {
 		case []any:
@@ -654,6 +734,104 @@ func cosmeticsToMap(c *ports.MasterCosmeticsUpsert) map[string]any {
 	}
 	for k, v := range c.Extra {
 		out[k] = v
+	}
+	return out
+}
+
+// buildEnrichScalars produces the Scalars map for an EnrichRequest on the
+// bind path. Includes:
+//   - master_products tier1 scalars (name, brand, description, image_url)
+//   - master_cosmetics scalars (only when vertical='cosmetics')
+//   - tier3.<key> entries — staged as scalar fills; curator approves into
+//     master_products.tier3 jsonb.
+//
+// The adapter drops empty / zero values, so caller can pass them all.
+func buildEnrichScalars(mp *ports.MasterProductUpsert, c *ports.MasterCosmeticsUpsert, vertical string, tier3 map[string]any) map[string]any {
+	out := map[string]any{}
+	if mp.Name != "" {
+		out["name"] = mp.Name
+	}
+	if mp.Brand != "" {
+		out["brand"] = mp.Brand
+	}
+	if mp.Description != "" {
+		out["description"] = mp.Description
+	}
+	if mp.ImageURL != "" {
+		out["image_url"] = mp.ImageURL
+	}
+	if mp.GTIN != "" {
+		out["gtin"] = mp.GTIN
+	}
+	if vertical == "cosmetics" {
+		if c.ProductForm != nil && *c.ProductForm != "" {
+			out["product_form"] = *c.ProductForm
+		}
+		if c.Texture != nil && *c.Texture != "" {
+			out["texture"] = *c.Texture
+		}
+		if c.RoutineStep != nil && *c.RoutineStep != "" {
+			out["routine_step"] = *c.RoutineStep
+		}
+		if c.RoutineTime != nil && *c.RoutineTime != "" {
+			out["routine_time"] = *c.RoutineTime
+		}
+		if c.ApplicationMethod != nil && *c.ApplicationMethod != "" {
+			out["application_method"] = *c.ApplicationMethod
+		}
+		if c.Scent != nil && *c.Scent != "" {
+			out["scent"] = *c.Scent
+		}
+		if c.SPF != nil && *c.SPF != 0 {
+			out["spf"] = *c.SPF
+		}
+		if c.MarketingClaim != nil && *c.MarketingClaim != "" {
+			out["marketing_claim"] = *c.MarketingClaim
+		}
+		if c.HowToUse != nil && *c.HowToUse != "" {
+			out["how_to_use"] = *c.HowToUse
+		}
+		if c.VolumeML != nil && *c.VolumeML != 0 {
+			out["volume_ml"] = *c.VolumeML
+		}
+		if c.WeightG != nil && *c.WeightG != 0 {
+			out["weight_g"] = *c.WeightG
+		}
+		if c.UnitCount != nil && *c.UnitCount != 0 {
+			out["unit_count"] = *c.UnitCount
+		}
+	}
+	for k, v := range tier3 {
+		out["tier3."+k] = v
+	}
+	return out
+}
+
+// buildEnrichArrays produces the Arrays map for an EnrichRequest on the
+// bind path. Only cosmetics-vertical contributes today; other verticals
+// route their list-like attributes through tier3.<key> as scalars.
+func buildEnrichArrays(c *ports.MasterCosmeticsUpsert, vertical string) map[string][]string {
+	if vertical != "cosmetics" {
+		return nil
+	}
+	out := map[string][]string{}
+	if len(c.SkinType) > 0 {
+		out["skin_type"] = c.SkinType
+	}
+	if len(c.Concern) > 0 {
+		out["concern"] = c.Concern
+	}
+	if len(c.KeyIngredients) > 0 {
+		out["key_ingredients"] = c.KeyIngredients
+	}
+	if len(c.TargetArea) > 0 {
+		out["target_area"] = c.TargetArea
+	}
+	if len(c.FreeFrom) > 0 {
+		out["free_from"] = c.FreeFrom
+	}
+	if len(c.Benefits) > 0 {
+		out["benefits"] = c.Benefits
 	}
 	return out
 }

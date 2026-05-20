@@ -57,6 +57,18 @@ export const mergeApi = {
   discover: (tenantId) => api.post(`/curator/tenants/${tenantId}/discover`),
 }
 
+// Pending approval surface (2026-05-20 bundled milestone). Reads/writes
+// catalog.master_pending_changes + the new staging flags on
+// catalog.master_products. Curator (Vlad) is the actor — decided_by is
+// derived server-side from session email.
+export const pendingApi = {
+  tree:     (vertical = 'cosmetics')                 => api.get(`/curator/pending/tree${vertical ? `?vertical=${encodeURIComponent(vertical)}` : ''}`),
+  category: (categoryId, { limit = 50, offset = 0 } = {}) => api.get(`/curator/pending/category/${categoryId}?limit=${limit}&offset=${offset}`),
+  master:   (masterId)                               => api.get(`/curator/pending/master/${masterId}`),
+  approve:  ({ masterIds = [], changeIds = [] })     => api.post('/curator/pending/approve', { master_ids: masterIds, change_ids: changeIds }),
+  reject:   ({ masterIds = [], changeIds = [], reason = '' }) => api.post('/curator/pending/reject', { master_ids: masterIds, change_ids: changeIds, reason }),
+}
+
 // Catalog Flow v2 — backend reads come directly from curator's adapter
 // (catalog.inbox_items + admin.tenant_action_log + admin.agent_runs +
 // catalog.tenant_catalog_schema). Sync-now / discover are proxied through
