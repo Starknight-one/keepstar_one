@@ -85,6 +85,29 @@ type CatalogV2WriterPort interface {
 	// fallback until then.
 	BulkUpsertListing(ctx context.Context, items []ListingUpsert) (int, error)
 
+	// BulkMatchOrCreateMaster runs the 3-stage match cascade
+	// (SKU → GTIN → normalized_match_key) against every input item in
+	// one UNNEST query, then INSERTs the unmatched items in a second.
+	// Returns one MatchResult per input position (same order), each
+	// carrying the resolved master_id and whether this call inserted it.
+	// CreateAsPending on the upsert is honoured on the INSERT branch.
+	// Chunks input internally; callers can pass arbitrary-large slices.
+	BulkMatchOrCreateMaster(ctx context.Context, items []MasterProductUpsert) ([]MatchResult, error)
+
+	// BulkUpsertCosmetics is the batched form of UpsertCosmetics. Each
+	// pair (master_id, fields) writes one master_cosmetics row in a
+	// single UNNEST + INSERT … ON CONFLICT DO UPDATE statement per batch.
+	// Returns the count of rows written. Skips entries whose master_id
+	// is empty. Returns ErrCosmeticsSchemaNotReady (legacy shape) — the
+	// caller (apply) falls back to BulkMergeTier3 in that case, same as
+	// the row-by-row path does today.
+	BulkUpsertCosmetics(ctx context.Context, items []BulkCosmeticsItem) (int, error)
+
+	// BulkMergeTier3 merges (top-level overwrite) one JSON patch per
+	// master_id in a single UNNEST + UPDATE per batch. Same semantics as
+	// the row-by-row MergeTier3 (`tier3 = COALESCE(tier3, '{}') || patch`).
+	BulkMergeTier3(ctx context.Context, items []BulkTier3Item) (int, error)
+
 	// LookupVertical resolves a shopify-style product_type string into the
 	// internal vertical class via catalog.vertical_aliases. The alias table
 	// is lowercased on insert; the lookup lowercases its input. Returns
@@ -126,6 +149,30 @@ type EnrichRequest struct {
 	SourceInboxItemID string              // FK to catalog.inbox_items.id, audit trail
 	Scalars           map[string]any      // master_products column name → proposed value; nil/empty values are ignored
 	Arrays            map[string][]string // master_products array column name → proposed elements; only elements absent from current value land in pending
+}
+
+// MatchResult is returned by BulkMatchOrCreateMaster, one per input
+// position. ID is the resolved master_products.id; WasCreated is true
+// when this call inserted the row (used by apply to gate the
+// Tier 2 / tier3 / pending-changes branches).
+type MatchResult struct {
+	ID         string
+	WasCreated bool
+}
+
+// BulkCosmeticsItem pairs a master_id with the cosmetics fields to
+// upsert. Used by BulkUpsertCosmetics — caller assembles one item per
+// newly-created master that has cosmetics-vertical attributes.
+type BulkCosmeticsItem struct {
+	MasterProductID string
+	Fields          *MasterCosmeticsUpsert
+}
+
+// BulkTier3Item pairs a master_id with a jsonb patch to merge into
+// master_products.tier3. Used by BulkMergeTier3.
+type BulkTier3Item struct {
+	MasterProductID string
+	Patch           map[string]any
 }
 
 // MasterCosmeticsUpsert mirrors the (reshaped) master_cosmetics column set.

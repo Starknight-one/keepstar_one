@@ -211,6 +211,71 @@ func (w *fakeWriter) BulkUpsertListing(_ context.Context, items []ports.ListingU
 	}
 	return len(items), nil
 }
+func (w *fakeWriter) BulkMatchOrCreateMaster(_ context.Context, items []ports.MasterProductUpsert) ([]ports.MatchResult, error) {
+	out := make([]ports.MatchResult, len(items))
+	for i, mp := range items {
+		mpCopy := mp
+		if id, ok := w.bySKU[mp.SKU]; ok && mp.SKU != "" {
+			w.bindCalls++
+			out[i] = ports.MatchResult{ID: id, WasCreated: false}
+			continue
+		}
+		if mp.GTIN != "" {
+			if id, ok := w.byGTIN[mp.GTIN]; ok {
+				w.bindCalls++
+				out[i] = ports.MatchResult{ID: id, WasCreated: false}
+				continue
+			}
+		}
+		if mp.NormalizedMatchKey != "" {
+			if id, ok := w.byMatchKey[mp.NormalizedMatchKey]; ok {
+				w.bindCalls++
+				out[i] = ports.MatchResult{ID: id, WasCreated: false}
+				continue
+			}
+		}
+		w.createCalls++
+		id := "master-" + mp.SKU
+		w.bySKU[mp.SKU] = id
+		if mp.GTIN != "" {
+			w.byGTIN[mp.GTIN] = id
+		}
+		if mp.NormalizedMatchKey != "" {
+			w.byMatchKey[mp.NormalizedMatchKey] = id
+		}
+		w.masters[id] = &mpCopy
+		out[i] = ports.MatchResult{ID: id, WasCreated: true}
+	}
+	return out, nil
+}
+func (w *fakeWriter) BulkUpsertCosmetics(_ context.Context, items []ports.BulkCosmeticsItem) (int, error) {
+	n := 0
+	for _, it := range items {
+		if it.MasterProductID == "" || it.Fields == nil {
+			continue
+		}
+		cp := *it.Fields
+		w.cosmetics[it.MasterProductID] = &cp
+		n++
+	}
+	return n, nil
+}
+func (w *fakeWriter) BulkMergeTier3(_ context.Context, items []ports.BulkTier3Item) (int, error) {
+	n := 0
+	for _, it := range items {
+		if it.MasterProductID == "" || len(it.Patch) == 0 {
+			continue
+		}
+		if w.tier3[it.MasterProductID] == nil {
+			w.tier3[it.MasterProductID] = map[string]any{}
+		}
+		for k, v := range it.Patch {
+			w.tier3[it.MasterProductID][k] = v
+		}
+		n++
+	}
+	return n, nil
+}
 func (w *fakeWriter) LookupVertical(_ context.Context, pt string) (string, bool, error) {
 	v, ok := w.aliases[strings.ToLower(strings.TrimSpace(pt))]
 	return v, ok, nil
