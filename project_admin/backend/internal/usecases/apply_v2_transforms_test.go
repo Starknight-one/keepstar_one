@@ -162,8 +162,45 @@ func TestApplyV2Transform_GFromString(t *testing.T) {
 }
 
 func TestApplyV2Transform_MLFromString_NoNumber(t *testing.T) {
-	if _, err := applyV2Transform("just text", "ml_from_string"); err == nil {
-		t.Fatalf("expected err on no-number input")
+	// "Just text" carries no number — treated as "no value", not error.
+	// Apply skips the rule for this row rather than emitting mapping_miss.
+	// Same contract as numeric/int on empty input.
+	got, err := applyV2Transform("just text", "ml_from_string")
+	if err != nil {
+		t.Fatalf("no-number input should be benign (nil, nil), got err: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("no-number input should return nil value, got %v", got)
+	}
+}
+
+// TestApplyV2Transform_EmptyInput_NoError verifies the tolerance contract
+// added 2026-05-22: numeric / int / ml_from_string / g_from_string on an
+// empty or whitespace-only input return (nil, nil) instead of erroring.
+// This is the unblocker for sources like Sephora CSV where optional
+// numeric fields (sale_price_usd, child_min_price, child_max_price) are
+// blank on rows that don't apply.
+func TestApplyV2Transform_EmptyInput_NoError(t *testing.T) {
+	cases := []struct {
+		transform string
+		input     any
+	}{
+		{"numeric", ""},
+		{"numeric", "   "},
+		{"int", ""},
+		{"int", "\t"},
+		{"ml_from_string", ""},
+		{"g_from_string", "   "},
+	}
+	for _, c := range cases {
+		got, err := applyV2Transform(c.input, c.transform)
+		if err != nil {
+			t.Errorf("transform=%q input=%q expected no error, got %v", c.transform, c.input, err)
+			continue
+		}
+		if got != nil {
+			t.Errorf("transform=%q input=%q expected nil value, got %v", c.transform, c.input, got)
+		}
 	}
 }
 

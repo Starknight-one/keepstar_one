@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"keepstar-admin/internal/adapters/anthropic"
 	"keepstar-admin/internal/domain"
@@ -35,8 +36,18 @@ const (
 	toolFindMasterByGTIN           = "find_master_by_gtin"
 	toolListMasterBrandsInCategory = "list_master_brands_in_category"
 
-	// Terminal tool: emit the artifact and exit the loop.
-	toolCommitArtifact = "commit_artifact"
+	// Builder tools: incrementally assemble the artifact with at-call-time
+	// validation. Each mutation lands in the run-scoped discoveryDraft;
+	// validation errors return tool_error so the agent self-corrects in
+	// the same run rather than re-rolling a whole artifact JSON.
+	toolSetClassifyingField = "set_classifying_field"
+	toolAddBranch           = "add_branch"
+	toolAddFieldMapping     = "add_field_mapping"
+	toolAddClassifyRule     = "add_classify_rule"
+	toolRemoveFieldMapping  = "remove_field_mapping"
+	toolRemoveClassifyRule  = "remove_classify_rule"
+	toolInspectDraft        = "inspect_draft"
+	toolCommit              = "commit"
 )
 
 // discoveryTools returns the ToolDef list passed to Anthropic. CacheControl
@@ -178,64 +189,120 @@ func discoveryTools() []anthropic.ToolDef {
 				"additionalProperties":false
 			}`),
 		},
+		// --- BUILDER TOOLS (mutate the run-scoped discoveryDraft) ---
 		{
-			Name: toolCommitArtifact,
-			Description: "Finalize discovery and exit. Submit the artifact as branches by vertical class plus " +
-				"optional classify_rules. One branch per vertical the tenant carries (cosmetics, electronics, " +
-				"furniture, haircare, apparel, footwear, food, ski, unknown). Each branch has its own field_map: " +
-				"target prefixes are master.<col> for Tier 1 columns, cosmetics.<col> ONLY when the branch is " +
-				"'cosmetics' (typed table exists), and tier3.<key> for every other vertical's attributes. " +
-				"classify_rules are evaluated row-by-row when Shopify product_type doesn't alias to a known " +
-				"vertical — supported DSL: \"product_type contains 'X'\", \"brand = 'X'\", \"name contains 'X'\", " +
-				"\"tag = 'X'\".",
+			Name: toolSetClassifyingField,
+			Description: "Pick the inbox top-level key whose value identifies a row's category. " +
+				"Common names: product_type (Shopify), primary_category (Sephora-CSV), " +
+				"category, type, kind, department. The right field has DISCRETE STRING values " +
+				"(Skincare, Makeup, Fragrance, Phone) — not numbers, not free text. " +
+				"Validation rejects fields with no string samples. Call sample_values on candidates first.",
+			InputSchema: json.RawMessage(`{
+				"type":"object",
+				"properties":{"field":{"type":"string","minLength":1,"maxLength":120,"pattern":"^[a-zA-Z0-9_\\-]+$"}},
+				"required":["field"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name: toolAddBranch,
+			Description: "Declare a branch for one vertical class. Each tenant has 1..N branches " +
+				"depending on what they sell. Common: cosmetics, haircare, unknown (fallback). " +
+				"Mixed retailers can have several. Tier 2 typed columns (cosmetics.*) only valid " +
+				"inside the cosmetics branch.",
 			InputSchema: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"classifying_field":{
-						"type":"string",
-						"description":"Name of the inbox top-level key whose value identifies this row's category (e.g. 'product_type' for Shopify, 'primary_category' for Sephora CSV). Apply_v2 reads raw[classifying_field] as the input to vertical lookup."
-					},
-					"branches":{
-						"type":"array",
-						"minItems":1,
-						"items":{
-							"type":"object",
-							"properties":{
-								"vertical":{"type":"string","enum":["cosmetics","electronics","furniture","haircare","apparel","footwear","food","ski","unknown"]},
-								"field_map":{
-									"type":"array",
-									"items":{
-										"type":"object",
-										"properties":{
-											"from":{"type":"string"},
-											"to":{"type":"string"},
-											"transform":{"type":"string"},
-											"default":{"type":"string"}
-										},
-										"required":["from","to"],
-										"additionalProperties":false
-									}
-								}
-							},
-							"required":["vertical","field_map"],
-							"additionalProperties":false
-						}
-					},
-					"classify_rules":{
-						"type":"array",
-						"items":{
-							"type":"object",
-							"properties":{
-								"when":{"type":"string"},
-								"then_vertical":{"type":"string"}
-							},
-							"required":["when","then_vertical"],
-							"additionalProperties":false
-						}
-					},
-					"notes":{"type":"string"}
+					"vertical":{"type":"string","enum":["cosmetics","electronics","furniture","haircare","apparel","footwear","food","ski","unknown"]}
 				},
-				"required":["branches"],
+				"required":["vertical"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name: toolAddFieldMapping,
+			Description: "Add one mapping rule to a branch: how an inbox field becomes a master / cosmetics / tier3 value. " +
+				"`from` must be an existing inbox top-level key (validator returns typo suggestions). " +
+				"`to` is <prefix>.<col>: master.{name,brand,description,sku,vertical,image_url,gtin}; " +
+				"cosmetics.{skin_type,concern,key_ingredients,target_area,free_from,benefits,product_form,texture,routine_step,routine_time,application_method,scent,marketing_claim,how_to_use,spf,volume_ml,weight_g,unit_count} (cosmetics branch only); " +
+				"tier3.<any_snake_case_key>. " +
+				"transform applies to the value before write: lowercase, trim, split (requires split_delim), " +
+				"ml_from_string, g_from_string, bool_from_yesno, int, numeric. " +
+				"Split is only valid for cosmetics.<array_col>. " +
+				"numeric/int/ml_from_string/g_from_string require a numeric target (gtin, spf, volume_ml, weight_g, unit_count, or tier3.*).",
+			InputSchema: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"vertical":{"type":"string","enum":["cosmetics","electronics","furniture","haircare","apparel","footwear","food","ski","unknown"]},
+					"from":{"type":"string","minLength":1,"maxLength":200},
+					"to":{"type":"string","pattern":"^(master|cosmetics|tier3)\\.[a-z][a-z0-9_]*$"},
+					"transform":{"type":"string","enum":["","lowercase","trim","split","ml_from_string","g_from_string","bool_from_yesno","int","numeric"]},
+					"split_delim":{"type":"string","maxLength":4},
+					"default":{"type":"string","maxLength":500}
+				},
+				"required":["vertical","from","to"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name: toolAddClassifyRule,
+			Description: "Add one classification rule. Apply evaluates these row-by-row when the alias lookup misses, " +
+				"first match wins. signal is what apply will read from the row: product_type maps to " +
+				"raw[classifying_field]; brand/name fall back to common synonyms (brand_name, product_name); " +
+				"tag iterates the row's tags array. op is contains or =. value is the literal substring/exact " +
+				"match. then_vertical must already have a branch declared. The validator runs a quick sample " +
+				"check — rules that match 0/N sampled values are rejected as dead.",
+			InputSchema: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"signal":{"type":"string","enum":["product_type","brand","name","tag"]},
+					"op":{"type":"string","enum":["contains","="]},
+					"value":{"type":"string","minLength":1,"maxLength":120},
+					"then_vertical":{"type":"string","enum":["cosmetics","electronics","furniture","haircare","apparel","footwear","food","ski","unknown"]}
+				},
+				"required":["signal","op","value","then_vertical"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name:        toolRemoveFieldMapping,
+			Description: "Delete a previously-added field mapping by exact (vertical, from, to) match. Use this when swapping a rule instead of leaving a duplicate.",
+			InputSchema: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"vertical":{"type":"string","enum":["cosmetics","electronics","furniture","haircare","apparel","footwear","food","ski","unknown"]},
+					"from":{"type":"string"},
+					"to":{"type":"string"}
+				},
+				"required":["vertical","from","to"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name:        toolRemoveClassifyRule,
+			Description: "Delete a previously-added classify_rule by exact (signal, op, value) match.",
+			InputSchema: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"signal":{"type":"string","enum":["product_type","brand","name","tag"]},
+					"op":{"type":"string","enum":["contains","="]},
+					"value":{"type":"string"}
+				},
+				"required":["signal","op","value"],
+				"additionalProperties":false
+			}`),
+		},
+		{
+			Name: toolInspectDraft,
+			Description: "Read-only — return the current draft state and a coverage snapshot (smoke-test on 5 sample rows). Use before commit to verify everything looks right.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		},
+		{
+			Name: toolCommit,
+			Description: "Finalize the draft and exit the run. Validates: classifying_field set, ≥1 branch, every branch has ≥1 mapping, classify smoke-test passes ≥20% coverage on 10 sampled rows. Notes are optional free text for the curator.",
+			InputSchema: json.RawMessage(`{
+				"type":"object",
+				"properties":{"notes":{"type":"string","maxLength":2000}},
 				"additionalProperties":false
 			}`),
 		},
@@ -263,11 +330,15 @@ type dispatchResult struct {
 // heavy-tool counter. The master-side digest port may be nil when this
 // dispatcher is exercised in isolation (e.g. unit tests over inbox-only
 // flows); master tool calls in that mode return a clear "not wired" error
-// rather than crashing.
+// rather than crashing. draft is the per-run artifact being assembled by
+// the builder tools (set_classifying_field, add_branch, …, commit). Old
+// non-builder call sites pass nil; builder tool calls then return a
+// "draft not wired" error.
 func dispatchTool(
 	ctx context.Context,
 	inbox ports.InboxPort,
 	digest ports.MasterDigestPort,
+	draft *discoveryDraft,
 	tenantID string,
 	name string,
 	args json.RawMessage,
@@ -452,91 +523,223 @@ func dispatchTool(
 		}
 		return okJSON(map[string]any{"category_id": a.CategoryID, "brands": brands, "count": len(brands)})
 
-	case toolCommitArtifact:
+	case toolSetClassifyingField:
+		if draft == nil {
+			return errResult(fmt.Errorf("%s: draft not wired", name))
+		}
 		var a struct {
-			ClassifyingField string                  `json:"classifying_field"`
-			Branches         []domain.VerticalBranch `json:"branches"`
-			ClassifyRules    []domain.ClassifyRule   `json:"classify_rules"`
-			Notes            string                  `json:"notes"`
+			Field string `json:"field"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil || a.Field == "" {
+			return errResult(fmt.Errorf("set_classifying_field: field required"))
+		}
+		inboxFields, _ := inbox.ListFields(ctx, tenantID, 500)
+		samples, _ := inbox.SampleValues(ctx, tenantID, a.Field, 10)
+		if err := draft.setClassifyingField(a.Field, inboxFields, samples); err != nil {
+			return errResult(err)
+		}
+		return okJSON(map[string]any{"classifying_field": draft.ClassifyingField})
+
+	case toolAddBranch:
+		if draft == nil {
+			return errResult(fmt.Errorf("%s: draft not wired", name))
+		}
+		var a struct {
+			Vertical string `json:"vertical"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return errResult(fmt.Errorf("commit_artifact: invalid args: %w", err))
+			return errResult(fmt.Errorf("add_branch: invalid args: %w", err))
 		}
-		// Validation suite. Each failure returns tool_error so the agent
-		// can self-correct in the same run instead of committing junk.
-		if len(a.Branches) == 0 {
-			return errResult(fmt.Errorf("commit_artifact: at least one branch required"))
+		if err := draft.addBranch(a.Vertical); err != nil {
+			return errResult(err)
 		}
-		// classifying_field is RECOMMENDED but not required: legacy
-		// artifacts (v3 written before this field existed) keep working
-		// through classifyContextFromRaw's synonym fallback. When the
-		// agent does provide it, we validate that the name is real.
-		if a.ClassifyingField != "" {
-			inboxFields, fieldsErr := inbox.ListFields(ctx, tenantID, 500)
-			if fieldsErr == nil && len(inboxFields) > 0 {
-				found := false
-				for _, f := range inboxFields {
-					if f == a.ClassifyingField {
-						found = true
-						break
-					}
-				}
-				if !found {
-					return errResult(fmt.Errorf("commit_artifact: classifying_field %q not present in inbox top-level keys; call list_fields and pick a real one", a.ClassifyingField))
-				}
+		return okJSON(map[string]any{"branches": draftVerticals(draft)})
+
+	case toolAddFieldMapping:
+		if draft == nil {
+			return errResult(fmt.Errorf("%s: draft not wired", name))
+		}
+		var a struct {
+			Vertical   string `json:"vertical"`
+			From       string `json:"from"`
+			To         string `json:"to"`
+			Transform  string `json:"transform"`
+			SplitDelim string `json:"split_delim"`
+			Default    string `json:"default"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return errResult(fmt.Errorf("add_field_mapping: invalid args: %w", err))
+		}
+		inboxFields, _ := inbox.ListFields(ctx, tenantID, 500)
+		if err := draft.addFieldMapping(a.Vertical, a.From, a.To, a.Transform, a.SplitDelim, a.Default, inboxFields); err != nil {
+			return errResult(err)
+		}
+		return okJSON(map[string]any{
+			"vertical": a.Vertical, "from": a.From, "to": a.To,
+			"branch_rule_count": len(branchByName(draft, a.Vertical).FieldMap),
+		})
+
+	case toolAddClassifyRule:
+		if draft == nil {
+			return errResult(fmt.Errorf("%s: draft not wired", name))
+		}
+		var a struct {
+			Signal       string `json:"signal"`
+			Op           string `json:"op"`
+			Value        string `json:"value"`
+			ThenVertical string `json:"then_vertical"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return errResult(fmt.Errorf("add_classify_rule: invalid args: %w", err))
+		}
+		// Best-effort dead-rule check: fetch samples for the field the
+		// signal actually reads. signal=product_type → samples from
+		// draft.ClassifyingField; other signals reuse a small synonym
+		// list. If draft.ClassifyingField isn't set yet, skip the dead
+		// check (validator will still enforce branch existence + enums).
+		var samples []string
+		if a.Signal == "product_type" && draft.ClassifyingField != "" {
+			samples, _ = inbox.SampleValues(ctx, tenantID, draft.ClassifyingField, 50)
+		}
+		if err := draft.addClassifyRule(a.Signal, a.Op, a.Value, a.ThenVertical, samples); err != nil {
+			return errResult(err)
+		}
+		return okJSON(map[string]any{
+			"classify_rule_count": len(draft.ClassifyRules),
+		})
+
+	case toolRemoveFieldMapping:
+		if draft == nil {
+			return errResult(fmt.Errorf("%s: draft not wired", name))
+		}
+		var a struct {
+			Vertical string `json:"vertical"`
+			From     string `json:"from"`
+			To       string `json:"to"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return errResult(fmt.Errorf("remove_field_mapping: invalid args: %w", err))
+		}
+		if err := draft.removeFieldMapping(a.Vertical, a.From, a.To); err != nil {
+			return errResult(err)
+		}
+		return okJSON(map[string]any{"removed": true})
+
+	case toolRemoveClassifyRule:
+		if draft == nil {
+			return errResult(fmt.Errorf("%s: draft not wired", name))
+		}
+		var a struct {
+			Signal string `json:"signal"`
+			Op     string `json:"op"`
+			Value  string `json:"value"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return errResult(fmt.Errorf("remove_classify_rule: invalid args: %w", err))
+		}
+		if err := draft.removeClassifyRule(a.Signal, a.Op, a.Value); err != nil {
+			return errResult(err)
+		}
+		return okJSON(map[string]any{"removed": true})
+
+	case toolInspectDraft:
+		if draft == nil {
+			return errResult(fmt.Errorf("%s: draft not wired", name))
+		}
+		// Compose a compact snapshot. Run a 5-row smoke test to show
+		// coverage so far (only if classifying_field is set).
+		coverage := map[string]any{"sampled": 0, "covered": 0}
+		if draft.ClassifyingField != "" {
+			if cv, sm, smokeErr := smokeTestClassify(ctx, inbox, tenantID, draft.ClassifyingField, draft.ClassifyRules); smokeErr == nil {
+				coverage = map[string]any{"sampled": sm, "covered": cv}
 			}
+		}
+		branchSummary := make([]map[string]any, 0, len(draft.Branches))
+		for _, b := range draft.Branches {
+			branchSummary = append(branchSummary, map[string]any{
+				"vertical":   b.Vertical,
+				"rule_count": len(b.FieldMap),
+			})
+		}
+		return okJSON(map[string]any{
+			"classifying_field":   draft.ClassifyingField,
+			"branches":            branchSummary,
+			"classify_rule_count": len(draft.ClassifyRules),
+			"coverage_so_far":     coverage,
+		})
+
+	case toolCommit:
+		if draft == nil {
+			return errResult(fmt.Errorf("%s: draft not wired", name))
+		}
+		var a struct {
+			Notes string `json:"notes"`
+		}
+		_ = json.Unmarshal(args, &a)
+		draft.Notes = a.Notes
+		// Final validation. Same gates as commit_artifact had post-hoc;
+		// per-step builder validation has already caught most issues.
+		if draft.ClassifyingField == "" {
+			return errResult(fmt.Errorf("commit: classifying_field not set — call set_classifying_field first"))
+		}
+		if len(draft.Branches) == 0 {
+			return errResult(fmt.Errorf("commit: no branches declared — call add_branch first"))
 		}
 		ruleCount := 0
-		for _, b := range a.Branches {
-			if b.Vertical == "" {
-				return errResult(fmt.Errorf("commit_artifact: every branch needs a vertical"))
-			}
+		for _, b := range draft.Branches {
 			if len(b.FieldMap) == 0 {
-				return errResult(fmt.Errorf("commit_artifact: branch %q has empty field_map", b.Vertical))
+				return errResult(fmt.Errorf("commit: branch %q has empty field_map — add at least one mapping (typically master.name)", b.Vertical))
 			}
 			ruleCount += len(b.FieldMap)
 		}
-		// Smoke-test the proposed classify rules + classifying_field on a
-		// real sample of the inbox. Only run when classifying_field is set
-		// AND the sample is large enough to be meaningful — protects the
-		// legacy artifact path (which never set classifying_field) from
-		// spurious tool_error noise. The check fails the commit only when
-		// the agent's classification provably misroutes >80% of sampled
-		// rows; that is the path that would otherwise cost $0.10 per row
-		// in mapping_miss retries.
-		if a.ClassifyingField != "" {
-			if covered, sampled, smokeErr := smokeTestClassify(ctx, inbox, tenantID, a.ClassifyingField, a.ClassifyRules); smokeErr == nil && sampled >= 5 {
-				coverage := float64(covered) / float64(sampled)
-				if coverage < 0.20 {
-					return errResult(fmt.Errorf("commit_artifact: classify smoke-test failed — only %d/%d (%.0f%%) sample rows classified to a known vertical. Either classifying_field=%q is wrong or classify_rules don't match real values. Use sample_values/count_by to inspect %q and try again", covered, sampled, coverage*100, a.ClassifyingField, a.ClassifyingField))
-				}
+		// Smoke-test classification on a real sample. ≥20% coverage gate.
+		if covered, sampled, smokeErr := smokeTestClassify(ctx, inbox, tenantID, draft.ClassifyingField, draft.ClassifyRules); smokeErr == nil && sampled >= 5 {
+			coverage := float64(covered) / float64(sampled)
+			if coverage < 0.20 {
+				return errResult(fmt.Errorf("commit: classify smoke-test failed — only %d/%d (%.0f%%) sample rows classified to a known vertical. classifying_field=%q or classify_rules don't match real values. Use sample_values/count_by on %q to inspect, then add or fix rules", covered, sampled, coverage*100, draft.ClassifyingField, draft.ClassifyingField))
 			}
 		}
-		art := &domain.MappingArtifactV3{
-			Version:          3,
-			ClassifyingField: a.ClassifyingField,
-			Branches:         a.Branches,
-			ClassifyRules:    a.ClassifyRules,
-			Notes:            a.Notes,
-		}
+		art := draft.Finalize()
 		body, _ := json.Marshal(map[string]any{
 			"committed":         true,
-			"classifying_field": a.ClassifyingField,
+			"classifying_field": art.ClassifyingField,
 			"branches":          art.VerticalNames(),
 			"total_rules":       ruleCount,
-			"classify_rules":    len(a.ClassifyRules),
+			"classify_rules":    len(art.ClassifyRules),
 		})
 		preview, _ := json.Marshal(map[string]any{
-			"classifying_field": a.ClassifyingField,
+			"classifying_field": art.ClassifyingField,
 			"branches":          art.VerticalNames(),
 			"rules":             ruleCount,
-			"classify_rules":    len(a.ClassifyRules),
+			"classify_rules":    len(art.ClassifyRules),
 		})
 		return &dispatchResult{Output: string(body), Preview: preview, CommitArtifact: art}
 
 	default:
 		return errResult(fmt.Errorf("unknown tool: %s", name))
 	}
+}
+
+// branchByName returns a pointer to the named branch in the draft, or
+// a placeholder (zero VerticalBranch) when not found. Used only for the
+// success-path okJSON return — caller already validated branch exists.
+func branchByName(d *discoveryDraft, vertical string) *domain.VerticalBranch {
+	for i := range d.Branches {
+		if strings.EqualFold(d.Branches[i].Vertical, vertical) {
+			return &d.Branches[i]
+		}
+	}
+	return &domain.VerticalBranch{}
+}
+
+// draftVerticals returns the list of branch verticals for tool result
+// summary.
+func draftVerticals(d *discoveryDraft) []string {
+	out := make([]string, 0, len(d.Branches))
+	for _, b := range d.Branches {
+		out = append(out, b.Vertical)
+	}
+	return out
 }
 
 // smokeTestClassify pulls a small sample of inbox rows and runs the agent's

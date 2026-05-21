@@ -284,6 +284,12 @@ func (uc *ApplyV2UseCase) applyOne(ctx context.Context, tenantID string, art *do
 		if err != nil {
 			return nil, wrapMiss(item.ID, rule.From, rule.To, fmt.Sprintf("transform %q failed: %v", rule.Transform, err))
 		}
+		// (nil, nil) means "no value" — transform decided this input is
+		// blank / not applicable for this row (e.g. empty sale_price on a
+		// not-on-sale item). Skip the rule, do NOT emit mapping_miss.
+		if transformed == nil {
+			continue
+		}
 		switch {
 		case strings.HasPrefix(rule.To, "master."):
 			if err := assignMasterField(mp, strings.TrimPrefix(rule.To, "master."), transformed); err != nil {

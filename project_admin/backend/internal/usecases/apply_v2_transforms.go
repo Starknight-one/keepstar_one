@@ -159,6 +159,12 @@ func applyV2Transform(in any, transform string) (any, error) {
 			}
 			return nil, fmt.Errorf("int: not a string or number (%T)", in)
 		}
+		// Empty / whitespace-only input is treated as "no value" — apply
+		// drops the rule rather than erroring. This is the common shape on
+		// optional numeric fields like Sephora's sale_price_usd, child_min_price.
+		if strings.TrimSpace(s) == "" {
+			return nil, nil
+		}
 		return strconv.Atoi(strings.TrimSpace(s))
 
 	case transform == "numeric":
@@ -168,6 +174,12 @@ func applyV2Transform(in any, transform string) (any, error) {
 				return f, nil
 			}
 			return nil, fmt.Errorf("numeric: not a string or number (%T)", in)
+		}
+		// Same empty-tolerance rule as `int` — optional numeric fields
+		// blank-out on rows where the value doesn't apply (not on sale,
+		// no variant min/max price, etc).
+		if strings.TrimSpace(s) == "" {
+			return nil, nil
 		}
 		return strconv.ParseFloat(strings.TrimSpace(s), 64)
 
@@ -183,7 +195,9 @@ var unitRegex = regexp.MustCompile(`(-?\d+(?:\.\d+)?)\s*([A-Za-z]+)?`)
 // parseUnitFromString extracts the integer value from strings like "30 ml".
 // hintUnits is currently unused beyond documenting intent; the regex grabs
 // the first number it sees regardless of unit. Result is int (rounded down
-// for fractional). Returns nil for non-string or no-numeric inputs.
+// for fractional). Empty / whitespace-only or no-numeric-found inputs
+// return (nil, nil) — apply treats this as "no value" and drops the rule
+// for that row (consistent with int/numeric empty-tolerance).
 func parseUnitFromString(in any, _ []string) (any, error) {
 	s, ok := asString(in)
 	if !ok {
@@ -193,9 +207,14 @@ func parseUnitFromString(in any, _ []string) (any, error) {
 		}
 		return nil, fmt.Errorf("unit_from_string: not a string or number (%T)", in)
 	}
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
 	m := unitRegex.FindStringSubmatch(s)
 	if m == nil {
-		return nil, fmt.Errorf("unit_from_string: no number in %q", s)
+		// String had content but no number — treat as no-value, not an
+		// error. Avoids mapping_miss for noise like "N/A" or "free".
+		return nil, nil
 	}
 	f, err := strconv.ParseFloat(m[1], 64)
 	if err != nil {

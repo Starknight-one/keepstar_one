@@ -18,10 +18,22 @@ import (
 type fakeInbox struct {
 	items   []*domain.InboxItem
 	applied map[string]bool
+	// Seeded data for builder-tool validators. Tests can override.
+	listFieldsSeed   []string
+	sampleValuesSeed map[string][]string
 }
 
 func newFakeInbox(items ...*domain.InboxItem) *fakeInbox {
-	return &fakeInbox{items: items, applied: map[string]bool{}}
+	return &fakeInbox{
+		items:          items,
+		applied:        map[string]bool{},
+		listFieldsSeed: []string{"title", "vendor", "sku", "product_type", "variants"},
+		sampleValuesSeed: map[string][]string{
+			"product_type": {"Cream", "Serum", "Toner"},
+			"title":        {"Hyaluronic Cream", "Vitamin C Serum"},
+			"vendor":       {"Brand"},
+		},
+	}
 }
 
 func (f *fakeInbox) Upsert(_ context.Context, _ *domain.InboxItem) (bool, error) {
@@ -66,9 +78,19 @@ func (f *fakeInbox) ListUnapplied(_ context.Context, tenantID string, limit, off
 	return out[offset:end], nil
 }
 func (f *fakeInbox) CountTotal(_ context.Context, _ string) (int, error)        { return len(f.items), nil }
-func (f *fakeInbox) ListFields(_ context.Context, _ string, _ int) ([]string, error)  { return nil, nil }
-func (f *fakeInbox) SampleValues(_ context.Context, _ string, _ string, _ int) ([]string, error) {
-	return nil, nil
+// fakeInbox can be seeded with predicted ListFields / SampleValues
+// responses so builder-tool tests have something the validators accept.
+// Default seed (set in newFakeInbox) covers a typical Shopify-shape
+// catalog — title/vendor/sku/product_type with Cream/Serum samples —
+// which is what most discovery scenarios assume.
+func (f *fakeInbox) ListFields(_ context.Context, _ string, _ int) ([]string, error) {
+	return f.listFieldsSeed, nil
+}
+func (f *fakeInbox) SampleValues(_ context.Context, _ string, field string, _ int) ([]string, error) {
+	if f.sampleValuesSeed == nil {
+		return nil, nil
+	}
+	return f.sampleValuesSeed[field], nil
 }
 func (f *fakeInbox) CountBy(_ context.Context, _ string, _ string, _ int) (map[string]int, error) {
 	return nil, nil

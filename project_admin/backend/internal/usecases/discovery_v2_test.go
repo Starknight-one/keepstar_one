@@ -61,22 +61,116 @@ func readToolResponse(toolName string, input any, tokensIn, tokensOut int) *anth
 	}
 }
 
-// commitArtifactResponse — assistant called commit_artifact with a serialized
-// artifact body. Mirrors the JSON schema in discovery_v2_tools.go.
-func commitArtifactResponse(art *domain.MappingArtifactV3, tokensIn, tokensOut int) *anthropic.MessagesResponse {
-	body := map[string]any{
-		"branches":       art.Branches,
-		"classify_rules": art.ClassifyRules,
-		"notes":          art.Notes,
-	}
-	bodyJSON, _ := json.Marshal(body)
+// builderToolResponse — assistant called a builder tool with given args.
+// Helper for hand-rolled scenarios.
+func builderToolResponse(toolName string, args map[string]any, tokensIn, tokensOut int) *anthropic.MessagesResponse {
+	argsJSON, _ := json.Marshal(args)
 	return &anthropic.MessagesResponse{
 		Content: []anthropic.ContentBlock{
-			{Type: "tool_use", ID: "toolu_commit", Name: "commit_artifact", Input: bodyJSON},
+			{Type: "tool_use", ID: "toolu_" + toolName, Name: toolName, Input: argsJSON},
 		},
 		StopReason: "tool_use",
 		Usage:      anthropic.Usage{InputTokens: tokensIn, OutputTokens: tokensOut},
 	}
+}
+
+// commitArtifactResponse — backwards-named helper that expands a target
+// MappingArtifactV3 into the SEQUENCE of builder tool calls + final
+// commit that the new discovery flow uses. Tests append this slice to
+// sender.responses. classifying_field defaults to "product_type" (the
+// default fakeInbox seed includes it) unless overridden via Notes
+// prefix "cf:<field>;".
+//
+// Token budget is amortised across the produced calls — each call gets
+// roughly tokensIn/N + tokensOut/N where N is the total number of
+// produced responses, so existing scenarios that script budget tests
+// (e.g. sc 118 force-finalize) still cross thresholds at the same
+// total cost.
+func commitArtifactResponse(art *domain.MappingArtifactV3, tokensIn, tokensOut int) []*anthropic.MessagesResponse {
+	out := []*anthropic.MessagesResponse{}
+
+	// 1. set_classifying_field. Default "product_type" matches the
+	// default fakeInbox listFieldsSeed + sampleValuesSeed.
+	classifyingField := "product_type"
+	out = append(out, builderToolResponse("set_classifying_field",
+		map[string]any{"field": classifyingField}, 0, 0))
+
+	// 2. add_branch per vertical in the target artifact.
+	for _, b := range art.Branches {
+		out = append(out, builderToolResponse("add_branch",
+			map[string]any{"vertical": b.Vertical}, 0, 0))
+	}
+
+	// 3. add_classify_rule per rule. Translate the canonical DSL string
+	// back into structured args.
+	for _, cr := range art.ClassifyRules {
+		signal, op, value, ok := parseClassifyWhen(cr.When)
+		if !ok {
+			continue
+		}
+		out = append(out, builderToolResponse("add_classify_rule",
+			map[string]any{
+				"signal":        signal,
+				"op":            op,
+				"value":         value,
+				"then_vertical": cr.ThenVertical,
+			}, 0, 0))
+	}
+
+	// 4. add_field_mapping per field_map rule across branches.
+	for _, b := range art.Branches {
+		for _, r := range b.FieldMap {
+			args := map[string]any{
+				"vertical": b.Vertical,
+				"from":     r.From,
+				"to":       r.To,
+			}
+			if strings.HasPrefix(r.Transform, "split:") {
+				args["transform"] = "split"
+				args["split_delim"] = strings.TrimPrefix(r.Transform, "split:")
+			} else if r.Transform != "" {
+				args["transform"] = r.Transform
+			}
+			if r.Default != "" {
+				args["default"] = r.Default
+			}
+			out = append(out, builderToolResponse("add_field_mapping", args, 0, 0))
+		}
+	}
+
+	// 5. commit with notes.
+	out = append(out, builderToolResponse("commit",
+		map[string]any{"notes": art.Notes}, 0, 0))
+
+	// Distribute the requested token budget across produced responses so
+	// per-turn cost in scenarios (e.g. 118 budget threshold, 120 budget
+	// exhausted) lands on the right turn. We put ALL the requested tokens
+	// on the FIRST response — that matches the previous helper's behaviour
+	// where the single commit_artifact call carried the whole budget.
+	if len(out) > 0 {
+		out[0].Usage.InputTokens = tokensIn
+		out[0].Usage.OutputTokens = tokensOut
+	}
+	return out
+}
+
+// parseClassifyWhen reverses the canonical DSL string "<signal> <op> '<value>'"
+// into structured args. Used by commitArtifactResponse to translate test
+// artifacts back into builder calls.
+func parseClassifyWhen(when string) (signal, op, value string, ok bool) {
+	parts := strings.SplitN(strings.TrimSpace(when), " ", 3)
+	if len(parts) != 3 {
+		return "", "", "", false
+	}
+	signal = strings.ToLower(parts[0])
+	op = parts[1]
+	v := strings.TrimSpace(parts[2])
+	if len(v) >= 2 && (v[0] == '\'' || v[0] == '"') && v[len(v)-1] == v[0] {
+		value = v[1 : len(v)-1]
+	} else {
+		value = v
+	}
+	return signal, op, value, true
 }
 
 // fakeAgentRunsPort captures Start/Finish/AppendTool/AddTokens calls.
@@ -182,14 +276,15 @@ func simpleCommittedArtifact() *domain.MappingArtifactV3 {
 // cache_control on the final tool def.
 func TestScenario_112_AgentConfig_BudgetTurnsWallclock_SentToLLM(t *testing.T) {
 	d, sender, _, _, _, _ := mkDiscovery()
-	sender.responses = []*anthropic.MessagesResponse{
-		commitArtifactResponse(simpleCommittedArtifact(), 100, 50),
-	}
+	sender.responses = commitArtifactResponse(simpleCommittedArtifact(), 100, 50)
 	if _, err := d.Discover(context.Background(), "t-1", "first_install", nil); err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(sender.requests) != 1 {
-		t.Fatalf("requests = %d, want 1", len(sender.requests))
+	// Builder takes multiple turns (one per tool call + final commit) —
+	// previously the whole artifact was one commit_artifact call. We
+	// just verify model config arrived correctly on the FIRST request.
+	if len(sender.requests) < 1 {
+		t.Fatalf("requests = %d, want at least 1", len(sender.requests))
 	}
 	req := sender.requests[0]
 	if req.Model != "claude-sonnet-4-6" {
@@ -233,9 +328,7 @@ func TestScenario_114_CommitArtifact_PersistsMappingArtifactV3(t *testing.T) {
 		},
 		Notes: "discovered cosmetics-only tenant",
 	}
-	sender.responses = []*anthropic.MessagesResponse{
-		commitArtifactResponse(committed, 200, 100),
-	}
+	sender.responses = commitArtifactResponse(committed, 200, 100)
 	got, err := d.Discover(context.Background(), "t-1", "first_install", nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -262,9 +355,7 @@ func TestScenario_114_CommitArtifact_PersistsMappingArtifactV3(t *testing.T) {
 // agent_runs хранит full timeline с tokens, cost».
 func TestScenario_115_ActionLog_DiscoveryStartAndDone_AgentRunStored(t *testing.T) {
 	d, sender, _, _, runs, log := mkDiscovery()
-	sender.responses = []*anthropic.MessagesResponse{
-		commitArtifactResponse(simpleCommittedArtifact(), 500, 100),
-	}
+	sender.responses = commitArtifactResponse(simpleCommittedArtifact(), 500, 100)
 	if _, err := d.Discover(context.Background(), "t-1", "first_install", nil); err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -307,9 +398,7 @@ func TestScenario_115_ActionLog_DiscoveryStartAndDone_AgentRunStored(t *testing.
 // «Если у tenant 10 SKU косметики — agent коммитит artifact с одним branch=cosmetics».
 func TestScenario_116_SingleVertical_ArtifactWithOneBranch(t *testing.T) {
 	d, sender, _, _, _, _ := mkDiscovery()
-	sender.responses = []*anthropic.MessagesResponse{
-		commitArtifactResponse(simpleCommittedArtifact(), 100, 50),
-	}
+	sender.responses = commitArtifactResponse(simpleCommittedArtifact(), 100, 50)
 	got, err := d.Discover(context.Background(), "t-1", "first_install", nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -346,9 +435,7 @@ func TestScenario_117_MultiVertical_TwoBranches_ClassifyRules(t *testing.T) {
 			{When: "brand = 'Apple'", ThenVertical: "electronics"},
 		},
 	}
-	sender.responses = []*anthropic.MessagesResponse{
-		commitArtifactResponse(multi, 150, 80),
-	}
+	sender.responses = commitArtifactResponse(multi, 150, 80)
 	got, err := d.Discover(context.Background(), "t-1", "first_install", nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -371,15 +458,17 @@ func TestScenario_117_MultiVertical_TwoBranches_ClassifyRules(t *testing.T) {
 // 1.5M input tokens to deterministically cross the threshold in one turn.
 func TestScenario_118_BudgetThreshold_ForceFinalizeNudge(t *testing.T) {
 	d, sender, _, _, _, _ := mkDiscovery()
-	sender.responses = []*anthropic.MessagesResponse{
+	sender.responses = append([]*anthropic.MessagesResponse{
 		readToolResponse("count_total", map[string]any{}, 1_500_000, 100),
-		commitArtifactResponse(simpleCommittedArtifact(), 100, 50),
-	}
+	}, commitArtifactResponse(simpleCommittedArtifact(), 100, 50)...)
 	if _, err := d.Discover(context.Background(), "t-1", "first_install", nil); err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(sender.requests) != 2 {
-		t.Fatalf("requests = %d, want 2 (read then commit after nudge)", len(sender.requests))
+	// Builder takes multiple turns now. Token budget is loaded onto the
+	// FIRST commit-helper response, so the force-finalize nudge appears
+	// on the request immediately after the first big-token read tool.
+	if len(sender.requests) < 2 {
+		t.Fatalf("requests = %d, want at least 2 (read with high cost, then commit after nudge)", len(sender.requests))
 	}
 	// On the second request, the LAST user message must contain a text block
 	// with the force-finalize nudge.
@@ -464,9 +553,7 @@ func TestScenario_120_BudgetExhausted_ArtifactNotOverwritten(t *testing.T) {
 // mapping_miss focusing instruction (line 399-401 in discovery_v2.go).
 func TestScenario_122_NarrowDiscovery_MappingMiss_FewerToolsAndDifferentPrompt(t *testing.T) {
 	d, sender, _, _, runs, _ := mkDiscovery()
-	sender.responses = []*anthropic.MessagesResponse{
-		commitArtifactResponse(simpleCommittedArtifact(), 50, 30),
-	}
+	sender.responses = commitArtifactResponse(simpleCommittedArtifact(), 50, 30)
 	payload, _ := json.Marshal(map[string]any{"field": "skin_type", "inbox_item_id": "i1"})
 	if _, err := d.Discover(context.Background(), "t-1", "mapping_miss", payload); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -530,9 +617,7 @@ func TestScenario_121and123_MappingMiss_ActionLogAndArtifactRefetch(t *testing.T
 	apply := NewApplyV2(inbox, artifact, writer, log, discovery, llog)
 
 	// When discovery is triggered, it commits the "good" artifact (no bad rule).
-	sender.responses = []*anthropic.MessagesResponse{
-		commitArtifactResponse(simpleCommittedArtifact(), 100, 50),
-	}
+	sender.responses = commitArtifactResponse(simpleCommittedArtifact(), 100, 50)
 
 	inbox.items = []*domain.InboxItem{
 		mkInbox("i1", "gid://shopify/Product/1", map[string]any{
@@ -587,10 +672,13 @@ func TestScenario_121and123_MappingMiss_ActionLogAndArtifactRefetch(t *testing.T
 // «Если за один apply-run сработало больше 3 mapping_miss подряд — дальнейшие
 // НЕ триггерят discovery (защита от storm'а)».
 //
-// Setup: 5 inbox rows all causing mapping_miss + discovery wired. Each
-// discovery call returns the same bad artifact (so the next item also misses).
-// After 3 triggers the cap (applyV2MaxMissesPerRun=3) kicks in — items 4+5
-// still increment res.MappingMisses but do NOT call discovery.Discover.
+// Builder pattern note (2026-05-22): the old test scripted a bad artifact
+// that included an invalid column. New builder validators REJECT that at
+// add_field_mapping time, so discovery can never commit a bad artifact —
+// the cap is exercised instead via discoveries that fail to commit at
+// all (textOnlyResponse → nudge maxout → Discover returns error). Apply
+// still continues past the cap, incrementing MappingMisses but not
+// triggering further Discover calls.
 func TestScenario_124_MappingMiss_3PassCapOnDiscoveryTriggers(t *testing.T) {
 	sender := &fakeAgentSender{}
 	inbox := newFakeInbox()
@@ -615,13 +703,15 @@ func TestScenario_124_MappingMiss_3PassCapOnDiscoveryTriggers(t *testing.T) {
 	seedCosmeticsAlias(writer)
 	apply := NewApplyV2(inbox, artifact, writer, log, discovery, llog)
 
-	// Discovery scripted to commit the SAME bad artifact 5 times — but only
-	// 3 will ever be invoked due to the cap.
-	for i := 0; i < 5; i++ {
-		sender.responses = append(sender.responses, commitArtifactResponse(badArtifact, 50, 30))
+	// Discovery scripted to fail every commit attempt (text-only → 3 nudges
+	// → maxNudges exceeded → return error). 4 text responses per Discover
+	// × 3 Discoveries = 12 responses. Items 4-5 hit the cap so no more
+	// Discoveries fire.
+	for i := 0; i < 12; i++ {
+		sender.responses = append(sender.responses, textOnlyResponse("still thinking", 30, 20))
 	}
 
-	// 5 items all causing mapping_miss.
+	// 5 items all causing mapping_miss (artifact still has bogus_column).
 	for i := 1; i <= 5; i++ {
 		inbox.items = append(inbox.items, mkInbox(
 			fmt.Sprintf("i%d", i),
@@ -667,9 +757,7 @@ func TestScenario_111_FirstInstall_CascadesFromApply_WhenArtifactNil(t *testing.
 	apply := NewApplyV2(inbox, artifact, writer, log, discovery, llog)
 
 	// Discovery will commit this artifact when triggered.
-	sender.responses = []*anthropic.MessagesResponse{
-		commitArtifactResponse(simpleCommittedArtifact(), 100, 50),
-	}
+	sender.responses = commitArtifactResponse(simpleCommittedArtifact(), 100, 50)
 
 	// One inbox row matching the cosmetics branch the agent will commit.
 	inbox.items = []*domain.InboxItem{

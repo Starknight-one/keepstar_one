@@ -164,6 +164,11 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 	systemBlocks := buildDiscoveryV2System(trigger, triggerPayload)
 	tools := discoveryTools()
 
+	// draft is the run-scoped artifact under construction. Builder tools
+	// (set_classifying_field, add_branch, add_field_mapping, …, commit)
+	// mutate it; commit returns Finalize() through dispatchResult.CommitArtifact.
+	draft := newDiscoveryDraft()
+
 	messages := []anthropic.Message{
 		{
 			Role: "user",
@@ -241,7 +246,17 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 
 		for _, tu := range toolUses {
 			t0 := time.Now()
-			dr := dispatchTool(ctx, d.inbox, d.digest, tenantID, tu.Name, tu.Input, &heavyCallsUsed, discoveryV2HeavyToolsCap)
+			dr := dispatchTool(ctx, d.inbox, d.digest, draft, tenantID, tu.Name, tu.Input, &heavyCallsUsed, discoveryV2HeavyToolsCap)
+			// Per-tool retry tracking. 3 consecutive errors → strong
+			// hint in the next tool_result. 5 → abort the run.
+			if dr.IsError {
+				draft.toolErrorCount[tu.Name]++
+				if draft.toolErrorCount[tu.Name] >= 5 {
+					return nil, fmt.Errorf("discovery v2: tool %q failed %d times — agent is stuck (last error appended to messages)", tu.Name, draft.toolErrorCount[tu.Name])
+				}
+			} else {
+				draft.toolErrorCount[tu.Name] = 0
+			}
 			elapsed := time.Since(t0)
 
 			_ = d.agentRuns.AppendTool(ctx, runID, ports.AgentToolCall{
@@ -336,7 +351,7 @@ Artifact shape (v3):
 
 Tools (full JSON schemas in tool defs):
 
-  INBOX-SIDE (explore the tenant's raw shape):
+  INBOX-SIDE (explore the tenant's raw shape — read-only):
     count_total      — row count
     list_fields      — distinct top-level JSONB keys
     sample_values    — distinct values of one field
@@ -344,15 +359,29 @@ Tools (full JSON schemas in tool defs):
     field_stats      — non-null/distinct/samples/min/max for one field
     peek_full_rows   — HEAVY: 1-5 full raw rows (cap: 10 calls/run)
 
-  MASTER-SIDE (see what our catalog already holds):
+  MASTER-SIDE (see what our catalog already holds — read-only):
     list_master_categories            — taxonomy tree per vertical
     digest_master_category            — top brands, sample names per cat
     find_master_by_sku                — does this SKU already exist?
     find_master_by_gtin               — does this GTIN already exist?
     list_master_brands_in_category    — what brands live in this cat?
 
+  BUILDER (assemble the artifact one element at a time — each call is
+  validated immediately so typos / dead rules / type mismatches surface
+  via tool_error and you fix them in the next turn):
+    set_classifying_field   — fix the inbox key that holds categories
+    add_branch              — declare one vertical's branch
+    add_field_mapping       — append one rule to a branch's field_map
+    add_classify_rule       — append one classify_rule (structured args,
+                              no DSL quoting)
+    remove_field_mapping    — undo a prior add_field_mapping
+    remove_classify_rule    — undo a prior add_classify_rule
+    inspect_draft           — read-only snapshot of draft + coverage
+
   TERMINAL:
-    commit_artifact   — finalize and exit. Must include classifying_field.
+    commit          — finalize the draft and exit the run. Validates
+                      classifying_field + ≥1 branch + ≥1 mapping per
+                      branch + smoke-test coverage ≥20% on sample rows.
 
 Why three tiers (read this — it shapes every mapping decision):
 
@@ -401,60 +430,76 @@ Transforms supported in apply_v2 (set 'transform' on a rule):
   int                — strconv.Atoi
   numeric            — ParseFloat
 
-Approach (DO NOT skip steps):
+Approach (DO NOT skip steps; builder tools enforce ordering):
 
-  1. Step 1 — Identify the classifying field.
-     - Call count_total + list_fields. See size and field names.
-     - From list_fields, pick 3-5 candidates that look like they hold a
+  Step 1 — Identify the classifying field.
+     - count_total + list_fields. See size and field names.
+     - From list_fields, pick 3-5 candidates that LOOK like they hold a
        category label (names: product_type, primary_category, category,
-       type, kind, department, primary_category, secondary_category…).
+       type, kind, department, secondary_category…).
      - For each candidate, call sample_values (limit 10). The right field
        is the one whose values look like discrete category names
        (Skincare, Makeup, Fragrance, Phone, Sofa…). Reject fields with
        values that look like prices, IDs, or free text.
-     - Once chosen, that field name goes in artifact.classifying_field.
+     - Call set_classifying_field with the chosen name.
 
-  2. Step 2 — Look at the master catalog FIRST.
-     - Call list_master_categories(vertical='cosmetics') (or whatever
-       vertical the tenant's data leans toward). See what categories
-       and counts already exist.
-     - Call digest_master_category on the 2-3 categories most relevant
-       to this tenant. See what brands and product names already live
-       there. Your field_map should mirror that structure.
+  Step 2 — Inspect the master catalog.
+     - list_master_categories(vertical) for the vertical(s) the tenant's
+       data leans toward.
+     - digest_master_category on 2-3 most relevant categories. See what
+       brands and product names already live there. Your field_map should
+       MIRROR that structure (don't invent new column names if a typed
+       slot exists).
 
-  3. Step 3 — Build branches + classify_rules.
-     - count_by on classifying_field tells you which verticals are
-       present in the inbox. Make a branch per vertical present.
-     - classify_rules should reference the classifying_field's actual
-       values (e.g. "product_type contains 'Skincare'" works when
-       classifying_field=primary_category and Sephora values include
-       'Skincare').
-     - When unsure for some rows, commit an 'unknown' branch — apply_v2
-       routes their attributes to tier3 and chat search still works.
+  Step 3 — Declare branches and classify_rules.
+     - count_by on classifying_field tells you which verticals appear.
+     - For each vertical seen: call add_branch(vertical). One per kind.
+     - For each branch (except a sole 'unknown'): call add_classify_rule
+       with signal/op/value picked from the classifying_field's values.
+       Example: classifying_field=primary_category with values including
+       'Skincare', 'Makeup' → add_classify_rule(signal=product_type,
+       op=contains, value='Skincare', then_vertical=cosmetics). Apply
+       internally reads raw[classifying_field] when signal=product_type;
+       value='Skincare' matches the row.
 
-  4. Step 4 — field_map per branch.
-     - Use field_stats / sample_values to confirm shape of each field
-       you map (text vs numeric vs array vs date).
+  Step 4 — Map fields one by one.
+     - For every meaningful inbox field, call add_field_mapping once.
+     - Use field_stats / sample_values to confirm shape (text vs numeric
+       vs array) BEFORE adding the rule. If you guess transform=numeric
+       on a text field, the validator rejects.
+     - Required for any chat-search-friendly catalog: master.name and
+       master.brand mappings on at least the dominant branch. Without
+       master.name, listings have no display title.
      - peek_full_rows ONLY when aggregates can't disambiguate.
 
-  5. Budget: aim for ~15 tool calls. Cap is $5. ~$0.01-0.05 per call.
+  Step 5 — Verify and commit.
+     - inspect_draft to see the assembled state + coverage so far.
+     - commit (with optional notes). On failure (e.g. coverage < 20%),
+       fix specific rules with add/remove_field_mapping or
+       add/remove_classify_rule and commit again.
+
+  Budget: typical run = 10-20 tool calls. Cap is $5 (a hard stop). Most
+  tool calls are tiny — input/output ≤ 500 bytes. A failed builder call
+  costs almost nothing because you retry one tool, not the whole artifact.
 
 Trigger-specific behaviour:
-  - first_install: build the full artifact from scratch using all of
-    Steps 1-4.
-  - mapping_miss: a previous apply failed on one field. Investigate
-    THAT field via the inbox tools, append/fix one rule, commit.
-    Don't re-explore the whole catalog. Keep the existing
-    classifying_field unless the failure proves it was wrong.
+  - first_install: full Steps 1-5 from scratch.
+  - mapping_miss: a previous apply failed on one field. Investigate THAT
+    field via the inbox tools, then either add_field_mapping with a
+    different transform, or remove_field_mapping for the offending rule
+    and add a replacement, then commit. Don't re-explore the whole
+    catalog. Keep the existing classifying_field unless its failure is
+    proven.
   - unknown_vertical: tenant added a product whose vertical you didn't
-    cover. Add ONE new branch for that vertical and commit.
+    cover. add_branch(new_vertical), add_classify_rule routing into it,
+    add_field_mapping for its essentials, commit.
   - manual: full re-discovery; the curator pressed a button.
 
-When ready, call commit_artifact. The dispatcher validates classifying_field
-against list_fields and smoke-tests classify_rules on a sample of inbox
-rows — if your artifact would misroute most of the data, you'll see a
-tool_error pointing at the failure, and you should self-correct rather
-than retry the same commit.
+When ready, call commit. The validator gates classifying_field set,
+≥1 branch, every branch with ≥1 mapping, and smoke-tests classify on
+sample rows. If your artifact would misroute most data, you'll see a
+tool_error pointing at the failure — self-correct via remove/add and
+commit again. Do NOT keep re-running commit unchanged.
 	`)
 
 	blocks := []anthropic.SystemBlock{
