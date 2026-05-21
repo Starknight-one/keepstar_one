@@ -37,6 +37,28 @@ func newDiscoveryDraft() *discoveryDraft {
 	return &discoveryDraft{toolErrorCount: map[string]int{}}
 }
 
+// newDiscoveryDraftFromArtifact seeds the draft from an existing committed
+// artifact so the agent can PATCH instead of rebuilding from scratch. Used
+// on mapping_miss and unknown_vertical triggers — the agent gets a one-line
+// instruction in the prompt ("focus on the offending field"), but it needs
+// to actually see the current state to patch it. first_install and manual
+// triggers still call newDiscoveryDraft for a fresh start.
+//
+// Slices are deep-copied so subsequent mutations don't bleed back into the
+// caller's artifact.
+func newDiscoveryDraftFromArtifact(art *domain.MappingArtifactV3) *discoveryDraft {
+	if art == nil {
+		return newDiscoveryDraft()
+	}
+	return &discoveryDraft{
+		ClassifyingField: art.ClassifyingField,
+		Branches:         append([]domain.VerticalBranch(nil), art.Branches...),
+		ClassifyRules:    append([]domain.ClassifyRule(nil), art.ClassifyRules...),
+		Notes:            art.Notes,
+		toolErrorCount:   map[string]int{},
+	}
+}
+
 // Finalize freezes the draft into the canonical MappingArtifactV3. Called
 // from the commit tool. BuiltAt is left zero — runLoop stamps it.
 func (d *discoveryDraft) Finalize() *domain.MappingArtifactV3 {

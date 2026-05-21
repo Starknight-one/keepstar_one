@@ -315,10 +315,8 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 				"tenant", tenantID, "rows", len(listingsBatch), "error", err)
 		} else {
 			res.Applied += len(listingsBatch)
-			for _, itemID := range appliedItemIDs {
-				if mErr := uc.inbox.MarkApplied(ctx, itemID); mErr != nil {
-					uc.log.Warn("apply_v2_mark_applied_failed", "item", itemID, "error", mErr)
-				}
+			if mErr := uc.inbox.BulkMarkApplied(ctx, appliedItemIDs); mErr != nil {
+				uc.log.Warn("apply_v2_bulk_mark_applied_failed", "count", len(appliedItemIDs), "error", mErr)
 			}
 		}
 

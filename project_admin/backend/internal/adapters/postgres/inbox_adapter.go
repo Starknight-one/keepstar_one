@@ -198,6 +198,21 @@ func (a *InboxAdapter) MarkApplied(ctx context.Context, itemID string) error {
 	return nil
 }
 
+func (a *InboxAdapter) BulkMarkApplied(ctx context.Context, itemIDs []string) error {
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	_, err := a.client.pool.Exec(ctx, `
+		UPDATE catalog.inbox_items
+		SET applied_at = NOW()
+		WHERE id::text = ANY($1::text[])
+	`, itemIDs)
+	if err != nil {
+		return fmt.Errorf("inbox bulk mark applied: %w", err)
+	}
+	return nil
+}
+
 func (a *InboxAdapter) DeleteByTenant(ctx context.Context, tenantID string) error {
 	_, err := a.client.pool.Exec(ctx, `
 		DELETE FROM catalog.inbox_items WHERE tenant_id = $1

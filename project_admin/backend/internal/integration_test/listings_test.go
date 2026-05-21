@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"keepstar-admin/internal/adapters/postgres"
+	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
 )
 
@@ -30,7 +31,7 @@ func TestScenario_141_ListingUniqueness_OnRealPostgres(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 	t.Cleanup(client.Close)
-	writer := postgres.NewCatalogV2WriterAdapter(client)
+	writer := postgres.NewCatalogV2WriterAdapter(client, logger.New("error"))
 
 	masterID := seedMasterProduct(t, pool, tenantID, "ITEST-UNIQ-1")
 

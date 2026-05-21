@@ -43,6 +43,11 @@ type InboxPort interface {
 	// from this inbox item.
 	MarkApplied(ctx context.Context, itemID string) error
 
+	// BulkMarkApplied stamps applied_at=NOW() on many items in one UPDATE.
+	// Replaces a per-row MarkApplied loop in apply_v2 (60ms × N rows is
+	// the dominant cost on a 500-row Neon page). Order of IDs doesn't matter.
+	BulkMarkApplied(ctx context.Context, itemIDs []string) error
+
 	// DeleteByTenant removes all inbox rows for one tenant. Used on
 	// disconnect or full re-import. Cascades via FK from tenants.
 	DeleteByTenant(ctx context.Context, tenantID string) error

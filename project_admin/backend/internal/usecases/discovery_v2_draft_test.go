@@ -3,6 +3,8 @@ package usecases
 import (
 	"strings"
 	"testing"
+
+	"keepstar-admin/internal/domain"
 )
 
 // Tests for the builder-pattern validators in discoveryDraft. Each test
@@ -242,6 +244,95 @@ func TestDraft_Finalize_ReturnsV3Artifact(t *testing.T) {
 	}
 	if len(art.Branches) != 1 || art.Branches[0].Vertical != "cosmetics" {
 		t.Errorf("branches = %+v, want one cosmetics branch", art.Branches)
+	}
+}
+
+// === newDiscoveryDraftFromArtifact (B1 — discovery patch flow) ===
+
+func TestDraft_FromArtifact_RoundTripsViaFinalize(t *testing.T) {
+	src := &domain.MappingArtifactV3{
+		Version:          3,
+		ClassifyingField: "product_type",
+		Branches: []domain.VerticalBranch{
+			{
+				Vertical: "cosmetics",
+				FieldMap: []domain.FieldMappingRule{
+					{From: "title", To: "master.name"},
+					{From: "brand", To: "master.brand"},
+				},
+			},
+			{
+				Vertical: "haircare",
+				FieldMap: []domain.FieldMappingRule{
+					{From: "ingredients", To: "tier3.ingredients", Transform: "split", Default: ""},
+				},
+			},
+		},
+		ClassifyRules: []domain.ClassifyRule{
+			{When: "product_type contains 'Skincare'", ThenVertical: "cosmetics"},
+			{When: "product_type contains 'Hair'", ThenVertical: "haircare"},
+			{When: "product_type contains 'Body'", ThenVertical: "cosmetics"},
+		},
+		Notes: "seeded by alpha-0.9.4 round-trip test",
+	}
+
+	draft := newDiscoveryDraftFromArtifact(src)
+	if draft == nil {
+		t.Fatal("newDiscoveryDraftFromArtifact returned nil")
+	}
+	if draft.ClassifyingField != "product_type" {
+		t.Errorf("ClassifyingField = %q, want product_type", draft.ClassifyingField)
+	}
+	if len(draft.Branches) != 2 || len(draft.ClassifyRules) != 3 {
+		t.Errorf("draft has %d branches / %d rules, want 2 / 3", len(draft.Branches), len(draft.ClassifyRules))
+	}
+
+	out := draft.Finalize()
+	if out.ClassifyingField != src.ClassifyingField {
+		t.Errorf("round-trip ClassifyingField %q != %q", out.ClassifyingField, src.ClassifyingField)
+	}
+	if len(out.Branches) != len(src.Branches) {
+		t.Errorf("round-trip branches %d != %d", len(out.Branches), len(src.Branches))
+	}
+	if len(out.ClassifyRules) != len(src.ClassifyRules) {
+		t.Errorf("round-trip rules %d != %d", len(out.ClassifyRules), len(src.ClassifyRules))
+	}
+	if out.Notes != src.Notes {
+		t.Errorf("round-trip Notes %q != %q", out.Notes, src.Notes)
+	}
+}
+
+func TestDraft_FromArtifact_NilArtifact_FallsBackToEmpty(t *testing.T) {
+	draft := newDiscoveryDraftFromArtifact(nil)
+	if draft == nil {
+		t.Fatal("expected empty draft, got nil")
+	}
+	if draft.ClassifyingField != "" || len(draft.Branches) != 0 || len(draft.ClassifyRules) != 0 {
+		t.Errorf("nil artifact should produce empty draft, got %+v", draft)
+	}
+	if draft.toolErrorCount == nil {
+		t.Error("toolErrorCount must be initialized to empty map")
+	}
+}
+
+func TestDraft_FromArtifact_DeepCopiesSlices(t *testing.T) {
+	src := &domain.MappingArtifactV3{
+		Branches: []domain.VerticalBranch{
+			{Vertical: "cosmetics", FieldMap: []domain.FieldMappingRule{{From: "title", To: "master.name"}}},
+		},
+		ClassifyRules: []domain.ClassifyRule{{When: "x", ThenVertical: "cosmetics"}},
+	}
+	draft := newDiscoveryDraftFromArtifact(src)
+
+	// Mutate draft slices; src must remain intact.
+	draft.Branches = append(draft.Branches, domain.VerticalBranch{Vertical: "extra"})
+	draft.ClassifyRules = append(draft.ClassifyRules, domain.ClassifyRule{When: "y", ThenVertical: "extra"})
+
+	if len(src.Branches) != 1 {
+		t.Errorf("src.Branches mutated: len = %d, want 1", len(src.Branches))
+	}
+	if len(src.ClassifyRules) != 1 {
+		t.Errorf("src.ClassifyRules mutated: len = %d, want 1", len(src.ClassifyRules))
 	}
 }
 

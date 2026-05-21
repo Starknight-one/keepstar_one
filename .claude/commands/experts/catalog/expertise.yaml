@@ -7,18 +7,29 @@
 # rebuild — MappingArtifactV3 (multi-vertical branches + classify_rules),
 # deterministic SKU→GTIN→NormalizedMatchKey cascade in MatchOrCreateMaster,
 # masters are IMMUTABLE on bind, products/delete soft-delete listing webhook.
-# 2026-05-20: catalog-flow bundled milestone — (a) MappingArtifactV3 gains
-# ClassifyingField so apply_v2 reads tenant-specific category column (Sephora
-# CSV primary_category, Shopify product_type, etc.) instead of hardcoded
-# Shopify synonyms; (b) discovery_v2 grows master-side tools via new
-# MasterDigestPort (list_master_categories, digest_master_category,
-# find_master_by_sku/gtin, list_master_brands_in_category); (c) pending-approval
-# staging — new masters land approval_status='pending_approval' (30-day TTL),
-# bind-path enrichments stage into catalog.master_pending_changes via
-# EnrichExistingMaster (curator approves/rejects); (d) bulk batched upserts
-# (InboxPort.BulkUpsert, CatalogV2WriterPort.BulkUpsertListing) for Sephora-scale
-# seeds; (e) daily cron (CronDailySourcePull) re-runs ManualSync per tenant
-# behind KEEPSTAR_DAILY_SOURCE_PULL=1 env gate.
+# 2026-05-20 (Alpha 0.9.1): catalog-flow bundled milestone — (a) MappingArtifactV3
+# gains ClassifyingField so apply_v2 reads tenant-specific category column
+# (Sephora primary_category, Shopify product_type, etc.); (b) discovery_v2 grows
+# master-side tools (MasterDigestPort + 5 tools); (c) pending-approval staging
+# (approval_status='pending_approval' 30-day TTL; bind enriches stage into
+# catalog.master_pending_changes); (d) bulk InboxPort.BulkUpsert +
+# BulkUpsertListing; (e) CronDailySourcePull (KEEPSTAR_DAILY_SOURCE_PULL=1 gate).
+# 2026-05-21 (Alpha 0.9.2): builder-pattern discovery — single commit_artifact
+# JSON-blob terminal replaced by 8 small builder tools (set_classifying_field,
+# add_branch, add_field_mapping, add_classify_rule, remove_field_mapping,
+# remove_classify_rule, inspect_draft, commit) backed by run-scoped
+# discoveryDraft. Each mutation validates at call time against cached inbox
+# shape (Levenshtein typo suggestions), allowlisted master/cosmetics columns,
+# and transform/target-type compatibility — tool_error → agent self-corrects in
+# same run. PLUS transform empty-input tolerance: numeric/int/ml_from_string/
+# g_from_string return (nil,nil) on empty/whitespace input → apply drops the
+# rule for that row, NO mapping_miss (Sephora optional fields no longer kill
+# apply). 2026-05-22 (Alpha 0.9.3): bulk apply path — applyOne now returns a
+# preparedApply struct (no DB writes), ApplyForTenant collects a full inbox
+# page then runs BulkMatchOrCreateMaster → split by wasCreated →
+# BulkUpsertCosmetics + BulkMergeTier3 (newly-created) + EnrichExistingMaster
+# (bind) + BulkUpsertListing. ~2000 roundtrips/batch → ~10. Sephora 8.5k apply
+# drops from ~30 min to seconds.
 
 overview:
   cross_cutting: true
@@ -168,7 +179,7 @@ write_side_pipeline:
         - "internal/usecases/inbox.go — InboxUseCase {WriteFromShopifyBulk, WriteFromCSV, WriteFromSheets, WriteManual}; computes payload_hash (SHA-256 canonical JSON)"
       writes_to: "catalog.inbox_items (raw JSONB, source_kind, external_id, payload_hash). Idempotent via UNIQUE(tenant_id, source_kind, external_id) — re-pulls of unchanged payloads return 'unchanged' and don't reset applied_at."
     2_discovery_v2:
-      file: "internal/usecases/discovery_v2.go (481 LOC) + discovery_v2_tools.go (609 LOC)"
+      file: "internal/usecases/discovery_v2.go (546 LOC) + discovery_v2_tools.go (812 LOC) + discovery_v2_draft.go (506 LOC, NEW 2026-05-21)"
       use_case: "DiscoveryV2.Discover(ctx, tenantID, trigger, triggerPayload) → *MappingArtifactV3. Constructor 2026-05-20 takes (llm, inbox InboxPort, digest MasterDigestPort, artifact, actionLog, agentRuns, log) — digest may be nil only in tests."
       model: "claude-sonnet-4-6 (was Haiku in legacy DiscoveryAgent)"
       triggers: |
@@ -195,8 +206,14 @@ write_side_pipeline:
           - "find_master_by_sku(sku) — MasterRef or null (case-insensitive)"
           - "find_master_by_gtin(gtin) — MasterRef or null (exact)"
           - "list_master_brands_in_category(category_id, limit≤100, default 30) — top brands desc"
-        terminal:
-          - "commit_artifact — finalize. REQUIRED: classifying_field (string). Dispatcher smoke-tests classify against PeekFullRows(5) and rejects when coverage is poor."
+        builder_2026_05_21:
+          - "set_classifying_field(field) — pick & validate the inbox category key; field must exist in cached inbox shape"
+          - "add_branch(vertical) — declare a vertical branch; vertical must match closed set used by ClassifyVertical"
+          - "add_field_mapping(vertical, from, to, transform, default) — one rule; validates from (Levenshtein suggestions if typo), to (allowlist of master.*/cosmetics.*/tier3.*), transform/target compatibility"
+          - "add_classify_rule(when, then_vertical) — DSL: product_type|brand|name|tag (contains|=) X; rejects unsupported predicates"
+          - "remove_field_mapping(vertical, from), remove_classify_rule(index) — undo for self-correction"
+          - "inspect_draft — read current run-scoped discoveryDraft state"
+          - "commit — finalize draft → MappingArtifactV3 persisted (was 'commit_artifact' with JSON blob, replaced 2026-05-21); dispatcher smoke-tests classify against PeekFullRows(5) and rejects when coverage poor"
       prompt_caching: "tool list cache-breakpointed on last ToolDef (ephemeral). Static system block also cached; dynamic trigger context separate uncached block."
       side_effects:
         - "admin.agent_runs Start/AppendTool/AddTokens/Finish around every run"
@@ -214,40 +231,44 @@ write_side_pipeline:
         Empty ClassifyingField on read = legacy artifact → apply_v2 falls back to synonym list.
         Status column now 'active' (was 'validated').
     3_apply_v2:
-      file: "internal/usecases/apply_v2.go (800 LOC, up from 660) + apply_v2_transforms.go (~274 LOC); helpers classify_vertical.go + match_key.go"
+      file: "internal/usecases/apply_v2.go (924 LOC, up from 800) + apply_v2_transforms.go (~293 LOC); helpers classify_vertical.go + match_key.go"
       use_case: "ApplyV2UseCase.ApplyForTenant(ctx, tenantID) → *ApplyResult"
-      flow_v3: |
-        Per inbox row WHERE applied_at IS NULL (batched 100):
+      flow_v3_bulk_2026_05_22: |
+        Apply is now PAGE-BATCHED (Alpha 0.9.3, commit 716f51f). Per inbox page:
+        Phase A — applyOne (pure, no DB writes) per row builds a preparedApply struct:
           1. Parse raw JSONB.
           2. classifyContextFromRaw(raw, art) → ClassifyContext{ProductType, Brand, Name, Tags}.
              Reads art.ClassifyingField first (e.g. 'primary_category'); falls back to synonyms
-             {product_type, productType, primary_category, category, type, kind, department}
-             for legacy artifacts. Brand synonyms: {brand, vendor, brand_name, manufacturer, maker}.
+             {product_type, productType, primary_category, category, type, kind, department}.
+             Brand synonyms: {brand, vendor, brand_name, manufacturer, maker}.
              Name synonyms: {name, title, product_name, display_name}.
           3. ClassifyVertical(ctx, writer.LookupVertical, art.ClassifyRules, cctx) → (vertical, source)
              cascade: alias → rules → "unknown".
           4. art.FindBranch(vertical): exact → "unknown" fallback. Branch missing → mapping_miss
              with synthetic key "branch.<vertical>" so agent adds it.
           5. Walk branch.field_map: build MasterProductUpsert + MasterCosmeticsUpsert + tier3 patch
-             + listing fields; apply transforms.
+             + listing fields; apply transforms. Empty-input tolerance: numeric/int/ml_from_string/
+             g_from_string return (nil,nil) on empty → rule dropped for this row, NO mapping_miss.
           6. Override mp.Vertical with classified value (rules don't get to disagree).
           7. Reject row if Name AND SKU both empty → mapping_miss "no signal".
           8. If SKU empty but Name present → synthesize "auto-<source_kind>-<external_id>".
-          9. mp.NormalizedMatchKey = NormalizeMatchKey(brand, name).
-         10. mp.CreateAsPending = true (NEW 2026-05-20) — adapter applies approval_status
-             on insert only.
-         11. writer.MatchOrCreateMaster(mp) → (masterID, wasCreated) deterministic 3-stage cascade:
-             SKU (lowercased exact) → GTIN (digits-only exact) → NormalizedMatchKey exact.
-             Insert branch sets approval_status='pending_approval' + pending_approval_expires_at=NOW()+30d.
-         12. IF wasCreated: write Tier2 (master_cosmetics) when vertical='cosmetics' AND hasCosmetics;
-             merge tier3 patch. IF !wasCreated (BIND): master_products row is IMMUTABLE;
-             call writer.EnrichExistingMaster([]EnrichRequest{{MasterProductID, TenantID,
-             SourceInboxItemID, Scalars: buildEnrichScalars(mp, cosmetics, vertical, tier3),
-             Arrays: buildEnrichArrays(cosmetics, vertical)}}) — stages proposed scalar fills +
-             array-union elements into catalog.master_pending_changes for curator approval.
-         13. ALWAYS UpsertListing (price/stock/title/master_product_id link). Bulk variant
-             BulkUpsertListing exists on the port for batched seed paths.
-         14. Mark inbox row applied_at = NOW().
+          9. mp.NormalizedMatchKey = NormalizeMatchKey(brand, name); mp.CreateAsPending=true.
+         10. Return preparedApply{MP, Cosmetics, Tier3Patch, Listing, InboxItemID, …}.
+        Phase B — bulk staging across the whole page:
+         11. writer.BulkMatchOrCreateMaster([]MasterProductUpsert) → []MatchResult{MasterID, WasCreated}.
+             3-stage cascade still strict-exact (SKU→GTIN→NormalizedMatchKey); INSERT branch sets
+             approval_status='pending_approval'+30d when CreateAsPending=true.
+         12. Split MatchResults by WasCreated:
+             - newly-created cosmetics-vertical rows → BulkUpsertCosmetics([]BulkCosmeticsItem)
+             - newly-created any-vertical rows → BulkMergeTier3([]BulkTier3Item) (top-level JSON merge)
+             - bind (wasCreated=false) rows → EnrichExistingMaster([]EnrichRequest) already bulk since 0.9.1
+         13. BulkUpsertListing([]ListingUpsert) for every row (chunked UNNEST, ~500/chunk).
+         14. MarkApplied for the whole page (one UPDATE).
+        Total DB roundtrips per 500-row batch: ~10 (was ~2000 in per-row mode).
+      legacy_per_row_path: |
+        Per-row writer methods (MatchOrCreateMaster, UpsertCosmetics, MergeTier3, UpsertListing,
+        EnrichExistingMaster single-item) remain on the port — used by tests, single-webhook
+        OnWebhook ingest, and as fallbacks. ApplyForTenant no longer uses them.
       first_install_cascade: "If no artifact yet → ApplyForTenant calls discovery.Discover(trigger='first_install') and uses its output."
       mapping_miss_loop: |
         On transform fail, unknown target prefix, missing branch (trigger='unknown_vertical'),
@@ -342,10 +363,11 @@ usecases_inventory:
     - "integrations.go, integrations_wipe.go — list/connect/disconnect tenant integrations"
     - "csv_mapping.go — CSV → schema mapping (365 LOC)"
   catalog_v2_loop:
-    - "discovery_v2.go (481 LOC, up from ~430) — DiscoveryV2.Discover → *MappingArtifactV3; Sonnet 4.6 agentic loop; constructor takes MasterDigestPort (2026-05-20); 12 tools (6 inbox + 5 master + commit); $5/10min/30-turn budget; triggers include 'unknown_vertical'"
-    - "discovery_v2_tools.go (609 LOC, up from ~340) — ToolDefs + dispatchTool(ctx, inbox, digest, tenantID, ...); commit_artifact requires classifying_field; smokeTestClassify (NEW 2026-05-20) calls inbox.PeekFullRows(5) and runs ClassifyVertical on each sample — covered/sampled stats reported"
-    - "apply_v2.go (800 LOC, up from ~660) — ApplyV2UseCase.ApplyForTenant; classifyContextFromRaw(raw, art) uses art.ClassifyingField+synonyms; mp.CreateAsPending=true; bind path stages via EnrichExistingMaster; buildEnrichScalars / buildEnrichArrays helpers; mapping_miss loop (cap 3/run)"
-    - "apply_v2_transforms.go (~274 LOC) — getPath(raw, dotted), applyV2Transform (lowercase|trim|split:<delim>|ml_from_string|g_from_string|bool_from_yesno|int|numeric); unknown transform = pass-through with warn"
+    - "discovery_v2.go (546 LOC) — DiscoveryV2.Discover → *MappingArtifactV3; Sonnet 4.6 agentic loop; constructor takes MasterDigestPort; 19 tools (6 inbox + 5 master + 8 builder); $5/10min/30-turn budget; triggers {first_install, manual, mapping_miss, unknown_vertical}"
+    - "discovery_v2_tools.go (812 LOC) — ToolDefs + dispatchTool(ctx, draft *discoveryDraft, inbox, digest, tenantID, ...); 'commit' tool finalizes the run-scoped draft; smokeTestClassify calls inbox.PeekFullRows(5) and runs ClassifyVertical on each sample — covered/sampled stats reported"
+    - "discovery_v2_draft.go (506 LOC, NEW 2026-05-21) — discoveryDraft run-scoped builder; per-mutation validation (cached inbox shape with Levenshtein typo suggestions, allowlisted master/cosmetics columns from domain reflection, transform/target type compatibility). Returns tool_error for self-correction in same run."
+    - "apply_v2.go (924 LOC, up from 800) — ApplyV2UseCase.ApplyForTenant page-batched bulk staging (BulkMatchOrCreateMaster → split → BulkUpsertCosmetics/BulkMergeTier3/EnrichExistingMaster/BulkUpsertListing); applyOne returns preparedApply (no DB writes); classifyContextFromRaw(raw, art); mapping_miss loop cap 3/run"
+    - "apply_v2_transforms.go (~293 LOC) — getPath(raw, dotted), applyV2Transform (lowercase|trim|split:<delim>|ml_from_string|g_from_string|bool_from_yesno|int|numeric); numeric/int/ml/g return (nil,nil) on empty/whitespace input (Alpha 0.9.2 tolerance); unknown transform = pass-through with warn"
     - "classify_vertical.go (NEW 2026-05-15) — ClassifyVertical(ctx, VerticalAliasLookup, []ClassifyRule, ClassifyContext) → (vertical, ClassifyVerticalSource ∈ {alias, rule, unknown}). Tiny DSL: 'product_type contains X', 'brand = X', 'name contains X', 'tag = X' (case-insensitive)."
     - "match_key.go (NEW 2026-05-15) — NormalizeMatchKey(brand, name): strip non-alphanumeric (unicode \\p{L}\\p{N}), collapse whitespace, lowercase. MUST stay byte-for-byte identical to the Postgres backfill regex in catalog_migrations.go."
     - "update_orchestrator.go (181 LOC) — UpdateOrchestrator {OnWebhook (24h rate-limit), ManualSync, OnMappingMiss}"
@@ -356,14 +378,14 @@ usecases_inventory:
     - "domain/master_digest.go (NEW 2026-05-20) — MasterCategoryNode {ID, Slug, Name, ParentID, Vertical, ProductCount}; MasterCategoryDigest {CategoryID, CategoryName, Vertical, ProductCount, TopBrands[≤10], SampleNames[≤10]}; MasterRef {ID, SKU, Name, Brand, Vertical, GTIN}. Read-only views returned by discovery_v2 master-side tools."
     - "domain/audit.go — added AuditActionApprove/Reject/Expire (NEW 2026-05-20) for the pending-approval lifecycle; Expire is emitted by sweeper that transitions 30-day-stale pending rows to status='expired'"
   ports_catalog_v2:
-    - "ports/catalog_v2_writer_port.go — MatchOrCreateMaster (REPLACES UpsertMaster 2026-05-15) → (id, wasCreated, error) 3-stage SKU→GTIN→NormalizedMatchKey cascade insert-on-miss / no-update-on-hit; sets approval_status='pending_approval'+30d-TTL when mp.CreateAsPending=true (2026-05-20). UpsertCosmetics; MergeTier3; UpsertListing; BulkUpsertListing (NEW 2026-05-20) → batched UNNEST in ~500-row chunks; LookupVertical (vertical_aliases lookup, lowercased); SoftDeleteListing(tenant, sourceSystem, sourceID); EnrichExistingMaster([]EnrichRequest)→(count,err) (NEW 2026-05-20) — stages enrich_scalar_fill + enrich_array_union rows into master_pending_changes; NOT EXISTS dedup; isEmptyScalar drops nil/'' /0. MasterProductUpsert adds CreateAsPending bool. New EnrichRequest{MasterProductID, TenantID, SourceInboxItemID, Scalars map[string]any, Arrays map[string][]string}."
+    - "ports/catalog_v2_writer_port.go — Per-row: MatchOrCreateMaster (REPLACED UpsertMaster 2026-05-15) → (id, wasCreated, err) 3-stage SKU→GTIN→NormalizedMatchKey cascade insert-on-miss/no-update-on-hit; sets approval_status='pending_approval'+30d-TTL when mp.CreateAsPending=true. UpsertCosmetics, MergeTier3, UpsertListing, SoftDeleteListing(tenant, sourceSystem, sourceID), LookupVertical. Bulk (used by ApplyForTenant since 2026-05-22): BulkMatchOrCreateMaster([]MasterProductUpsert)→([]MatchResult,err); BulkUpsertCosmetics([]BulkCosmeticsItem)→(count,err); BulkMergeTier3([]BulkTier3Item)→(count,err) — top-level JSON merge; BulkUpsertListing([]ListingUpsert)→(count,err) UNNEST ~500/chunk; EnrichExistingMaster([]EnrichRequest)→(count,err) stages enrich_scalar_fill+enrich_array_union into master_pending_changes (NOT EXISTS dedup; isEmptyScalar drops nil/''/0). Domain types: MatchResult{MasterID, WasCreated}, BulkCosmeticsItem{MasterID, Fields *MasterCosmeticsUpsert}, BulkTier3Item{MasterID, Patch map[string]any}, EnrichRequest{MasterProductID, TenantID, SourceInboxItemID, Scalars map[string]any, Arrays map[string][]string}. MasterProductUpsert has CreateAsPending bool."
     - "ports/inbox_port.go — InboxPort: existing Upsert + NEW BulkUpsert(items []*InboxItem)→(changed int, err) (2026-05-20). Same idempotency/ON CONFLICT semantics; chunked at 500 rows via UNNEST; empty TenantID/ExternalID/SourceKind rows silently skipped; per-row error attribution requires Upsert."
     - "ports/master_digest_port.go (NEW 2026-05-20) — MasterDigestPort: ListMasterCategories(vertical, limit), DigestMasterCategory(categoryID), FindMasterBySKU(sku, case-insensitive), FindMasterByGTIN(gtin), ListMasterBrandsInCategory(categoryID, limit). All global (not tenant-scoped); read-only views of master catalog exposed to discovery_v2 LLM agent."
     - "ports/mapping_artifact_v2_port.go — file name retained; type now *MappingArtifactV3 on Save/Get. Meta.Status enum 'active'|'stale'|'needs_human_review' (was 'validated' pre-2026-05-15)."
   adapters_2026_05_20_additions:
-    - "adapters/postgres/master_digest_adapter.go (NEW, 240 LOC) — MasterDigestAdapter implements MasterDigestPort; read-only queries against catalog.master_categories + catalog.master_products + M:N table; bounded by per-query LIMITs."
-    - "adapters/postgres/catalog_v2_writer_adapter.go — gains EnrichExistingMaster + BulkUpsertListing (one UNNEST INSERT per ~500-row chunk); MatchOrCreateMaster INSERT extended with approval_status + pending_approval_expires_at columns under CASE WHEN mp.CreateAsPending"
-    - "adapters/postgres/inbox_adapter.go — BulkUpsert via UNNEST WITH ORDINALITY + prior CTE (LEFT JOIN against existing payload_hash so changed-vs-unchanged is computed before the upsert rewrites it); 500-row batches; cuts ~8.5k Sephora seed from ~8500 roundtrips to ~17"
+    - "adapters/postgres/master_digest_adapter.go (240 LOC, NEW 2026-05-20) — MasterDigestAdapter implements MasterDigestPort; read-only queries against catalog.master_categories + catalog.master_products + M:N table; bounded by per-query LIMITs."
+    - "adapters/postgres/catalog_v2_writer_adapter.go (1106 LOC, up from ~686) — gains BulkMatchOrCreateMaster + BulkUpsertCosmetics + BulkMergeTier3 (Alpha 0.9.3); plus prior EnrichExistingMaster + BulkUpsertListing (one UNNEST INSERT per ~500-row chunk); MatchOrCreateMaster INSERT extended with approval_status + pending_approval_expires_at columns under CASE WHEN mp.CreateAsPending."
+    - "adapters/postgres/inbox_adapter.go (436 LOC) — BulkUpsert via UNNEST WITH ORDINALITY + prior CTE (LEFT JOIN against existing payload_hash so changed-vs-unchanged is computed before the upsert rewrites it); 500-row batches; cuts ~8.5k Sephora seed from ~8500 roundtrips to ~17"
   enrichment:
     - "enrichment.go (509) — LLM-driven master product enrichment (PIM fields, descriptions). Untouched by catalog-v2 rebuild."
   shopify_v2:
@@ -445,6 +467,9 @@ invariants:
   - "Discovery_v2 must call MASTER-side tools (list_master_categories, digest_master_category) BEFORE finalizing field_map (system prompt enforces Step 2 = look at master catalog FIRST). The agent should mirror our existing taxonomy, not invent parallel structures. MasterDigestPort.ListMasterCategories joins through M:N (master_product_categories) — schema change to that table will alter all 5 digest tool outputs."
   - "InboxPort.BulkUpsert is the seed/scale path; Upsert is the per-row error-attribution path. WriteFromShopifyBulk + writeFromMapRows USE BulkUpsert. ShopifyV2.UpdateOrchestrator.OnWebhook still uses Upsert per-row (single-product event). Don't replace Upsert call sites with BulkUpsert in the per-webhook path."
   - "CronDailySourcePull is OFF by default. Enable with KEEPSTAR_DAILY_SOURCE_PULL=1. main.go starts the ticker only when both the env var = '1' AND catalogV2Orchestrator != nil (i.e. AnthropicAPIKey was configured at boot). Dev/test runs naturally stay off so they don't burn tokens nightly."
+  - "ApplyForTenant is BULK since Alpha 0.9.3 (2026-05-22): applyOne is pure (no DB writes) and returns a preparedApply struct; the use case collects a full inbox page then issues ~10 bulk writes (BulkMatchOrCreateMaster, BulkUpsertCosmetics, BulkMergeTier3, EnrichExistingMaster, BulkUpsertListing, MarkApplied). Per-row port methods stay live for tests and the single-product webhook path. Don't add a per-row write inside applyOne — it will execute outside the page transaction shape and break the page-level idempotency the bulk path provides."
+  - "Discovery_v2 is a BUILDER since Alpha 0.9.2 (2026-05-21): the single commit_artifact JSON-blob terminal is gone. The agent must call set_classifying_field, add_branch, add_field_mapping, add_classify_rule (with optional remove_*/inspect_draft) and finalize with 'commit'. Each builder call validates against the cached inbox shape, the allowlisted master/cosmetics target columns (sourced from domain reflection), and transform/target type compatibility — invalid args return tool_error and the agent self-corrects in the same run within the $5 budget. New target columns added to master_products/master_cosmetics MUST be reflected in the allowlist or builder will reject them."
+  - "Transform empty-input tolerance (Alpha 0.9.2): numeric, int, ml_from_string, g_from_string return (nil, nil) on empty or whitespace input. apply_v2.applyOne treats nil as 'no value' and drops the rule for that row — NO mapping_miss. Required side effect: optional numeric fields (Sephora sale_price_usd, child_min_price; any partially-populated CSV) no longer kill apply. If you add a new numeric-ish transform, mirror the same (nil,nil)-on-empty contract."
 
 gotchas:
   - "V5 read-side does NOT filter by approval_status today (2026-05-20). New masters inserted as 'pending_approval' are still visible to V5 chat. The intended invariant (approved-only on read) requires updating postgres_catalog.go ListProducts/GetProduct/BuildCatalogDigest WHERE clauses + VectorSearch — follow-up work."
@@ -476,7 +501,9 @@ related_experts:
 active_workstreams:
   tracker: "docs/CATALOG_GAPS.md + docs/PRE_LAUNCH_TASKS.md + docs/CATALOG_V2_TEST_SPEC.md"
   recent_milestones:
-    - "Catalog-flow bundled milestone (2026-05-20, uncommitted): (a) MappingArtifactV3.ClassifyingField — discovery_v2 picks the tenant's category column (Shopify product_type / Sephora primary_category / etc.) and apply_v2.classifyContextFromRaw reads it; (b) discovery_v2 master-side tools — new MasterDigestPort/Adapter, 5 tools (list_master_categories, digest_master_category, find_master_by_sku, find_master_by_gtin, list_master_brands_in_category) so agent mirrors existing taxonomy; (c) pending-approval staging — catalog.master_pending_changes table, master_products.approval_status/pending_approval_expires_at/approved_at/approved_by columns, EnrichExistingMaster port+adapter, mp.CreateAsPending=true on every insert, AuditActionApprove/Reject/Expire; (d) bulk batched upserts — InboxPort.BulkUpsert + CatalogV2WriterPort.BulkUpsertListing via UNNEST 500-row chunks, WriteFromShopifyBulk + writeFromMapRows switched to bulk; (e) CronDailySourcePull (KEEPSTAR_DAILY_SOURCE_PULL=1 env gate, 24h ticker with 1-minute startup stagger, ManualSync per active tenant)."
+    - "Alpha 0.9.3 — Bulk MatchOrCreate + Cosmetics + Tier3 in apply (2026-05-22, commit 716f51f): applyOne returns preparedApply with no DB writes; ApplyForTenant collects a page then runs BulkMatchOrCreateMaster → BulkUpsertCosmetics + BulkMergeTier3 (newly-created) + EnrichExistingMaster (bind) + BulkUpsertListing. New port methods + domain types (MatchResult, BulkCosmeticsItem, BulkTier3Item). ~2000→~10 roundtrips/batch; Sephora 8.5k apply ~30 min → seconds."
+    - "Alpha 0.9.2 — Builder-pattern discovery + transform empty-input tolerance (2026-05-21, commit 6597359): commit_artifact (single JSON blob) replaced by 8 builder tools (set_classifying_field, add_branch, add_field_mapping, add_classify_rule, remove_field_mapping, remove_classify_rule, inspect_draft, commit) backed by run-scoped discoveryDraft with at-call-time validation; agent self-corrects via tool_error. Transform tolerance: numeric/int/ml/g return (nil,nil) on empty input → rule dropped, no mapping_miss."
+    - "Alpha 0.9.1 — Catalog-flow bundled milestone (2026-05-20, commit ca6cf3f): (a) MappingArtifactV3.ClassifyingField — discovery_v2 picks the tenant's category column (Shopify product_type / Sephora primary_category / etc.) and apply_v2.classifyContextFromRaw reads it; (b) discovery_v2 master-side tools — new MasterDigestPort/Adapter, 5 tools (list_master_categories, digest_master_category, find_master_by_sku, find_master_by_gtin, list_master_brands_in_category) so agent mirrors existing taxonomy; (c) pending-approval staging — catalog.master_pending_changes table, master_products.approval_status/pending_approval_expires_at/approved_at/approved_by columns, EnrichExistingMaster port+adapter, mp.CreateAsPending=true on every insert, AuditActionApprove/Reject/Expire; (d) bulk batched upserts — InboxPort.BulkUpsert + CatalogV2WriterPort.BulkUpsertListing via UNNEST 500-row chunks, WriteFromShopifyBulk + writeFromMapRows switched to bulk; (e) CronDailySourcePull (KEEPSTAR_DAILY_SOURCE_PULL=1 env gate, 24h ticker with 1-minute startup stagger, ManualSync per active tenant)."
     - "Structured-discovering-lollipop rebuild (2026-05-15 evening, commit d2f2d1c): MappingArtifactV3 (branches+classify_rules); vertical_aliases table; master_products.gtin+normalized_match_key; products.tenant_overrides JSONB; MatchOrCreateMaster 3-stage cascade; immutable masters on bind; products/delete soft-delete webhook; new helpers classify_vertical.go + match_key.go + mapping_artifact_v3.go"
     - "Legacy code purge (2026-05-15, commit 62a2e36) — 23 files deleted, shopify_v2.go -455 LOC; inbox ingester is now required"
     - "Catalog-v2 ShopifyIngester wired to install + webhook, forgiving vertical fallback (2026-05-15, commit 8ddaaa5)"
@@ -487,17 +514,19 @@ active_workstreams:
   hot_files:
     - "project_admin/.../shopify/client.go (1302 LOC) — Shopify API; split candidate (products/orders/webhooks/oauth)"
     - "project_admin/.../catalog_adapter.go (1293 LOC) — admin write-side DB; split candidate"
+    - "project_admin/.../catalog_v2_writer_adapter.go (1106 LOC, up from 686) — +BulkMatchOrCreateMaster + BulkUpsertCosmetics + BulkMergeTier3 (Alpha 0.9.3); prior EnrichExistingMaster + BulkUpsertListing + pending-approval branch"
+    - "project_admin/.../apply_v2.go (924 LOC, up from 800) — applyOne→preparedApply (no DB writes); ApplyForTenant page-batched bulk staging"
+    - "project_admin/.../catalog_migrations.go (891 LOC)"
     - "project_admin/.../canvas_adapter.go (870 LOC)"
-    - "project_admin/.../catalog_migrations.go (891 LOC) — +master_pending_changes table, master_products approval_status columns + partial idx (2026-05-20)"
-    - "project_admin/.../apply_v2.go (800 LOC, up from 660) — classifyContextFromRaw(raw, art) + bind-path EnrichExistingMaster + buildEnrichScalars/Arrays"
-    - "project_admin/.../cmd/server/main.go (854 LOC) — MasterDigestAdapter DI + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker"
+    - "project_admin/.../cmd/server/main.go (865 LOC) — MasterDigestAdapter DI + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker"
+    - "project_admin/.../discovery_v2_tools.go (812 LOC, up from 609) — +8 builder tools, 5 master tools, draft-aware dispatcher"
     - "project_v5/.../postgres_catalog.go (727 LOC) — V5 read-side; master_cosmetics JOIN + tier3-precedence merge"
-    - "project_admin/.../catalog_v2_writer_adapter.go (686 LOC, up from ~420) — +EnrichExistingMaster + BulkUpsertListing + approval_status branch in MatchOrCreateMaster"
     - "project_admin/.../shopify_v2.go (623 LOC)"
-    - "project_admin/.../discovery_v2_tools.go (609 LOC, up from ~340) — +5 master-side tools + smokeTestClassify"
+    - "project_admin/.../discovery_v2.go (546 LOC, up from 481) — builder-aware agent loop"
+    - "project_admin/.../discovery_v2_draft.go (506 LOC, NEW 2026-05-21) — run-scoped discoveryDraft with at-call-time validation"
     - "project_admin/.../enrichment.go (509 LOC)"
     - "project_admin/.../smoke_catalog_v2/main.go (492 LOC) — end-to-end smoke for full v2 loop"
-    - "project_admin/.../discovery_v2.go (481 LOC, up from ~430) — MasterDigestPort dep + commit_artifact requires classifying_field"
     - "project_admin/.../import.go (449 LOC)"
-    - "project_admin/.../inbox_adapter.go (436 LOC, up from ~327) — BulkUpsert via UNNEST WITH ORDINALITY + prior CTE"
-    - "project_admin/.../master_digest_adapter.go (240 LOC, NEW 2026-05-20)"
+    - "project_admin/.../inbox_adapter.go (436 LOC) — BulkUpsert via UNNEST WITH ORDINALITY + prior CTE"
+    - "project_admin/.../apply_v2_transforms.go (293 LOC) — empty-input-tolerant numeric/int/ml/g"
+    - "project_admin/.../master_digest_adapter.go (240 LOC)"

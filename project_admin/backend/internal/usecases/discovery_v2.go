@@ -167,7 +167,26 @@ func (d *DiscoveryV2) runLoop(ctx context.Context, tenantID, trigger string, tri
 	// draft is the run-scoped artifact under construction. Builder tools
 	// (set_classifying_field, add_branch, add_field_mapping, …, commit)
 	// mutate it; commit returns Finalize() through dispatchResult.CommitArtifact.
-	draft := newDiscoveryDraft()
+	//
+	// On mapping_miss / unknown_vertical the draft is seeded from the existing
+	// artifact so the agent patches instead of rebuilding. On first_install /
+	// manual the draft starts empty (manual = explicit full re-discovery).
+	var draft *discoveryDraft
+	if trigger == "mapping_miss" || trigger == "unknown_vertical" {
+		existing, _, gErr := d.artifact.Get(ctx, tenantID)
+		if gErr == nil && existing != nil {
+			draft = newDiscoveryDraftFromArtifact(existing)
+			_ = d.actionLog.Log(ctx, &ports.TenantActionLogEntry{
+				TenantID: tenantID,
+				Action:   "discovery_patch_from_existing",
+				Status:   "ok",
+				Payload:  marshalOrEmpty(map[string]any{"run_id": runID, "trigger": trigger, "branches": len(existing.Branches), "rules": len(existing.ClassifyRules)}),
+			})
+		}
+	}
+	if draft == nil {
+		draft = newDiscoveryDraft()
+	}
 
 	messages := []anthropic.Message{
 		{

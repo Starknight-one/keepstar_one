@@ -616,8 +616,18 @@ func TestScenario_121and123_MappingMiss_ActionLogAndArtifactRefetch(t *testing.T
 	seedCosmeticsAlias(writer)
 	apply := NewApplyV2(inbox, artifact, writer, log, discovery, llog)
 
-	// When discovery is triggered, it commits the "good" artifact (no bad rule).
-	sender.responses = commitArtifactResponse(simpleCommittedArtifact(), 100, 50)
+	// When discovery is triggered on mapping_miss, the draft is now seeded
+	// from the existing (bad) artifact (B1 in alpha-0.9.4). The mock agent
+	// removes the offending rule first, then sends the standard commit
+	// sequence. The remaining add_branch / add_field_mapping calls in the
+	// commit sequence return tool_errors against the pre-loaded duplicates;
+	// that's fine — commit Finalizes whatever draft state survived.
+	removeBad := builderToolResponse("remove_field_mapping", map[string]any{
+		"vertical": "cosmetics",
+		"from":     "vendor",
+		"to":       "master.bogus_column",
+	}, 0, 0)
+	sender.responses = append([]*anthropic.MessagesResponse{removeBad}, commitArtifactResponse(simpleCommittedArtifact(), 100, 50)...)
 
 	inbox.items = []*domain.InboxItem{
 		mkInbox("i1", "gid://shopify/Product/1", map[string]any{

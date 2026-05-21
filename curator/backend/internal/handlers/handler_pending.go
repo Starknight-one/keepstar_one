@@ -111,11 +111,22 @@ func (h *Handler) ApprovePending(w http.ResponseWriter, r *http.Request) {
 		decidedBy = "curator"
 	}
 
+	// Step 1: actually mutate target columns on master_products / master_cosmetics / tier3.
+	// This must happen BEFORE the status flip so "approved" implies "written".
+	applyResult, err := h.Client.ApplyPendingChanges(r.Context(), body.ChangeIDs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Step 2: flip approval_status on master_products (new-master case).
 	mastersResult, err := h.Client.BulkApproveMasters(r.Context(), body.MasterIDs, decidedBy)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Step 3: flip status on master_pending_changes rows we just applied.
 	changesResult, err := h.Client.BulkApprovePendingChanges(r.Context(), body.ChangeIDs, decidedBy)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -125,6 +136,8 @@ func (h *Handler) ApprovePending(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"masters_updated": mastersResult.Updated,
 		"changes_updated": changesResult.Updated,
+		"changes_applied": applyResult.Applied,
+		"changes_skipped": applyResult.Skipped,
 		"decided_by":      decidedBy,
 	})
 }

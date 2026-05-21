@@ -826,6 +826,11 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			ON catalog.master_products(gtin) WHERE gtin IS NOT NULL;`,
 		`CREATE INDEX IF NOT EXISTS idx_master_products_normalized_match_key
 			ON catalog.master_products(normalized_match_key) WHERE normalized_match_key IS NOT NULL;`,
+		// Functional index on LOWER(sku) for the BulkMatchOrCreateMaster
+		// cascade JOIN. Without it, the 3-key match did a full scan of
+		// master_products on every batch (dominant cost in apply throughput).
+		`CREATE INDEX IF NOT EXISTS idx_master_products_lower_sku
+			ON catalog.master_products(LOWER(sku)) WHERE sku IS NOT NULL AND sku <> '';`,
 		`CREATE INDEX IF NOT EXISTS idx_master_products_brand_trgm
 			ON catalog.master_products USING gin (brand gin_trgm_ops);`,
 		`CREATE INDEX IF NOT EXISTS idx_master_products_name_trgm

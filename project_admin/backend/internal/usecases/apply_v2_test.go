@@ -46,6 +46,12 @@ func (f *fakeInbox) MarkApplied(_ context.Context, id string) error {
 	f.applied[id] = true
 	return nil
 }
+func (f *fakeInbox) BulkMarkApplied(_ context.Context, ids []string) error {
+	for _, id := range ids {
+		f.applied[id] = true
+	}
+	return nil
+}
 func (f *fakeInbox) DeleteByTenant(_ context.Context, _ string) error {
 	panic("fakeInbox.DeleteByTenant not implemented")
 }

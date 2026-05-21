@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"keepstar-admin/internal/adapters/postgres"
+	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
 )
 
@@ -29,7 +30,7 @@ func TestScenario_156_SoftDelete_StampsDeletedAt_OnRealPostgres(t *testing.T) {
 		t.Fatalf("postgres.NewClient: %v", err)
 	}
 	t.Cleanup(client.Close)
-	writer := postgres.NewCatalogV2WriterAdapter(client)
+	writer := postgres.NewCatalogV2WriterAdapter(client, logger.New("error"))
 
 	// Seed a master + listing for this tenant.
 	masterID := seedMasterProduct(t, pool, tenantID, "ITEST-SD-1")

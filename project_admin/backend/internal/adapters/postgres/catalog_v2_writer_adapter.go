@@ -816,20 +816,20 @@ func (a *CatalogV2WriterAdapter) bulkUpsertCosmeticsBatch(ctx context.Context, b
 			extra = map[string]any{}
 		}
 		row := map[string]any{
-			"skin_type":          f.SkinType,
-			"concern":            f.Concern,
-			"key_ingredients":    f.KeyIngredients,
-			"target_area":        f.TargetArea,
+			"skin_type":          coerceStringSlice(f.SkinType),
+			"concern":            coerceStringSlice(f.Concern),
+			"key_ingredients":    coerceStringSlice(f.KeyIngredients),
+			"target_area":        coerceStringSlice(f.TargetArea),
 			"product_form":       nullableStr(f.ProductForm),
 			"texture":            nullableStr(f.Texture),
 			"routine_step":       nullableStr(f.RoutineStep),
 			"routine_time":       nullableStr(f.RoutineTime),
 			"application_method": nullableStr(f.ApplicationMethod),
-			"free_from":          f.FreeFrom,
+			"free_from":          coerceStringSlice(f.FreeFrom),
 			"scent":              nullableStr(f.Scent),
 			"spf":                nullableInt(f.SPF),
 			"marketing_claim":    nullableStr(f.MarketingClaim),
-			"benefits":           f.Benefits,
+			"benefits":           coerceStringSlice(f.Benefits),
 			"how_to_use":         nullableStr(f.HowToUse),
 			"volume_ml":          nullableInt(f.VolumeML),
 			"weight_g":           nullableInt(f.WeightG),
@@ -1101,6 +1101,18 @@ func nullableUUID(s string) any {
 func stringSliceArg(s []string) any {
 	if len(s) == 0 {
 		return nil
+	}
+	return s
+}
+
+// coerceStringSlice returns []string{} for nil so json.Marshal emits
+// [] instead of null. SQL paths that unpack arrays via
+// jsonb_array_elements_text crash on null (SQLSTATE 22023). Every Bulk*
+// writer that JSON-marshals an array field into a row blob must route
+// through this helper.
+func coerceStringSlice(s []string) []string {
+	if s == nil {
+		return []string{}
 	}
 	return s
 }
