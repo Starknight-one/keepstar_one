@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Package, Upload, Code, Settings, LogOut, MessageSquare, Palette, Activity, CreditCard, FolderTree, AlertCircle, Plug } from 'lucide-react'
+import { Package, Upload, Code, Settings, LogOut, MessageSquare, Palette, Activity, CreditCard, FolderTree, AlertCircle, Plug, GitCompare } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthProvider.jsx'
 import { api } from '../../shared/api/apiClient.js'
@@ -45,6 +45,9 @@ export default function DashboardLayout() {
           <NavLink to="/catalog/detected-addons" className={({ isActive }) => `sidebar-link sidebar-sub ${isActive ? 'active' : ''}`}>
             <AlertCircle size={16} /> Detected add-ons
             {junkCount > 0 && <span className="sidebar-badge">{junkCount}</span>}
+          </NavLink>
+          <NavLink to="/catalog/drift" className={({ isActive }) => `sidebar-link sidebar-sub ${isActive ? 'active' : ''}`}>
+            <GitCompare size={16} /> Schema drift
           </NavLink>
           <NavLink to="/import" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
             <Upload size={18} /> Import

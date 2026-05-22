@@ -36,10 +36,12 @@ package usecases
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"keepstar-admin/internal/domain"
 	"keepstar-admin/internal/logger"
@@ -68,12 +70,13 @@ type MappingMissDetails struct {
 }
 
 type ApplyV2UseCase struct {
-	inbox     ports.InboxPort
-	artifact  ports.MappingArtifactV2Port
-	writer    ports.CatalogV2WriterPort
-	actionLog ports.TenantActionLogPort
-	discovery *DiscoveryV2 // for mapping_miss / first_install cascade
-	log       *logger.Logger
+	inbox       ports.InboxPort
+	artifact    ports.MappingArtifactV2Port
+	writer      ports.CatalogV2WriterPort
+	actionLog   ports.TenantActionLogPort
+	discovery   *DiscoveryV2        // for mapping_miss / first_install cascade
+	schemaDrift *SchemaDriftUseCase // for B2 drift publish — nil if Redis disabled
+	log         *logger.Logger
 }
 
 func NewApplyV2(
@@ -92,6 +95,13 @@ func NewApplyV2(
 		discovery: discovery,
 		log:       log,
 	}
+}
+
+// AttachSchemaDrift wires the drift-classification producer into apply.
+// Optional — if Redis is unavailable (cfg.HasRedis()==false), main.go
+// skips this call and apply runs without publishing drift jobs.
+func (uc *ApplyV2UseCase) AttachSchemaDrift(sd *SchemaDriftUseCase) {
+	uc.schemaDrift = sd
 }
 
 // ApplyResult summarises one ApplyForTenant call.
@@ -340,7 +350,27 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 		Status:   status,
 		Payload:  payload,
 	})
+
+	// Publish drift-classification job to the broker (B2). Best-effort —
+	// apply has already succeeded. If broker is down, worker is down, or
+	// schemaDrift wasn't attached (Redis disabled), we log and continue.
+	if uc.schemaDrift != nil {
+		runID := newDriftRunID()
+		if pErr := uc.schemaDrift.PublishJob(ctx, tenantID, runID); pErr != nil {
+			uc.log.Warn("apply_v2_drift_publish_failed",
+				"tenant", tenantID, "run_id", runID, "error", pErr)
+		}
+	}
 	return res, nil
+}
+
+// newDriftRunID returns a fresh opaque ID per ApplyForTenant call.
+// Used to dedupe drift findings on (tenant_id, apply_run_id, field_name).
+// Format: `apply-<unix_nano>-<rand>` — readable in logs, no UUID lib dep.
+func newDriftRunID() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("apply-%d-%x", time.Now().UnixNano(), b)
 }
 
 // preparedApply is one row's worth of work assembled by applyOne but NOT

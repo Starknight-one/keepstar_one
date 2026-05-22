@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/joho/godotenv"
 	anthropicAdapter "keepstar-admin/internal/adapters/anthropic"
+	brokerAdapters "keepstar-admin/internal/adapters/broker"
 	"keepstar-admin/internal/adapters/geoip"
 	googleAdapter "keepstar-admin/internal/adapters/google"
 	telegramAdapter "keepstar-admin/internal/adapters/telegram"
@@ -411,6 +414,13 @@ func main() {
 	// -------------------------------------------------------------------
 	var catalogV2Handler *handlers.CatalogV2Handler
 	var catalogV2Orchestrator *usecases.UpdateOrchestrator
+	// B2 schema-drift wiring locals — set inside the AnthropicAPIKey branch
+	// when Redis is also configured; consumed by the bg worker block and
+	// by the admin drift handler below.
+	var driftBrokerForWorkers ports.BrokerPort
+	var schemaDriftForWorkers *usecases.SchemaDriftUseCase
+	var schemaDriftHandler *handlers.SchemaDriftHandler
+	_ = schemaDriftHandler // wired into routes below when non-nil
 	if cfg.AnthropicAPIKey != "" {
 		inboxAdapter := postgres.NewInboxAdapter(dbClient, log)
 		actionLogAdapter := postgres.NewTenantActionLogAdapter(dbClient, log)
@@ -426,6 +436,28 @@ func main() {
 		applyV2 := usecases.NewApplyV2(inboxAdapter, mappingArtifactV2Adapter, catalogV2Writer, actionLogAdapter, discoveryV2, log)
 		orchestrator := usecases.NewUpdateOrchestrator(inboxUC, applyV2, discoveryV2, actionLogAdapter, rateLimitAdapter, log)
 		catalogV2Orchestrator = orchestrator
+
+		// Schema drift detection (B2). Producer hook in applyV2 publishes a
+		// classify job to Redis after each apply; the worker pool started
+		// below in the bg block consumes the stream. If Redis is not
+		// configured (cfg.HasRedis() == false), schemaDrift stays nil and
+		// apply runs without drift detection — graceful degradation.
+		driftFindingsAdapter := postgres.NewSchemaDriftFindingsAdapter(dbClient, log)
+		if cfg.HasRedis() {
+			brokerAdapter, brokerErr := brokerAdapters.NewRedisBrokerAdapter(cfg.RedisURL, log)
+			if brokerErr != nil {
+				log.Warn("redis_broker_unavailable_drift_disabled", "error", brokerErr)
+			} else {
+				driftClient := anthropicAdapter.NewDriftClassifierClient(cfg.AnthropicAPIKey, cfg.DriftClassifierModel)
+				schemaDriftUC := usecases.NewSchemaDrift(inboxAdapter, mappingArtifactV2Adapter, driftFindingsAdapter, brokerAdapter, driftClient, actionLogAdapter, log)
+				applyV2.AttachSchemaDrift(schemaDriftUC)
+				// Hand the broker + usecase out to the bg startup block via
+				// closure-friendly locals.
+				driftBrokerForWorkers = brokerAdapter
+				schemaDriftForWorkers = schemaDriftUC
+			}
+		}
+		schemaDriftHandler = handlers.NewSchemaDriftHandler(driftFindingsAdapter, discoveryV2, log)
 
 		// Ingesters — Shopify is wired into ShopifyV2UseCase below so that
 		// real Shopify installs route through the new flow (inbox →
@@ -627,6 +659,22 @@ func main() {
 		protected.HandleFunc("/admin/api/catalog/enrich-v2", enrichmentHandler.HandleEnrichV2)
 	}
 
+	if schemaDriftHandler != nil {
+		protected.HandleFunc("/admin/api/catalog/drift", schemaDriftHandler.List)
+		// /admin/api/catalog/drift/{id}/apply and /dismiss share a trailing-
+		// slash mux entry; the handler routes by URL path suffix internally.
+		protected.HandleFunc("/admin/api/catalog/drift/", func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/apply"):
+				schemaDriftHandler.Apply(w, r)
+			case strings.HasSuffix(r.URL.Path, "/dismiss"):
+				schemaDriftHandler.Dismiss(w, r)
+			default:
+				http.NotFound(w, r)
+			}
+		})
+	}
+
 	if integrationsHandler != nil {
 		protected.HandleFunc("/admin/api/integrations", integrationsHandler.HandleList)
 		// Shopify-specific first — more specific path wins in net/http mux.
@@ -678,6 +726,8 @@ func main() {
 	mux.Handle("/admin/api/catalog/import", authMW(protected))
 	mux.Handle("/admin/api/catalog/import/", authMW(protected))
 	mux.Handle("/admin/api/catalog/imports", authMW(protected))
+	mux.Handle("/admin/api/catalog/drift", authMW(protected))
+	mux.Handle("/admin/api/catalog/drift/", authMW(protected))
 	mux.Handle("/admin/api/settings", authMW(protected))
 	mux.Handle("/admin/api/stock/bulk", authMW(protected))
 	mux.Handle("/admin/api/traces", authMW(protected))
@@ -838,6 +888,41 @@ func main() {
 				}
 			}
 		}()
+	}
+
+	// B2 schema-drift worker pool. Each goroutine is a unique consumer in
+	// the `drift_workers` group of the `drift_classify` stream. Workers
+	// run until bgCtx is cancelled on SIGTERM. Crashes inside the handler
+	// don't kill the worker — recover() inside dispatch logs and lets
+	// XAUTOCLAIM redeliver the message after the idle timeout.
+	if driftBrokerForWorkers != nil && schemaDriftForWorkers != nil {
+		defer func() { _ = driftBrokerForWorkers.Close() }()
+		topic := usecases.DriftTopic()
+		const group = "drift_workers"
+		for i := 0; i < cfg.DriftWorkers; i++ {
+			consumer := fmt.Sprintf("drift-worker-%d", i)
+			go func(name string) {
+				err := driftBrokerForWorkers.Subscribe(bgCtx, topic, group, name,
+					func(ctx context.Context, payload []byte) (handlerErr error) {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Error("drift_worker_panic", "consumer", name, "panic", fmt.Sprintf("%v", r))
+								handlerErr = fmt.Errorf("worker panic: %v", r)
+							}
+						}()
+						var job usecases.DriftJob
+						if err := json.Unmarshal(payload, &job); err != nil {
+							log.Warn("drift_worker_bad_payload", "consumer", name, "error", err)
+							return nil // ACK — payload is structurally bad; don't retry
+						}
+						return schemaDriftForWorkers.Classify(ctx, job.TenantID, job.ApplyRunID)
+					})
+				if err != nil && !errors.Is(err, context.Canceled) {
+					log.Error("drift_worker_subscribe_failed", "consumer", name, "error", err)
+				}
+			}(consumer)
+		}
+		log.Info("drift_worker_pool_started", "workers", cfg.DriftWorkers)
 	}
 
 	go func() {

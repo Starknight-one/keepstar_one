@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -58,6 +59,13 @@ type Config struct {
 	AuthResetTTL     time.Duration
 	AuthPre2FATTL    time.Duration
 	AuthPublicBaseURL string
+
+	// Redis broker — drives the async drift-classification worker pool.
+	// When RedisURL is empty, the worker is not spawned and apply still
+	// works (drift detection silently disabled).
+	RedisURL             string
+	DriftClassifierModel string // default "claude-sonnet-4-6"
+	DriftWorkers         int    // number of concurrent worker goroutines
 }
 
 func Load() *Config {
@@ -105,6 +113,10 @@ func Load() *Config {
 		AuthResetTTL:     getDurationEnv("AUTH_RESET_TTL", 1*time.Hour),
 		AuthPre2FATTL:    getDurationEnv("AUTH_PRE_2FA_TTL", 5*time.Minute),
 		AuthPublicBaseURL: getEnv("AUTH_PUBLIC_BASE_URL", getEnv("PUBLIC_BASE_URL", "")),
+
+		RedisURL:             getEnv("REDIS_URL", ""),
+		DriftClassifierModel: getEnv("DRIFT_CLASSIFIER_MODEL", "claude-sonnet-4-6"),
+		DriftWorkers:         getIntEnv("DRIFT_WORKERS", 5),
 	}
 }
 
@@ -114,6 +126,7 @@ func (c *Config) HasEnrichment() bool { return c.AnthropicAPIKey != "" }
 func (c *Config) HasEncryption() bool { return c.EncryptionKey != "" }
 func (c *Config) HasShopify() bool    { return c.ShopifyAPIKey != "" && c.ShopifyAPISecret != "" }
 
+func (c *Config) HasRedis() bool  { return c.RedisURL != "" }
 func (c *Config) HasSMTP() bool   { return c.SMTPHost != "" && c.SMTPFrom != "" }
 func (c *Config) HasResend() bool { return c.ResendAPIKey != "" && c.SMTPFrom != "" }
 func (c *Config) HasGoogleOAuth() bool {
@@ -137,6 +150,18 @@ func getEnv(key, defaultValue string) string {
 		return v
 	}
 	return defaultValue
+}
+
+func getIntEnv(key string, defaultValue int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return defaultValue
+	}
+	return n
 }
 
 func getDurationEnv(key string, defaultValue time.Duration) time.Duration {

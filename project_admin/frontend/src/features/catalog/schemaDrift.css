@@ -1,0 +1,143 @@
+/* Schema drift page — list view of pending classifications from the
+ * B2 worker pool. Brand palette: light blue #5BA4D9 (info / active),
+ * orange #F0924A (new / fresh). No purple anywhere. */
+
+.sd-page {
+  padding: 24px 32px;
+  max-width: 1100px;
+}
+
+.sd-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-subtle, #e5e7eb);
+  margin: 16px 0 20px;
+}
+.sd-tab {
+  background: transparent;
+  border: 0;
+  padding: 10px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+}
+.sd-tab:hover { color: var(--text); }
+.sd-tab.active {
+  color: var(--text);
+  border-bottom-color: #5BA4D9;
+  font-weight: 500;
+}
+
+.sd-empty {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--text-muted);
+}
+.sd-empty-title {
+  margin: 12px 0 0;
+  font-size: 14px;
+}
+
+.sd-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sd-row {
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--bg-surface, #fff);
+}
+
+.sd-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.sd-field-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sd-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+  text-transform: lowercase;
+}
+
+.sd-pill-type {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.tone-info {
+  background: #eaf4fb;
+  color: #2c6e9f;
+}
+.tone-warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+.tone-fresh {
+  background: #fdebd9;
+  color: #b35a18;
+}
+
+.sd-confidence {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.sd-action {
+  font-size: 13px;
+  color: var(--text);
+  margin: 6px 0;
+}
+.sd-action code {
+  background: #f3f4f6;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+}
+
+.sd-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 6px 0 12px;
+  flex-wrap: wrap;
+}
+.sd-stats code {
+  background: #f3f4f6;
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin: 0 1px;
+}
+
+.sd-samples {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sd-actions {
+  display: flex;
+  gap: 8px;
+}

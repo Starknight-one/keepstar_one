@@ -885,6 +885,32 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_master_products_pending_approval
 			ON catalog.master_products(approval_status, pending_approval_expires_at)
 			WHERE approval_status='pending_approval';`,
+
+		// alpha-0.9.5 — schema drift findings. After each apply we publish
+		// a classify job to Redis; workers populate this table with the
+		// LLM's classification of each unmapped inbox field (typo / alias
+		// of existing attribute / genuinely new). Owner triggers
+		// patch-discovery from the admin tab to apply a finding.
+		`CREATE TABLE IF NOT EXISTS catalog.schema_drift_findings (
+			id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id         UUID NOT NULL REFERENCES catalog.tenants(id) ON DELETE CASCADE,
+			apply_run_id      TEXT NOT NULL,
+			field_name        TEXT NOT NULL,
+			type_guess        TEXT,
+			stats             JSONB NOT NULL,
+			decision          TEXT
+				CHECK (decision IS NULL OR decision IN ('typo_of_existing','alias_of_attribute','new')),
+			confidence        NUMERIC(3,2),
+			suggested_action  JSONB,
+			status            TEXT NOT NULL DEFAULT 'pending'
+				CHECK (status IN ('pending','classified','applied','dismissed')),
+			created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			classified_at     TIMESTAMPTZ,
+			decided_at        TIMESTAMPTZ,
+			UNIQUE (tenant_id, apply_run_id, field_name)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_schema_drift_findings_tenant_status
+			ON catalog.schema_drift_findings(tenant_id, status);`,
 	)
 
 	for i, m := range migrations {
