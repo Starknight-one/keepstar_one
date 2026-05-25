@@ -423,24 +423,45 @@ func (a *CatalogV2WriterAdapter) UpsertListing(ctx context.Context, lst *ports.L
 	if currency == "" {
 		currency = "USD"
 	}
+	// Position B: every listing references a variant. Ensure the master has a
+	// default variant (created once, idempotent), then bind the listing to it.
+	var variantID string
+	if err := a.client.pool.QueryRow(ctx, `
+		WITH ensured AS (
+			INSERT INTO catalog.master_variants (master_product_id, variant_kind)
+			SELECT $1::uuid, 'default'
+			WHERE NOT EXISTS (SELECT 1 FROM catalog.master_variants WHERE master_product_id=$1::uuid)
+			ON CONFLICT (master_product_id) WHERE variant_kind='default' DO NOTHING
+			RETURNING id
+		)
+		SELECT id FROM ensured
+		UNION ALL
+		SELECT mv.id FROM catalog.master_variants mv WHERE mv.master_product_id=$1::uuid
+			ORDER BY (mv.variant_kind='default') DESC LIMIT 1
+		LIMIT 1
+	`, lst.MasterProductID).Scan(&variantID); err != nil {
+		return "", fmt.Errorf("ensure default variant: %w", err)
+	}
+
 	var id string
 	err := a.client.pool.QueryRow(ctx, `
 		INSERT INTO catalog.products
-			(tenant_id, master_product_id, name, price, currency, stock_quantity,
+			(tenant_id, master_product_id, master_variant_id, name, price, currency, stock_quantity,
 			 source_system, source_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
 		ON CONFLICT (tenant_id, master_product_id) DO UPDATE
-		SET name           = COALESCE(NULLIF(EXCLUDED.name, ''), products.name),
-		    price          = EXCLUDED.price,
-		    currency       = COALESCE(NULLIF(EXCLUDED.currency, ''), products.currency),
-		    stock_quantity = EXCLUDED.stock_quantity,
-		    source_system  = COALESCE(NULLIF(EXCLUDED.source_system, ''), products.source_system),
-		    source_id      = COALESCE(NULLIF(EXCLUDED.source_id, ''), products.source_id),
-		    deleted_at     = NULL,
-		    updated_at     = NOW()
+		SET name              = COALESCE(NULLIF(EXCLUDED.name, ''), products.name),
+		    master_variant_id = COALESCE(products.master_variant_id, EXCLUDED.master_variant_id),
+		    price             = EXCLUDED.price,
+		    currency          = COALESCE(NULLIF(EXCLUDED.currency, ''), products.currency),
+		    stock_quantity    = EXCLUDED.stock_quantity,
+		    source_system     = COALESCE(NULLIF(EXCLUDED.source_system, ''), products.source_system),
+		    source_id         = COALESCE(NULLIF(EXCLUDED.source_id, ''), products.source_id),
+		    deleted_at        = NULL,
+		    updated_at        = NOW()
 		RETURNING id::text
 	`,
-		lst.TenantID, lst.MasterProductID, lst.CustomTitle,
+		lst.TenantID, lst.MasterProductID, variantID, lst.CustomTitle,
 		lst.Price, currency, lst.Stock,
 		lst.SourceSystem, lst.SourceID,
 	).Scan(&id)
@@ -838,6 +859,19 @@ func (a *CatalogV2WriterAdapter) bulkUpsertListingBatch(ctx context.Context, bat
 	if len(tenantIDs) == 0 {
 		return 0, nil
 	}
+	// Position B: ensure each master in the batch has a default variant before
+	// binding listings — one statement, no N+1. Committed before the listing
+	// insert below so its lookup sees the rows.
+	if _, err := a.client.pool.Exec(ctx, `
+		INSERT INTO catalog.master_variants (master_product_id, variant_kind)
+		SELECT DISTINCT m::uuid, 'default'
+		FROM unnest($1::text[]) AS m
+		WHERE NOT EXISTS (SELECT 1 FROM catalog.master_variants mv WHERE mv.master_product_id=m::uuid)
+		ON CONFLICT (master_product_id) WHERE variant_kind='default' DO NOTHING
+	`, masterIDs); err != nil {
+		return 0, fmt.Errorf("bulk ensure default variants: %w", err)
+	}
+
 	var written int
 	err := a.client.pool.QueryRow(ctx, `
 		WITH input AS (
@@ -855,20 +889,24 @@ func (a *CatalogV2WriterAdapter) bulkUpsertListingBatch(ctx context.Context, bat
 		),
 		ins AS (
 			INSERT INTO catalog.products
-				(tenant_id, master_product_id, name, price, currency, stock_quantity,
+				(tenant_id, master_product_id, master_variant_id, name, price, currency, stock_quantity,
 				 source_system, source_id, created_at, updated_at)
-			SELECT tenant_id, master_id, title, price, currency, stock,
+			SELECT tenant_id, master_id,
+			       (SELECT mv.id FROM catalog.master_variants mv WHERE mv.master_product_id = input.master_id
+			          ORDER BY (mv.variant_kind='default') DESC LIMIT 1),
+			       title, price, currency, stock,
 			       source_system, source_id, NOW(), NOW()
 			FROM input
 			ON CONFLICT (tenant_id, master_product_id) DO UPDATE
-			SET name           = COALESCE(NULLIF(EXCLUDED.name, ''), products.name),
-			    price          = EXCLUDED.price,
-			    currency       = COALESCE(NULLIF(EXCLUDED.currency, ''), products.currency),
-			    stock_quantity = EXCLUDED.stock_quantity,
-			    source_system  = COALESCE(NULLIF(EXCLUDED.source_system, ''), products.source_system),
-			    source_id      = COALESCE(NULLIF(EXCLUDED.source_id, ''), products.source_id),
-			    deleted_at     = NULL,
-			    updated_at     = NOW()
+			SET name              = COALESCE(NULLIF(EXCLUDED.name, ''), products.name),
+			    master_variant_id = COALESCE(products.master_variant_id, EXCLUDED.master_variant_id),
+			    price             = EXCLUDED.price,
+			    currency          = COALESCE(NULLIF(EXCLUDED.currency, ''), products.currency),
+			    stock_quantity    = EXCLUDED.stock_quantity,
+			    source_system     = COALESCE(NULLIF(EXCLUDED.source_system, ''), products.source_system),
+			    source_id         = COALESCE(NULLIF(EXCLUDED.source_id, ''), products.source_id),
+			    deleted_at        = NULL,
+			    updated_at        = NOW()
 			RETURNING 1
 		)
 		SELECT COUNT(*)::int FROM ins

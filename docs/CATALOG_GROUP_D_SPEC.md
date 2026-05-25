@@ -250,20 +250,22 @@ columns in a migration. `master_cosmetics` writes stay as-is (V5 shim); it is no
 Make `master_variants` first-class. Every listing references a variant. Non-variant
 products get one synthetic default variant.
 
-> **DECISION LOCKED (2026-05-25) — Position B (listing = sellable unit = variant).**
-> A `catalog.products` row represents a *variant* a tenant sells; every master_product has ≥1
-> variant (simple products get one synthetic `variant_kind='default'`).
-> **Phasing (per the tables→CRUD→agents→V5 rule):** this is the *table-model decision*, recorded
-> now. The SCHEMA changes below (`master_variant_id` NOT NULL, the variant-aware unique key, the
-> default-variant backfill, repointing listings) and the apply wiring are **deferred to the
-> implementation/agents phase** — doing them now would break `apply` (it upserts on
-> `(tenant_id, master_product_id)` and never sets `master_variant_id`). **No live DDL for variants
-> in the table phase.**
-> **D4 makes this clean:** stock + price already live on the listing row (Target A), so once the
-> listing grain becomes per-variant, per-variant stock/price fall out for free.
-> **Landmine for the implementation phase:** the unique index
-> `idx_catalog_products_tenant_master (tenant_id, master_product_id)` must become variant-aware
-> (e.g. `(tenant_id, master_variant_id)` or `(tenant_id, sku)`), or variants collide on one row.
+> **Position B — table phase IMPLEMENTED (Alpha 0.9.9, 2026-05-25).** Listing = sellable unit =
+> variant: every `catalog.products` row references a `master_variant`; a simple product gets one
+> synthetic `variant_kind='default'` variant.
+> **Done:** migration adds `'default'` to the `variant_kind` CHECK + a partial unique index (one
+> default per master), creates a default variant per master, **synthesizes a master for the 34
+> legacy orphan listings** (Shopify rows that had no master — generated `legacy-orphan-<id>` sku, no
+> data loss), binds every listing to its variant, and enforces `master_variant_id NOT NULL`. apply
+> (`UpsertListing` + `BulkUpsertListing`) now ensures+binds the default variant so new ingests
+> conform. **Verified on Neon:** 1963 listings all bound, 1951 masters / 1947 default + 4 real
+> variants, 0 integrity mismatches, idempotent re-run (counts stable). D4's stock+price on the
+> listing row are now per-variant-ready.
+> **Still deferred (agents phase):** recognizing *real* siblings (7ml+12ml → ONE master, N variants)
+> — the genuinely agentic grouping — and the variant-aware unique key it needs (the current
+> `(tenant_id, master_product_id)` holds while it's 1 listing : 1 product).
+> **NOTE:** the apply variant wiring is correct-by-construction but is first exercised on the next
+> real seed run (not run this session).
 
 | File | Method / section | Change | Sev |
 |---|---|---|---|

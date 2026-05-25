@@ -1012,6 +1012,50 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`DROP TABLE IF EXISTS catalog.stock CASCADE;`,
 	)
 
+	// D1b (table phase) — Position B: every listing references a variant; a simple
+	// product gets one synthetic default variant. Recognizing real siblings
+	// (7ml+12ml → one master, N variants) is the agentic/ingest phase, NOT here.
+	// All steps idempotent (guards + IF NOT EXISTS; SET NOT NULL is a no-op once met).
+	migrations = append(migrations,
+		// allow variant_kind='default' (was real/addon/bundle); find the real
+		// constraint name first so this works regardless of how it was created.
+		`DO $$ DECLARE c text; BEGIN
+			SELECT conname INTO c FROM pg_constraint
+				WHERE conrelid='catalog.master_variants'::regclass AND contype='c'
+				  AND pg_get_constraintdef(oid) LIKE '%variant_kind%';
+			IF c IS NOT NULL THEN EXECUTE 'ALTER TABLE catalog.master_variants DROP CONSTRAINT '||quote_ident(c); END IF;
+		END $$;`,
+		`ALTER TABLE catalog.master_variants
+			ADD CONSTRAINT master_variants_variant_kind_check
+			CHECK (variant_kind IN ('real','addon','bundle','default'));`,
+		// at most one default variant per master (also the ON CONFLICT arbiter).
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_mv_one_default
+			ON catalog.master_variants (master_product_id) WHERE variant_kind='default';`,
+		// orphan listings (legacy Shopify rows with no master) → synthesize a
+		// master so every listing has identity. Generated unique sku; no data loss.
+		`INSERT INTO catalog.master_products (sku, name, owner_tenant_id)
+			SELECT 'legacy-orphan-'||p.id::text, COALESCE(NULLIF(p.name,''),'Untitled'), p.tenant_id
+			FROM catalog.products p
+			WHERE p.master_product_id IS NULL AND p.master_variant_id IS NULL
+			ON CONFLICT (sku) DO NOTHING;`,
+		`UPDATE catalog.products p SET master_product_id = mp.id
+			FROM catalog.master_products mp
+			WHERE mp.sku = 'legacy-orphan-'||p.id::text AND p.master_product_id IS NULL;`,
+		// default variant for every master that has none.
+		`INSERT INTO catalog.master_variants (master_product_id, variant_kind)
+			SELECT mp.id, 'default' FROM catalog.master_products mp
+			WHERE NOT EXISTS (SELECT 1 FROM catalog.master_variants mv WHERE mv.master_product_id=mp.id)
+			ON CONFLICT (master_product_id) WHERE variant_kind='default' DO NOTHING;`,
+		// bind every listing to its master's variant (prefer the default).
+		`UPDATE catalog.products p SET master_variant_id = (
+				SELECT mv.id FROM catalog.master_variants mv
+				WHERE mv.master_product_id = p.master_product_id
+				ORDER BY (mv.variant_kind='default') DESC LIMIT 1)
+			WHERE p.master_variant_id IS NULL AND p.master_product_id IS NOT NULL;`,
+		// enforce Position B: every listing has a variant.
+		`ALTER TABLE catalog.products ALTER COLUMN master_variant_id SET NOT NULL;`,
+	)
+
 	for i, m := range migrations {
 		if _, err := c.pool.Exec(ctx, m); err != nil {
 			return fmt.Errorf("catalog migration %d failed: %w", i+1, err)

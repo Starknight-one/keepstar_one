@@ -3,14 +3,16 @@ package domain
 import "time"
 
 // VariantKind classifies whether a variant is a real product, an addon
-// (gift wrap, engraving, warranty), or a bundle. addon/bundle are excluded
-// from search/embedding/chat-rendering.
+// (gift wrap, engraving, warranty), a bundle, or a synthetic default. addon/
+// bundle are excluded from search/embedding/chat-rendering; default is the lone
+// synthetic variant a simple product gets (Position B) and is treated like real.
 type VariantKind string
 
 const (
-	VariantKindReal   VariantKind = "real"
-	VariantKindAddon  VariantKind = "addon"
-	VariantKindBundle VariantKind = "bundle"
+	VariantKindReal    VariantKind = "real"
+	VariantKindAddon   VariantKind = "addon"
+	VariantKindBundle  VariantKind = "bundle"
+	VariantKindDefault VariantKind = "default"
 )
 
 // MasterVariant is one SKU of a master product. Spec §3.1 (Option C parent-child).
