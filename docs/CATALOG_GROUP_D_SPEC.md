@@ -37,7 +37,7 @@ code** — E2E only proves it.
 | **1. Drop dead services** | ✅ DONE + run on Neon | services/master_services dropped (were 0 rows). Removed adapter/port/import.go/csv_mapping/domain service.go/test mocks. |
 | **2. tier2 canonical (drop master_cosmetics + 17 legacy cols)** | ✅ DONE + run on Neon + verified | apply→tier2, curator `tier2.<key>` routing, enrichment/embedding repointed. Migration: seed 18 cosmetics field-defs + backfill master_cosmetics (1000 rows)→tier2 + backfill 17 legacy cols (~960 rows)→tier2/tier3 + drops. **reconcile=0 (zero data loss)** verified on Neon. build+vet+catalog/apply tests green. |
 | **Task #7 — dead-code cleanup** | ✅ DONE (Alpha 0.9.7) | Removed `UpsertCosmetics`/`BulkUpsertCosmetics`/`bulkUpsertCosmeticsBatch`/`probeCosmeticsSchema` + `sync` import + probe struct fields + 4 now-dead pgx helpers (`nullableStr`/`nullableInt`/`stringSliceArg`/`coerceStringSlice`); port `UpsertCosmetics`/`BulkUpsertCosmetics`/`BulkCosmeticsItem`/`ErrCosmeticsSchemaNotReady` + `errors` import; `master_variants` `UpsertMasterCosmetics`/`GetMasterCosmetics` + port + `domain.MasterCosmetics`; fakeWriter mocks. KEPT `ports.MasterCosmeticsUpsert`. build + usecases tests green (only pre-existing Shopify 052–055 red). |
-| **3. D6 controlled vocabularies** | ⬜ NOT STARTED | dim-tables + aliases (mirror `catalog.unit_aliases` / `internal/units/aliases.go`) + normalizer in apply (resolved ids → tier2) + brand→brand_id dedup + curator vocab queue. |
+| **3. D6 controlled vocabularies** | ⏸ DEFERRED (2026-05-25) | **Parked — the PIM table phase is complete without it.** Controlled vocab (dim/alias tables) is an *enhancement over tier-2*, not a missing tier. Its consumers — clickable facet filters, hard/exact filters, aggregation — don't exist yet (no facet UI; fuzzy search is handled in the V5 pipeline). Revisit when a real consumer appears, and design it then under the **data-driven generic shape** — one `dim_values` / `dim_aliases` pair keyed by `dim_key`, NOT per-attribute tables (vertical-agnostic). Brand canonicalization (`brand_id`) can land with it. |
 | **4. Categories: drop V1 (D3)** | ✅ DONE + run on Neon + verified (Alpha 0.9.7) | Full migration to target model: V1 `catalog.categories` → `master_categories` + `master_product_categories` junction (reused V1 UUIDs → hierarchy + links preserved). Rerouted ALL admin readers (filter recursive-CTE, 7 display LATERALs, `GetCategories`, `GetOrCreateCategory`, `GetCategoryBySlug`, `UpsertMasterProduct`, `UpdateMasterProductPIM`) + `cmd/seed` + `rebuild-embeddings` to the junction. Dropped `category_id` column + `catalog.categories` + stale V1 indexes. **Neon: 30 categories migrated, 987 product links, 0 data loss, V1 gone.** Category `vertical` defaulted to `'unknown'` (curator refines later). V5 category reads left for the V5-milestone (already broken). Bumped migration ctx 30s→120s (Neon cold-start headroom). |
 | **5. Stock consolidation** | ✅ DONE + run on Neon + verified (Alpha 0.9.8) | **Target A (consolidate onto the listing row) — chosen over the old "`catalog.stock` canonical" plan.** stock + price are both tenant-listing facts → both live on `catalog.products`. Backfilled `products.stock_quantity` from `catalog.stock` (live values won), **dropped `catalog.stock` + its dead `reserved` column**. Rewrote `BulkUpdateStock` to UPDATE the listing row; removed 2 redundant dual-writes (`UpdateProduct`/`UpsertProduct`); repointed admin reads to `p.stock_quantity` (no join). Curator unchanged — it already read the column, so it's fixed for free. **Neon: stock table gone, 1963 products / stock_quantity sum 2262 / 990>0 preserved → 0 loss.** Full migration re-runs clean (idempotent). V5 stock read left for the V5-milestone (already-broken query — see landmine note). |
 | **6. E2E verification on 4 seeds (+ tenant E)** | ⬜ NOT STARTED | ingest A/B/C/D via real pipeline; verify tier2 populates for all verticals; tenant E (overlap seed) for cross-tenant dedup — see §8.2. |
@@ -249,6 +249,21 @@ columns in a migration. `master_cosmetics` writes stay as-is (V5 shim); it is no
 
 Make `master_variants` first-class. Every listing references a variant. Non-variant
 products get one synthetic default variant.
+
+> **DECISION LOCKED (2026-05-25) — Position B (listing = sellable unit = variant).**
+> A `catalog.products` row represents a *variant* a tenant sells; every master_product has ≥1
+> variant (simple products get one synthetic `variant_kind='default'`).
+> **Phasing (per the tables→CRUD→agents→V5 rule):** this is the *table-model decision*, recorded
+> now. The SCHEMA changes below (`master_variant_id` NOT NULL, the variant-aware unique key, the
+> default-variant backfill, repointing listings) and the apply wiring are **deferred to the
+> implementation/agents phase** — doing them now would break `apply` (it upserts on
+> `(tenant_id, master_product_id)` and never sets `master_variant_id`). **No live DDL for variants
+> in the table phase.**
+> **D4 makes this clean:** stock + price already live on the listing row (Target A), so once the
+> listing grain becomes per-variant, per-variant stock/price fall out for free.
+> **Landmine for the implementation phase:** the unique index
+> `idx_catalog_products_tenant_master (tenant_id, master_product_id)` must become variant-aware
+> (e.g. `(tenant_id, master_variant_id)` or `(tenant_id, sku)`), or variants collide on one row.
 
 | File | Method / section | Change | Sev |
 |---|---|---|---|
