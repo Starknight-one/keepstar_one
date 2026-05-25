@@ -126,14 +126,23 @@ func (f *httpFakeAuth) SetTOTPSecret(_ context.Context, id, enc string) error {
 func (f *httpFakeAuth) GetTOTPSecret(_ context.Context, id string) (string, bool, error) {
 	return f.totp[id], f.enabled[id], nil
 }
-func (f *httpFakeAuth) EnableTOTP(_ context.Context, id string) error  { f.enabled[id] = true; return nil }
-func (f *httpFakeAuth) DisableTOTP(_ context.Context, id string) error { delete(f.totp, id); delete(f.enabled, id); return nil }
+func (f *httpFakeAuth) EnableTOTP(_ context.Context, id string) error {
+	f.enabled[id] = true
+	return nil
+}
+func (f *httpFakeAuth) DisableTOTP(_ context.Context, id string) error {
+	delete(f.totp, id)
+	delete(f.enabled, id)
+	return nil
+}
 
 type httpFakeMemberships struct {
 	rows map[string]string
 }
 
-func newHTTPFakeMemberships() *httpFakeMemberships { return &httpFakeMemberships{rows: map[string]string{}} }
+func newHTTPFakeMemberships() *httpFakeMemberships {
+	return &httpFakeMemberships{rows: map[string]string{}}
+}
 
 func (f *httpFakeMemberships) ListForUser(_ context.Context, uid string) ([]ports.UserTenantMembership, error) {
 	var out []ports.UserTenantMembership
@@ -165,7 +174,9 @@ type httpFakeCatalog struct {
 	byID map[string]*domain.Tenant
 }
 
-func newHTTPFakeCatalog() *httpFakeCatalog { return &httpFakeCatalog{byID: map[string]*domain.Tenant{}} }
+func newHTTPFakeCatalog() *httpFakeCatalog {
+	return &httpFakeCatalog{byID: map[string]*domain.Tenant{}}
+}
 
 func (f *httpFakeCatalog) CreateTenant(_ context.Context, t *domain.Tenant) (*domain.Tenant, error) {
 	t.ID = "tenant-" + t.Slug
@@ -191,15 +202,6 @@ func (f *httpFakeCatalog) GetProduct(context.Context, string, string) (*domain.P
 func (f *httpFakeCatalog) UpdateProduct(context.Context, string, string, domain.ProductUpdate) error {
 	return nil
 }
-func (f *httpFakeCatalog) ListServices(context.Context, string, domain.AdminProductFilter) ([]domain.Service, int, error) {
-	return nil, 0, nil
-}
-func (f *httpFakeCatalog) GetService(context.Context, string, string) (*domain.Service, error) {
-	return nil, nil
-}
-func (f *httpFakeCatalog) UpdateService(context.Context, string, string, domain.ProductUpdate) error {
-	return nil
-}
 func (f *httpFakeCatalog) GetCategories(context.Context, string) ([]domain.Category, error) {
 	return nil, nil
 }
@@ -207,12 +209,6 @@ func (f *httpFakeCatalog) UpsertMasterProduct(context.Context, *domain.MasterPro
 	return "", nil
 }
 func (f *httpFakeCatalog) UpsertProductListing(context.Context, *domain.Product) (string, error) {
-	return "", nil
-}
-func (f *httpFakeCatalog) UpsertMasterService(context.Context, *domain.MasterService) (string, error) {
-	return "", nil
-}
-func (f *httpFakeCatalog) UpsertServiceListing(context.Context, *domain.Service) (string, error) {
 	return "", nil
 }
 func (f *httpFakeCatalog) GetOrCreateCategory(context.Context, string, string) (string, error) {
@@ -242,14 +238,8 @@ func (f *httpFakeCatalog) UpsertListingFromSource(context.Context, *domain.Listi
 func (f *httpFakeCatalog) GetMasterProductsWithoutEmbedding(context.Context, string) ([]domain.MasterProduct, error) {
 	return nil, nil
 }
-func (f *httpFakeCatalog) GetMasterServicesWithoutEmbedding(context.Context, string) ([]domain.MasterService, error) {
-	return nil, nil
-}
-func (f *httpFakeCatalog) SeedEmbedding(context.Context, string, []float32) error    { return nil }
-func (f *httpFakeCatalog) SeedServiceEmbedding(context.Context, string, []float32) error {
-	return nil
-}
-func (f *httpFakeCatalog) GenerateCatalogDigest(context.Context, string) error { return nil }
+func (f *httpFakeCatalog) SeedEmbedding(context.Context, string, []float32) error { return nil }
+func (f *httpFakeCatalog) GenerateCatalogDigest(context.Context, string) error    { return nil }
 
 type httpFakeSessions struct {
 	byID    map[string]*ports.Session
@@ -309,7 +299,9 @@ type httpFakeChallenges struct {
 	byHash map[string]*ports.Challenge
 }
 
-func newHTTPFakeChallenges() *httpFakeChallenges { return &httpFakeChallenges{byHash: map[string]*ports.Challenge{}} }
+func newHTTPFakeChallenges() *httpFakeChallenges {
+	return &httpFakeChallenges{byHash: map[string]*ports.Challenge{}}
+}
 
 func (c *httpFakeChallenges) Create(_ context.Context, ch *ports.Challenge) error {
 	ch.ID = "ch-" + ch.CodeHash[:8]
@@ -349,16 +341,16 @@ func (m *httpFakeMailer) Send(_ context.Context, msg ports.EmailMessage) error {
 // ---------------------------------------------------------------------
 
 type httpFixture struct {
-	auth       *httpFakeAuth
-	catalog    *httpFakeCatalog
+	auth        *httpFakeAuth
+	catalog     *httpFakeCatalog
 	memberships *httpFakeMemberships
-	sessions   *httpFakeSessions
-	challenges *httpFakeChallenges
-	mailer     *httpFakeMailer
+	sessions    *httpFakeSessions
+	challenges  *httpFakeChallenges
+	mailer      *httpFakeMailer
 
-	authHandler    *AuthHandler
+	authHandler     *AuthHandler
 	sessionsHandler *SessionsHandler
-	magicHandler   *MagicLinkHandler
+	magicHandler    *MagicLinkHandler
 
 	authUC     *usecases.AuthUseCase
 	sessionsUC *usecases.SessionsUseCase

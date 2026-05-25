@@ -226,7 +226,7 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 
 		// Stage 3: split prepared rows by wasCreated and collect bulk
 		// payloads for each downstream write target.
-		cosmeticsBatch := make([]ports.BulkCosmeticsItem, 0)
+		tier2Batch := make([]ports.BulkTier2Item, 0)
 		tier3Batch := make([]ports.BulkTier3Item, 0)
 		enrichBatch := make([]ports.EnrichRequest, 0)
 		listingsBatch := make([]ports.ListingUpsert, 0, len(prepared))
@@ -235,11 +235,15 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 			masterID := matchResults[i].ID
 			wasCreated := matchResults[i].WasCreated
 			if wasCreated {
+				// Typed per-vertical attributes → master_products.tier2
+				// (Group D: replaced the master_cosmetics typed table).
 				if p.vertical == "cosmetics" && p.hasCosmetics {
-					cosmeticsBatch = append(cosmeticsBatch, ports.BulkCosmeticsItem{
-						MasterProductID: masterID,
-						Fields:          p.cosmetics,
-					})
+					if patch := cosmeticsToMap(p.cosmetics); len(patch) > 0 {
+						tier2Batch = append(tier2Batch, ports.BulkTier2Item{
+							MasterProductID: masterID,
+							Patch:           patch,
+						})
+					}
 				}
 				if len(p.tier3) > 0 {
 					tier3Batch = append(tier3Batch, ports.BulkTier3Item{
@@ -274,28 +278,12 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 			appliedItemIDs = append(appliedItemIDs, p.itemID)
 		}
 
-		// Stage 4: bulk cosmetics. On legacy-schema error, fold the
-		// cosmetics fields into tier3 for those rows and retry as part
-		// of the tier3 bulk.
-		if len(cosmeticsBatch) > 0 {
-			if _, err := uc.writer.BulkUpsertCosmetics(ctx, cosmeticsBatch); err != nil {
-				if errors.Is(err, ports.ErrCosmeticsSchemaNotReady) {
-					uc.log.Warn("apply_v2_cosmetics_fallback_to_tier3",
-						"tenant", tenantID, "rows", len(cosmeticsBatch))
-					for _, ci := range cosmeticsBatch {
-						patch := cosmeticsToMap(ci.Fields)
-						if len(patch) == 0 {
-							continue
-						}
-						tier3Batch = append(tier3Batch, ports.BulkTier3Item{
-							MasterProductID: ci.MasterProductID,
-							Patch:           patch,
-						})
-					}
-				} else {
-					uc.log.Warn("apply_v2_bulk_cosmetics_failed",
-						"tenant", tenantID, "rows", len(cosmeticsBatch), "error", err)
-				}
+		// Stage 4: bulk tier2 (typed per-vertical attributes). Group D:
+		// master_products.tier2 is the canonical home — master_cosmetics gone.
+		if len(tier2Batch) > 0 {
+			if _, err := uc.writer.BulkMergeTier2(ctx, tier2Batch); err != nil {
+				uc.log.Warn("apply_v2_bulk_tier2_failed",
+					"tenant", tenantID, "rows", len(tier2Batch), "error", err)
 			}
 		}
 
@@ -879,41 +867,43 @@ func buildEnrichScalars(mp *ports.MasterProductUpsert, c *ports.MasterCosmeticsU
 		out["gtin"] = mp.GTIN
 	}
 	if vertical == "cosmetics" {
+		// Cosmetic typed attrs stage as tier2.<key> (Group D: tier2 jsonb is the
+		// canonical home; curator applyOneChange routes tier2.* into it).
 		if c.ProductForm != nil && *c.ProductForm != "" {
-			out["product_form"] = *c.ProductForm
+			out["tier2.product_form"] = *c.ProductForm
 		}
 		if c.Texture != nil && *c.Texture != "" {
-			out["texture"] = *c.Texture
+			out["tier2.texture"] = *c.Texture
 		}
 		if c.RoutineStep != nil && *c.RoutineStep != "" {
-			out["routine_step"] = *c.RoutineStep
+			out["tier2.routine_step"] = *c.RoutineStep
 		}
 		if c.RoutineTime != nil && *c.RoutineTime != "" {
-			out["routine_time"] = *c.RoutineTime
+			out["tier2.routine_time"] = *c.RoutineTime
 		}
 		if c.ApplicationMethod != nil && *c.ApplicationMethod != "" {
-			out["application_method"] = *c.ApplicationMethod
+			out["tier2.application_method"] = *c.ApplicationMethod
 		}
 		if c.Scent != nil && *c.Scent != "" {
-			out["scent"] = *c.Scent
+			out["tier2.scent"] = *c.Scent
 		}
 		if c.SPF != nil && *c.SPF != 0 {
-			out["spf"] = *c.SPF
+			out["tier2.spf"] = *c.SPF
 		}
 		if c.MarketingClaim != nil && *c.MarketingClaim != "" {
-			out["marketing_claim"] = *c.MarketingClaim
+			out["tier2.marketing_claim"] = *c.MarketingClaim
 		}
 		if c.HowToUse != nil && *c.HowToUse != "" {
-			out["how_to_use"] = *c.HowToUse
+			out["tier2.how_to_use"] = *c.HowToUse
 		}
 		if c.VolumeML != nil && *c.VolumeML != 0 {
-			out["volume_ml"] = *c.VolumeML
+			out["tier2.volume_ml"] = *c.VolumeML
 		}
 		if c.WeightG != nil && *c.WeightG != 0 {
-			out["weight_g"] = *c.WeightG
+			out["tier2.weight_g"] = *c.WeightG
 		}
 		if c.UnitCount != nil && *c.UnitCount != 0 {
-			out["unit_count"] = *c.UnitCount
+			out["tier2.unit_count"] = *c.UnitCount
 		}
 	}
 	for k, v := range tier3 {
@@ -929,24 +919,26 @@ func buildEnrichArrays(c *ports.MasterCosmeticsUpsert, vertical string) map[stri
 	if vertical != "cosmetics" {
 		return nil
 	}
+	// Cosmetic array attrs stage as tier2.<key> (Group D: tier2 jsonb home;
+	// curator applyOneChange unions them into the tier2 array key).
 	out := map[string][]string{}
 	if len(c.SkinType) > 0 {
-		out["skin_type"] = c.SkinType
+		out["tier2.skin_type"] = c.SkinType
 	}
 	if len(c.Concern) > 0 {
-		out["concern"] = c.Concern
+		out["tier2.concern"] = c.Concern
 	}
 	if len(c.KeyIngredients) > 0 {
-		out["key_ingredients"] = c.KeyIngredients
+		out["tier2.key_ingredients"] = c.KeyIngredients
 	}
 	if len(c.TargetArea) > 0 {
-		out["target_area"] = c.TargetArea
+		out["tier2.target_area"] = c.TargetArea
 	}
 	if len(c.FreeFrom) > 0 {
-		out["free_from"] = c.FreeFrom
+		out["tier2.free_from"] = c.FreeFrom
 	}
 	if len(c.Benefits) > 0 {
-		out["benefits"] = c.Benefits
+		out["tier2.benefits"] = c.Benefits
 	}
 	return out
 }

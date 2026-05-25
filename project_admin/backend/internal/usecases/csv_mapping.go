@@ -213,12 +213,6 @@ func ApplyMapping(headers []string, rows [][]string, mapping map[string]string, 
 				item.Images = splitList(val)
 			case "tags":
 				item.Tags = splitList(val)
-			case "duration":
-				item.Duration = val
-			case "provider":
-				item.Provider = val
-			case "availability":
-				item.Availability = val
 			}
 		}
 		if item.SKU == "" {

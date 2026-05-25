@@ -90,51 +90,9 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		WHERE stock_quantity > 0
 		ON CONFLICT DO NOTHING;`,
 
-		// Services tables
-		`CREATE TABLE IF NOT EXISTS catalog.master_services (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			sku VARCHAR(100) NOT NULL UNIQUE,
-			name VARCHAR(500) NOT NULL,
-			description TEXT,
-			brand VARCHAR(255),
-			category_id UUID REFERENCES catalog.categories(id),
-			images JSONB DEFAULT '[]',
-			attributes JSONB DEFAULT '{}',
-			duration VARCHAR(100),
-			provider VARCHAR(255),
-			owner_tenant_id UUID REFERENCES catalog.tenants(id),
-			embedding vector(384),
-			created_at TIMESTAMPTZ DEFAULT NOW(),
-			updated_at TIMESTAMPTZ DEFAULT NOW()
-		);`,
-		`CREATE TABLE IF NOT EXISTS catalog.services (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id),
-			master_service_id UUID REFERENCES catalog.master_services(id),
-			name VARCHAR(500),
-			description TEXT,
-			price INTEGER NOT NULL DEFAULT 0,
-			currency VARCHAR(10) DEFAULT 'RUB',
-			rating NUMERIC(2,1) DEFAULT 0,
-			images JSONB DEFAULT '[]',
-			availability VARCHAR(50) DEFAULT 'available',
-			created_at TIMESTAMPTZ DEFAULT NOW(),
-			updated_at TIMESTAMPTZ DEFAULT NOW()
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_services_tenant ON catalog.services(tenant_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_services_master ON catalog.services(master_service_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_master_services_category ON catalog.master_services(category_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_master_services_sku ON catalog.master_services(sku);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_master_services_embedding
-			ON catalog.master_services USING hnsw (embedding vector_cosine_ops);`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_services_tenant_master
-			ON catalog.services(tenant_id, master_service_id);`,
-
 		// Tags
 		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';`,
-		`ALTER TABLE catalog.services ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_products_tags ON catalog.products USING gin(tags);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_services_tags ON catalog.services USING gin(tags);`,
 
 		// PIM Redesign: structured columns on master_products
 		`ALTER TABLE catalog.master_products ADD COLUMN IF NOT EXISTS short_name VARCHAR(200);`,
@@ -911,6 +869,131 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_schema_drift_findings_tenant_status
 			ON catalog.schema_drift_findings(tenant_id, status);`,
+	)
+
+	// =========================================================================
+	// Group D Phase 1 (2026-05-25) — radical catalog cleanup.
+	// Destructive drops; Neon is the dev stand (owner-approved). Runs last so any
+	// dependent objects are already present. Idempotent via IF EXISTS.
+	// =========================================================================
+	migrations = append(migrations,
+		// D4 — dead services tables. The service ingest path (import.go) and all
+		// readers were removed in the same change; no live code references these.
+		`DROP TABLE IF EXISTS catalog.services CASCADE;`,
+		`DROP TABLE IF EXISTS catalog.master_services CASCADE;`,
+	)
+
+	// D1a/D2 — tier2 becomes the canonical home for typed per-vertical attributes
+	// (vertical-agnostic). Seed the cosmetics key registry, backfill the legacy
+	// master_cosmetics typed table into master_products.tier2, then drop it.
+	migrations = append(migrations,
+		// Key registry for the cosmetics vertical (tier2 allowlist).
+		`INSERT INTO catalog.master_field_definitions (vertical, key, label, type, source, promoted_by) VALUES
+			('cosmetics','skin_type','Skin Type','array','migration','groupd'),
+			('cosmetics','concern','Concern','array','migration','groupd'),
+			('cosmetics','key_ingredients','Key Ingredients','array','migration','groupd'),
+			('cosmetics','target_area','Target Area','array','migration','groupd'),
+			('cosmetics','free_from','Free From','array','migration','groupd'),
+			('cosmetics','benefits','Benefits','array','migration','groupd'),
+			('cosmetics','product_form','Product Form','text','migration','groupd'),
+			('cosmetics','texture','Texture','text','migration','groupd'),
+			('cosmetics','routine_step','Routine Step','text','migration','groupd'),
+			('cosmetics','routine_time','Routine Time','text','migration','groupd'),
+			('cosmetics','application_method','Application Method','text','migration','groupd'),
+			('cosmetics','scent','Scent','text','migration','groupd'),
+			('cosmetics','marketing_claim','Marketing Claim','text','migration','groupd'),
+			('cosmetics','how_to_use','How To Use','text','migration','groupd'),
+			('cosmetics','spf','SPF','number','migration','groupd'),
+			('cosmetics','volume_ml','Volume (ml)','number','migration','groupd'),
+			('cosmetics','weight_g','Weight (g)','number','migration','groupd'),
+			('cosmetics','unit_count','Unit Count','number','migration','groupd')
+		ON CONFLICT (vertical, key) DO NOTHING;`,
+
+		// Backfill master_cosmetics → master_products.tier2. Guarded by table
+		// existence so re-runs after the drop are a no-op (idempotent).
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.tables
+			           WHERE table_schema='catalog' AND table_name='master_cosmetics') THEN
+				UPDATE catalog.master_products mp
+				SET tier2 = COALESCE(mp.tier2, '{}'::jsonb) || mc.patch,
+				    updated_at = NOW()
+				FROM (
+					SELECT master_product_id,
+					       jsonb_strip_nulls(
+					           COALESCE(extra, '{}'::jsonb) || jsonb_build_object(
+					               'skin_type',          CASE WHEN array_length(skin_type,1)       > 0 THEN to_jsonb(skin_type) END,
+					               'concern',            CASE WHEN array_length(concern,1)         > 0 THEN to_jsonb(concern) END,
+					               'key_ingredients',    CASE WHEN array_length(key_ingredients,1) > 0 THEN to_jsonb(key_ingredients) END,
+					               'target_area',        CASE WHEN array_length(target_area,1)     > 0 THEN to_jsonb(target_area) END,
+					               'free_from',          CASE WHEN array_length(free_from,1)       > 0 THEN to_jsonb(free_from) END,
+					               'benefits',           CASE WHEN array_length(benefits,1)        > 0 THEN to_jsonb(benefits) END,
+					               'product_form',       to_jsonb(NULLIF(product_form,'')),
+					               'texture',            to_jsonb(NULLIF(texture,'')),
+					               'routine_step',       to_jsonb(NULLIF(routine_step,'')),
+					               'routine_time',       to_jsonb(NULLIF(routine_time,'')),
+					               'application_method', to_jsonb(NULLIF(application_method,'')),
+					               'scent',              to_jsonb(NULLIF(scent,'')),
+					               'marketing_claim',    to_jsonb(NULLIF(marketing_claim,'')),
+					               'how_to_use',         to_jsonb(NULLIF(how_to_use,'')),
+					               'spf',                to_jsonb(spf),
+					               'volume_ml',          to_jsonb(volume_ml),
+					               'weight_g',           to_jsonb(weight_g),
+					               'unit_count',         to_jsonb(unit_count)
+					           )
+					       ) AS patch
+					FROM catalog.master_cosmetics
+				) mc
+				WHERE mp.id = mc.master_product_id AND mc.patch <> '{}'::jsonb;
+			END IF;
+		END $$;`,
+
+		`DROP TABLE IF EXISTS catalog.master_cosmetics CASCADE;`,
+	)
+
+	// D1a (cont.) — backfill the 17 legacy typed columns ON master_products into
+	// tier2 (cosmetic attrs) / tier3 (provenance), then drop them. tier2 already
+	// holds master_cosmetics-derived values from the step above, which win on
+	// conflict (`legacy || existing_tier2`). Guarded so re-runs after the drop
+	// are a no-op.
+	migrations = append(migrations,
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.columns
+			           WHERE table_schema='catalog' AND table_name='master_products' AND column_name='skin_type') THEN
+				UPDATE catalog.master_products mp
+				SET tier2 = jsonb_strip_nulls(jsonb_build_object(
+						'skin_type',          CASE WHEN array_length(skin_type,1)>0       THEN to_jsonb(skin_type) END,
+						'concern',            CASE WHEN array_length(concern,1)>0         THEN to_jsonb(concern) END,
+						'key_ingredients',    CASE WHEN array_length(key_ingredients,1)>0 THEN to_jsonb(key_ingredients) END,
+						'target_area',        CASE WHEN array_length(target_area,1)>0     THEN to_jsonb(target_area) END,
+						'free_from',          CASE WHEN array_length(free_from,1)>0       THEN to_jsonb(free_from) END,
+						'benefits',           CASE WHEN array_length(benefits,1)>0        THEN to_jsonb(benefits) END,
+						'product_form',       to_jsonb(NULLIF(product_form,'')),
+						'texture',            to_jsonb(NULLIF(texture,'')),
+						'routine_step',       to_jsonb(NULLIF(routine_step,'')),
+						'routine_time',       to_jsonb(NULLIF(routine_time,'')),
+						'application_method', to_jsonb(NULLIF(application_method,'')),
+						'marketing_claim',    to_jsonb(NULLIF(marketing_claim,'')),
+						'how_to_use',         to_jsonb(NULLIF(how_to_use,''))
+					)) || COALESCE(mp.tier2,'{}'::jsonb),
+				    tier3 = COALESCE(mp.tier3,'{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+						'original_name', to_jsonb(NULLIF(original_name,'')),
+						'product_line',  to_jsonb(NULLIF(product_line,''))
+					)),
+				    updated_at = NOW()
+				WHERE array_length(skin_type,1)>0 OR array_length(concern,1)>0 OR array_length(key_ingredients,1)>0
+				   OR array_length(target_area,1)>0 OR array_length(free_from,1)>0 OR array_length(benefits,1)>0
+				   OR COALESCE(product_form,'')<>'' OR COALESCE(texture,'')<>'' OR COALESCE(routine_step,'')<>''
+				   OR COALESCE(routine_time,'')<>'' OR COALESCE(application_method,'')<>'' OR COALESCE(marketing_claim,'')<>''
+				   OR COALESCE(how_to_use,'')<>'' OR COALESCE(original_name,'')<>'' OR COALESCE(product_line,'')<>'';
+			END IF;
+		END $$;`,
+		`ALTER TABLE catalog.master_products
+			DROP COLUMN IF EXISTS skin_type, DROP COLUMN IF EXISTS concern, DROP COLUMN IF EXISTS key_ingredients,
+			DROP COLUMN IF EXISTS target_area, DROP COLUMN IF EXISTS free_from, DROP COLUMN IF EXISTS benefits,
+			DROP COLUMN IF EXISTS marketing_claim, DROP COLUMN IF EXISTS how_to_use, DROP COLUMN IF EXISTS product_form,
+			DROP COLUMN IF EXISTS texture, DROP COLUMN IF EXISTS routine_step, DROP COLUMN IF EXISTS routine_time,
+			DROP COLUMN IF EXISTS application_method, DROP COLUMN IF EXISTS original_name, DROP COLUMN IF EXISTS product_line,
+			DROP COLUMN IF EXISTS enrichment_version;`,
 	)
 
 	for i, m := range migrations {

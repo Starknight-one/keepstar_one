@@ -964,6 +964,60 @@ func (a *CatalogV2WriterAdapter) bulkMergeTier3Batch(ctx context.Context, batch 
 	return int(tag.RowsAffected()), nil
 }
 
+// BulkMergeTier2 merges JSON patches into master_products.tier2 for many rows
+// in one UPDATE per batch. tier2 is the canonical home for typed per-vertical
+// attributes (Group D: replaced the master_cosmetics typed table). Same
+// `tier2 = COALESCE(tier2,'{}') || patch` semantics as BulkMergeTier3.
+func (a *CatalogV2WriterAdapter) BulkMergeTier2(ctx context.Context, items []ports.BulkTier2Item) (int, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
+	written := 0
+	for start := 0; start < len(items); start += masterBulkBatchSize {
+		end := min(start+masterBulkBatchSize, len(items))
+		n, err := a.bulkMergeTier2Batch(ctx, items[start:end])
+		if err != nil {
+			return written, fmt.Errorf("bulk merge tier2 batch [%d:%d]: %w", start, end, err)
+		}
+		written += n
+	}
+	return written, nil
+}
+
+func (a *CatalogV2WriterAdapter) bulkMergeTier2Batch(ctx context.Context, batch []ports.BulkTier2Item) (int, error) {
+	masterIDs := make([]string, 0, len(batch))
+	patches := make([]string, 0, len(batch))
+	for _, it := range batch {
+		if it.MasterProductID == "" || len(it.Patch) == 0 {
+			continue
+		}
+		b, err := json.Marshal(it.Patch)
+		if err != nil {
+			continue
+		}
+		masterIDs = append(masterIDs, it.MasterProductID)
+		patches = append(patches, string(b))
+	}
+	if len(masterIDs) == 0 {
+		return 0, nil
+	}
+	tag, err := a.client.pool.Exec(ctx, `
+		WITH input AS (
+			SELECT t.mid::uuid AS mid, t.patch::jsonb AS patch
+			FROM unnest($1::text[], $2::text[]) AS t(mid, patch)
+		)
+		UPDATE catalog.master_products mp
+		SET tier2 = COALESCE(mp.tier2, '{}'::jsonb) || i.patch,
+		    updated_at = NOW()
+		FROM input i
+		WHERE mp.id = i.mid
+	`, masterIDs, patches)
+	if err != nil {
+		return 0, fmt.Errorf("bulk merge tier2 exec: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // BulkUpsertListing batches the same INSERT … ON CONFLICT semantics as
 // UpsertListing but issues one statement per ~500 rows via UNNEST. Caller
 // passes the raw slice; the adapter chunks. Returns the total RETURNING

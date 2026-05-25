@@ -31,17 +31,6 @@ var (
 	masterProductTextCols = map[string]bool{
 		"name": true, "brand": true, "description": true, "image_url": true, "gtin": true,
 	}
-	cosmeticsTextCols = map[string]bool{
-		"product_form": true, "texture": true, "routine_step": true, "routine_time": true,
-		"application_method": true, "scent": true, "marketing_claim": true, "how_to_use": true,
-	}
-	cosmeticsIntCols = map[string]bool{
-		"spf": true, "volume_ml": true, "weight_g": true, "unit_count": true,
-	}
-	cosmeticsArrayCols = map[string]bool{
-		"skin_type": true, "concern": true, "key_ingredients": true,
-		"target_area": true, "free_from": true, "benefits": true,
-	}
 )
 
 // PendingTreeNode is one node in the curator's master-category tree.
@@ -324,7 +313,8 @@ func (c *Client) BulkRejectMasters(ctx context.Context, masterIDs []string, deci
 // Routing rules (field_name format mirrors apply_v2.buildEnrichScalars):
 //
 //   - "tier3.<key>"      → master_products.tier3 || jsonb_build_object(<key>, value)
-//   - bare cosmetics col → master_cosmetics scalar/array on (master_product_id)
+//   - "tier2.<key>"      → master_products.tier2 (typed per-vertical attrs;
+//                          scalar fill-when-empty or array set-union by op_kind)
 //   - bare master col    → master_products column
 //
 // op_kind controls scalar-vs-array semantics:
@@ -419,72 +409,62 @@ func applyOneChange(ctx context.Context, tx pgx.Tx, masterID, opKind, fieldName 
 		return true, nil
 	}
 
-	// cosmetics array union
-	if cosmeticsArrayCols[fieldName] && opKind == "enrich_array_union" {
-		var arr []string
-		if err := json.Unmarshal(rawValue, &arr); err != nil {
-			return false, fmt.Errorf("decode array value: %w", err)
+	// tier2.<key> — typed per-vertical attributes pocket on master_products
+	// (Group D: replaced the master_cosmetics typed table). op_kind selects
+	// scalar fill-when-empty vs array set-union, both into the tier2 jsonb.
+	if len(fieldName) > 6 && fieldName[:6] == "tier2." {
+		key := fieldName[6:]
+		if key == "" {
+			return false, nil
 		}
-		if len(arr) == 0 {
+		if opKind == "enrich_array_union" {
+			// EnrichExistingMaster stages one row per element (pending_value is a
+			// single JSON string); tolerate both a single string and an array.
+			var arr []string
+			if err := json.Unmarshal(rawValue, &arr); err != nil {
+				var one string
+				if err2 := json.Unmarshal(rawValue, &one); err2 != nil {
+					return false, fmt.Errorf("decode tier2 array value: %w", err)
+				}
+				arr = []string{one}
+			}
+			if len(arr) == 0 {
+				return true, nil
+			}
+			_, err := tx.Exec(ctx, `
+				UPDATE catalog.master_products
+				SET tier2 = jsonb_set(
+						COALESCE(tier2, '{}'::jsonb),
+						ARRAY[$2::text],
+						(
+							SELECT COALESCE(jsonb_agg(DISTINCT e), '[]'::jsonb)
+							FROM (
+								SELECT jsonb_array_elements_text(
+									CASE WHEN jsonb_typeof(tier2->$2) = 'array'
+									     THEN tier2->$2 ELSE '[]'::jsonb END) AS e
+								UNION
+								SELECT unnest($3::text[]) AS e
+							) u
+						),
+						true),
+				    updated_at = NOW()
+				WHERE id::text = $1
+			`, masterID, key, arr)
+			if err != nil {
+				return false, fmt.Errorf("tier2 array union (%s): %w", key, err)
+			}
 			return true, nil
 		}
-		// fmt.Sprintf is safe — fieldName is allowlist-gated above.
-		stmt := fmt.Sprintf(`
-			INSERT INTO catalog.master_cosmetics (master_product_id, %s, updated_at)
-			VALUES ($1::uuid, $2::text[], NOW())
-			ON CONFLICT (master_product_id) DO UPDATE
-			SET %s = (
-				SELECT COALESCE(array_agg(DISTINCT v), '{}'::text[])
-				FROM unnest(COALESCE(master_cosmetics.%s, '{}'::text[]) || EXCLUDED.%s) AS v
-			),
+		// scalar fill-when-empty: only set when the key is absent or empty.
+		_, err := tx.Exec(ctx, `
+			UPDATE catalog.master_products
+			SET tier2 = COALESCE(tier2, '{}'::jsonb) || jsonb_build_object($2::text, $3::jsonb),
 			    updated_at = NOW()
-		`, fieldName, fieldName, fieldName, fieldName)
-		if _, err := tx.Exec(ctx, stmt, masterID, arr); err != nil {
-			return false, fmt.Errorf("cosmetics array union (%s): %w", fieldName, err)
-		}
-		return true, nil
-	}
-
-	// cosmetics scalar text
-	if cosmeticsTextCols[fieldName] {
-		var s string
-		if err := json.Unmarshal(rawValue, &s); err != nil {
-			return false, fmt.Errorf("decode text value: %w", err)
-		}
-		if s == "" {
-			return true, nil
-		}
-		stmt := fmt.Sprintf(`
-			INSERT INTO catalog.master_cosmetics (master_product_id, %s, updated_at)
-			VALUES ($1::uuid, $2::text, NOW())
-			ON CONFLICT (master_product_id) DO UPDATE
-			SET %s = COALESCE(NULLIF(master_cosmetics.%s, ''), EXCLUDED.%s),
-			    updated_at = NOW()
-		`, fieldName, fieldName, fieldName, fieldName)
-		if _, err := tx.Exec(ctx, stmt, masterID, s); err != nil {
-			return false, fmt.Errorf("cosmetics text fill (%s): %w", fieldName, err)
-		}
-		return true, nil
-	}
-
-	// cosmetics scalar int
-	if cosmeticsIntCols[fieldName] {
-		var n int
-		if err := json.Unmarshal(rawValue, &n); err != nil {
-			return false, fmt.Errorf("decode int value: %w", err)
-		}
-		if n == 0 {
-			return true, nil
-		}
-		stmt := fmt.Sprintf(`
-			INSERT INTO catalog.master_cosmetics (master_product_id, %s, updated_at)
-			VALUES ($1::uuid, $2::int, NOW())
-			ON CONFLICT (master_product_id) DO UPDATE
-			SET %s = COALESCE(master_cosmetics.%s, EXCLUDED.%s),
-			    updated_at = NOW()
-		`, fieldName, fieldName, fieldName, fieldName)
-		if _, err := tx.Exec(ctx, stmt, masterID, n); err != nil {
-			return false, fmt.Errorf("cosmetics int fill (%s): %w", fieldName, err)
+			WHERE id::text = $1
+			  AND (tier2 -> $2 IS NULL OR tier2 ->> $2 = '')
+		`, masterID, key, string(rawValue))
+		if err != nil {
+			return false, fmt.Errorf("tier2 scalar fill (%s): %w", key, err)
 		}
 		return true, nil
 	}

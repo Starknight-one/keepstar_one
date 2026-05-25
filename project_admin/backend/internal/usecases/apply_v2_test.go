@@ -131,6 +131,7 @@ type fakeWriter struct {
 	byMatchKey map[string]string
 	masters    map[string]*ports.MasterProductUpsert
 	cosmetics  map[string]*ports.MasterCosmeticsUpsert
+	tier2      map[string]map[string]any
 	tier3      map[string]map[string]any
 	listings   []*ports.ListingUpsert
 	aliases    map[string]string // lowercased product_type → vertical
@@ -155,6 +156,7 @@ func newFakeWriter() *fakeWriter {
 		byMatchKey: map[string]string{},
 		masters:    map[string]*ports.MasterProductUpsert{},
 		cosmetics:  map[string]*ports.MasterCosmeticsUpsert{},
+		tier2:      map[string]map[string]any{},
 		tier3:      map[string]map[string]any{},
 		aliases:    map[string]string{},
 	}
@@ -277,6 +279,22 @@ func (w *fakeWriter) BulkMergeTier3(_ context.Context, items []ports.BulkTier3It
 		}
 		for k, v := range it.Patch {
 			w.tier3[it.MasterProductID][k] = v
+		}
+		n++
+	}
+	return n, nil
+}
+func (w *fakeWriter) BulkMergeTier2(_ context.Context, items []ports.BulkTier2Item) (int, error) {
+	n := 0
+	for _, it := range items {
+		if it.MasterProductID == "" || len(it.Patch) == 0 {
+			continue
+		}
+		if w.tier2[it.MasterProductID] == nil {
+			w.tier2[it.MasterProductID] = map[string]any{}
+		}
+		for k, v := range it.Patch {
+			w.tier2[it.MasterProductID][k] = v
 		}
 		n++
 	}
@@ -476,15 +494,15 @@ func TestApplyForTenant_HappyPathCosmetics(t *testing.T) {
 	if mp.Vertical != "cosmetics" {
 		t.Errorf("vertical = %q, want cosmetics", mp.Vertical)
 	}
-	cos := writer.cosmetics["master-ORD-HA-30"]
-	if cos == nil {
-		t.Fatal("cosmetics row not written")
+	t2 := writer.tier2["master-ORD-HA-30"]
+	if t2 == nil {
+		t.Fatal("tier2 attributes not written")
 	}
-	if len(cos.SkinType) != 2 || cos.SkinType[0] != "oily" {
-		t.Errorf("skin_type = %v, want [oily dry]", cos.SkinType)
+	if st, _ := t2["skin_type"].([]string); len(st) != 2 || st[0] != "oily" {
+		t.Errorf("skin_type = %v, want [oily dry]", t2["skin_type"])
 	}
-	if cos.VolumeML == nil || *cos.VolumeML != 30 {
-		t.Errorf("volume_ml = %v, want 30", cos.VolumeML)
+	if vol, _ := t2["volume_ml"].(int); vol != 30 {
+		t.Errorf("volume_ml = %v, want 30", t2["volume_ml"])
 	}
 	if len(writer.listings) != 1 {
 		t.Fatalf("listings = %d, want 1", len(writer.listings))
@@ -527,7 +545,7 @@ func TestApplyForTenant_MasterImmutableOnBind(t *testing.T) {
 		t.Errorf("master mutated on bind: name=%q brand=%q", mp.Name, mp.Brand)
 	}
 	// On bind we MUST NOT write cosmetics or tier3.
-	if _, ok := writer.cosmetics["master-SHARED-1"]; ok {
+	if _, ok := writer.tier2["master-SHARED-1"]; ok {
 		t.Errorf("cosmetics written on bind path — should be skipped")
 	}
 	if _, ok := writer.tier3["master-SHARED-1"]; ok {
@@ -570,14 +588,14 @@ func TestApplyForTenant_PerRowVerticalRouting(t *testing.T) {
 	if cosm == nil || cosm.Vertical != "cosmetics" {
 		t.Errorf("cosmetics row missing or wrong vertical: %+v", cosm)
 	}
-	if _, ok := writer.cosmetics["master-ORD-NIA-30"]; !ok {
+	if _, ok := writer.tier2["master-ORD-NIA-30"]; !ok {
 		t.Error("cosmetics row not written for serum")
 	}
 	elec := writer.masters["master-MBA-1"]
 	if elec == nil || elec.Vertical != "electronics" {
 		t.Errorf("electronics row missing or wrong vertical: %+v", elec)
 	}
-	if _, ok := writer.cosmetics["master-MBA-1"]; ok {
+	if _, ok := writer.tier2["master-MBA-1"]; ok {
 		t.Error("cosmetics written for electronics row — should not be")
 	}
 	// tier3 must have cpu+ram for laptop.
@@ -638,7 +656,7 @@ func TestApplyForTenant_TierThreeFallbackForNonCosmeticsRuleInCosmeticsBranch(t 
 	if mp == nil || mp.Vertical != "unknown" {
 		t.Errorf("vertical = %q, want unknown", mp.Vertical)
 	}
-	if _, ok := writer.cosmetics["master-X-1"]; ok {
+	if _, ok := writer.tier2["master-X-1"]; ok {
 		t.Error("cosmetics written for unknown-vertical row — should be tier3 fallback")
 	}
 	t3 := writer.tier3["master-X-1"]
@@ -898,7 +916,7 @@ func TestScenario_137_BindCascade_GTINMatch_NoMasterUpdate(t *testing.T) {
 	if mp.Name != "Original Name" || mp.Brand != "Original Brand" || mp.SKU != "OLD-SKU" {
 		t.Errorf("master mutated on GTIN bind: name=%q brand=%q sku=%q", mp.Name, mp.Brand, mp.SKU)
 	}
-	if _, ok := writer.cosmetics["master-pre"]; ok {
+	if _, ok := writer.tier2["master-pre"]; ok {
 		t.Error("cosmetics written on bind path — must be skipped")
 	}
 	if _, ok := writer.tier3["master-pre"]; ok {

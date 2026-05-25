@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Catalog — таблицы, связи, вложенность</title>
+<style>
+:root {
+  --brand-blue: #5BA4D9;
+  --brand-orange: #F0924A;
+  --ink: #1F2A37;
+  --ink-soft: #6B7280;
+  --bg: #FAFBFC;
+  --card: #FFFFFF;
+  --border: #E5E7EB;
+  --border-strong: #D1D5DB;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --pk-color: #92400E;
+  --fk-color: #5BA4D9;
+  --new-color: #F0924A;
+  --drop-color: #991B1B;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.page {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 36px 28px 96px;
+}
+
+header.hero h1 {
+  font-size: 28px;
+  margin: 0 0 8px;
+  letter-spacing: -0.3px;
+}
+
+header.hero p {
+  font-size: 14px;
+  color: var(--ink-soft);
+  max-width: 880px;
+  margin: 0 0 6px;
+}
+
+.legend-bar {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.legend-swatch.pk   { background: #FEF3C7; border-color: #FCD34D; }
+.legend-swatch.fk   { background: #DBEAFE; border-color: var(--brand-blue); }
+.legend-swatch.new  { background: #FFF7ED; border-color: var(--brand-orange); }
+.legend-swatch.drop { background: #FEE2E2; border-color: #FCA5A5; }
+.legend-swatch.jsonb{ background: #ECFDF5; border-color: #6EE7B7; }
+
+/* ===== Layer sections ===== */
+
+.layer {
+  margin-top: 48px;
+}
+
+.layer-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 12px 16px;
+  background: var(--card);
+  border-left: 5px solid;
+  border-radius: 4px 10px 10px 4px;
+  margin-bottom: 22px;
+}
+
+.layer-head .num {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--ink);
+  color: white;
+  letter-spacing: 0.4px;
+}
+
+.layer-head h2 {
+  font-size: 19px;
+  margin: 0;
+  font-weight: 700;
+}
+
+.layer-head .desc {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin-left: auto;
+  max-width: 50%;
+  text-align: right;
+}
+
+.layer-master   .layer-head { border-left-color: var(--brand-blue); }
+.layer-project  .layer-head { border-left-color: var(--brand-orange); }
+.layer-listing  .layer-head { border-left-color: var(--ink); }
+.layer-pipeline .layer-head { border-left-color: #06A77D; }
+.layer-curator  .layer-head { border-left-color: #4ECDC4; }
+
+/* ===== Table card ===== */
+
+.tbl-tree {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 22px;
+}
+
+.tbl {
+  border: 1.5px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--card);
+  overflow: hidden;
+  position: relative;
+}
+
+.tbl.root {
+  border-color: var(--brand-blue);
+  border-width: 2px;
+}
+
+.tbl.new {
+  border-color: var(--brand-orange);
+  border-width: 2px;
+}
+
+.tbl.new::after {
+  content: "NEW · D2";
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--brand-orange);
+  background: #FFF7ED;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--brand-orange);
+}
+
+.tbl-head {
+  padding: 12px 16px;
+  background: #F9FAFB;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tbl-name {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.tbl-role {
+  font-size: 11px;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.tbl-scope {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: auto;
+}
+
+.tbl-scope.shared    { background: #DBEAFE; color: #1E40AF; }
+.tbl-scope.tenant    { background: #FEF3C7; color: #92400E; }
+.tbl-scope.pipeline  { background: #DCFCE7; color: #14532D; }
+.tbl-scope.curator   { background: #CFFAFE; color: #0E7490; }
+.tbl-scope.junction  { background: #F3F4F6; color: var(--ink-soft); }
+
+/* Columns table */
+
+.cols {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.cols th,
+.cols td {
+  padding: 5px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.cols th {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: #FAFBFC;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.cols td.col-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cols td.col-type {
+  color: var(--ink-soft);
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.cols td.col-note {
+  color: var(--ink);
+  font-family: -apple-system, sans-serif;
+  font-size: 11.5px;
+}
+
+.cols td.col-note .fk-ref {
+  color: var(--brand-blue);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.cols tr.is-pk td.col-name { background: #FEF3C7; }
+.cols tr.is-fk td.col-name { background: #DBEAFE; }
+.cols tr.is-pk.is-fk td.col-name { background: linear-gradient(135deg, #FEF3C7 50%, #DBEAFE 50%); }
+
+.col-tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.3px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.col-tag.pk  { background: #FEF3C7; color: #92400E; }
+.col-tag.fk  { background: #DBEAFE; color: #1E40AF; }
+.col-tag.jsonb { background: #ECFDF5; color: #065F46; }
+
+/* Sample rows */
+
+.sample {
+  background: #FAFBFC;
+  padding: 10px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  border-top: 1px dashed var(--border);
+}
+
+.sample-label {
+  font-family: -apple-system, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+}
+
+.sample-row {
+  padding: 4px 0;
+  border-bottom: 1px dotted #E5E7EB;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.sample-row:last-child { border-bottom: 0; }
+
+.sample-row .k {
+  color: var(--ink-soft);
+}
+
+.sample-row .v-str { color: #166534; }
+.sample-row .v-num { color: #1E40AF; }
+.sample-row .v-null { color: #9CA3AF; font-style: italic; }
+.sample-row .v-uuid { color: #92400E; }
+.sample-row .v-arr { color: #5B21B6; }
+.sample-row .v-jsonb { color: #065F46; }
+
+/* Nesting */
+
+.nest {
+  margin-left: 30px;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 22px;
+  position: relative;
+  margin-top: 16px;
+}
+
+.nest::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 0;
+  width: 24px;
+  height: 28px;
+  border-left: 2px solid var(--border-strong);
+  border-bottom: 2px solid var(--border-strong);
+  border-bottom-left-radius: 10px;
+}
+
+.nest-rel {
+  position: relative;
+  top: -8px;
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: white;
+  background: var(--ink-soft);
+  padding: 2px 10px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.nest-rel.one-to-many   { background: var(--brand-blue); }
+.nest-rel.one-to-one    { background: #06A77D; }
+.nest-rel.many-to-many  { background: var(--brand-orange); }
+.nest-rel.cross-ref     { background: var(--ink); }
+
+/* ===== Cross-references panel ===== */
+
+.xref {
+  margin-top: 56px;
+  background: var(--card);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.xref-head {
+  padding: 12px 18px;
+  background: var(--ink);
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.xref table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.xref th, .xref td {
+  padding: 8px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.xref th {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--ink-soft);
+  background: #F9FAFB;
+}
+
+.xref td.cm-from, .xref td.cm-to {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.xref td.cm-rel {
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+footer {
+  margin-top: 80px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+code { font-family: var(--mono); font-size: 12px; }
+
+.scenario {
+  margin-top: 24px;
+  padding: 16px 20px;
+  background: #FFF7ED;
+  border: 1px dashed var(--brand-orange);
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.scenario strong { color: #92400E; }
+.scenario .step {
+  display: block;
+  padding-left: 16px;
+  position: relative;
+  margin: 4px 0;
+}
+.scenario .step::before {
+  content: counter(step-counter);
+  counter-increment: step-counter;
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 14px;
+  height: 14px;
+  background: var(--brand-orange);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scenario { counter-reset: step-counter; }
+
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <h1>Catalog — таблицы, колонки, связи</h1>
+  <p>Целевое состояние ПОСЛЕ Group D. Каждая таблица показана с ключевыми колонками, PK/FK, скоупом (shared / per-tenant) и парой сэмпл-рядов. Связи вложены — дочерние таблицы под родителями, M:N через junction-таблицы помечены. Полный реестр кросс-ссылок внизу.</p>
+
+  <div class="legend-bar">
+    <span class="legend-item"><span class="legend-swatch pk"></span>PRIMARY KEY</span>
+    <span class="legend-item"><span class="legend-swatch fk"></span>FOREIGN KEY</span>
+    <span class="legend-item"><span class="legend-swatch jsonb"></span>jsonb (semi-structured)</span>
+    <span class="legend-item"><span class="legend-swatch new"></span>NEW в Group D</span>
+    <span class="legend-item"><span class="legend-swatch drop"></span>DROP в Group D</span>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section class="layer layer-master">
+  <div class="layer-head">
+    <span class="num">L1</span>
+    <h2>Master layer — shared identity</h2>
+    <span class="desc">Источник правды о продукте. Один master = одна семья. Один на всех тенантов. Slow churn, rich data, ingest-time-heavy.</span>
+  </div>
+
+  <!-- master_products root -->
+  <div class="tbl root">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.master_products</span>
+      <span class="tbl-role">family identity</span>
+      <span class="tbl-scope shared">SHARED</span>
+    </div>
+    <table class="cols">
+      <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note">stable UUID, никогда не меняется</td></tr>
+        <tr><td class="col-name">sku</td><td class="col-type">VARCHAR(100)</td><td class="col-note">UNIQUE; первичный matching key</td></tr>
+        <tr><td class="col-name">name</td><td class="col-type">VARCHAR(500)</td><td class="col-note">canonical name (без тенантских override'ов)</td></tr>
+        <tr><td class="col-name">brand</td><td class="col-type">VARCHAR(255)</td><td class="col-note">trgm GIN-index для fuzzy</td></tr>
+        <tr><td class="col-name">vertical</td><td class="col-type">TEXT</td><td class="col-note">hot fast-path filter ('cosmetics', 'electronics', ...)</td></tr>
+        <tr class="is-fk"><td class="col-name">category_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_categories.id</span></td></tr>
+        <tr><td class="col-name">tier2 <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">типизированные per-vertical атрибуты (schema в master_field_definitions)</td></tr>
+        <tr><td class="col-name">tier3 <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">«солянка»: отзывы, транскрипты, упаковка — для богатого поиска</td></tr>
+        <tr><td class="col-name">embedding</td><td class="col-type">vector(384)</td><td class="col-note">только для curator/ingest/merger; чат использует projection</td></tr>
+        <tr><td class="col-name">approval_status</td><td class="col-type">TEXT</td><td class="col-note">approved | pending_approval | rejected | expired</td></tr>
+        <tr><td class="col-name">confidence</td><td class="col-type">TEXT</td><td class="col-note">unverified | guessed | curator_confirmed</td></tr>
+        <tr><td class="col-name">gtin, normalized_match_key</td><td class="col-type">TEXT</td><td class="col-note">secondary match keys для apply_v2 cascade</td></tr>
+        <tr><td class="col-name">source_system, source_id</td><td class="col-type">VARCHAR</td><td class="col-note">провенанс первичного ingest'а</td></tr>
+      </tbody>
+    </table>
+    <div class="sample">
+      <div class="sample-label">Example row</div>
+      <div class="sample-row"><span class="k">id=</span><span class="v-uuid">abc-123</span> <span class="k">sku=</span><span class="v-str">"LOR-MASC-001"</span> <span class="k">name=</span><span class="v-str">"Mascara Volume Million"</span> <span class="k">brand=</span><span class="v-str">"L'Oreal"</span> <span class="k">vertical=</span><span class="v-str">"cosmetics"</span> <span class="k">tier2=</span><span class="v-jsonb">{"product_form":"mascara"}</span> <span class="k">tier3=</span><span class="v-jsonb">{"reviews":1247, "claims":["удлиняет","не сыпется"]}</span></div>
+    </div>
+
+    <!-- nested children -->
+    <div class="nest">
+      <div class="nest-rel one-to-many">1 : N → master_variants</div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="tbl-name">catalog.master_variants</span>
+          <span class="tbl-role">variant axes</span>
+          <span class="tbl-scope shared">SHARED</span>
+        </div>
+        <table class="cols">
+          <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note"></td></tr>
+            <tr class="is-fk"><td class="col-name">master_product_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_products.id</span> ON DELETE CASCADE</td></tr>
+            <tr><td class="col-name">sku</td><td class="col-type">TEXT</td><td class="col-note">variant-уровневый SKU</td></tr>
+            <tr><td class="col-name">gtins</td><td class="col-type">TEXT[]</td><td class="col-note">штрихкоды</td></tr>
+            <tr><td class="col-name">volume_ml, weight_g</td><td class="col-type">INTEGER</td><td class="col-note">оси размера</td></tr>
+            <tr><td class="col-name">color, size, material</td><td class="col-type">TEXT</td><td class="col-note">оси внешнего вида</td></tr>
+            <tr><td class="col-name">axes <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">любые vertical-specific оси (запах, тон, мощность)</td></tr>
+            <tr><td class="col-name">variant_kind</td><td class="col-type">TEXT</td><td class="col-note">real | addon | bundle | <strong style="color:var(--new-color)">default</strong> (NEW — для невариативных)</td></tr>
+            <tr><td class="col-name">embedding</td><td class="col-type">vector(384)</td><td class="col-note">narrow embedding для variant-specific поиска</td></tr>
+          </tbody>
+        </table>
+        <div class="sample">
+          <div class="sample-label">Example rows — у мастера abc-123 два варианта по объёму</div>
+          <div class="sample-row"><span class="k">id=</span><span class="v-uuid">var-7</span> <span class="k">master=</span><span class="v-uuid">abc-123</span> <span class="k">sku=</span><span class="v-str">"LOR-MASC-001-7ML"</span> <span class="k">volume_ml=</span><span class="v-num">7</span> <span class="k">variant_kind=</span><span class="v-str">"real"</span></div>
+          <div class="sample-row"><span class="k">id=</span><span class="v-uuid">var-12</span> <span class="k">master=</span><span class="v-uuid">abc-123</span> <span class="k">sku=</span><span class="v-str">"LOR-MASC-001-12ML"</span> <span class="k">volume_ml=</span><span class="v-num">12</span> <span class="k">variant_kind=</span><span class="v-str">"real"</span></div>
+          <div class="sample-row" style="color:var(--ink-soft)"><span class="k">// для невариативного товара (например, Aspirin 500mg) будет один синтетический variant_kind="default"</span></div>
+        </div>
+      </div>
+
+      <div class="nest-rel one-to-one">1 : 1 (per cosmetic master) → master_cosmetics</div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="tbl-name">catalog.master_cosmetics</span>
+          <span class="tbl-role">per-vertical typed slab</span>
+          <span class="tbl-scope shared">SHARED</span>
+        </div>
+        <table class="cols">
+          <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr class="is-pk is-fk"><td class="col-name">master_product_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_products.id</span></td></tr>
+            <tr><td class="col-name">skin_type, concern, key_ingredients, target_area, free_from, benefits</td><td class="col-type">TEXT[]</td><td class="col-note">GIN-индексы; main typed search-keys для cosmetics</td></tr>
+            <tr><td class="col-name">product_form, texture, routine_step, routine_time, application_method, scent, marketing_claim</td><td class="col-type">TEXT</td><td class="col-note">scalar typed-атрибуты</td></tr>
+            <tr><td class="col-name">spf</td><td class="col-type">INTEGER</td><td class="col-note"></td></tr>
+            <tr><td class="col-name">extra <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">one-offs не достигшие promotion</td></tr>
+          </tbody>
+        </table>
+        <div class="sample">
+          <div class="sample-label">Example — cosmetics-данные для abc-123 (L'Oreal Mascara)</div>
+          <div class="sample-row"><span class="k">master_product_id=</span><span class="v-uuid">abc-123</span> <span class="k">skin_type=</span><span class="v-arr">{sensitive,all}</span> <span class="k">key_ingredients=</span><span class="v-arr">{hyaluronic,panthenol}</span> <span class="k">product_form=</span><span class="v-str">"mascara"</span> <span class="k">routine_step=</span><span class="v-str">"makeup_eye"</span></div>
+          <div class="sample-row" style="color:var(--ink-soft)">// для electronics/apparel/sport — НЕТ строки в master_cosmetics; их типизированные атрибуты живут в tier2 или в (будущей) master_electronics</div>
+        </div>
+      </div>
+
+      <div class="nest-rel many-to-many">M : N → master_categories (via master_product_categories)</div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="tbl-name">catalog.master_categories</span>
+          <span class="tbl-role">global curated taxonomy</span>
+          <span class="tbl-scope shared">SHARED</span>
+        </div>
+        <table class="cols">
+          <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note"></td></tr>
+            <tr class="is-fk"><td class="col-name">parent_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_categories.id</span> self-ref (tree)</td></tr>
+            <tr><td class="col-name">slug, name</td><td class="col-type">TEXT</td><td class="col-note">"makeup/mascara"</td></tr>
+            <tr><td class="col-name">vertical</td><td class="col-type">TEXT</td><td class="col-note"></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="tbl-name">catalog.master_product_categories</span>
+          <span class="tbl-role">M:N junction</span>
+          <span class="tbl-scope junction">JUNCTION</span>
+        </div>
+        <table class="cols">
+          <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr class="is-pk is-fk"><td class="col-name">master_product_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_products.id</span></td></tr>
+            <tr class="is-pk is-fk"><td class="col-name">master_category_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_categories.id</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="nest-rel cross-ref">1 : N (registry) → master_field_definitions</div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="tbl-name">catalog.master_field_definitions</span>
+          <span class="tbl-role">tier2 schema registry</span>
+          <span class="tbl-scope shared">SHARED</span>
+        </div>
+        <table class="cols">
+          <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note"></td></tr>
+            <tr><td class="col-name">vertical, key</td><td class="col-type">TEXT</td><td class="col-note">UNIQUE (vertical, key) — определяет валидные ключи tier2</td></tr>
+            <tr><td class="col-name">type</td><td class="col-type">TEXT</td><td class="col-note">text | number | enum | array | boolean</td></tr>
+            <tr><td class="col-name">enum_values</td><td class="col-type">TEXT[]</td><td class="col-note"></td></tr>
+            <tr><td class="col-name">source</td><td class="col-type">TEXT</td><td class="col-note">seed | curator | migration</td></tr>
+          </tbody>
+        </table>
+        <div class="sample">
+          <div class="sample-label">Example — что валидно в tier2 для cosmetics</div>
+          <div class="sample-row"><span class="k">vertical=</span><span class="v-str">"cosmetics"</span> <span class="k">key=</span><span class="v-str">"product_form"</span> <span class="k">type=</span><span class="v-str">"enum"</span> <span class="k">enum_values=</span><span class="v-arr">{cream,gel,mascara,foundation,serum}</span></div>
+          <div class="sample-row"><span class="k">vertical=</span><span class="v-str">"electronics"</span> <span class="k">key=</span><span class="v-str">"ram_gb"</span> <span class="k">type=</span><span class="v-str">"number"</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DROP in D1 -->
+  <div class="tbl" style="border-color: #FCA5A5; background: #FEF2F2; opacity: 0.7; margin-top: 22px;">
+    <div class="tbl-head" style="background:#FEE2E2">
+      <span class="tbl-name" style="text-decoration: line-through;">17 legacy cosmetics columns on master_products</span>
+      <span class="tbl-role">duplicates of master_cosmetics</span>
+      <span class="tbl-scope" style="background:#FEE2E2; color:#991B1B">DROP · D1</span>
+    </div>
+    <div style="padding: 10px 16px; font-family: var(--mono); font-size: 11px; color: #991B1B;">
+      ALTER TABLE master_products DROP COLUMN skin_type, concern, key_ingredients, target_area, free_from, benefits, marketing_claim, how_to_use, volume, product_form, texture, routine_step, routine_time, application_method, inci_text, short_name, original_name, product_line, enrichment_version;
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="layer layer-project">
+  <div class="layer-head">
+    <span class="num">L2</span>
+    <h2>Projection layer — per-tenant search slice</h2>
+    <span class="desc">НОВЫЙ слой (D2). Денормализация мастер+вариант+overrides per (tenant_id, master_variant_id). HNSW смотрит только в свой slice → не зависит от размера мастера.</span>
+  </div>
+
+  <div class="tbl new">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.tenant_search_projection</span>
+      <span class="tbl-role">denormalized search index</span>
+      <span class="tbl-scope tenant">PER-TENANT</span>
+    </div>
+    <table class="cols">
+      <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr class="is-pk is-fk"><td class="col-name">tenant_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenants.id</span></td></tr>
+        <tr class="is-pk is-fk"><td class="col-name">master_variant_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_variants.id</span></td></tr>
+        <tr class="is-fk"><td class="col-name">master_product_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note">denorm <span class="fk-ref">→ master_products.id</span></td></tr>
+        <tr><td class="col-name">vertical</td><td class="col-type">TEXT</td><td class="col-note">denorm из master_products для hot filter</td></tr>
+        <tr><td class="col-name">tier1_text</td><td class="col-type">TEXT</td><td class="col-note">name + brand → embedding input</td></tr>
+        <tr><td class="col-name">tier2_text</td><td class="col-type">TEXT</td><td class="col-note">flatten типизированных атрибутов</td></tr>
+        <tr><td class="col-name">tier3_text</td><td class="col-type">TEXT</td><td class="col-note">солянка из master.tier3 (отзывы, транскрипты, упаковка)</td></tr>
+        <tr><td class="col-name">variant_text</td><td class="col-type">TEXT</td><td class="col-note">"7мл", "тон 03", "размер S" — оси конкретного варианта</td></tr>
+        <tr><td class="col-name">override_text</td><td class="col-type">TEXT</td><td class="col-note">tenant_overrides + display_name (приватное, видит только этот тенант)</td></tr>
+        <tr><td class="col-name">embedding</td><td class="col-type">vector(384)</td><td class="col-note">пересчитан per-tenant; <strong>HNSW indexed</strong></td></tr>
+        <tr><td class="col-name">search_tsv</td><td class="col-type">tsvector</td><td class="col-note">GIN indexed FTS-фолбэк</td></tr>
+        <tr><td class="col-name">updated_at</td><td class="col-type">TIMESTAMPTZ</td><td class="col-note">rebuild trigger</td></tr>
+      </tbody>
+    </table>
+    <div class="sample">
+      <div class="sample-label">Example — projection-строки для Beauty Boutique (tenant=t1) на L'Oreal Mascara</div>
+      <div class="sample-row"><span class="k">tenant=</span><span class="v-uuid">t1</span> <span class="k">variant=</span><span class="v-uuid">var-7</span> <span class="k">master=</span><span class="v-uuid">abc-123</span> <span class="k">vertical=</span><span class="v-str">"cosmetics"</span> <span class="k">tier1=</span><span class="v-str">"L'Oreal Mascara Volume Million"</span> <span class="k">tier3=</span><span class="v-str">"удлиняет не сыпется hyaluronic 1247 отзывов"</span> <span class="k">override=</span><span class="v-str">"HIT curator-picked free-shipping"</span></div>
+      <div class="sample-row"><span class="k">tenant=</span><span class="v-uuid">t1</span> <span class="k">variant=</span><span class="v-uuid">var-12</span> <span class="k">master=</span><span class="v-uuid">abc-123</span> <span class="k">vertical=</span><span class="v-str">"cosmetics"</span> <span class="k">tier1=</span><span class="v-str">"L'Oreal Mascara Volume Million"</span> <span class="k">variant_text=</span><span class="v-str">"12мл"</span></div>
+      <div class="sample-row" style="color:var(--ink-soft)">// у Skincare Pro (t2) — только var-7 (12мл не продают); у Mega Mart (t4) — обе строки с override_text="SALE -33%"</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="layer layer-listing">
+  <div class="layer-head">
+    <span class="num">L3</span>
+    <h2>Listing layer — tenant offering + CMS</h2>
+    <span class="desc">Что тенант продаёт и как показывает. Commerce-поля (price/stock) и presentation-overrides. Один row на (tenant_id, master_variant_id).</span>
+  </div>
+
+  <div class="tbl root">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.products</span>
+      <span class="tbl-role">tenant listing of one variant</span>
+      <span class="tbl-scope tenant">PER-TENANT</span>
+    </div>
+    <table class="cols">
+      <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note"></td></tr>
+        <tr class="is-fk"><td class="col-name">tenant_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenants.id</span></td></tr>
+        <tr class="is-fk"><td class="col-name">master_product_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_products.id</span> (denorm для индексов)</td></tr>
+        <tr class="is-fk"><td class="col-name">master_variant_id <span class="col-tag fk">FK</span> <strong style="color:var(--new-color)">NOT NULL после D1</strong></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_variants.id</span> — конкретный вариант, который продаёт тенант</td></tr>
+
+        <tr><td class="col-name" colspan="3" style="background:#FFF7ED; font-style:italic; color:#92400E;">— commerce block —</td></tr>
+        <tr><td class="col-name">price</td><td class="col-type">INTEGER</td><td class="col-note">в копейках/центах</td></tr>
+        <tr><td class="col-name">currency</td><td class="col-type">VARCHAR(10)</td><td class="col-note"></td></tr>
+        <tr><td class="col-name">stock_quantity</td><td class="col-type">INTEGER</td><td class="col-note">⚠️ дубль с catalog.stock — D4 решит кто win'ит</td></tr>
+        <tr><td class="col-name">rating</td><td class="col-type">NUMERIC(2,1)</td><td class="col-note"></td></tr>
+
+        <tr><td class="col-name" colspan="3" style="background:#FFF7ED; font-style:italic; color:#92400E;">— presentation override block —</td></tr>
+        <tr><td class="col-name">display_name</td><td class="col-type">TEXT</td><td class="col-note">тенант override названия; NULL → fallback на master.name</td></tr>
+        <tr><td class="col-name">original_name</td><td class="col-type">TEXT</td><td class="col-note">оригинал из Shopify/CSV (для аудита)</td></tr>
+        <tr><td class="col-name">description</td><td class="col-type">TEXT</td><td class="col-note">override</td></tr>
+        <tr><td class="col-name">media <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">фото/видео override</td></tr>
+        <tr><td class="col-name">tenant_overrides <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">badges (HIT/SALE), custom tags, marketing payload</td></tr>
+        <tr><td class="col-name">tags <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">GIN indexed</td></tr>
+
+        <tr><td class="col-name" colspan="3" style="background:#FFF7ED; font-style:italic; color:#92400E;">— source provenance —</td></tr>
+        <tr><td class="col-name">source_system, source_id</td><td class="col-type">TEXT</td><td class="col-note">shopify | csv | sheets — для re-sync</td></tr>
+        <tr><td class="col-name">payload_hash</td><td class="col-type">TEXT</td><td class="col-note">для идемпотентности re-ingest</td></tr>
+        <tr><td class="col-name">deleted_at</td><td class="col-type">TIMESTAMPTZ</td><td class="col-note">per-tenant soft-delete (мастер не трогаем)</td></tr>
+      </tbody>
+    </table>
+    <div class="sample">
+      <div class="sample-label">Example — Beauty Boutique продаёт L'Oreal Mascara 7мл</div>
+      <div class="sample-row"><span class="k">tenant=</span><span class="v-uuid">t1</span> <span class="k">master_product=</span><span class="v-uuid">abc-123</span> <span class="k">master_variant=</span><span class="v-uuid">var-7</span> <span class="k">price=</span><span class="v-num">2500</span> <span class="k">currency=</span><span class="v-str">"USD"</span> <span class="k">display_name=</span><span class="v-str">"L'Oreal Mascara Volume Million"</span> <span class="k">tenant_overrides=</span><span class="v-jsonb">{"badges":["HIT","curator-picked"]}</span></div>
+      <div class="sample-row"><span class="k">tenant=</span><span class="v-uuid">t4</span> <span class="k">master_product=</span><span class="v-uuid">abc-123</span> <span class="k">master_variant=</span><span class="v-uuid">var-7</span> <span class="k">price=</span><span class="v-num">1999</span> <span class="k">currency=</span><span class="v-str">"USD"</span> <span class="k">display_name=</span><span class="v-str">"Тушь L'Oreal 7мл"</span> <span class="k">tenant_overrides=</span><span class="v-jsonb">{"badges":["SALE"],"compare_at":2999}</span></div>
+      <div class="sample-row" style="color:var(--ink-soft)">// один и тот же master+variant, две разные listing-строки — у Beauty Boutique и Mega Mart</div>
+    </div>
+
+    <div class="nest">
+      <div class="nest-rel one-to-one">1 : 1 → catalog.stock (hot store)</div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="tbl-name">catalog.stock</span>
+          <span class="tbl-role">hot stock — будущий KeyDB/Tarantool</span>
+          <span class="tbl-scope tenant">PER-TENANT</span>
+        </div>
+        <table class="cols">
+          <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr class="is-pk is-fk"><td class="col-name">tenant_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenants.id</span></td></tr>
+            <tr class="is-pk is-fk"><td class="col-name">product_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ catalog.products.id</span></td></tr>
+            <tr><td class="col-name">quantity</td><td class="col-type">INTEGER</td><td class="col-note"></td></tr>
+            <tr><td class="col-name">reserved</td><td class="col-type">INTEGER</td><td class="col-note">в корзинах</td></tr>
+            <tr><td class="col-name">updated_at</td><td class="col-type">TIMESTAMPTZ</td><td class="col-note">webhook-updated, per-second</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="nest-rel many-to-many">M : N → tenant_categories (via tenant_listing_categories)</div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="tbl-name">catalog.tenant_categories</span>
+          <span class="tbl-role">tenant's own taxonomy</span>
+          <span class="tbl-scope tenant">PER-TENANT</span>
+        </div>
+        <table class="cols">
+          <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note"></td></tr>
+            <tr class="is-fk"><td class="col-name">tenant_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenants.id</span></td></tr>
+            <tr class="is-fk"><td class="col-name">parent_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note">self-ref tree</td></tr>
+            <tr><td class="col-name">name, external_id</td><td class="col-type">TEXT</td><td class="col-note">внешний id от Shopify collection</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="tbl-name">catalog.category_mapping</span>
+          <span class="tbl-role">tenant cat → master cat</span>
+          <span class="tbl-scope junction">JUNCTION</span>
+        </div>
+        <table class="cols">
+          <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr class="is-pk is-fk"><td class="col-name">tenant_category_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenant_categories.id</span></td></tr>
+            <tr class="is-fk"><td class="col-name">master_category_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_categories.id</span></td></tr>
+            <tr><td class="col-name">confidence</td><td class="col-type">NUMERIC</td><td class="col-note">0..1, curator-confirmed</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- DROP in D3 -->
+  <div class="tbl" style="border-color: #FCA5A5; background: #FEF2F2; opacity: 0.7; margin-top: 22px;">
+    <div class="tbl-head" style="background:#FEE2E2">
+      <span class="tbl-name" style="text-decoration: line-through;">catalog.categories</span>
+      <span class="tbl-role">V1 — устарела</span>
+      <span class="tbl-scope" style="background:#FEE2E2; color:#991B1B">DROP · D3</span>
+    </div>
+    <div style="padding:10px 16px; font-family: var(--mono); font-size:11px; color:#991B1B;">
+      Заменена парой master_categories + tenant_categories. Перед DROP — grep readers.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="layer layer-pipeline">
+  <div class="layer-head">
+    <span class="num">L4</span>
+    <h2>Ingest pipeline — поток сырья</h2>
+    <span class="desc">Сырьё клиента → артефакт-карта → apply → master + listing. Все три таблицы — служебные, не источник правды.</span>
+  </div>
+
+  <div class="tbl">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.inbox_items</span>
+      <span class="tbl-role">raw tenant data buffer</span>
+      <span class="tbl-scope pipeline">PIPELINE</span>
+    </div>
+    <table class="cols">
+      <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note"></td></tr>
+        <tr class="is-fk"><td class="col-name">tenant_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenants.id</span></td></tr>
+        <tr><td class="col-name">source_kind</td><td class="col-type">TEXT</td><td class="col-note">shopify | csv | sheets | manual</td></tr>
+        <tr><td class="col-name">external_id</td><td class="col-type">TEXT</td><td class="col-note">id в источнике; UNIQUE(tenant, source_kind, external_id)</td></tr>
+        <tr><td class="col-name">raw <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">сырой объект как пришёл (GIN indexed)</td></tr>
+        <tr><td class="col-name">payload_hash</td><td class="col-type">TEXT</td><td class="col-note">идемпотентность; applied_at сбрасывается только если hash изменился</td></tr>
+        <tr><td class="col-name">applied_at</td><td class="col-type">TIMESTAMPTZ</td><td class="col-note">NULL = ждёт apply; partial-index по unapplied</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tbl">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.tenant_catalog_schema</span>
+      <span class="tbl-role">mapping artifact (карта полей)</span>
+      <span class="tbl-scope pipeline">PIPELINE</span>
+    </div>
+    <table class="cols">
+      <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr class="is-pk is-fk"><td class="col-name">tenant_id <span class="col-tag pk">PK</span><span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenants.id</span> — одна карта на тенанта</td></tr>
+        <tr><td class="col-name">mapping_artifact <span class="col-tag jsonb">JSONB</span></td><td class="col-type">jsonb</td><td class="col-note">branches + classify_rules + classifying_field — построено discovery-агентом</td></tr>
+        <tr><td class="col-name">artifact_version</td><td class="col-type">INTEGER</td><td class="col-note">монотонно растёт; patch-flow из B1 инкрементит</td></tr>
+        <tr><td class="col-name">status</td><td class="col-type">TEXT</td><td class="col-note">active | stale | needs_human_review</td></tr>
+        <tr><td class="col-name">discovered_at, validated_at, re_discover_after</td><td class="col-type">TIMESTAMPTZ</td><td class="col-note"></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="layer layer-curator">
+  <div class="layer-head">
+    <span class="num">L5</span>
+    <h2>Curator queues — что ждёт ревью</h2>
+    <span class="desc">5 разных «корзин» под разные ревью-задачи. У каждой свой trigger / writer / UI.</span>
+  </div>
+
+  <div class="tbl">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.master_pending_changes</span>
+      <span class="tbl-role">per-field enrichments awaiting approval</span>
+      <span class="tbl-scope curator">CURATOR</span>
+    </div>
+    <table class="cols">
+      <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note"></td></tr>
+        <tr class="is-fk"><td class="col-name">master_product_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ master_products.id</span></td></tr>
+        <tr class="is-fk"><td class="col-name">tenant_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenants.id</span> — кто предложил</td></tr>
+        <tr class="is-fk"><td class="col-name">source_inbox_item_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ inbox_items.id</span></td></tr>
+        <tr><td class="col-name">op_kind</td><td class="col-type">TEXT</td><td class="col-note">enrich_array_union | enrich_scalar_fill</td></tr>
+        <tr><td class="col-name">field_name, pending_value</td><td class="col-type">TEXT, jsonb</td><td class="col-note">что и куда писать на approve</td></tr>
+        <tr><td class="col-name">status</td><td class="col-type">TEXT</td><td class="col-note">pending | approved | rejected | expired (30-day TTL)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tbl">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.schema_drift_findings</span>
+      <span class="tbl-role">B2 — незамапленные колонки</span>
+      <span class="tbl-scope curator">CURATOR</span>
+    </div>
+    <table class="cols">
+      <thead><tr><th>Column</th><th>Type</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr class="is-pk"><td class="col-name">id <span class="col-tag pk">PK</span></td><td class="col-type">UUID</td><td class="col-note"></td></tr>
+        <tr class="is-fk"><td class="col-name">tenant_id <span class="col-tag fk">FK</span></td><td class="col-type">UUID</td><td class="col-note"><span class="fk-ref">→ tenants.id</span></td></tr>
+        <tr><td class="col-name">apply_run_id, field_name</td><td class="col-type">TEXT</td><td class="col-note">UNIQUE(tenant, run, field) — идемпотентен</td></tr>
+        <tr><td class="col-name">type_guess</td><td class="col-type">TEXT</td><td class="col-note">numeric | categorical | text | date</td></tr>
+        <tr><td class="col-name">decision</td><td class="col-type">TEXT</td><td class="col-note">typo_of_existing | alias_of_attribute | new</td></tr>
+        <tr><td class="col-name">suggested_action, stats</td><td class="col-type">jsonb</td><td class="col-note">LLM-предложение + sample-статы</td></tr>
+        <tr><td class="col-name">status</td><td class="col-type">TEXT</td><td class="col-note">pending | classified | applied | dismissed</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tbl">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.master_attribute_candidates</span>
+      <span class="tbl-role">кандидаты на promotion → master_field_definitions / tier2</span>
+      <span class="tbl-scope curator">CURATOR</span>
+    </div>
+  </div>
+  <div class="tbl">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.master_category_candidates</span>
+      <span class="tbl-role">кандидаты в master_categories</span>
+      <span class="tbl-scope curator">CURATOR</span>
+    </div>
+  </div>
+  <div class="tbl">
+    <div class="tbl-head">
+      <span class="tbl-name">catalog.tenant_variant_candidates_junk</span>
+      <span class="tbl-role">варианты, отмеченные мусором</span>
+      <span class="tbl-scope curator">CURATOR</span>
+    </div>
+  </div>
+
+  <!-- DROP in D4 -->
+  <div class="tbl" style="border-color: #FCA5A5; background: #FEF2F2; opacity: 0.7; margin-top: 22px;">
+    <div class="tbl-head" style="background:#FEE2E2">
+      <span class="tbl-name" style="text-decoration: line-through;">catalog.merge_reports</span>
+      <span class="tbl-role">pre-inbox legacy</span>
+      <span class="tbl-scope" style="background:#FEE2E2; color:#991B1B">DROP · D4</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="scenario">
+    <strong style="font-size:14px;">Сквозной сценарий: «лореаль тушь 7мл» в чате Beauty Boutique</strong>
+    <span class="step"><strong>V5 chat</strong> делает запрос к <code>tenant_search_projection</code> WHERE tenant_id = t1, ORDER BY embedding ↔ query_vector LIMIT 10. HNSW в slice'е Beauty Boutique находит строку (t1, var-7).</span>
+    <span class="step"><strong>JOIN</strong> в read-path: projection (поиск) → catalog.products (price, display_name, tenant_overrides) → master_products (canonical name/brand, embedding не используется) → master_variants (volume_ml=7, axes) → master_cosmetics (skin_type, key_ingredients).</span>
+    <span class="step"><strong>Render</strong>: карточка показывает <code>display_name="L'Oreal Mascara Volume Million"</code>, <code>price=$25</code>, <code>badges=[HIT, curator-picked]</code>, variant_picker={7ml selected, 12ml available because Beauty Boutique listing-row для var-12 тоже существует}.</span>
+    <span class="step">У Skincare Pro (t2) — тот же поиск находит ТОЛЬКО var-7 (потому что для var-12 listing-строки нет, projection её не содержит). Picker показывает 7ml selected, 12ml unavailable.</span>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="xref">
+  <div class="xref-head">Cross-layer FK reference map</div>
+  <table>
+    <thead><tr><th>From</th><th>Relation</th><th>To</th><th>Comment</th></tr></thead>
+    <tbody>
+      <tr><td class="cm-from">master_variants.master_product_id</td><td class="cm-rel">N : 1</td><td class="cm-to">master_products.id</td><td>cascade delete; обязателен</td></tr>
+      <tr><td class="cm-from">master_cosmetics.master_product_id</td><td class="cm-rel">1 : 1</td><td class="cm-to">master_products.id</td><td>PK = FK; cascade</td></tr>
+      <tr><td class="cm-from">master_product_categories.master_product_id</td><td class="cm-rel">M : N</td><td class="cm-to">master_products.id</td><td>junction</td></tr>
+      <tr><td class="cm-from">master_product_categories.master_category_id</td><td class="cm-rel">M : N</td><td class="cm-to">master_categories.id</td><td>junction</td></tr>
+      <tr><td class="cm-from">master_categories.parent_id</td><td class="cm-rel">N : 1 (self)</td><td class="cm-to">master_categories.id</td><td>tree</td></tr>
+      <tr><td class="cm-from"><strong>tenant_search_projection.tenant_id</strong></td><td class="cm-rel">N : 1</td><td class="cm-to">tenants.id</td><td><strong>NEW</strong> · cascade</td></tr>
+      <tr><td class="cm-from"><strong>tenant_search_projection.master_variant_id</strong></td><td class="cm-rel">N : 1</td><td class="cm-to">master_variants.id</td><td><strong>NEW</strong> · cascade</td></tr>
+      <tr><td class="cm-from"><strong>tenant_search_projection.master_product_id</strong></td><td class="cm-rel">N : 1</td><td class="cm-to">master_products.id</td><td><strong>NEW</strong> · denorm</td></tr>
+      <tr><td class="cm-from">catalog.products.tenant_id</td><td class="cm-rel">N : 1</td><td class="cm-to">tenants.id</td><td></td></tr>
+      <tr><td class="cm-from">catalog.products.master_product_id</td><td class="cm-rel">N : 1</td><td class="cm-to">master_products.id</td><td>denorm для индексов</td></tr>
+      <tr><td class="cm-from">catalog.products.master_variant_id</td><td class="cm-rel">N : 1</td><td class="cm-to">master_variants.id</td><td><strong>NOT NULL после D1</strong></td></tr>
+      <tr><td class="cm-from">catalog.stock.product_id</td><td class="cm-rel">1 : 1</td><td class="cm-to">catalog.products.id</td><td>cascade</td></tr>
+      <tr><td class="cm-from">tenant_categories.tenant_id</td><td class="cm-rel">N : 1</td><td class="cm-to">tenants.id</td><td></td></tr>
+      <tr><td class="cm-from">tenant_categories.parent_id</td><td class="cm-rel">N : 1 (self)</td><td class="cm-to">tenant_categories.id</td><td>tree</td></tr>
+      <tr><td class="cm-from">category_mapping.tenant_category_id</td><td class="cm-rel">1 : 1</td><td class="cm-to">tenant_categories.id</td><td></td></tr>
+      <tr><td class="cm-from">category_mapping.master_category_id</td><td class="cm-rel">N : 1</td><td class="cm-to">master_categories.id</td><td></td></tr>
+      <tr><td class="cm-from">tenant_listing_categories.product_id</td><td class="cm-rel">M : N</td><td class="cm-to">catalog.products.id</td><td>junction</td></tr>
+      <tr><td class="cm-from">tenant_listing_categories.tenant_category_id</td><td class="cm-rel">M : N</td><td class="cm-to">tenant_categories.id</td><td>junction</td></tr>
+      <tr><td class="cm-from">inbox_items.tenant_id</td><td class="cm-rel">N : 1</td><td class="cm-to">tenants.id</td><td>cascade</td></tr>
+      <tr><td class="cm-from">tenant_catalog_schema.tenant_id</td><td class="cm-rel">1 : 1</td><td class="cm-to">tenants.id</td><td>PK = FK</td></tr>
+      <tr><td class="cm-from">master_pending_changes.master_product_id</td><td class="cm-rel">N : 1</td><td class="cm-to">master_products.id</td><td>cascade</td></tr>
+      <tr><td class="cm-from">master_pending_changes.tenant_id</td><td class="cm-rel">N : 1</td><td class="cm-to">tenants.id</td><td>кто предложил</td></tr>
+      <tr><td class="cm-from">master_pending_changes.source_inbox_item_id</td><td class="cm-rel">N : 1</td><td class="cm-to">inbox_items.id</td><td>SET NULL</td></tr>
+      <tr><td class="cm-from">schema_drift_findings.tenant_id</td><td class="cm-rel">N : 1</td><td class="cm-to">tenants.id</td><td>cascade</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  Целевое состояние ПОСЛЕ Group D · D1 = identity consolidation · D2 = tenant_search_projection · D3 = categories cleanup · D4 = DROP мёртвого · См. <code>docs/CATALOG_GAPS.md</code>
+</footer>
+
+</div>
+</body>
+</html>

@@ -39,7 +39,7 @@ func (uc *ImportUseCase) SetEnrichmentTrigger(t EnrichmentTrigger) {
 }
 
 type ImportItem struct {
-	Type         string         `json:"type"`          // "product" (default) or "service"
+	Type         string         `json:"type"` // "product" (default) or "service"
 	SKU          string         `json:"sku"`
 	Name         string         `json:"name"`
 	Brand        string         `json:"brand"`
@@ -52,9 +52,6 @@ type ImportItem struct {
 	Images       []string       `json:"images"`
 	Attributes   map[string]any `json:"attributes"`
 	Tags         []string       `json:"tags"`
-	Duration     string         `json:"duration"`      // service-specific
-	Provider     string         `json:"provider"`      // service-specific
-	Availability string         `json:"availability"`  // service-specific
 	SourceSystem string         `json:"source_system"` // integration tag — "shopify"/"csv"/"google_sheets"/"manual"
 	SourceID     string         `json:"source_id"`     // external stable id
 }
@@ -226,9 +223,6 @@ func (uc *ImportUseCase) processItemWithCurrency(ctx context.Context, tenantID s
 		item.SourceSystem = "manual"
 	}
 
-	if item.Type == "service" {
-		return uc.processServiceItem(ctx, tenantID, item, categoryID, currency)
-	}
 	return uc.processProductItem(ctx, tenantID, item, categoryID, currency)
 }
 
@@ -267,53 +261,12 @@ func (uc *ImportUseCase) processProductItem(ctx context.Context, tenantID string
 	return nil
 }
 
-func (uc *ImportUseCase) processServiceItem(ctx context.Context, tenantID string, item ImportItem, categoryID, currency string) error {
-	ms := &domain.MasterService{
-		SKU:           item.SKU,
-		Name:          item.Name,
-		Brand:         item.Brand,
-		CategoryID:    categoryID,
-		Images:        item.Images,
-		Duration:      item.Duration,
-		Provider:      item.Provider,
-		OwnerTenantID: tenantID,
-	}
-	msID, err := uc.catalog.UpsertMasterService(ctx, ms)
-	if err != nil {
-		return fmt.Errorf("master service: %w", err)
-	}
-
-	availability := item.Availability
-	if availability == "" {
-		availability = "available"
-	}
-
-	s := &domain.Service{
-		TenantID:        tenantID,
-		MasterServiceID: msID,
-		Name:            item.Name,
-		Price:           item.Price,
-		Currency:        currency,
-		Rating:          item.Rating,
-		Images:          item.Images,
-		Tags:            item.Tags,
-		Availability:    availability,
-	}
-	_, err = uc.catalog.UpsertServiceListing(ctx, s)
-	if err != nil {
-		return fmt.Errorf("service listing: %w", err)
-	}
-
-	return nil
-}
-
 func (uc *ImportUseCase) postImport(tenantID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	if uc.embedding != nil {
 		uc.embedProducts(ctx, tenantID)
-		uc.embedServices(ctx, tenantID)
 	}
 
 	if err := uc.catalog.GenerateCatalogDigest(ctx, tenantID); err != nil {
@@ -396,54 +349,4 @@ func buildEmbeddingText(p domain.MasterProduct) string {
 		parts = append(parts, p.RoutineStep)
 	}
 	return strings.Join(parts, " ")
-}
-
-func (uc *ImportUseCase) embedServices(ctx context.Context, tenantID string) {
-	services, err := uc.catalog.GetMasterServicesWithoutEmbedding(ctx, tenantID)
-	if err != nil {
-		uc.log.Error("post_import_get_services_failed", "error", err)
-		return
-	}
-	if len(services) == 0 {
-		return
-	}
-
-	uc.log.Info("post_import_service_embedding_started", "count", len(services))
-	texts := make([]string, len(services))
-	for i, s := range services {
-		text := s.Name
-		if s.Description != "" {
-			text += " " + s.Description
-		}
-		if s.Brand != "" {
-			text += " " + s.Brand
-		}
-		if s.CategoryName != "" {
-			text += " " + s.CategoryName
-		}
-		if s.Duration != "" {
-			text += " " + s.Duration
-		}
-		if s.Provider != "" {
-			text += " " + s.Provider
-		}
-		texts[i] = text
-	}
-
-	batchSize := 100
-	for i := 0; i < len(texts); i += batchSize {
-		end := i + batchSize
-		if end > len(texts) {
-			end = len(texts)
-		}
-		embeddings, err := uc.embedding.Embed(ctx, texts[i:end])
-		if err != nil {
-			uc.log.Error("post_import_service_embed_failed", "error", err)
-			break
-		}
-		for j, emb := range embeddings {
-			uc.catalog.SeedServiceEmbedding(ctx, services[i+j].ID, emb)
-		}
-	}
-	uc.log.Info("post_import_service_embedding_completed", "count", len(services))
 }

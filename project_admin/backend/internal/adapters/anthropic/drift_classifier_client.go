@@ -200,7 +200,7 @@ const driftSystemPrompt = `You are a PIM schema-drift classifier. Your job is to
 
 - "typo_of_existing": the field name is a likely typo / variant of a field already present in artifact.branches[].field_map[].from. Suggest renaming.
 - "alias_of_attribute": semantically the same as an already-mapped attribute under a different name. Suggest mapping it to the same target column.
-- "new": legitimately new attribute, not previously seen. Suggest where it should land (typically a tier3.<key> bucket on master_products, sometimes a typed master_cosmetics column if a cosmetics-vertical attribute, rarely a universal master.<col> column).
+- "new": legitimately new attribute, not previously seen. Suggest where it should land (a tier2.<key> bucket on master_products for a typed per-vertical attribute, a tier3.<key> bucket for free-form/search text, or rarely a universal master.<col> column).
 
 ## Mapping targets you can suggest
 

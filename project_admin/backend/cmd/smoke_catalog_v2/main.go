@@ -424,9 +424,9 @@ func dumpGlobalCounts(ctx context.Context, db *postgres.Client, tenantIDs map[st
 		SELECT COUNT(*) FROM catalog.products WHERE tenant_id = ANY($1::uuid[]) AND deleted_at IS NULL
 	`, ids).Scan(&listings)
 	_ = db.Pool().QueryRow(ctx, `
-		SELECT COUNT(DISTINCT mc.master_product_id) FROM catalog.master_cosmetics mc
-		JOIN catalog.products p ON p.master_product_id = mc.master_product_id
-		WHERE p.tenant_id = ANY($1::uuid[])
+		SELECT COUNT(DISTINCT mp.id) FROM catalog.master_products mp
+		JOIN catalog.products p ON p.master_product_id = mp.id
+		WHERE p.tenant_id = ANY($1::uuid[]) AND mp.tier2 <> '{}'::jsonb
 	`, ids).Scan(&cosmetics)
 	_ = db.Pool().QueryRow(ctx, `
 		SELECT COUNT(DISTINCT mp.id) FROM catalog.master_products mp
@@ -436,7 +436,7 @@ func dumpGlobalCounts(ctx context.Context, db *postgres.Client, tenantIDs map[st
 
 	fmt.Printf("Distinct masters across 4 tenants: %d  (expected: 27)\n", masters)
 	fmt.Printf("Total active listings:             %d  (expected: 40)\n", listings)
-	fmt.Printf("Distinct master_cosmetics:         %d  (expected: 13 — A=10 own + B-new=3)\n", cosmetics)
+	fmt.Printf("Distinct masters with tier2:       %d  (cosmetic typed attrs now in tier2)\n", cosmetics)
 	fmt.Printf("Distinct masters with tier3:       %d  (expected: 17 — C=10 electronics + D-new=4 furniture/ski + B-new=3 cosmetics with tags/handle)\n", withTier3)
 }
 

@@ -108,6 +108,12 @@ type CatalogV2WriterPort interface {
 	// the row-by-row MergeTier3 (`tier3 = COALESCE(tier3, '{}') || patch`).
 	BulkMergeTier3(ctx context.Context, items []BulkTier3Item) (int, error)
 
+	// BulkMergeTier2 merges one JSON patch per master_id into
+	// master_products.tier2 — the canonical home for typed per-vertical
+	// attributes (Group D: replaced the master_cosmetics typed table). Same
+	// UNNEST + `tier2 = COALESCE(tier2,'{}') || patch` semantics as BulkMergeTier3.
+	BulkMergeTier2(ctx context.Context, items []BulkTier2Item) (int, error)
+
 	// LookupVertical resolves a shopify-style product_type string into the
 	// internal vertical class via catalog.vertical_aliases. The alias table
 	// is lowercased on insert; the lookup lowercases its input. Returns
@@ -171,6 +177,13 @@ type BulkCosmeticsItem struct {
 // BulkTier3Item pairs a master_id with a jsonb patch to merge into
 // master_products.tier3. Used by BulkMergeTier3.
 type BulkTier3Item struct {
+	MasterProductID string
+	Patch           map[string]any
+}
+
+// BulkTier2Item pairs a master_id with a jsonb patch to merge into
+// master_products.tier2 (typed per-vertical attributes). Used by BulkMergeTier2.
+type BulkTier2Item struct {
 	MasterProductID string
 	Patch           map[string]any
 }

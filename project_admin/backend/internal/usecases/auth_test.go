@@ -56,15 +56,6 @@ func (f *fakeAdminCatalog) GetProduct(context.Context, string, string) (*domain.
 func (f *fakeAdminCatalog) UpdateProduct(context.Context, string, string, domain.ProductUpdate) error {
 	panic("not implemented")
 }
-func (f *fakeAdminCatalog) ListServices(context.Context, string, domain.AdminProductFilter) ([]domain.Service, int, error) {
-	panic("not implemented")
-}
-func (f *fakeAdminCatalog) GetService(context.Context, string, string) (*domain.Service, error) {
-	panic("not implemented")
-}
-func (f *fakeAdminCatalog) UpdateService(context.Context, string, string, domain.ProductUpdate) error {
-	panic("not implemented")
-}
 func (f *fakeAdminCatalog) GetCategories(context.Context, string) ([]domain.Category, error) {
 	panic("not implemented")
 }
@@ -72,12 +63,6 @@ func (f *fakeAdminCatalog) UpsertMasterProduct(context.Context, *domain.MasterPr
 	panic("not implemented")
 }
 func (f *fakeAdminCatalog) UpsertProductListing(context.Context, *domain.Product) (string, error) {
-	panic("not implemented")
-}
-func (f *fakeAdminCatalog) UpsertMasterService(context.Context, *domain.MasterService) (string, error) {
-	panic("not implemented")
-}
-func (f *fakeAdminCatalog) UpsertServiceListing(context.Context, *domain.Service) (string, error) {
 	panic("not implemented")
 }
 func (f *fakeAdminCatalog) GetOrCreateCategory(context.Context, string, string) (string, error) {
@@ -107,13 +92,7 @@ func (f *fakeAdminCatalog) UpsertListingFromSource(context.Context, *domain.List
 func (f *fakeAdminCatalog) GetMasterProductsWithoutEmbedding(context.Context, string) ([]domain.MasterProduct, error) {
 	panic("not implemented")
 }
-func (f *fakeAdminCatalog) GetMasterServicesWithoutEmbedding(context.Context, string) ([]domain.MasterService, error) {
-	panic("not implemented")
-}
 func (f *fakeAdminCatalog) SeedEmbedding(context.Context, string, []float32) error {
-	panic("not implemented")
-}
-func (f *fakeAdminCatalog) SeedServiceEmbedding(context.Context, string, []float32) error {
 	panic("not implemented")
 }
 func (f *fakeAdminCatalog) GenerateCatalogDigest(context.Context, string) error {

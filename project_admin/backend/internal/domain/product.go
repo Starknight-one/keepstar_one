@@ -76,7 +76,6 @@ type MasterProduct struct {
 	MarketingClaim    string   `json:"marketingClaim,omitempty"`
 	Benefits          []string `json:"benefits,omitempty"`
 	HowToUse          string   `json:"howToUse,omitempty"`
-	EnrichmentVersion int      `json:"enrichmentVersion,omitempty"`
 
 	// Source tracking — stable key from the external system that produced this
 	// row (Shopify product.id, CSV filename+row, Sheets row). Enables idempotent

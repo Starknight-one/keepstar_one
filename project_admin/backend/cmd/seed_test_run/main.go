@@ -155,13 +155,13 @@ func main() {
 	_ = db.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM catalog.products WHERE tenant_id=$1 AND deleted_at IS NULL AND master_product_id IS NULL`, tenantID).Scan(&listingsUnlinked)
 	fmt.Printf("catalog.products:      %d listings, %d unlinked (no master_product_id)\n", listings, listingsUnlinked)
 
-	var cosmetics int
+	var withTier2 int
 	_ = db.Pool().QueryRow(ctx, `
-		SELECT COUNT(DISTINCT mc.master_product_id) FROM catalog.master_cosmetics mc
-		JOIN catalog.products p ON p.master_product_id = mc.master_product_id
-		WHERE p.tenant_id=$1
-	`, tenantID).Scan(&cosmetics)
-	fmt.Printf("master_cosmetics:      %d rows (typed cosmetics attributes)\n", cosmetics)
+		SELECT COUNT(DISTINCT mp.id) FROM catalog.master_products mp
+		JOIN catalog.products p ON p.master_product_id = mp.id
+		WHERE p.tenant_id=$1 AND mp.tier2 <> '{}'::jsonb
+	`, tenantID).Scan(&withTier2)
+	fmt.Printf("masters with tier2:    %d (typed per-vertical attributes)\n", withTier2)
 
 	var withTier3 int
 	_ = db.Pool().QueryRow(ctx, `

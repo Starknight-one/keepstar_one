@@ -574,13 +574,14 @@ func (a *CatalogAdapter) GetCategoryBySlug(ctx context.Context, slug string) (*d
 
 // GetMasterProductsForEnrichment returns products without PIM data for enrichment.
 func (a *CatalogAdapter) GetMasterProductsForEnrichment(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
-	// Products that don't have enriched PIM data yet (product_form absent)
+	// Products that don't have enriched PIM data yet (empty tier2). Group D:
+	// "enriched" = tier2 populated (per-vertical typed columns removed).
 	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
 		mp.images, mp.owner_tenant_id, c.name
 		FROM catalog.master_products mp
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		WHERE mp.owner_tenant_id = $1
-			AND (mp.product_form IS NULL OR mp.product_form = '')
+			AND (mp.tier2 IS NULL OR mp.tier2 = '{}'::jsonb)
 		ORDER BY mp.created_at`
 
 	rows, err := a.client.pool.Query(ctx, query, tenantID)
@@ -649,15 +650,16 @@ func (a *CatalogAdapter) GetAllMasterProducts(ctx context.Context, tenantID stri
 	return products, nil
 }
 
-// GetUnenrichedMasterProducts returns only products with enrichment_version = 0
-// — the incremental enrichment path used by the post-import auto-trigger.
+// GetUnenrichedMasterProducts returns masters with no tier2 attributes yet —
+// the incremental enrichment path used by the post-import auto-trigger. Group D:
+// "enriched" now means "tier2 populated" (enrichment_version column removed).
 func (a *CatalogAdapter) GetUnenrichedMasterProducts(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
 	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
 		mp.images, mp.owner_tenant_id, c.name
 		FROM catalog.master_products mp
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		WHERE mp.owner_tenant_id = $1
-			AND COALESCE(mp.enrichment_version, 0) = 0
+			AND (mp.tier2 IS NULL OR mp.tier2 = '{}'::jsonb)
 		ORDER BY mp.created_at`
 
 	rows, err := a.client.pool.Query(ctx, query, tenantID)
@@ -760,34 +762,72 @@ func (a *CatalogAdapter) SoftDeleteProductBySource(ctx context.Context, tenantID
 	return nil
 }
 
+// UpdateMasterProductPIM writes the LLM enrichment output to the master. Group D:
+// typed per-vertical attributes go to master_products.tier2 (jsonb), provenance
+// (original_name, product_line) to tier3 — no per-vertical typed columns.
 func (a *CatalogAdapter) UpdateMasterProductPIM(ctx context.Context, productID string, categoryID string, out domain.EnrichmentOutputV2) error {
-	query := `UPDATE catalog.master_products SET
-		name = $1, original_name = $2, product_line = $3,
-		product_form = $4, texture = $5, routine_step = $6, routine_time = $7,
-		application_method = $8, skin_type = $9, concern = $10,
-		key_ingredients = $11, target_area = $12, free_from = $13,
-		marketing_claim = $14, benefits = $15,
-		enrichment_version = 2, updated_at = NOW()
-	WHERE id = $16`
-
-	args := []any{
-		out.ShortName, out.OriginalName, out.ProductLine,
-		out.ProductForm, out.Texture, out.RoutineStep, out.RoutineTime,
-		out.ApplicationMethod, out.SkinType, out.Concern,
-		out.KeyIngredients, out.TargetArea, out.FreeFrom,
-		out.MarketingClaim, out.Benefits,
-		productID,
+	tier2 := map[string]any{}
+	if out.ProductForm != "" {
+		tier2["product_form"] = out.ProductForm
 	}
+	if out.Texture != "" {
+		tier2["texture"] = out.Texture
+	}
+	if out.RoutineStep != "" {
+		tier2["routine_step"] = out.RoutineStep
+	}
+	if out.RoutineTime != "" {
+		tier2["routine_time"] = out.RoutineTime
+	}
+	if out.ApplicationMethod != "" {
+		tier2["application_method"] = out.ApplicationMethod
+	}
+	if out.MarketingClaim != "" {
+		tier2["marketing_claim"] = out.MarketingClaim
+	}
+	if len(out.SkinType) > 0 {
+		tier2["skin_type"] = out.SkinType
+	}
+	if len(out.Concern) > 0 {
+		tier2["concern"] = out.Concern
+	}
+	if len(out.KeyIngredients) > 0 {
+		tier2["key_ingredients"] = out.KeyIngredients
+	}
+	if len(out.TargetArea) > 0 {
+		tier2["target_area"] = out.TargetArea
+	}
+	if len(out.FreeFrom) > 0 {
+		tier2["free_from"] = out.FreeFrom
+	}
+	if len(out.Benefits) > 0 {
+		tier2["benefits"] = out.Benefits
+	}
+	tier3 := map[string]any{}
+	if out.OriginalName != "" {
+		tier3["original_name"] = out.OriginalName
+	}
+	if out.ProductLine != "" {
+		tier3["product_line"] = out.ProductLine
+	}
+	tier2JSON, _ := json.Marshal(tier2)
+	tier3JSON, _ := json.Marshal(tier3)
+
+	query := `UPDATE catalog.master_products SET
+		name = $1,
+		tier2 = COALESCE(tier2, '{}'::jsonb) || $2::jsonb,
+		tier3 = COALESCE(tier3, '{}'::jsonb) || $3::jsonb,
+		updated_at = NOW()
+	WHERE id = $4`
+	args := []any{out.ShortName, tier2JSON, tier3JSON, productID}
 
 	if categoryID != "" {
 		query = `UPDATE catalog.master_products SET
-			name = $1, original_name = $2, product_line = $3,
-			product_form = $4, texture = $5, routine_step = $6, routine_time = $7,
-			application_method = $8, skin_type = $9, concern = $10,
-			key_ingredients = $11, target_area = $12, free_from = $13,
-			marketing_claim = $14, benefits = $15,
-			enrichment_version = 2, category_id = $17, updated_at = NOW()
-		WHERE id = $16`
+			name = $1,
+			tier2 = COALESCE(tier2, '{}'::jsonb) || $2::jsonb,
+			tier3 = COALESCE(tier3, '{}'::jsonb) || $3::jsonb,
+			category_id = $5, updated_at = NOW()
+		WHERE id = $4`
 		args = append(args, categoryID)
 	}
 
@@ -803,15 +843,32 @@ func (a *CatalogAdapter) UpdateMasterProductPIM(ctx context.Context, productID s
 
 // --- Post-import ---
 
+// jsonStr / jsonStrSlice extract typed values from a decoded tier2/tier3 jsonb
+// map. Arrays decode as []any, so jsonStrSlice narrows to []string.
+func jsonStr(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func jsonStrSlice(m map[string]any, key string) []string {
+	raw, ok := m[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
 	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
-		mp.images, mp.owner_tenant_id, c.name,
-		COALESCE(mp.product_form, '') as product_form,
-		COALESCE(mp.texture, '') as texture,
-		COALESCE(mp.routine_step, '') as routine_step,
-		COALESCE(mp.marketing_claim, '') as marketing_claim,
-		mp.skin_type, mp.concern, mp.key_ingredients,
-		COALESCE(mp.enrichment_version, 0) as enrichment_version
+		mp.images, mp.owner_tenant_id, c.name, COALESCE(mp.tier2, '{}'::jsonb)
 		FROM catalog.master_products mp
 		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		WHERE mp.embedding IS NULL AND mp.owner_tenant_id = $1
@@ -826,14 +883,11 @@ func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context, 
 	var products []domain.MasterProduct
 	for rows.Next() {
 		var mp domain.MasterProduct
-		var imagesJSON []byte
+		var imagesJSON, tier2JSON []byte
 		var catName *string
 		if err := rows.Scan(
 			&mp.ID, &mp.SKU, &mp.Name, &mp.Description, &mp.Brand, &mp.CategoryID,
-			&imagesJSON, &mp.OwnerTenantID, &catName,
-			&mp.ProductForm, &mp.Texture, &mp.RoutineStep,
-			&mp.MarketingClaim, &mp.SkinType, &mp.Concern, &mp.KeyIngredients,
-			&mp.EnrichmentVersion,
+			&imagesJSON, &mp.OwnerTenantID, &catName, &tier2JSON,
 		); err != nil {
 			return nil, fmt.Errorf("scan master product: %w", err)
 		}
@@ -842,6 +896,19 @@ func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context, 
 		}
 		if catName != nil {
 			mp.CategoryName = *catName
+		}
+		// Group D: typed attrs come from tier2 jsonb (master_cosmetics removed).
+		if len(tier2JSON) > 0 {
+			var t2 map[string]any
+			if json.Unmarshal(tier2JSON, &t2) == nil {
+				mp.ProductForm = jsonStr(t2, "product_form")
+				mp.Texture = jsonStr(t2, "texture")
+				mp.RoutineStep = jsonStr(t2, "routine_step")
+				mp.MarketingClaim = jsonStr(t2, "marketing_claim")
+				mp.SkinType = jsonStrSlice(t2, "skin_type")
+				mp.Concern = jsonStrSlice(t2, "concern")
+				mp.KeyIngredients = jsonStrSlice(t2, "key_ingredients")
+			}
 		}
 		products = append(products, mp)
 	}
@@ -897,279 +964,6 @@ func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID str
 	return nil
 }
 
-// --- Services ---
-
-func (a *CatalogAdapter) ListServices(ctx context.Context, tenantID string, filter domain.AdminProductFilter) ([]domain.Service, int, error) {
-	if filter.Limit <= 0 {
-		filter.Limit = 25
-	}
-
-	where := []string{"sv.tenant_id = $1"}
-	args := []any{tenantID}
-	argIdx := 2
-
-	if filter.Search != "" {
-		where = append(where, fmt.Sprintf(
-			"(ms.name ILIKE $%d OR ms.sku ILIKE $%d OR ms.brand ILIKE $%d)",
-			argIdx, argIdx, argIdx))
-		args = append(args, "%"+filter.Search+"%")
-		argIdx++
-	}
-	if filter.CategoryID != "" {
-		where = append(where, fmt.Sprintf("ms.category_id = $%d", argIdx))
-		args = append(args, filter.CategoryID)
-		argIdx++
-	}
-
-	whereClause := strings.Join(where, " AND ")
-
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM catalog.services sv
-		LEFT JOIN catalog.master_services ms ON sv.master_service_id = ms.id
-		WHERE %s`, whereClause)
-	var total int
-	if err := a.client.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count services: %w", err)
-	}
-
-	query := fmt.Sprintf(`SELECT
-		sv.id, sv.tenant_id, sv.master_service_id, sv.name, sv.description,
-		sv.price, sv.currency, sv.rating, sv.images, COALESCE(sv.tags, '[]') as tags,
-		sv.availability, sv.created_at, sv.updated_at,
-		ms.name, ms.description, ms.brand, ms.sku, ms.images, ms.attributes,
-		ms.duration, ms.provider,
-		c.name
-		FROM catalog.services sv
-		LEFT JOIN catalog.master_services ms ON sv.master_service_id = ms.id
-		LEFT JOIN catalog.categories c ON ms.category_id = c.id
-		WHERE %s
-		ORDER BY sv.created_at DESC
-		LIMIT $%d OFFSET $%d`, whereClause, argIdx, argIdx+1)
-	args = append(args, filter.Limit, filter.Offset)
-
-	rows, err := a.client.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("list services: %w", err)
-	}
-	defer rows.Close()
-
-	var services []domain.Service
-	for rows.Next() {
-		var s domain.Service
-		var sImagesJSON, tagsJSON, msImagesJSON, msAttrsJSON []byte
-		var msName, msDesc, msBrand, msSKU, msDuration, msProvider *string
-		var catName *string
-
-		if err := rows.Scan(
-			&s.ID, &s.TenantID, &s.MasterServiceID, &s.Name, &s.Description,
-			&s.Price, &s.Currency, &s.Rating, &sImagesJSON, &tagsJSON,
-			&s.Availability, &s.CreatedAt, &s.UpdatedAt,
-			&msName, &msDesc, &msBrand, &msSKU, &msImagesJSON, &msAttrsJSON,
-			&msDuration, &msProvider,
-			&catName,
-		); err != nil {
-			return nil, 0, fmt.Errorf("scan service: %w", err)
-		}
-
-		if msName != nil && s.Name == "" {
-			s.Name = *msName
-		}
-		if msDesc != nil && s.Description == "" {
-			s.Description = *msDesc
-		}
-		if msDuration != nil {
-			s.Duration = *msDuration
-		}
-		if msProvider != nil {
-			s.Provider = *msProvider
-		}
-		if catName != nil {
-			s.Category = *catName
-		}
-		if len(sImagesJSON) > 0 && s.Images == nil {
-			json.Unmarshal(sImagesJSON, &s.Images)
-		}
-		if len(s.Images) == 0 && len(msImagesJSON) > 0 {
-			json.Unmarshal(msImagesJSON, &s.Images)
-		}
-		if len(tagsJSON) > 0 {
-			json.Unmarshal(tagsJSON, &s.Tags)
-		}
-		if len(msAttrsJSON) > 0 {
-			json.Unmarshal(msAttrsJSON, &s.Attributes)
-		}
-
-		s.PriceFormatted = formatPrice(s.Price, s.Currency)
-		services = append(services, s)
-	}
-
-	return services, total, nil
-}
-
-func (a *CatalogAdapter) GetService(ctx context.Context, tenantID string, serviceID string) (*domain.Service, error) {
-	query := `SELECT
-		sv.id, sv.tenant_id, sv.master_service_id, sv.name, sv.description,
-		sv.price, sv.currency, sv.rating, sv.images, COALESCE(sv.tags, '[]') as tags,
-		sv.availability, sv.created_at, sv.updated_at,
-		ms.name, ms.description, ms.brand, ms.sku, ms.images, ms.attributes,
-		ms.duration, ms.provider,
-		c.name
-		FROM catalog.services sv
-		LEFT JOIN catalog.master_services ms ON sv.master_service_id = ms.id
-		LEFT JOIN catalog.categories c ON ms.category_id = c.id
-		WHERE sv.id = $1 AND sv.tenant_id = $2`
-
-	var s domain.Service
-	var sImagesJSON, tagsJSON, msImagesJSON, msAttrsJSON []byte
-	var msName, msDesc, msBrand, msSKU, msDuration, msProvider *string
-	var catName *string
-
-	err := a.client.pool.QueryRow(ctx, query, serviceID, tenantID).Scan(
-		&s.ID, &s.TenantID, &s.MasterServiceID, &s.Name, &s.Description,
-		&s.Price, &s.Currency, &s.Rating, &sImagesJSON, &tagsJSON,
-		&s.Availability, &s.CreatedAt, &s.UpdatedAt,
-		&msName, &msDesc, &msBrand, &msSKU, &msImagesJSON, &msAttrsJSON,
-		&msDuration, &msProvider,
-		&catName,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrProductNotFound
-		}
-		return nil, fmt.Errorf("get service: %w", err)
-	}
-
-	if msName != nil && s.Name == "" {
-		s.Name = *msName
-	}
-	if msDesc != nil && s.Description == "" {
-		s.Description = *msDesc
-	}
-	if msDuration != nil {
-		s.Duration = *msDuration
-	}
-	if msProvider != nil {
-		s.Provider = *msProvider
-	}
-	if catName != nil {
-		s.Category = *catName
-	}
-	if len(sImagesJSON) > 0 {
-		json.Unmarshal(sImagesJSON, &s.Images)
-	}
-	if len(s.Images) == 0 && len(msImagesJSON) > 0 {
-		json.Unmarshal(msImagesJSON, &s.Images)
-	}
-	if len(tagsJSON) > 0 {
-		json.Unmarshal(tagsJSON, &s.Tags)
-	}
-	if len(msAttrsJSON) > 0 {
-		json.Unmarshal(msAttrsJSON, &s.Attributes)
-	}
-
-	s.PriceFormatted = formatPrice(s.Price, s.Currency)
-	return &s, nil
-}
-
-func (a *CatalogAdapter) UpdateService(ctx context.Context, tenantID string, serviceID string, update domain.ProductUpdate) error {
-	sets := []string{}
-	args := []any{}
-	argIdx := 1
-
-	if update.Name != nil {
-		sets = append(sets, fmt.Sprintf("name = $%d", argIdx))
-		args = append(args, *update.Name)
-		argIdx++
-	}
-	if update.Description != nil {
-		sets = append(sets, fmt.Sprintf("description = $%d", argIdx))
-		args = append(args, *update.Description)
-		argIdx++
-	}
-	if update.Price != nil {
-		sets = append(sets, fmt.Sprintf("price = $%d", argIdx))
-		args = append(args, *update.Price)
-		argIdx++
-	}
-	if update.Rating != nil {
-		sets = append(sets, fmt.Sprintf("rating = $%d", argIdx))
-		args = append(args, *update.Rating)
-		argIdx++
-	}
-
-	if len(sets) == 0 {
-		return nil
-	}
-
-	sets = append(sets, "updated_at = NOW()")
-	query := fmt.Sprintf("UPDATE catalog.services SET %s WHERE id = $%d AND tenant_id = $%d",
-		strings.Join(sets, ", "), argIdx, argIdx+1)
-	args = append(args, serviceID, tenantID)
-
-	tag, err := a.client.pool.Exec(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("update service: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrProductNotFound
-	}
-	return nil
-}
-
-// --- Import upserts for services ---
-
-func (a *CatalogAdapter) UpsertMasterService(ctx context.Context, ms *domain.MasterService) (string, error) {
-	imagesJSON, _ := json.Marshal(ms.Images)
-	attrsJSON, _ := json.Marshal(ms.Attributes)
-
-	query := `INSERT INTO catalog.master_services (sku, name, description, brand, category_id, images, attributes, duration, provider, owner_tenant_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (sku) DO UPDATE SET
-			name = EXCLUDED.name,
-			brand = EXCLUDED.brand,
-			images = EXCLUDED.images,
-			attributes = EXCLUDED.attributes,
-			duration = EXCLUDED.duration,
-			provider = EXCLUDED.provider,
-			updated_at = NOW()
-		RETURNING id`
-
-	var id string
-	err := a.client.pool.QueryRow(ctx, query,
-		ms.SKU, ms.Name, ms.Description, ms.Brand, ms.CategoryID,
-		imagesJSON, attrsJSON, ms.Duration, ms.Provider, ms.OwnerTenantID,
-	).Scan(&id)
-	if err != nil {
-		return "", fmt.Errorf("upsert master service: %w", err)
-	}
-	return id, nil
-}
-
-func (a *CatalogAdapter) UpsertServiceListing(ctx context.Context, s *domain.Service) (string, error) {
-	imagesJSON, _ := json.Marshal(s.Images)
-	tagsJSON, _ := json.Marshal(s.Tags)
-
-	query := `INSERT INTO catalog.services (tenant_id, master_service_id, name, description, price, currency, rating, images, tags, availability)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (tenant_id, master_service_id) DO UPDATE SET
-			price = EXCLUDED.price,
-			rating = EXCLUDED.rating,
-			images = EXCLUDED.images,
-			tags = EXCLUDED.tags,
-			availability = EXCLUDED.availability,
-			updated_at = NOW()
-		RETURNING id`
-
-	var id string
-	err := a.client.pool.QueryRow(ctx, query,
-		s.TenantID, s.MasterServiceID, s.Name, s.Description,
-		s.Price, s.Currency, s.Rating, imagesJSON, tagsJSON, s.Availability,
-	).Scan(&id)
-	if err != nil {
-		return "", fmt.Errorf("upsert service listing: %w", err)
-	}
-	return id, nil
-}
-
 // --- Stock ---
 
 func (a *CatalogAdapter) BulkUpdateStock(ctx context.Context, tenantID string, items []domain.StockUpdate) (int, error) {
@@ -1207,56 +1001,6 @@ func (a *CatalogAdapter) BulkUpdateStock(ctx context.Context, tenantID string, i
 		}
 	}
 	return updated, nil
-}
-
-// --- Post-import for services ---
-
-func (a *CatalogAdapter) GetMasterServicesWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterService, error) {
-	query := `SELECT ms.id, ms.sku, ms.name, ms.description, ms.brand, ms.category_id,
-		ms.images, ms.attributes, ms.owner_tenant_id, ms.duration, ms.provider, c.name
-		FROM catalog.master_services ms
-		LEFT JOIN catalog.categories c ON ms.category_id = c.id
-		WHERE ms.embedding IS NULL AND ms.owner_tenant_id = $1
-		ORDER BY ms.created_at`
-
-	rows, err := a.client.pool.Query(ctx, query, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("get services without embedding: %w", err)
-	}
-	defer rows.Close()
-
-	var services []domain.MasterService
-	for rows.Next() {
-		var ms domain.MasterService
-		var imagesJSON, attrsJSON []byte
-		var catName *string
-		if err := rows.Scan(
-			&ms.ID, &ms.SKU, &ms.Name, &ms.Description, &ms.Brand, &ms.CategoryID,
-			&imagesJSON, &attrsJSON, &ms.OwnerTenantID, &ms.Duration, &ms.Provider, &catName,
-		); err != nil {
-			return nil, fmt.Errorf("scan master service: %w", err)
-		}
-		if len(imagesJSON) > 0 {
-			json.Unmarshal(imagesJSON, &ms.Images)
-		}
-		if len(attrsJSON) > 0 {
-			json.Unmarshal(attrsJSON, &ms.Attributes)
-		}
-		if catName != nil {
-			ms.CategoryName = *catName
-		}
-		services = append(services, ms)
-	}
-	return services, nil
-}
-
-func (a *CatalogAdapter) SeedServiceEmbedding(ctx context.Context, masterServiceID string, embedding []float32) error {
-	query := `UPDATE catalog.master_services SET embedding = $1 WHERE id = $2`
-	_, err := a.client.pool.Exec(ctx, query, pgvector.NewVector(embedding), masterServiceID)
-	if err != nil {
-		return fmt.Errorf("seed service embedding: %w", err)
-	}
-	return nil
 }
 
 // --- helpers ---

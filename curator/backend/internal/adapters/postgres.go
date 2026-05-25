@@ -644,19 +644,6 @@ func (c *Client) GetMasterProduct(ctx context.Context, id string) (domain.Master
 
 // --- helpers ---
 
-var verticalTables = map[string]string{
-	"cosmetics": "master_cosmetics",
-	"laptops":   "master_laptops",
-}
-
-func verticalKeys() []string {
-	out := make([]string, 0, len(verticalTables))
-	for k := range verticalTables {
-		out = append(out, k)
-	}
-	return out
-}
-
 var allowedColumnTypes = map[string]string{
 	"text":       "TEXT",
 	"text_array": "TEXT[]",
