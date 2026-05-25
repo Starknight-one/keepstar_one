@@ -62,22 +62,10 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			ON catalog.master_products USING hnsw (embedding vector_cosine_ops);`,
 		`ALTER TABLE catalog.tenants ADD COLUMN IF NOT EXISTS catalog_digest JSONB DEFAULT NULL;`,
 
-		// Stock table
-		`CREATE TABLE IF NOT EXISTS catalog.stock (
-			tenant_id UUID NOT NULL REFERENCES catalog.tenants(id),
-			product_id UUID NOT NULL REFERENCES catalog.products(id) ON DELETE CASCADE,
-			quantity INTEGER NOT NULL DEFAULT 0,
-			reserved INTEGER NOT NULL DEFAULT 0,
-			updated_at TIMESTAMPTZ DEFAULT NOW(),
-			PRIMARY KEY (tenant_id, product_id)
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_stock_tenant ON catalog.stock(tenant_id);`,
-
-		// Seed stock from existing products
-		`INSERT INTO catalog.stock (tenant_id, product_id, quantity)
-		SELECT tenant_id, id, stock_quantity FROM catalog.products
-		WHERE stock_quantity > 0
-		ON CONFLICT DO NOTHING;`,
+		// D4: stock now lives on the listing row (catalog.products.stock_quantity).
+		// The legacy catalog.stock split table is backfilled + dropped in the
+		// Group D block below; its CREATE/index/seed are intentionally removed so
+		// the migration converges to the target model without re-creating it.
 
 		// Tags
 		`ALTER TABLE catalog.products ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]';`,
@@ -1004,6 +992,24 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		END $$;`,
 		`ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS category_id CASCADE;`,
 		`DROP TABLE IF EXISTS catalog.categories CASCADE;`,
+	)
+
+	// D4 — consolidate stock onto catalog.products (drop the catalog.stock split).
+	// stock + price are both tenant-listing facts and now share the listing row.
+	// catalog.stock held the live values → backfill products.stock_quantity from
+	// it (guarded on table existence), then drop the table (incl. dead `reserved`).
+	// Idempotent: post-drop the guard is a no-op and DROP IF EXISTS is a no-op.
+	migrations = append(migrations,
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.tables
+			           WHERE table_schema='catalog' AND table_name='stock') THEN
+				UPDATE catalog.products p
+					SET stock_quantity = s.quantity, updated_at = NOW()
+					FROM catalog.stock s
+					WHERE s.product_id = p.id AND s.tenant_id = p.tenant_id;
+			END IF;
+		END $$;`,
+		`DROP TABLE IF EXISTS catalog.stock CASCADE;`,
 	)
 
 	for i, m := range migrations {

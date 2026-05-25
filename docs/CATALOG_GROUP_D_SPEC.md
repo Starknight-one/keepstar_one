@@ -25,7 +25,12 @@ breaking V5 search + running destructive migrations against Neon (= the dev stan
 (apply creates no variants today; all listings have `master_variant_id=NULL`); the Phase-1
 final gate below is downscoped (1b.*, INT.4 OUT). **D3** reroutes admin + rebuild-embeddings to
 V2 and drops V1; V5's V1-category reads are left for the V5-milestone (V5 already broken).
-**Cross-tenant dedup (Decision #6) already works in code** — E2E only proves it.
+**D4 (stock): chose Target A — consolidate stock onto the listing row (`catalog.products`)
+alongside price and DROP `catalog.stock`**, rather than keeping `catalog.stock` canonical.
+Rationale: `reserved` is dead, stock is never filtered/sorted, and a separate hot table is a
+scale optimization not needed at current write volume (revisit per-tenant if throughput ever
+demands it — it's a mechanical re-split). **Cross-tenant dedup (Decision #6) already works in
+code** — E2E only proves it.
 
 | Item | Status | Notes |
 |---|---|---|
@@ -34,14 +39,14 @@ V2 and drops V1; V5's V1-category reads are left for the V5-milestone (V5 alread
 | **Task #7 — dead-code cleanup** | ✅ DONE (Alpha 0.9.7) | Removed `UpsertCosmetics`/`BulkUpsertCosmetics`/`bulkUpsertCosmeticsBatch`/`probeCosmeticsSchema` + `sync` import + probe struct fields + 4 now-dead pgx helpers (`nullableStr`/`nullableInt`/`stringSliceArg`/`coerceStringSlice`); port `UpsertCosmetics`/`BulkUpsertCosmetics`/`BulkCosmeticsItem`/`ErrCosmeticsSchemaNotReady` + `errors` import; `master_variants` `UpsertMasterCosmetics`/`GetMasterCosmetics` + port + `domain.MasterCosmetics`; fakeWriter mocks. KEPT `ports.MasterCosmeticsUpsert`. build + usecases tests green (only pre-existing Shopify 052–055 red). |
 | **3. D6 controlled vocabularies** | ⬜ NOT STARTED | dim-tables + aliases (mirror `catalog.unit_aliases` / `internal/units/aliases.go`) + normalizer in apply (resolved ids → tier2) + brand→brand_id dedup + curator vocab queue. |
 | **4. Categories: drop V1 (D3)** | ✅ DONE + run on Neon + verified (Alpha 0.9.7) | Full migration to target model: V1 `catalog.categories` → `master_categories` + `master_product_categories` junction (reused V1 UUIDs → hierarchy + links preserved). Rerouted ALL admin readers (filter recursive-CTE, 7 display LATERALs, `GetCategories`, `GetOrCreateCategory`, `GetCategoryBySlug`, `UpsertMasterProduct`, `UpdateMasterProductPIM`) + `cmd/seed` + `rebuild-embeddings` to the junction. Dropped `category_id` column + `catalog.categories` + stale V1 indexes. **Neon: 30 categories migrated, 987 product links, 0 data loss, V1 gone.** Category `vertical` defaulted to `'unknown'` (curator refines later). V5 category reads left for the V5-milestone (already broken). Bumped migration ctx 30s→120s (Neon cold-start headroom). |
-| **5. Stock consolidation** | ⬜ NOT STARTED | `catalog.stock` canonical; curator reads stale `products.stock_quantity`; fix curator + drop denorm col. |
+| **5. Stock consolidation** | ✅ DONE + run on Neon + verified (Alpha 0.9.8) | **Target A (consolidate onto the listing row) — chosen over the old "`catalog.stock` canonical" plan.** stock + price are both tenant-listing facts → both live on `catalog.products`. Backfilled `products.stock_quantity` from `catalog.stock` (live values won), **dropped `catalog.stock` + its dead `reserved` column**. Rewrote `BulkUpdateStock` to UPDATE the listing row; removed 2 redundant dual-writes (`UpdateProduct`/`UpsertProduct`); repointed admin reads to `p.stock_quantity` (no join). Curator unchanged — it already read the column, so it's fixed for free. **Neon: stock table gone, 1963 products / stock_quantity sum 2262 / 990>0 preserved → 0 loss.** Full migration re-runs clean (idempotent). V5 stock read left for the V5-milestone (already-broken query — see landmine note). |
 | **6. E2E verification on 4 seeds (+ tenant E)** | ⬜ NOT STARTED | ingest A/B/C/D via real pipeline; verify tier2 populates for all verticals; tenant E (overlap seed) for cross-tenant dedup — see §8.2. |
 
 **Resume tip:** Neon already migrated for items 1+2 (master_cosmetics/services/17-cols gone; tier2
 populated). Migrations in `catalog_migrations.go` are idempotent — a fresh server start re-applies
 them safely. **Execute from `docs/Updates/main_2026-05-25_18-59.md`** in order:
-Task #7 (dead code, 0 risk) → D3 (drop V1 categories) → D4-stock (curator → catalog.stock) →
-D6-data (controlled vocabularies) → E2E (4 seeds + tenant E). No code changed yet this round.
+Task #7 ✅ → D3 ✅ → D4 ✅ (stock consolidated onto the listing row; `catalog.stock` dropped) →
+**D6-data (controlled vocabularies) ← NEXT** → E2E (4 seeds + tenant E).
 
 ---
 
@@ -112,7 +117,7 @@ electronics/furniture as equal first-class citizens.
 |---|---|---|---|
 | **L1 — Identity (Master)** | `master_products` (incl. `tier2`/`tier3` jsonb), `master_variants`, `master_categories`, `master_field_definitions`, dim-vocab tables. *(`master_cosmetics` = legacy shim, drops in Phase 2)* | Shared across all tenants | Slow churn, rich data, ingest-heavy |
 | **L2 — Search projection** *(Phase 2)* | `tenant_search_projection` | Per-tenant slice | Read-heavy, latency-sensitive |
-| **L3 — Listing (Offering + CMS)** | `catalog.products`, `catalog.stock`, `tenant_categories`, `category_mapping` | Per-tenant | Commerce writes + presentation reads |
+| **L3 — Listing (Offering + CMS)** | `catalog.products` (price + stock_quantity), `tenant_categories`, `category_mapping` | Per-tenant | Commerce writes + presentation reads |
 
 ### 2.2 Three-tier knowledge model (NOT duplication — a hierarchy)
 
@@ -274,11 +279,13 @@ create a second default variant for the same master.
 | File | Method / section | Change | Sev |
 |---|---|---|---|
 | `project_admin/backend/internal/adapters/postgres/catalog_adapter.go` | `CreateOrUpsertService`, `GetServices`, `UpdateServiceEmbedding` + 3 unused `LEFT JOIN catalog.master_services` | DELETE methods + joins, then DROP `master_services`/`services` | M/S |
-| ` ` | `BulkUpdateStock` | Write both `catalog.stock` and `products.stock_quantity` (transitional) | S |
+| ` ` | `BulkUpdateStock` | **DONE (Target A):** UPDATE `products.stock_quantity` on the listing row (was: INSERT `catalog.stock`). | S |
 
 - **`merge_reports` is ALIVE** (admin handlers + `integrations_wipe.go`) — **do not touch.**
-- Stock: `catalog.stock` is canonical (hot path, future KeyDB/Tarantool); `products.stock_quantity`
-  stays as denorm for compatibility; deprecate later.
+- Stock — **RESOLVED (Target A, Alpha 0.9.8): SUPERSEDES the "`catalog.stock` canonical / future
+  Tarantool" plan.** stock + price are both tenant-listing facts → both live on `catalog.products`;
+  `catalog.stock` (+ dead `reserved`) was DROPPED. A separate hot stock table is a scale
+  optimization not needed at current volume (re-split per-tenant later if write throughput demands).
 
 ### D6-data — controlled vocabularies (expand phase)
 

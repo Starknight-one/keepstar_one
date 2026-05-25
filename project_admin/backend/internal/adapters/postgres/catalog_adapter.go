@@ -130,8 +130,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 			SELECT mc.id, mc.name FROM catalog.master_product_categories mpc
 			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
 			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
-		) c ON true
-		LEFT JOIN catalog.stock st ON st.product_id = p.id AND st.tenant_id = p.tenant_id`
+		) c ON true`
 
 	// Count
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM catalog.products p%s WHERE %s`, joins, whereClause)
@@ -150,7 +149,7 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		COALESCE(p.original_name, '') AS original_name,
 		p.description,
 		p.price, p.currency,
-		COALESCE(st.quantity, p.stock_quantity) AS stock_quantity,
+		p.stock_quantity,
 		p.rating, p.images, COALESCE(p.tags, '[]') AS tags,
 		COALESCE(p.raw_attributes, '{}'::jsonb) AS raw_attributes,
 		COALESCE(p.media, '[]'::jsonb) AS media,
@@ -294,7 +293,7 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		COALESCE(p.original_name, '') AS original_name,
 		p.description,
 		p.price, p.currency,
-		COALESCE(st.quantity, p.stock_quantity) AS stock_quantity,
+		p.stock_quantity,
 		p.rating, p.images, COALESCE(p.tags, '[]') AS tags,
 		COALESCE(p.raw_attributes, '{}'::jsonb) AS raw_attributes,
 		COALESCE(p.media, '[]'::jsonb) AS media,
@@ -310,7 +309,6 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
 			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
 		) c ON true
-		LEFT JOIN catalog.stock st ON st.product_id = p.id AND st.tenant_id = p.tenant_id
 		WHERE p.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL`
 
 	var p domain.Product
@@ -412,15 +410,6 @@ func (a *CatalogAdapter) UpdateProduct(ctx context.Context, tenantID string, pro
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrProductNotFound
-	}
-
-	// Also update stock table if stock was changed
-	if update.Stock != nil {
-		stockQuery := `INSERT INTO catalog.stock (tenant_id, product_id, quantity, updated_at)
-			VALUES ($1, $2, $3, NOW())
-			ON CONFLICT (tenant_id, product_id) DO UPDATE SET
-				quantity = EXCLUDED.quantity, updated_at = NOW()`
-		_, _ = a.client.pool.Exec(ctx, stockQuery, tenantID, productID, *update.Stock)
 	}
 
 	return nil
@@ -562,15 +551,6 @@ func (a *CatalogAdapter) UpsertProductListing(ctx context.Context, p *domain.Pro
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("upsert product listing: %w", err)
-	}
-
-	// Also upsert into stock table
-	if p.StockQuantity > 0 {
-		stockQuery := `INSERT INTO catalog.stock (tenant_id, product_id, quantity, updated_at)
-			VALUES ($1, $2, $3, NOW())
-			ON CONFLICT (tenant_id, product_id) DO UPDATE SET
-				quantity = EXCLUDED.quantity, updated_at = NOW()`
-		_, _ = a.client.pool.Exec(ctx, stockQuery, p.TenantID, id, p.StockQuantity)
 	}
 
 	return id, nil
@@ -1009,15 +989,11 @@ func (a *CatalogAdapter) BulkUpdateStock(ctx context.Context, tenantID string, i
 	}
 	updated := 0
 	for _, item := range items {
-		// Upsert stock row: resolve SKU → product_id via master_products
+		// Update stock on the listing row, resolving SKU → product via master_products.
 		query := `
-			INSERT INTO catalog.stock (tenant_id, product_id, quantity, updated_at)
-			SELECT $1, p.id, $3, NOW()
-			FROM catalog.products p
-			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE mp.sku = $2 AND p.tenant_id = $1
-			ON CONFLICT (tenant_id, product_id) DO UPDATE SET
-				quantity = EXCLUDED.quantity, updated_at = NOW()`
+			UPDATE catalog.products p SET stock_quantity = $3, updated_at = NOW()
+			FROM catalog.master_products mp
+			WHERE p.master_product_id = mp.id AND mp.sku = $2 AND p.tenant_id = $1`
 
 		tag, err := a.client.pool.Exec(ctx, query, tenantID, item.SKU, item.Quantity)
 		if err != nil {
