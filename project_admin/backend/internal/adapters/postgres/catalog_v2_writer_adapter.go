@@ -1,13 +1,6 @@
 // Package postgres — CatalogV2WriterAdapter implements ports.CatalogV2WriterPort.
 // All upserts are idempotent on natural keys so re-running apply_v2 over the
 // same inbox state converges.
-//
-// master_cosmetics schema awareness:
-//   The current production table uses the legacy master_variant_id PK (0 rows).
-//   The new shape uses master_product_id PK with 17+ typed cosmetic columns.
-//   UpsertCosmetics probes for the master_product_id column once per process
-//   start (sync.Once); on legacy shape it returns ErrCosmeticsSchemaNotReady
-//   so apply_v2 falls back to writing into master_products.tier3.
 package postgres
 
 import (
@@ -16,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/jackc/pgx/v5"
 
@@ -27,10 +19,6 @@ import (
 type CatalogV2WriterAdapter struct {
 	client *Client
 	log    *logger.Logger
-
-	once             sync.Once
-	cosmeticsReady   bool
-	cosmeticsProbeErr error
 }
 
 func NewCatalogV2WriterAdapter(client *Client, log *logger.Logger) *CatalogV2WriterAdapter {
@@ -235,83 +223,6 @@ func (a *CatalogV2WriterAdapter) SoftDeleteListing(ctx context.Context, tenantID
 	`, tenantID, sourceSystem, sourceID)
 	if err != nil {
 		return fmt.Errorf("soft delete listing exec: %w", err)
-	}
-	return nil
-}
-
-// UpsertCosmetics writes per-vertical cosmetics columns keyed by
-// master_product_id. Returns ErrCosmeticsSchemaNotReady when the table
-// still has the legacy master_variant_id PK shape (apply_v2 routes those
-// fields into tier3 in that case).
-func (a *CatalogV2WriterAdapter) UpsertCosmetics(ctx context.Context, masterID string, fields *ports.MasterCosmeticsUpsert) error {
-	if masterID == "" || fields == nil {
-		return fmt.Errorf("upsert cosmetics: master_id and fields required")
-	}
-	a.once.Do(func() {
-		a.cosmeticsReady, a.cosmeticsProbeErr = a.probeCosmeticsSchema(ctx)
-	})
-	if a.cosmeticsProbeErr != nil {
-		return fmt.Errorf("upsert cosmetics probe: %w", a.cosmeticsProbeErr)
-	}
-	if !a.cosmeticsReady {
-		return ports.ErrCosmeticsSchemaNotReady
-	}
-
-	extraJSON := []byte("{}")
-	if len(fields.Extra) > 0 {
-		b, _ := json.Marshal(fields.Extra)
-		extraJSON = b
-	}
-
-	_, err := a.client.pool.Exec(ctx, `
-		INSERT INTO catalog.master_cosmetics (
-			master_product_id, skin_type, concern, key_ingredients, target_area,
-			product_form, texture, routine_step, routine_time, application_method,
-			free_from, scent, spf, marketing_claim, benefits, how_to_use,
-			volume_ml, weight_g, unit_count, extra, updated_at
-		) VALUES (
-			$1, COALESCE($2::text[], '{}'::text[]), COALESCE($3::text[], '{}'::text[]), COALESCE($4::text[], '{}'::text[]), COALESCE($5::text[], '{}'::text[]),
-			$6, $7, $8, $9, $10,
-			COALESCE($11::text[], '{}'::text[]), $12, $13, $14, COALESCE($15::text[], '{}'::text[]), $16,
-			$17, $18, $19, $20::jsonb, NOW()
-		)
-		ON CONFLICT (master_product_id) DO UPDATE
-		SET skin_type           = COALESCE(EXCLUDED.skin_type, master_cosmetics.skin_type),
-		    concern             = COALESCE(EXCLUDED.concern, master_cosmetics.concern),
-		    key_ingredients     = COALESCE(EXCLUDED.key_ingredients, master_cosmetics.key_ingredients),
-		    target_area         = COALESCE(EXCLUDED.target_area, master_cosmetics.target_area),
-		    product_form        = COALESCE(EXCLUDED.product_form, master_cosmetics.product_form),
-		    texture             = COALESCE(EXCLUDED.texture, master_cosmetics.texture),
-		    routine_step        = COALESCE(EXCLUDED.routine_step, master_cosmetics.routine_step),
-		    routine_time        = COALESCE(EXCLUDED.routine_time, master_cosmetics.routine_time),
-		    application_method  = COALESCE(EXCLUDED.application_method, master_cosmetics.application_method),
-		    free_from           = COALESCE(EXCLUDED.free_from, master_cosmetics.free_from),
-		    scent               = COALESCE(EXCLUDED.scent, master_cosmetics.scent),
-		    spf                 = COALESCE(EXCLUDED.spf, master_cosmetics.spf),
-		    marketing_claim     = COALESCE(EXCLUDED.marketing_claim, master_cosmetics.marketing_claim),
-		    benefits            = COALESCE(EXCLUDED.benefits, master_cosmetics.benefits),
-		    how_to_use          = COALESCE(EXCLUDED.how_to_use, master_cosmetics.how_to_use),
-		    volume_ml           = COALESCE(EXCLUDED.volume_ml, master_cosmetics.volume_ml),
-		    weight_g            = COALESCE(EXCLUDED.weight_g, master_cosmetics.weight_g),
-		    unit_count          = COALESCE(EXCLUDED.unit_count, master_cosmetics.unit_count),
-		    extra               = master_cosmetics.extra || EXCLUDED.extra,
-		    updated_at          = NOW()
-	`,
-		masterID,
-		stringSliceArg(fields.SkinType), stringSliceArg(fields.Concern),
-		stringSliceArg(fields.KeyIngredients), stringSliceArg(fields.TargetArea),
-		nullableStr(fields.ProductForm), nullableStr(fields.Texture),
-		nullableStr(fields.RoutineStep), nullableStr(fields.RoutineTime),
-		nullableStr(fields.ApplicationMethod),
-		stringSliceArg(fields.FreeFrom),
-		nullableStr(fields.Scent), nullableInt(fields.SPF),
-		nullableStr(fields.MarketingClaim), stringSliceArg(fields.Benefits),
-		nullableStr(fields.HowToUse),
-		nullableInt(fields.VolumeML), nullableInt(fields.WeightG), nullableInt(fields.UnitCount),
-		string(extraJSON),
-	)
-	if err != nil {
-		return fmt.Errorf("upsert cosmetics exec: %w", err)
 	}
 	return nil
 }
@@ -544,8 +455,8 @@ func (a *CatalogV2WriterAdapter) UpsertListing(ctx context.Context, lst *ports.L
 // admin postgres adapter.
 const listingBulkBatchSize = 500
 
-// masterBulkBatchSize caps one BulkMatchOrCreateMaster / UpsertCosmetics
-// / MergeTier3 transaction. Same as listing.
+// masterBulkBatchSize caps one BulkMatchOrCreateMaster / MergeTier3
+// transaction. Same as listing.
 const masterBulkBatchSize = 500
 
 // BulkMatchOrCreateMaster runs the same 3-stage cascade as per-row
@@ -770,147 +681,6 @@ func (a *CatalogV2WriterAdapter) bulkMatchOrCreateBatch(ctx context.Context, bat
 	return nil
 }
 
-// BulkUpsertCosmetics writes/updates many master_cosmetics rows in one
-// UNNEST + INSERT … ON CONFLICT DO UPDATE per batch. Returns
-// ErrCosmeticsSchemaNotReady when the legacy table shape is still in
-// place — caller falls back to BulkMergeTier3.
-func (a *CatalogV2WriterAdapter) BulkUpsertCosmetics(ctx context.Context, items []ports.BulkCosmeticsItem) (int, error) {
-	if len(items) == 0 {
-		return 0, nil
-	}
-	a.once.Do(func() {
-		a.cosmeticsReady, a.cosmeticsProbeErr = a.probeCosmeticsSchema(ctx)
-	})
-	if a.cosmeticsProbeErr != nil {
-		return 0, fmt.Errorf("upsert cosmetics probe: %w", a.cosmeticsProbeErr)
-	}
-	if !a.cosmeticsReady {
-		return 0, ports.ErrCosmeticsSchemaNotReady
-	}
-
-	written := 0
-	for start := 0; start < len(items); start += masterBulkBatchSize {
-		end := min(start+masterBulkBatchSize, len(items))
-		n, err := a.bulkUpsertCosmeticsBatch(ctx, items[start:end])
-		if err != nil {
-			return written, fmt.Errorf("bulk upsert cosmetics batch [%d:%d]: %w", start, end, err)
-		}
-		written += n
-	}
-	return written, nil
-}
-
-func (a *CatalogV2WriterAdapter) bulkUpsertCosmeticsBatch(ctx context.Context, batch []ports.BulkCosmeticsItem) (int, error) {
-	// We marshal every per-row value as JSON; the SQL casts back to the
-	// right Postgres type. Keeps the Go side type-uniform and lets the
-	// UNNEST parameter list stay at a manageable 5 text[] arrays.
-	masterIDs := make([]string, 0, len(batch))
-	rowJSONs := make([]string, 0, len(batch))
-	for _, it := range batch {
-		if it.MasterProductID == "" || it.Fields == nil {
-			continue
-		}
-		f := it.Fields
-		extra := f.Extra
-		if extra == nil {
-			extra = map[string]any{}
-		}
-		row := map[string]any{
-			"skin_type":          coerceStringSlice(f.SkinType),
-			"concern":            coerceStringSlice(f.Concern),
-			"key_ingredients":    coerceStringSlice(f.KeyIngredients),
-			"target_area":        coerceStringSlice(f.TargetArea),
-			"product_form":       nullableStr(f.ProductForm),
-			"texture":            nullableStr(f.Texture),
-			"routine_step":       nullableStr(f.RoutineStep),
-			"routine_time":       nullableStr(f.RoutineTime),
-			"application_method": nullableStr(f.ApplicationMethod),
-			"free_from":          coerceStringSlice(f.FreeFrom),
-			"scent":              nullableStr(f.Scent),
-			"spf":                nullableInt(f.SPF),
-			"marketing_claim":    nullableStr(f.MarketingClaim),
-			"benefits":           coerceStringSlice(f.Benefits),
-			"how_to_use":         nullableStr(f.HowToUse),
-			"volume_ml":          nullableInt(f.VolumeML),
-			"weight_g":           nullableInt(f.WeightG),
-			"unit_count":         nullableInt(f.UnitCount),
-			"extra":              extra,
-		}
-		b, _ := json.Marshal(row)
-		masterIDs = append(masterIDs, it.MasterProductID)
-		rowJSONs = append(rowJSONs, string(b))
-	}
-	if len(masterIDs) == 0 {
-		return 0, nil
-	}
-
-	var written int
-	err := a.client.pool.QueryRow(ctx, `
-		WITH input AS (
-			SELECT t.mid::uuid AS mid, t.row::jsonb AS row
-			FROM unnest($1::text[], $2::text[]) AS t(mid, row)
-		),
-		ins AS (
-			INSERT INTO catalog.master_cosmetics (
-				master_product_id, skin_type, concern, key_ingredients, target_area,
-				product_form, texture, routine_step, routine_time, application_method,
-				free_from, scent, spf, marketing_claim, benefits, how_to_use,
-				volume_ml, weight_g, unit_count, extra, updated_at
-			)
-			SELECT
-				i.mid,
-				COALESCE((SELECT array_agg(value::text) FROM jsonb_array_elements_text(i.row->'skin_type')), '{}'::text[]),
-				COALESCE((SELECT array_agg(value::text) FROM jsonb_array_elements_text(i.row->'concern')), '{}'::text[]),
-				COALESCE((SELECT array_agg(value::text) FROM jsonb_array_elements_text(i.row->'key_ingredients')), '{}'::text[]),
-				COALESCE((SELECT array_agg(value::text) FROM jsonb_array_elements_text(i.row->'target_area')), '{}'::text[]),
-				NULLIF(i.row->>'product_form',''),
-				NULLIF(i.row->>'texture',''),
-				NULLIF(i.row->>'routine_step',''),
-				NULLIF(i.row->>'routine_time',''),
-				NULLIF(i.row->>'application_method',''),
-				COALESCE((SELECT array_agg(value::text) FROM jsonb_array_elements_text(i.row->'free_from')), '{}'::text[]),
-				NULLIF(i.row->>'scent',''),
-				NULLIF(i.row->>'spf','')::int,
-				NULLIF(i.row->>'marketing_claim',''),
-				COALESCE((SELECT array_agg(value::text) FROM jsonb_array_elements_text(i.row->'benefits')), '{}'::text[]),
-				NULLIF(i.row->>'how_to_use',''),
-				NULLIF(i.row->>'volume_ml','')::int,
-				NULLIF(i.row->>'weight_g','')::int,
-				NULLIF(i.row->>'unit_count','')::int,
-				COALESCE(i.row->'extra', '{}'::jsonb),
-				NOW()
-			FROM input i
-			ON CONFLICT (master_product_id) DO UPDATE
-			SET skin_type           = COALESCE(EXCLUDED.skin_type, master_cosmetics.skin_type),
-			    concern             = COALESCE(EXCLUDED.concern, master_cosmetics.concern),
-			    key_ingredients     = COALESCE(EXCLUDED.key_ingredients, master_cosmetics.key_ingredients),
-			    target_area         = COALESCE(EXCLUDED.target_area, master_cosmetics.target_area),
-			    product_form        = COALESCE(EXCLUDED.product_form, master_cosmetics.product_form),
-			    texture             = COALESCE(EXCLUDED.texture, master_cosmetics.texture),
-			    routine_step        = COALESCE(EXCLUDED.routine_step, master_cosmetics.routine_step),
-			    routine_time        = COALESCE(EXCLUDED.routine_time, master_cosmetics.routine_time),
-			    application_method  = COALESCE(EXCLUDED.application_method, master_cosmetics.application_method),
-			    free_from           = COALESCE(EXCLUDED.free_from, master_cosmetics.free_from),
-			    scent               = COALESCE(EXCLUDED.scent, master_cosmetics.scent),
-			    spf                 = COALESCE(EXCLUDED.spf, master_cosmetics.spf),
-			    marketing_claim     = COALESCE(EXCLUDED.marketing_claim, master_cosmetics.marketing_claim),
-			    benefits            = COALESCE(EXCLUDED.benefits, master_cosmetics.benefits),
-			    how_to_use          = COALESCE(EXCLUDED.how_to_use, master_cosmetics.how_to_use),
-			    volume_ml           = COALESCE(EXCLUDED.volume_ml, master_cosmetics.volume_ml),
-			    weight_g            = COALESCE(EXCLUDED.weight_g, master_cosmetics.weight_g),
-			    unit_count          = COALESCE(EXCLUDED.unit_count, master_cosmetics.unit_count),
-			    extra               = master_cosmetics.extra || EXCLUDED.extra,
-			    updated_at          = NOW()
-			RETURNING 1
-		)
-		SELECT COUNT(*)::int FROM ins
-	`, masterIDs, rowJSONs).Scan(&written)
-	if err != nil {
-		return 0, fmt.Errorf("bulk upsert cosmetics exec: %w", err)
-	}
-	return written, nil
-}
-
 // BulkMergeTier3 merges JSON patches into master_products.tier3 for many
 // rows in one UPDATE per batch. Same `tier3 = COALESCE(tier3,'{}') || patch`
 // semantics as the per-row MergeTier3.
@@ -1111,62 +881,9 @@ func (a *CatalogV2WriterAdapter) bulkUpsertListingBatch(ctx context.Context, bat
 
 // ----- internal helpers -----
 
-// probeCosmeticsSchema returns (ready, err). ready=true when
-// master_cosmetics has the master_product_id column (new shape).
-func (a *CatalogV2WriterAdapter) probeCosmeticsSchema(ctx context.Context) (bool, error) {
-	var exists bool
-	err := a.client.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM information_schema.columns
-			WHERE table_schema = 'catalog'
-			  AND table_name   = 'master_cosmetics'
-			  AND column_name  = 'master_product_id'
-		)
-	`).Scan(&exists)
-	return exists, err
-}
-
-// nullableStr returns *string for pgx (NULL when nil or empty).
-func nullableStr(p *string) any {
-	if p == nil || *p == "" {
-		return nil
-	}
-	return *p
-}
-
-func nullableInt(p *int) any {
-	if p == nil {
-		return nil
-	}
-	return *p
-}
-
 func nullableUUID(s string) any {
 	if s == "" {
 		return nil
-	}
-	return s
-}
-
-// stringSliceArg returns nil for empty slices (pgx treats nil as NULL),
-// otherwise the slice itself. The SQL uses COALESCE($n, '{}') so NULL
-// gracefully maps to an empty Postgres text[] without overwriting the
-// existing value on conflict update.
-func stringSliceArg(s []string) any {
-	if len(s) == 0 {
-		return nil
-	}
-	return s
-}
-
-// coerceStringSlice returns []string{} for nil so json.Marshal emits
-// [] instead of null. SQL paths that unpack arrays via
-// jsonb_array_elements_text crash on null (SQLSTATE 22023). Every Bulk*
-// writer that JSON-marshals an array field into a row blob must route
-// through this helper.
-func coerceStringSlice(s []string) []string {
-	if s == nil {
-		return []string{}
 	}
 	return s
 }

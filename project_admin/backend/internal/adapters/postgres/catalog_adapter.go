@@ -103,14 +103,17 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		argIdx++
 	}
 	if filter.CategoryID != "" {
-		where = append(where, fmt.Sprintf(`mp.category_id IN (
-			WITH RECURSIVE sub AS (
-				SELECT id FROM catalog.categories WHERE id = $%d
-				UNION ALL
-				SELECT c.id FROM catalog.categories c
-				JOIN sub s ON c.parent_id = s.id
-			) SELECT id FROM sub
-		)`, argIdx))
+		where = append(where, fmt.Sprintf(`mp.id IN (
+				SELECT mpc.master_product_id FROM catalog.master_product_categories mpc
+				WHERE mpc.master_category_id IN (
+					WITH RECURSIVE sub AS (
+						SELECT id FROM catalog.master_categories WHERE id = $%d
+						UNION ALL
+						SELECT c.id FROM catalog.master_categories c
+						JOIN sub s ON c.parent_id = s.id
+					) SELECT id FROM sub
+				)
+			)`, argIdx))
 		args = append(args, filter.CategoryID)
 		argIdx++
 	}
@@ -123,7 +126,11 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	const joins = `
 		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
 		LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT mc.id, mc.name FROM catalog.master_product_categories mpc
+			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
+			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
+		) c ON true
 		LEFT JOIN catalog.stock st ON st.product_id = p.id AND st.tenant_id = p.tenant_id`
 
 	// Count
@@ -298,7 +305,11 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 		FROM catalog.products p
 		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
 		LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT mc.id, mc.name FROM catalog.master_product_categories mpc
+			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
+			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
+		) c ON true
 		LEFT JOIN catalog.stock st ON st.product_id = p.id AND st.tenant_id = p.tenant_id
 		WHERE p.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL`
 
@@ -423,16 +434,17 @@ func (a *CatalogAdapter) UpdateProduct(ctx context.Context, tenantID string, pro
 func (a *CatalogAdapter) GetCategories(ctx context.Context, tenantID string) ([]domain.Category, error) {
 	query := `
 		WITH RECURSIVE descendants AS (
-		    SELECT id, id AS root_id FROM catalog.categories
+		    SELECT id, id AS root_id FROM catalog.master_categories
 		    UNION ALL
 		    SELECT c.id, d.root_id
-		    FROM catalog.categories c
+		    FROM catalog.master_categories c
 		    JOIN descendants d ON c.parent_id = d.id
 		),
 		counts AS (
 		    SELECT d.root_id, COUNT(DISTINCT p.id) AS n
 		    FROM descendants d
-		    LEFT JOIN catalog.master_products mp ON mp.category_id = d.id
+		    LEFT JOIN catalog.master_product_categories mpc ON mpc.master_category_id = d.id
+			    LEFT JOIN catalog.master_products mp ON mp.id = mpc.master_product_id
 		    LEFT JOIN catalog.products p
 		        ON p.master_product_id = mp.id
 		        AND p.tenant_id = $1
@@ -441,7 +453,7 @@ func (a *CatalogAdapter) GetCategories(ctx context.Context, tenantID string) ([]
 		)
 		SELECT c.id, c.name, c.slug, COALESCE(c.parent_id::text, ''),
 		       COALESCE(counts.n, 0)::int AS product_count
-		FROM catalog.categories c
+		FROM catalog.master_categories c
 		LEFT JOIN counts ON counts.root_id = c.id
 		WHERE COALESCE(counts.n, 0) > 0
 		ORDER BY c.name`
@@ -466,7 +478,7 @@ func (a *CatalogAdapter) GetOrCreateCategory(ctx context.Context, name string, s
 	// Try to get first
 	var id string
 	err := a.client.pool.QueryRow(ctx,
-		`SELECT id FROM catalog.categories WHERE slug = $1`, slug).Scan(&id)
+		`SELECT id FROM catalog.master_categories WHERE slug = $1`, slug).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -476,7 +488,7 @@ func (a *CatalogAdapter) GetOrCreateCategory(ctx context.Context, name string, s
 
 	// Create
 	err = a.client.pool.QueryRow(ctx,
-		`INSERT INTO catalog.categories (name, slug) VALUES ($1, $2)
+		`INSERT INTO catalog.master_categories (name, slug, vertical) VALUES ($1, $2, 'unknown')
 		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
 		RETURNING id`, name, slug).Scan(&id)
 	if err != nil {
@@ -495,8 +507,8 @@ func (a *CatalogAdapter) UpsertMasterProduct(ctx context.Context, mp *domain.Mas
 	imagesJSON, _ := json.Marshal(mp.Images)
 
 	query := `INSERT INTO catalog.master_products
-			(sku, name, description, brand, category_id, images, owner_tenant_id, source_system, source_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8,''), NULLIF($9,''))
+			(sku, name, description, brand, images, owner_tenant_id, source_system, source_id)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''))
 		ON CONFLICT (sku) DO UPDATE SET
 			name = EXCLUDED.name,
 			brand = EXCLUDED.brand,
@@ -508,11 +520,18 @@ func (a *CatalogAdapter) UpsertMasterProduct(ctx context.Context, mp *domain.Mas
 
 	var id string
 	err := a.client.pool.QueryRow(ctx, query,
-		mp.SKU, mp.Name, mp.Description, mp.Brand, mp.CategoryID,
+		mp.SKU, mp.Name, mp.Description, mp.Brand,
 		imagesJSON, mp.OwnerTenantID, mp.SourceSystem, mp.SourceID,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("upsert master product: %w", err)
+	}
+	// Group D: categorization via the master_product_categories junction.
+	if mp.CategoryID != "" {
+		if _, err := a.client.pool.Exec(ctx,
+			`INSERT INTO catalog.master_product_categories (master_product_id, master_category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, mp.CategoryID); err != nil {
+			return "", fmt.Errorf("link master category: %w", err)
+		}
 	}
 	return id, nil
 }
@@ -560,7 +579,7 @@ func (a *CatalogAdapter) UpsertProductListing(ctx context.Context, p *domain.Pro
 // --- Enrichment ---
 
 func (a *CatalogAdapter) GetCategoryBySlug(ctx context.Context, slug string) (*domain.Category, error) {
-	query := `SELECT id, name, slug, COALESCE(parent_id::text, '') FROM catalog.categories WHERE slug = $1`
+	query := `SELECT id, name, slug, COALESCE(parent_id::text, '') FROM catalog.master_categories WHERE slug = $1`
 	var c domain.Category
 	err := a.client.pool.QueryRow(ctx, query, slug).Scan(&c.ID, &c.Name, &c.Slug, &c.ParentID)
 	if err != nil {
@@ -576,10 +595,14 @@ func (a *CatalogAdapter) GetCategoryBySlug(ctx context.Context, slug string) (*d
 func (a *CatalogAdapter) GetMasterProductsForEnrichment(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
 	// Products that don't have enriched PIM data yet (empty tier2). Group D:
 	// "enriched" = tier2 populated (per-vertical typed columns removed).
-	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
+	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, COALESCE(c.id::text,''),
 		mp.images, mp.owner_tenant_id, c.name
 		FROM catalog.master_products mp
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT mc.id, mc.name FROM catalog.master_product_categories mpc
+			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
+			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
+		) c ON true
 		WHERE mp.owner_tenant_id = $1
 			AND (mp.tier2 IS NULL OR mp.tier2 = '{}'::jsonb)
 		ORDER BY mp.created_at`
@@ -615,10 +638,14 @@ func (a *CatalogAdapter) GetMasterProductsForEnrichment(ctx context.Context, ten
 // --- Enrichment V2 ---
 
 func (a *CatalogAdapter) GetAllMasterProducts(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
-	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
+	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, COALESCE(c.id::text,''),
 		mp.images, mp.owner_tenant_id, c.name
 		FROM catalog.master_products mp
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT mc.id, mc.name FROM catalog.master_product_categories mpc
+			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
+			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
+		) c ON true
 		WHERE mp.owner_tenant_id = $1
 		ORDER BY mp.created_at`
 
@@ -654,10 +681,14 @@ func (a *CatalogAdapter) GetAllMasterProducts(ctx context.Context, tenantID stri
 // the incremental enrichment path used by the post-import auto-trigger. Group D:
 // "enriched" now means "tier2 populated" (enrichment_version column removed).
 func (a *CatalogAdapter) GetUnenrichedMasterProducts(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
-	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
+	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, COALESCE(c.id::text,''),
 		mp.images, mp.owner_tenant_id, c.name
 		FROM catalog.master_products mp
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT mc.id, mc.name FROM catalog.master_product_categories mpc
+			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
+			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
+		) c ON true
 		WHERE mp.owner_tenant_id = $1
 			AND (mp.tier2 IS NULL OR mp.tier2 = '{}'::jsonb)
 		ORDER BY mp.created_at`
@@ -821,22 +852,19 @@ func (a *CatalogAdapter) UpdateMasterProductPIM(ctx context.Context, productID s
 	WHERE id = $4`
 	args := []any{out.ShortName, tier2JSON, tier3JSON, productID}
 
-	if categoryID != "" {
-		query = `UPDATE catalog.master_products SET
-			name = $1,
-			tier2 = COALESCE(tier2, '{}'::jsonb) || $2::jsonb,
-			tier3 = COALESCE(tier3, '{}'::jsonb) || $3::jsonb,
-			category_id = $5, updated_at = NOW()
-		WHERE id = $4`
-		args = append(args, categoryID)
-	}
-
 	tag, err := a.client.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("update master product PIM: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrProductNotFound
+	}
+	// Group D: categorization via the master_product_categories junction.
+	if categoryID != "" {
+		if _, err := a.client.pool.Exec(ctx,
+			`INSERT INTO catalog.master_product_categories (master_product_id, master_category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, productID, categoryID); err != nil {
+			return fmt.Errorf("link master category: %w", err)
+		}
 	}
 	return nil
 }
@@ -867,10 +895,14 @@ func jsonStrSlice(m map[string]any, key string) []string {
 }
 
 func (a *CatalogAdapter) GetMasterProductsWithoutEmbedding(ctx context.Context, tenantID string) ([]domain.MasterProduct, error) {
-	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, mp.category_id,
+	query := `SELECT mp.id, mp.sku, mp.name, mp.description, mp.brand, COALESCE(c.id::text,''),
 		mp.images, mp.owner_tenant_id, c.name, COALESCE(mp.tier2, '{}'::jsonb)
 		FROM catalog.master_products mp
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT mc.id, mc.name FROM catalog.master_product_categories mpc
+			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
+			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
+		) c ON true
 		WHERE mp.embedding IS NULL AND mp.owner_tenant_id = $1
 		ORDER BY mp.created_at`
 
@@ -935,7 +967,11 @@ func (a *CatalogAdapter) GenerateCatalogDigest(ctx context.Context, tenantID str
 			SELECT mp.id, mp.name, mp.brand, mp.attributes, c.name AS category_name, p.price, p.currency
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			LEFT JOIN catalog.categories c ON mp.category_id = c.id
+			LEFT JOIN LATERAL (
+			SELECT mc.id, mc.name FROM catalog.master_product_categories mpc
+			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
+			WHERE mpc.master_product_id = mp.id ORDER BY mc.name LIMIT 1
+		) c ON true
 			WHERE p.tenant_id = $1
 		)
 		SELECT json_build_object(

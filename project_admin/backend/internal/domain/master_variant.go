@@ -18,41 +18,28 @@ const (
 // M3/1TB/Silver, M3/512GB/Black). All identification facts (GTIN, SKU,
 // dimensions) live here, not on master_products.
 type MasterVariant struct {
-	ID              string      `json:"id"`
-	MasterProductID string      `json:"masterProductId"`
-	SKU             string      `json:"sku,omitempty"`
-	GTINs           []string    `json:"gtins"` // primary match key, multiple per variant possible
-	ImageURL        string      `json:"imageUrl,omitempty"`
-	WeightG         *int        `json:"weightG,omitempty"`
-	VolumeML        *int        `json:"volumeML,omitempty"`
-	LengthMM        *int        `json:"lengthMm,omitempty"`
-	WidthMM         *int        `json:"widthMm,omitempty"`
-	HeightMM        *int        `json:"heightMm,omitempty"`
-	Color           string      `json:"color,omitempty"`
-	Size            string      `json:"size,omitempty"` // textual: "236ml" / "M" / "14 inch"
-	Material        string      `json:"material,omitempty"`
+	ID              string            `json:"id"`
+	MasterProductID string            `json:"masterProductId"`
+	SKU             string            `json:"sku,omitempty"`
+	GTINs           []string          `json:"gtins"` // primary match key, multiple per variant possible
+	ImageURL        string            `json:"imageUrl,omitempty"`
+	WeightG         *int              `json:"weightG,omitempty"`
+	VolumeML        *int              `json:"volumeML,omitempty"`
+	LengthMM        *int              `json:"lengthMm,omitempty"`
+	WidthMM         *int              `json:"widthMm,omitempty"`
+	HeightMM        *int              `json:"heightMm,omitempty"`
+	Color           string            `json:"color,omitempty"`
+	Size            string            `json:"size,omitempty"` // textual: "236ml" / "M" / "14 inch"
+	Material        string            `json:"material,omitempty"`
 	Axes            map[string]string `json:"axes,omitempty"` // raw axis values from source: {"size":"236ml"}
-	VariantKind     VariantKind `json:"variantKind"`
+	VariantKind     VariantKind       `json:"variantKind"`
 
 	// Dual-store fields: typed parsed value + raw source string + parser status.
 	// Spec §1.12 / §5: raw kept for re-parse when registry improves.
-	WeightRaw   string                 `json:"weightRaw,omitempty"`
-	VolumeRaw   string                 `json:"volumeRaw,omitempty"`
-	ParseStatus map[string]string      `json:"parseStatus,omitempty"` // {"volume_ml":"ok","weight_g":"failed"}
+	WeightRaw   string            `json:"weightRaw,omitempty"`
+	VolumeRaw   string            `json:"volumeRaw,omitempty"`
+	ParseStatus map[string]string `json:"parseStatus,omitempty"` // {"volume_ml":"ok","weight_g":"failed"}
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
-}
-
-// MasterCosmetics is the per-vertical Tier 2 row for cosmetics products.
-// One row per master_variant (PK = master_variant_id, FK CASCADE). New columns
-// appear here over time via curator promotion (spec §4.5).
-type MasterCosmetics struct {
-	MasterVariantID string   `json:"masterVariantId"`
-	SkinType        []string `json:"skinType"`
-	Concern         []string `json:"concern"`
-	Ingredients     []string `json:"ingredients"`
-	Scent           string   `json:"scent,omitempty"`
-	SPF             *int     `json:"spf,omitempty"`
-	UpdatedAt       time.Time `json:"updatedAt"`
 }

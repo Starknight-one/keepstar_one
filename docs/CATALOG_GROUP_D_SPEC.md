@@ -11,22 +11,37 @@
 
 ## ⏱ Execution status (2026-05-25)
 
-Session log: `docs/Updates/main_2026-05-25_18-15.md`. Owner authorized breaking V5 search +
-running destructive migrations against Neon (= the dev stand).
+> **▶ LIVE EXECUTION PLAN for the remaining work: `docs/Updates/main_2026-05-25_18-59.md`.**
+> Read that first — it has the locked decisions, code-verified corrections (e.g. the `sync`
+> import must be REMOVED, not kept), and exact file:line edits per item. The table below is
+> the high-level status; that doc is what you execute from.
+
+Session logs: `docs/Updates/main_2026-05-25_18-15.md` (items 1+2) →
+`docs/Updates/main_2026-05-25_18-59.md` (remaining-work plan) →
+`docs/Updates/main_2026-05-25_20-18.md` (Task #7 + D3 categories shipped). Owner authorized
+breaking V5 search + running destructive migrations against Neon (= the dev stand).
+
+**Decisions locked 2026-05-25:** **D1b (variant identity) DEFERRED** to a separate milestone
+(apply creates no variants today; all listings have `master_variant_id=NULL`); the Phase-1
+final gate below is downscoped (1b.*, INT.4 OUT). **D3** reroutes admin + rebuild-embeddings to
+V2 and drops V1; V5's V1-category reads are left for the V5-milestone (V5 already broken).
+**Cross-tenant dedup (Decision #6) already works in code** — E2E only proves it.
 
 | Item | Status | Notes |
 |---|---|---|
 | **1. Drop dead services** | ✅ DONE + run on Neon | services/master_services dropped (were 0 rows). Removed adapter/port/import.go/csv_mapping/domain service.go/test mocks. |
 | **2. tier2 canonical (drop master_cosmetics + 17 legacy cols)** | ✅ DONE + run on Neon + verified | apply→tier2, curator `tier2.<key>` routing, enrichment/embedding repointed. Migration: seed 18 cosmetics field-defs + backfill master_cosmetics (1000 rows)→tier2 + backfill 17 legacy cols (~960 rows)→tier2/tier3 + drops. **reconcile=0 (zero data loss)** verified on Neon. build+vet+catalog/apply tests green. |
-| **Task #7 — dead-code cleanup** | ⬜ REMAINING (zero runtime risk) | seed cmds + drift prompt = DONE. Still to remove (never-called dead code referencing dropped table): admin writer `UpsertCosmetics`/`BulkUpsertCosmetics`/`bulkUpsertCosmeticsBatch`/`probeCosmeticsSchema` + struct fields + `sync` import + head doc; port `UpsertCosmetics`/`BulkUpsertCosmetics`/`BulkCosmeticsItem`/`ErrCosmeticsSchemaNotReady` + `errors` import; fakeWriter same; `master_variants_adapter` `UpsertMasterCosmetics`/`GetMasterCosmetics` + port + `domain.MasterCosmetics`. KEEP `ports.MasterCosmeticsUpsert` (apply uses it as in-memory holder). |
+| **Task #7 — dead-code cleanup** | ✅ DONE (Alpha 0.9.7) | Removed `UpsertCosmetics`/`BulkUpsertCosmetics`/`bulkUpsertCosmeticsBatch`/`probeCosmeticsSchema` + `sync` import + probe struct fields + 4 now-dead pgx helpers (`nullableStr`/`nullableInt`/`stringSliceArg`/`coerceStringSlice`); port `UpsertCosmetics`/`BulkUpsertCosmetics`/`BulkCosmeticsItem`/`ErrCosmeticsSchemaNotReady` + `errors` import; `master_variants` `UpsertMasterCosmetics`/`GetMasterCosmetics` + port + `domain.MasterCosmetics`; fakeWriter mocks. KEPT `ports.MasterCosmeticsUpsert`. build + usecases tests green (only pre-existing Shopify 052–055 red). |
 | **3. D6 controlled vocabularies** | ⬜ NOT STARTED | dim-tables + aliases (mirror `catalog.unit_aliases` / `internal/units/aliases.go`) + normalizer in apply (resolved ids → tier2) + brand→brand_id dedup + curator vocab queue. |
-| **4. Categories: drop V1** | ⬜ NOT STARTED | `catalog.categories` (V1) still read by admin (`GetOrCreateCategory`, recursive-CTE filter) + V5 + rebuild-embeddings. Repoint `master_products.category_id`→`master_categories`, then drop. |
+| **4. Categories: drop V1 (D3)** | ✅ DONE + run on Neon + verified (Alpha 0.9.7) | Full migration to target model: V1 `catalog.categories` → `master_categories` + `master_product_categories` junction (reused V1 UUIDs → hierarchy + links preserved). Rerouted ALL admin readers (filter recursive-CTE, 7 display LATERALs, `GetCategories`, `GetOrCreateCategory`, `GetCategoryBySlug`, `UpsertMasterProduct`, `UpdateMasterProductPIM`) + `cmd/seed` + `rebuild-embeddings` to the junction. Dropped `category_id` column + `catalog.categories` + stale V1 indexes. **Neon: 30 categories migrated, 987 product links, 0 data loss, V1 gone.** Category `vertical` defaulted to `'unknown'` (curator refines later). V5 category reads left for the V5-milestone (already broken). Bumped migration ctx 30s→120s (Neon cold-start headroom). |
 | **5. Stock consolidation** | ⬜ NOT STARTED | `catalog.stock` canonical; curator reads stale `products.stock_quantity`; fix curator + drop denorm col. |
 | **6. E2E verification on 4 seeds (+ tenant E)** | ⬜ NOT STARTED | ingest A/B/C/D via real pipeline; verify tier2 populates for all verticals; tenant E (overlap seed) for cross-tenant dedup — see §8.2. |
 
 **Resume tip:** Neon already migrated for items 1+2 (master_cosmetics/services/17-cols gone; tier2
 populated). Migrations in `catalog_migrations.go` are idempotent — a fresh server start re-applies
-them safely. Next: Task #7 cleanup (quick, no risk), then item 3.
+them safely. **Execute from `docs/Updates/main_2026-05-25_18-59.md`** in order:
+Task #7 (dead code, 0 risk) → D3 (drop V1 categories) → D4-stock (curator → catalog.stock) →
+D6-data (controlled vocabularies) → E2E (4 seeds + tenant E). No code changed yet this round.
 
 ---
 

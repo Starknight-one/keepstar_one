@@ -126,7 +126,11 @@ func main() {
 		mp.skin_type, mp.concern, mp.key_ingredients,
 		COALESCE(mp.enrichment_version, 0) as enrichment_version
 		FROM catalog.master_products mp
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT mc.name FROM catalog.master_product_categories mpc
+			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
+			WHERE mpc.master_product_id = mp.id LIMIT 1
+		) c ON true
 		WHERE mp.embedding IS NULL
 		ORDER BY mp.created_at`
 

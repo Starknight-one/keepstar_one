@@ -96,8 +96,8 @@ func main() {
 		}
 
 		tag, err := pool.Exec(ctx,
-			`INSERT INTO catalog.categories (id, name, slug, parent_id)
-			VALUES ($1, $2, $3, $4)
+			`INSERT INTO catalog.master_categories (id, name, slug, parent_id, vertical)
+			VALUES ($1, $2, $3, $4, 'unknown')
 			ON CONFLICT (slug) DO NOTHING`,
 			id, cat.Name, cat.Slug, parentID)
 		if err != nil {

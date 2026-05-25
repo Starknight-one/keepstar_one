@@ -18,20 +18,12 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		);`,
-		`CREATE TABLE IF NOT EXISTS catalog.categories (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			name VARCHAR(255) NOT NULL,
-			slug VARCHAR(100) NOT NULL,
-			parent_id UUID REFERENCES catalog.categories(id),
-			created_at TIMESTAMPTZ DEFAULT NOW()
-		);`,
 		`CREATE TABLE IF NOT EXISTS catalog.master_products (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			sku VARCHAR(100) NOT NULL UNIQUE,
 			name VARCHAR(500) NOT NULL,
 			description TEXT,
 			brand VARCHAR(255),
-			category_id UUID REFERENCES catalog.categories(id),
 			images JSONB DEFAULT '[]',
 			attributes JSONB DEFAULT '{}',
 			owner_tenant_id UUID REFERENCES catalog.tenants(id),
@@ -55,11 +47,8 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_catalog_tenants_slug ON catalog.tenants(slug);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_products_tenant ON catalog.products(tenant_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_products_master ON catalog.products(master_product_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_master_products_category ON catalog.master_products(category_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_master_products_owner ON catalog.master_products(owner_tenant_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_master_products_sku ON catalog.master_products(sku);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_categories_slug ON catalog.categories(slug);`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_categories_slug_unique ON catalog.categories(slug);`,
 		`CREATE EXTENSION IF NOT EXISTS vector;`,
 		`DO $$ BEGIN
 			IF NOT EXISTS (
@@ -143,7 +132,6 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_routine_step ON catalog.master_products (routine_step);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_brand ON catalog.master_products (brand);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_short_name ON catalog.master_products (short_name);`,
-		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_cat_form ON catalog.master_products (category_id, product_form);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_skin_type ON catalog.master_products USING gin (skin_type);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_concern ON catalog.master_products USING gin (concern);`,
 		`CREATE INDEX IF NOT EXISTS idx_catalog_mp_key_ingredients ON catalog.master_products USING gin (key_ingredients);`,
@@ -994,6 +982,28 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 			DROP COLUMN IF EXISTS texture, DROP COLUMN IF EXISTS routine_step, DROP COLUMN IF EXISTS routine_time,
 			DROP COLUMN IF EXISTS application_method, DROP COLUMN IF EXISTS original_name, DROP COLUMN IF EXISTS product_line,
 			DROP COLUMN IF EXISTS enrichment_version;`,
+	)
+
+	// D3 — migrate V1 catalog.categories → V2 master_categories + the
+	// master_product_categories junction (reusing V1 UUIDs to preserve hierarchy
+	// and product links), then drop V1. Guarded on category_id existence so
+	// re-runs after the drop are a no-op (idempotent).
+	migrations = append(migrations,
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.columns
+			           WHERE table_schema='catalog' AND table_name='master_products' AND column_name='category_id') THEN
+				INSERT INTO catalog.master_categories (id, parent_id, slug, name, vertical)
+					SELECT id, parent_id, slug, name, 'unknown' FROM catalog.categories
+					ON CONFLICT (slug) DO NOTHING;
+				INSERT INTO catalog.master_product_categories (master_product_id, master_category_id)
+					SELECT mp.id, mp.category_id FROM catalog.master_products mp
+					WHERE mp.category_id IS NOT NULL
+					  AND EXISTS (SELECT 1 FROM catalog.master_categories mc WHERE mc.id = mp.category_id)
+					ON CONFLICT DO NOTHING;
+			END IF;
+		END $$;`,
+		`ALTER TABLE catalog.master_products DROP COLUMN IF EXISTS category_id CASCADE;`,
+		`DROP TABLE IF EXISTS catalog.categories CASCADE;`,
 	)
 
 	for i, m := range migrations {

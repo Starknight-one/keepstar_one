@@ -51,3 +51,4 @@ docs/v5-smoke/**/p[0-9]*.json
 
 # go build artifacts from smoke test
 project_admin/backend/smoke_catalog_v2
+project_admin/backend/seed_test_run

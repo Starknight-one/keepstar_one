@@ -83,7 +83,8 @@ func (f *fakeInbox) ListUnapplied(_ context.Context, tenantID string, limit, off
 	}
 	return out[offset:end], nil
 }
-func (f *fakeInbox) CountTotal(_ context.Context, _ string) (int, error)        { return len(f.items), nil }
+func (f *fakeInbox) CountTotal(_ context.Context, _ string) (int, error) { return len(f.items), nil }
+
 // fakeInbox can be seeded with predicted ListFields / SampleValues
 // responses so builder-tool tests have something the validators accept.
 // Default seed (set in newFakeInbox) covers a typical Shopify-shape
@@ -130,7 +131,6 @@ type fakeWriter struct {
 	byGTIN     map[string]string
 	byMatchKey map[string]string
 	masters    map[string]*ports.MasterProductUpsert
-	cosmetics  map[string]*ports.MasterCosmeticsUpsert
 	tier2      map[string]map[string]any
 	tier3      map[string]map[string]any
 	listings   []*ports.ListingUpsert
@@ -155,7 +155,6 @@ func newFakeWriter() *fakeWriter {
 		byGTIN:     map[string]string{},
 		byMatchKey: map[string]string{},
 		masters:    map[string]*ports.MasterProductUpsert{},
-		cosmetics:  map[string]*ports.MasterCosmeticsUpsert{},
 		tier2:      map[string]map[string]any{},
 		tier3:      map[string]map[string]any{},
 		aliases:    map[string]string{},
@@ -192,11 +191,6 @@ func (w *fakeWriter) MatchOrCreateMaster(_ context.Context, mp *ports.MasterProd
 	cp := *mp
 	w.masters[id] = &cp
 	return id, true, nil
-}
-func (w *fakeWriter) UpsertCosmetics(_ context.Context, masterID string, f *ports.MasterCosmeticsUpsert) error {
-	cp := *f
-	w.cosmetics[masterID] = &cp
-	return nil
 }
 func (w *fakeWriter) MergeTier3(_ context.Context, masterID string, patch map[string]any) error {
 	if w.tier3[masterID] == nil {
@@ -255,18 +249,6 @@ func (w *fakeWriter) BulkMatchOrCreateMaster(_ context.Context, items []ports.Ma
 		out[i] = ports.MatchResult{ID: id, WasCreated: true}
 	}
 	return out, nil
-}
-func (w *fakeWriter) BulkUpsertCosmetics(_ context.Context, items []ports.BulkCosmeticsItem) (int, error) {
-	n := 0
-	for _, it := range items {
-		if it.MasterProductID == "" || it.Fields == nil {
-			continue
-		}
-		cp := *it.Fields
-		w.cosmetics[it.MasterProductID] = &cp
-		n++
-	}
-	return n, nil
 }
 func (w *fakeWriter) BulkMergeTier3(_ context.Context, items []ports.BulkTier3Item) (int, error) {
 	n := 0

@@ -2,13 +2,7 @@ package ports
 
 import (
 	"context"
-	"errors"
 )
-
-// ErrCosmeticsSchemaNotReady is returned by UpsertCosmetics when the
-// master_cosmetics table still uses the legacy master_variant_id PK. Apply
-// reacts by routing the cosmetics fields into tier3 JSONB instead.
-var ErrCosmeticsSchemaNotReady = errors.New("master_cosmetics schema not yet reshaped (legacy master_variant_id PK)")
 
 // CatalogV2WriterPort is the write surface apply_v2 uses to land mapped data
 // into master_products + per-vertical tables + slim catalog.products. Kept
@@ -60,15 +54,8 @@ type CatalogV2WriterPort interface {
 	// pile up duplicate pending entries.
 	EnrichExistingMaster(ctx context.Context, items []EnrichRequest) (int, error)
 
-	// UpsertCosmetics writes per-vertical cosmetics data keyed by
-	// master_product_id. Returns ErrCosmeticsSchemaNotReady when the
-	// master_cosmetics table still has the legacy master_variant_id PK shape
-	// — apply_v2 reacts by routing cosmetics.* fields into tier3 instead.
-	UpsertCosmetics(ctx context.Context, masterID string, fields *MasterCosmeticsUpsert) error
-
 	// MergeTier3 merges (top-level overwrite) the given JSON object into
-	// master_products.tier3. Apply_v2 calls this for the unknown-vertical
-	// path and for cosmetics fallback when cosmetics schema isn't ready.
+	// master_products.tier3. Apply_v2 calls this for the unknown-vertical path.
 	MergeTier3(ctx context.Context, masterID string, patch map[string]any) error
 
 	// UpsertListing writes/updates one catalog.products row keyed by
@@ -93,15 +80,6 @@ type CatalogV2WriterPort interface {
 	// CreateAsPending on the upsert is honoured on the INSERT branch.
 	// Chunks input internally; callers can pass arbitrary-large slices.
 	BulkMatchOrCreateMaster(ctx context.Context, items []MasterProductUpsert) ([]MatchResult, error)
-
-	// BulkUpsertCosmetics is the batched form of UpsertCosmetics. Each
-	// pair (master_id, fields) writes one master_cosmetics row in a
-	// single UNNEST + INSERT … ON CONFLICT DO UPDATE statement per batch.
-	// Returns the count of rows written. Skips entries whose master_id
-	// is empty. Returns ErrCosmeticsSchemaNotReady (legacy shape) — the
-	// caller (apply) falls back to BulkMergeTier3 in that case, same as
-	// the row-by-row path does today.
-	BulkUpsertCosmetics(ctx context.Context, items []BulkCosmeticsItem) (int, error)
 
 	// BulkMergeTier3 merges (top-level overwrite) one JSON patch per
 	// master_id in a single UNNEST + UPDATE per batch. Same semantics as
@@ -164,14 +142,6 @@ type EnrichRequest struct {
 type MatchResult struct {
 	ID         string
 	WasCreated bool
-}
-
-// BulkCosmeticsItem pairs a master_id with the cosmetics fields to
-// upsert. Used by BulkUpsertCosmetics — caller assembles one item per
-// newly-created master that has cosmetics-vertical attributes.
-type BulkCosmeticsItem struct {
-	MasterProductID string
-	Fields          *MasterCosmeticsUpsert
 }
 
 // BulkTier3Item pairs a master_id with a jsonb patch to merge into

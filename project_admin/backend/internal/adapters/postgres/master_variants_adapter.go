@@ -1,4 +1,4 @@
-// Package postgres — master_variants + master_cosmetics adapter.
+// Package postgres — master_variants adapter.
 // Spec: docs/New features/admin_catalog_design_2026-04-23.md §3.1.
 package postgres
 
@@ -327,37 +327,6 @@ func scanVariants(rows pgx.Rows) ([]domain.MasterVariant, error) {
 	return out, rows.Err()
 }
 
-// UpsertMasterCosmetics writes the Tier 2 cosmetics row for a variant.
-func (a *MasterVariantsAdapter) UpsertMasterCosmetics(ctx context.Context, mc *domain.MasterCosmetics) error {
-	if mc.MasterVariantID == "" {
-		return errors.New("master_cosmetics: master_variant_id required")
-	}
-	if mc.SkinType == nil {
-		mc.SkinType = []string{}
-	}
-	if mc.Concern == nil {
-		mc.Concern = []string{}
-	}
-	if mc.Ingredients == nil {
-		mc.Ingredients = []string{}
-	}
-	_, err := a.client.pool.Exec(ctx, `
-		INSERT INTO catalog.master_cosmetics (master_variant_id, skin_type, concern, ingredients, scent, spf)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (master_variant_id) DO UPDATE SET
-			skin_type = EXCLUDED.skin_type,
-			concern = EXCLUDED.concern,
-			ingredients = EXCLUDED.ingredients,
-			scent = EXCLUDED.scent,
-			spf = EXCLUDED.spf,
-			updated_at = NOW()`,
-		mc.MasterVariantID, mc.SkinType, mc.Concern, mc.Ingredients, mc.Scent, mc.SPF)
-	if err != nil {
-		return fmt.Errorf("upsert master_cosmetics: %w", err)
-	}
-	return nil
-}
-
 // FindMasterProductsByEmbedding cosine-searches master_products.embedding.
 // Optional vertical filter narrows scope; empty = search all. Limit is
 // capped at 50 to keep response size bounded for the discovery agent
@@ -488,22 +457,6 @@ func (a *MasterVariantsAdapter) GetMasterProductSummary(ctx context.Context, mas
 		s.Variants = append(s.Variants, snip)
 	}
 	return &s, rows.Err()
-}
-
-func (a *MasterVariantsAdapter) GetMasterCosmetics(ctx context.Context, masterVariantID string) (*domain.MasterCosmetics, error) {
-	var mc domain.MasterCosmetics
-	err := a.client.pool.QueryRow(ctx, `
-		SELECT master_variant_id, skin_type, concern, ingredients, scent, spf, updated_at
-		FROM catalog.master_cosmetics WHERE master_variant_id = $1`, masterVariantID).Scan(
-		&mc.MasterVariantID, &mc.SkinType, &mc.Concern, &mc.Ingredients, &mc.Scent, &mc.SPF, &mc.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get master_cosmetics: %w", err)
-	}
-	return &mc, nil
 }
 
 // GetMasterOverview computes a catalog-wide summary grouped by vertical, plus

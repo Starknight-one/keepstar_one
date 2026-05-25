@@ -40,12 +40,6 @@ type MasterVariantsPort interface {
 	// < 0.08). Implementations should rely on the hnsw index for performance.
 	FindByEmbedding(ctx context.Context, embedding []float32, threshold float64, limit int) ([]MasterVariantWithScore, error)
 
-	// UpsertMasterCosmetics writes/updates the cosmetics Tier 2 row for a variant.
-	UpsertMasterCosmetics(ctx context.Context, mc *domain.MasterCosmetics) error
-
-	// GetMasterCosmetics returns the Tier 2 cosmetics row for a variant, or nil.
-	GetMasterCosmetics(ctx context.Context, masterVariantID string) (*domain.MasterCosmetics, error)
-
 	// FindMasterProductsByEmbedding searches master_products (not variants) by
 	// cosine similarity. Used by harvester (M4d) match cascade step 4 — the
 	// expensive long-tail catch-all. Discovery agent uses the cheaper
@@ -76,26 +70,26 @@ type MasterVariantsPort interface {
 // system prompt. Format mirrors V4's CatalogDigest (tenant-side digest) so
 // the agent gets a consistent "soup" view of both sides.
 type MasterOverview struct {
-	TotalProducts   int                       `json:"totalProducts"`
-	Verticals       []MasterVerticalSummary   `json:"verticals"`
-	RegisteredFields []MasterFieldDefSummary  `json:"registeredFields,omitempty"` // from master_field_definitions
+	TotalProducts    int                     `json:"totalProducts"`
+	Verticals        []MasterVerticalSummary `json:"verticals"`
+	RegisteredFields []MasterFieldDefSummary `json:"registeredFields,omitempty"` // from master_field_definitions
 }
 
 // MasterVerticalSummary is one vertical's slice of the master overview.
 type MasterVerticalSummary struct {
-	Vertical    string   `json:"vertical"`
-	ProductCount int     `json:"productCount"`
-	TopBrands   []string `json:"topBrands,omitempty"`   // ≤10
-	Categories  []string `json:"categories,omitempty"`  // master_categories slugs ≤20
+	Vertical     string   `json:"vertical"`
+	ProductCount int      `json:"productCount"`
+	TopBrands    []string `json:"topBrands,omitempty"`  // ≤10
+	Categories   []string `json:"categories,omitempty"` // master_categories slugs ≤20
 }
 
 // MasterFieldDefSummary is a tier-2 field already promoted in master_field_definitions.
 // The agent uses this to know which keys it should map TO existing typed fields
 // vs. propose as new candidates.
 type MasterFieldDefSummary struct {
-	Vertical string   `json:"vertical"`
-	Key      string   `json:"key"`
-	Type     string   `json:"type"`
+	Vertical   string   `json:"vertical"`
+	Key        string   `json:"key"`
+	Type       string   `json:"type"`
 	EnumValues []string `json:"enumValues,omitempty"`
 }
 
@@ -104,14 +98,14 @@ type MasterFieldDefSummary struct {
 // (name, brand, vertical) and shape (variant count, axis names, GTIN
 // presence) to decide whether incoming data should link or not.
 type MasterProductSummary struct {
-	ID            string                  `json:"id"`
-	Name          string                  `json:"name"`
-	Brand         string                  `json:"brand"`
-	Vertical      string                  `json:"vertical"`
-	Confidence    string                  `json:"confidence"`
-	OwnerTenantID string                  `json:"ownerTenantId,omitempty"`
-	Score         float64                 `json:"score,omitempty"` // similarity, when from FindMasterProductsByEmbedding
-	Variants      []MasterVariantSnippet  `json:"variants,omitempty"`
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Brand         string                 `json:"brand"`
+	Vertical      string                 `json:"vertical"`
+	Confidence    string                 `json:"confidence"`
+	OwnerTenantID string                 `json:"ownerTenantId,omitempty"`
+	Score         float64                `json:"score,omitempty"` // similarity, when from FindMasterProductsByEmbedding
+	Variants      []MasterVariantSnippet `json:"variants,omitempty"`
 }
 
 // MasterVariantSnippet is a tiny per-variant view embedded in
