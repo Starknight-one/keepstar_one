@@ -26,11 +26,40 @@ architecture:
     cmd_server: "curator/backend/cmd/server/main.go (185 LOC) — DI bootstrap, route mux, CORS, SPA fallback"
     cmd_seed: "curator/backend/cmd/seed-curator/main.go (49 LOC) — bootstrap default curator user"
     domain: "curator/backend/internal/domain/types.go (147 LOC) — read-shape types for catalog domain only. NOTE: v5 chat/trace types live in the adapters package (v5_chats.go), and catalog-v2 types (Inbox*, ActionLogEntry, AgentRun*, MappingArtifactView) live in adapters/catalog_v2.go — both deliberate exceptions for cross-domain read inspection."
-    adapters_postgres: "curator/backend/internal/adapters/postgres.go (708 LOC) — primary Client struct: auth + audit + tenants + master catalog. Lost ~170 LOC with the 2026-05-15 purge (candidate/junk/promote methods removed)."
+    adapters_postgres: "curator/backend/internal/adapters/postgres.go (695 LOC) — primary Client struct: auth + audit + tenants + master catalog. Lost ~170 LOC with the 2026-05-15 purge (candidate/junk/promote methods removed); Group D 0.9.6 dropped the dead verticalTables/verticalKeys() helpers."
     adapters_catalog_v2: "curator/backend/internal/adapters/catalog_v2.go (240 LOC) — NEW 2026-05-15. Read methods for the 6-step flow: ListInbox, GetInboxItem, ListActionLog, ListAgentRuns, GetAgentRun, GetMappingArtifact. Reads catalog.inbox_items, admin.tenant_action_log, admin.agent_runs, catalog.tenant_catalog_schema."
     adapters_v5_chats: "curator/backend/internal/adapters/v5_chats.go (302 LOC) — V5 chat/trace read methods (Client.ListChats / GetChatTimeline / GetChatTurn). Reads tables OWNED by V5: v5_chat_sessions, v5_chat_session_traces. Curator never writes them."
+    adapters_pending: |
+      curator/backend/internal/adapters/pending.go (536 LOC, NEW 2026-05-20; expanded
+      Alpha 0.9.4; rerouted Group D 0.9.6 2026-05-25). Read-shape: PendingTreeNode,
+      PendingMasterCard, PendingChangeRow, PendingMasterDetail, ApplyChangesResult,
+      ApproveResult. Read: ListPendingTree(vertical) → tree of master_categories with
+      pending_master_count + pending_change_count via M:N master_product_categories.
+      ListPendingMastersInCategory(catID, limit, offset). GetPendingMaster(id).
+      Write: ApplyPendingChanges(changeIDs) — per-field router over
+      PendingChangeRow.FieldName + OpKind. GROUP D 0.9.6: the 3 master_cosmetics
+      allowlist maps (cosmeticsTextCols/IntCols/ArrayCols) + all master_cosmetics
+      INSERT…ON CONFLICT SQL were DELETED (table dropped). Routes now: (1)
+      masterProductTextCols → master_products.{name,brand,description,image_url,gtin}
+      fill-when-empty UPDATE; (2) "tier2.<key>" prefix → master_products.tier2 jsonb —
+      scalar fill-when-empty (`tier2 = COALESCE(tier2,'{}') || jsonb_build_object(key,val)`
+      guarded WHERE tier2->key IS NULL/empty) or array set-union (jsonb_set + jsonb_agg
+      DISTINCT; tolerates single-string pending_value since EnrichExistingMaster stages
+      one element per row); (3) "tier3.<key>" prefix → master_products.tier3 jsonb merge.
+      op_kind ('enrich_array_union' vs scalar) selects within tier2/tier3.
+      BulkApproveMasters / BulkApprovePendingChanges / BulkRejectMasters /
+      BulkRejectPendingChanges flip status flags.
+      Companion regression test: regression_pending_apply_test.go (Alpha 0.9.4 A3).
+    regression_tests: "curator/backend/internal/adapters/regression_pending_apply_test.go + regression_inbox_idempotency_test.go (admin side) lock the per-field router and identical-payload idempotency contracts."
     handlers: "curator/backend/internal/handlers/handlers.go (204 LOC) — auth + audit + tenants + master catalog HTTP handlers"
     handler_catalog_v2: "curator/backend/internal/handlers/handler_catalog_v2.go (119 LOC) — NEW 2026-05-15. Pure-read handlers for inbox/action-log/agent-runs/mapping tabs."
+    handler_pending: |
+      curator/backend/internal/handlers/handler_pending.go (~180 LOC, NEW
+      Alpha 0.9.4). Wires GET /pending/tree, /pending/category/{id},
+      /pending/master/{id}, POST /pending/approve, /pending/reject. ApprovePending
+      runs ApplyPendingChanges → BulkApproveMasters → BulkApprovePendingChanges
+      in that order (so "approved" implies "written"). decided_by from
+      session.Email(ctx); falls back to literal "curator".
     handler_merge: "curator/backend/internal/handlers/handler_merge.go (113 LOC) — MergeProxy: single remaining endpoint HandleSyncNowV2 (→ /admin/api/catalog/v2/sync-now/{tenant_id})."
     handler_chats: "curator/backend/internal/handlers/handler_chats.go (88 LOC) — V5 chat inspection: ListChats / GetChatTimeline / GetChatTurn. Pure read; no proxy."
     session: "curator/backend/internal/session/middleware.go (94 LOC) — Bearer or HttpOnly Cookie auth, opaque tokens"
@@ -42,6 +71,7 @@ architecture:
       - "TenantsPage — GET /curator/tenants (operator dashboard)"
       - "TenantDetailPage (574 LOC) — 6-step catalog-v2 flow tabs: Products / Inbox / Action Log / Agent Runs / Mapping; Sync-now button"
       - "MasterCatalogPage / MasterDetailPage — master catalog browse"
+      - "PendingPage (326 LOC, NEW Alpha 0.9.4) — pending-approval review at /pending; tree (by vertical) → category cards → master detail with PendingChangeRow list; approve/reject calls POST /curator/pending/{approve,reject}. Sidebar 'Pending Approval' link under Operations."
       - "AuditPage — audit log read-only"
       - "ChatsPage (155 LOC) — cross-tenant V5 chat session list with filters (tenant, status, q) + aggregates (cost/tokens/turn count)"
       - "ChatDetailPage (207 LOC) — session timeline + spans waterfall for one V5 chat turn"
@@ -55,6 +85,7 @@ domain_types:
   cross_package_types:
     - "ChatRow, ListChatsFilter, TurnSummary, ChatTimeline, TurnDetail live in adapters/v5_chats.go — V5 owns the shape, Curator renders it"
     - "InboxRow, InboxItemFull, ActionLogEntry, AgentRunSummary, AgentRunDetail, MappingArtifactView live in adapters/catalog_v2.go — admin owns the catalog-v2 shape"
+    - "PendingTreeNode, PendingMasterCard, PendingChangeRow, PendingMasterDetail, ApplyChangesResult, ApproveResult live in adapters/pending.go — curator owns this surface (it's the only domain where curator MUTATES catalog.*) but the read shape mirrors catalog.master_pending_changes + master_products approval columns. Writes target master_products columns + tier2/tier3 jsonb only (master_cosmetics gone, Group D 0.9.6)"
   types:
     - "CuratorUser {ID, Email, Role string, CreatedAt} — Role default 'curator' (DB column DEFAULT 'curator')"
     - "AuditEntry {ID, TenantID, ActorKind, ActorID, EntityKind, EntityID, Action, FieldChanges, AggregateMeta, CreatedAt}"
@@ -98,6 +129,12 @@ http_routes:
       - "GET /curator/chats/{sessionId} → ChatTimeline {session, turns[], totalCostUsd, totalTokens} — session header + ordered turns (oldest first)"
       - "GET /curator/chats/{sessionId}/turns/{requestId} → TurnDetail {turn, spans[]} — full spans JSONB for waterfall view"
       - "Dispatch in main.go: /curator/chats/ prefix routes to GetChatTurn if path contains '/turns/', else GetChatTimeline (single mux entry, two handlers)"
+    pending:
+      - "GET  /curator/pending/tree?vertical=... → {vertical, categories: PendingTreeNode[], count} — master_categories tree with pending_master + pending_change counts via M:N"
+      - "GET  /curator/pending/category/{id}?limit=&offset= → {category_id, cards: PendingMasterCard[], total} — masters in 'pending_approval' OR with ≥1 pending change, newest first"
+      - "GET  /curator/pending/master/{id} → PendingMasterDetail — card + every PendingChangeRow attached"
+      - "POST /curator/pending/approve {master_ids?, change_ids?, reason?} → {masters_updated, changes_updated, changes_applied, changes_skipped, decided_by} — runs ApplyPendingChanges FIRST (writes target columns), then BulkApproveMasters, then BulkApprovePendingChanges. decided_by = session.Email(ctx)"
+      - "POST /curator/pending/reject {master_ids?, change_ids?, reason?} → {masters_updated, changes_updated, decided_by} — pure status flip; no column writes"
   spa_fallback:
     pattern: "Any path that doesn't resolve to a static file under CURATOR_STATIC_DIR (default ./static) → serve index.html"
     rationale: "Standard SPA deep-link support so /tenants/abc/merge-reports/xyz works after page refresh"
@@ -142,7 +179,7 @@ merge_proxy:
 
 adapter_methods:
   files:
-    - "curator/backend/internal/adapters/postgres.go (708 LOC)"
+    - "curator/backend/internal/adapters/postgres.go (695 LOC)"
     - "curator/backend/internal/adapters/catalog_v2.go (240 LOC)"
     - "curator/backend/internal/adapters/v5_chats.go (302 LOC)"
   groups:
@@ -178,17 +215,41 @@ adapter_methods:
         - "ListChats(ctx, ListChatsFilter) → ([]ChatRow, total) — dynamic WHERE; aggregates from v5_chat_session_traces (turn_count, total_cost, total_tokens, has_errors, last_trace_at); latest user_query via DISTINCT ON; LEFT JOIN catalog.tenants for slug/name; status derived by 30-min cutoff on s.updated_at"
         - "GetChatTimeline(ctx, sessionID) → ChatTimeline — header from v5_chat_sessions; turns ordered ASC; populates session aggregates from accumulator"
         - "GetChatTurn(ctx, sessionID, requestID) → TurnDetail — full row + spans JSONB unmarshalled to []json.RawMessage for waterfall"
+    pending:
+      file: "pending.go"
+      methods:
+        - "ListPendingTree(ctx, vertical) → []PendingTreeNode — master_categories filtered by vertical; correlated subqueries against master_product_categories + master_pending_changes for the two counts"
+        - "ListPendingMastersInCategory(ctx, categoryID, limit, offset) → ([]PendingMasterCard, total) — masters with approval_status='pending_approval' OR ≥1 pending change"
+        - "GetPendingMaster(ctx, masterID) → *PendingMasterDetail — card + PendingChangeRow[] joined from master_pending_changes"
+        - "ApplyPendingChanges(ctx, changeIDs) → ApplyChangesResult{Applied, Skipped} — fetches rows, routes by FieldName + OpKind. GROUP D 0.9.6 routes: masterProductTextCols allowlist (name/brand/description/image_url/gtin) + 'tier2.<key>' prefix (jsonb scalar-fill or array-union) + 'tier3.<key>' prefix. The 3 master_cosmetics allowlists were removed (table dropped). Unknown fields counted as Skipped (no error). Each route executes one SQL with fill-when-empty semantics."
+        - "BulkApproveMasters(ctx, masterIDs, decidedBy) → ApproveResult — UPDATE approval_status='approved', approved_at=NOW(), approved_by"
+        - "BulkApprovePendingChanges(ctx, changeIDs, decidedBy) → ApproveResult — UPDATE master_pending_changes status='approved'. MUST run AFTER ApplyPendingChanges in the same handler."
+        - "BulkRejectMasters / BulkRejectPendingChanges — pure status flips to 'rejected' with reason"
   utility:
     - "generateSessionToken() — crypto/rand 32-byte token"
     - "hashToken(plain) — SHA-256 hex"
+  sql_identifier_safety:
+    note: |
+      GROUP D 0.9.6: the only remaining fmt.Sprintf-into-SQL path is the
+      masterProductTextCols allowlist (5 fixed columns on master_products) —
+      column names are physically only that map's keys, so a malicious
+      field_name cannot reach a dynamic identifier. The tier2.<key> and
+      tier3.<key> routes are NOT dynamic identifiers: <key> is passed as a
+      parameterized jsonb path/key ($2), never interpolated into the SQL
+      string — so arbitrary keys are safe by construction. The 3 master_cosmetics
+      allowlists (cosmeticsTextCols/IntCols/ArrayCols) and their fmt.Sprintf
+      INSERT templates were deleted with the table. postgres.go also dropped the
+      dead verticalTables/verticalKeys() helpers in the same commit. Adding a
+      new fixed master_products column still requires extending masterProductTextCols;
+      new typed attrs need NO allowlist change (they ride the tier2.<key> route).
   removed_2026_05_15:
     - "Candidate queues (ListAttributeCandidates, ListCategoryCandidates, PromoteAttribute, DismissAttribute)"
     - "Junk classification (ListJunkCandidates, ClassifyJunk)"
-    - "SQL identifier safety helpers (verticalKeys, verticalTables, allowedColumnTypes, validIdent)"
+    - "SQL identifier safety helpers (verticalKeys, verticalTables, allowedColumnTypes, validIdent) — superseded by hardcoded column allowlists in pending.go"
 
 frontend:
   router_v7: "react-router-dom 7"
-  layout: "App.jsx Layout component — sidebar (Operations, Curation queues, Activity, Tracing sections) + main route outlet"
+  layout: "App.jsx Layout component — sidebar (Operations [Tenants, Master Catalog, Pending Approval], Activity [Audit], Tracing [Chat Sessions] sections) + main route outlet. Curation Queues section removed 2026-05-15."
   auth_flow:
     - "On mount: GET /curator/me. 401 → setUser(null) → render LoginPage. Success → render Layout."
     - "LoginPage onLogin sets user, navigates to /tenants"
@@ -225,11 +286,11 @@ deploy:
   rootDirectory: "/curator (Railway setting)"
 
 invariants:
-  - "Curator domain types are READ-shape only — admin owns canonical catalog domain. Adding new types here means duplicating, fix at admin first."
+  - "Curator domain types are READ-shape only EXCEPT for the pending-approval surface (PendingTreeNode et al. in adapters/pending.go) — admin owns canonical catalog domain. Adding new types here means duplicating, fix at admin first."
   - "MergeProxy never executes business logic — pure HTTP forwarder. Adding mutating ops means add to admin-backend internal endpoint, not curator."
-  - "After 2026-05-15, curator does NOT mutate catalog DB. No ALTER TABLE, no schema writes. Only writes are curator.users + curator.sessions (own schema) and audit_log via WriteAudit (currently unused)."
+  - "Curator MUTATES catalog.* ONLY via ApplyPendingChanges + the bulk approve/reject helpers in adapters/pending.go (Alpha 0.9.4 A3; rerouted Group D 0.9.6). Writes target master_products.{name/brand/description/image_url/gtin}, master_products.tier2 (jsonb, replaced master_cosmetics), master_products.tier3, plus the master_pending_changes + master_products status columns. No other catalog mutation path exists in curator; no ALTER TABLE on any path."
   - "Session tokens are HASHED at rest (SHA-256). Plaintext only travels in HTTP layer (cookie/Bearer/login response)."
-  - "Sidebar nav order: Operations (tenants, master) > Activity (audit) > Tracing (chats). Curation Queues section was removed with the candidate/junk purge."
+  - "Sidebar nav order: Operations (tenants, master, pending approval) > Activity (audit) > Tracing (chats). Curation Queues section was removed with the candidate/junk purge; Pending Approval added Alpha 0.9.4."
   - "Login does NOT auto-create users — seed-curator command bootstraps the first admin user. New users come via admin-managed flow."
   - "Curator uses its own 'curator' schema in Postgres (curator.users, curator.sessions) — separate from admin.* and catalog.* schemas. RunMigrations creates it idempotently on startup."
 
@@ -245,25 +306,32 @@ gotchas:
   - "/curator/tenants/ and /curator/chats/ prefix dispatchers in main.go branch on path suffix/substring. Adding a new sub-resource means adding another switch case — the StripPrefix mux trick isn't used here. The tenants dispatcher now has 8 branches (products/schema/sync-now/inbox/inbox-detail/action-log/agent-runs/agent-run-detail/mapping); easy to break ordering."
   - "extractTenantSegment in handler_catalog_v2.go assumes path shape /curator/tenants/{id}/{suffix} — if a new path segment (like a UUID with embedded slashes) ever appears, the helper will mis-extract. Same gotcha applies to GetTenantInboxItem / GetTenantAgentRun which index parts[4] explicitly."
   - "AttributeCandidate / CategoryCandidate / JunkCandidate types still live in domain/types.go but no code references them. They look live to anyone grepping the domain package — they are dead code from before 2026-05-15."
+  - "ApplyPendingChanges is NOT wrapped in a Begin/Commit in pending.go — each per-field UPDATE/INSERT is its own statement. The handler's 3-step sequence (apply → approve masters → approve changes) is therefore non-atomic: a crash between steps 1 and 3 leaves changes written but status still 'pending'. The next approve call is idempotent on writes (fill-when-empty) so re-running closes the gap, but a single approve isn't all-or-nothing."
+  - "ApplyPendingChanges silently counts unknown field_name as Skipped (not error). GROUP D 0.9.6: typed per-vertical attrs now arrive as 'tier2.<key>' and ride the generic tier2 jsonb route (no allowlist needed). The only remaining hard allowlist is masterProductTextCols (5 fixed columns). A bare cosmetic field_name (e.g. 'skin_type' without the 'tier2.' prefix) would now be Skipped — admin's enrich builder must emit the tier2.<key> form. Keep the prefix contract in lockstep with admin's apply_v2.cosmeticsToMap (which emits tier2.<key>)."
 
 related_experts:
   - "admin — owns canonical catalog domain types, UpdateOrchestrator, ApplyV2, DiscoveryV2. Curator UI is a thin operator surface over admin's data + endpoints. Sync-now proxy targets admin's /admin/api/catalog/v2/sync-now/."
-  - "catalog (cross-cutting) — inbox_items / master_products / master_cosmetics / tenant_catalog_schema / agent_runs / tenant_action_log; curator reads these via SQL through its own Client."
+  - "catalog (cross-cutting) — inbox_items / master_products (incl. tier2/tier3 jsonb) / tenant_catalog_schema / agent_runs / tenant_action_log; curator reads these via SQL through its own Client. master_cosmetics was DROPPED Group D 0.9.6 — curator's pending-apply writes tier2 instead."
   - "pipeline-agents — NOT directly related to curator's catalog tabs, but curator's /chats endpoints consume the v5_chat_sessions/traces tables pipeline-agents writes."
 
 active_workstreams:
   tracker: "docs/PRE_LAUNCH_TASKS.md (curator-related: catalog-v2 UI follow-ups)"
   recent_milestones:
+    - "Alpha 0.9.6 — Group D Phase 1 tier2 reroute (2026-05-25, commit ef3c6c2): master_cosmetics table dropped catalog-side, so curator's ApplyPendingChanges (adapters/pending.go) deleted its 3 cosmetics allowlist maps + all master_cosmetics INSERT…ON CONFLICT SQL and now routes typed attrs through a 'tier2.<key>' prefix into master_products.tier2 jsonb (scalar fill-when-empty / array set-union, parameterized key — no dynamic identifier). postgres.go dropped dead verticalTables/verticalKeys() helpers. pending.go 556→536 LOC. Handler 3-step apply→approve→approve sequence unchanged."
+    - "Alpha 0.9.4 — A3 Approve actually writes (2026-05-22): ApplyPendingChanges in adapters/pending.go closes the bug where curator 'approve' was a status-only flip. Per-field router with 4 column allowlists writes to master_products / master_cosmetics / tier3 BEFORE BulkApprovePendingChanges flips status. handler_pending.go orchestrates the 3-step sequence (apply → approve masters → approve changes) but it is NOT wrapped in a DB transaction — no Begin/Commit in handler or adapter (see gotcha); re-run is the recovery path. New regression_pending_apply_test.go locks the contract."
     - "Catalog-v2 cut-over (2026-05-15, commits 62a2e36 + 5e85ad6): TenantDetailPage rebuilt around 6-step flow (Products/Inbox/Action Log/Agent Runs/Mapping tabs + Sync-now). New handler_catalog_v2.go + adapter catalog_v2.go (240 LOC). MergeProxy reduced to single HandleSyncNowV2. CandidatesPage/JunkPage/MergeReportPage deleted."
     - "V5 chunk-13 — cross-tenant chat/trace inspection (2026-05-03): /curator/chats list + detail, ChatsPage + ChatDetailPage, sidebar 'Tracing' section"
     - "Phase D3 — merge proxy + MergeReportPage (2026-04-28) — SUPERSEDED by catalog-v2 cut-over"
     - "Curator-driven pivot — Этап 1 tenants dashboard (2026-04-27)"
     - "M11 — standalone service split (2026-04-26)"
   hot_files:
-    - "adapters/postgres.go (708 LOC) — primary adapter; lost ~170 LOC with legacy purge"
+    - "adapters/postgres.go (695 LOC) — primary adapter; lost ~170 LOC with legacy purge + dead verticalTables/verticalKeys (Group D)"
+    - "adapters/pending.go (536 LOC, NEW 2026-05-20 → expanded Alpha 0.9.4 → tier2-rerouted Group D 0.9.6) — pending-approval read+write (ApplyPendingChanges per-field router: master_products cols + tier2.<key> + tier3.<key>)"
     - "frontend TenantDetailPage.jsx (574 LOC) — 6-step flow UI; split candidate if more tabs land"
+    - "frontend PendingPage.jsx (326 LOC, NEW Alpha 0.9.4) — pending-approval review (tree → category → master detail; approve/reject)"
     - "adapters/v5_chats.go (302 LOC) — V5 session timeline + waterfall"
     - "adapters/catalog_v2.go (240 LOC) — NEW 2026-05-15; catalog-v2 read methods"
-    - "handler_catalog_v2.go (119 LOC) — NEW 2026-05-15; catalog-v2 HTTP handlers"
     - "frontend ChatDetailPage.jsx (207 LOC) — spans waterfall renderer"
     - "handlers.go (204 LOC) — auth + tenant + master handlers"
+    - "handler_pending.go (177 LOC, NEW Alpha 0.9.4) — /pending/* routes; orchestrates ApplyPendingChanges → BulkApprove* sequence"
+    - "handler_catalog_v2.go (119 LOC) — NEW 2026-05-15; catalog-v2 HTTP handlers"

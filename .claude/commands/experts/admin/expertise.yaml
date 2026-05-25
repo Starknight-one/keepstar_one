@@ -24,7 +24,7 @@ overview:
 architecture:
   pattern: "Hexagonal — proper ports + adapters, multiple usecase packages, ~30 handlers"
   backend_structure:
-    cmd_server: "project_admin/backend/cmd/server/main.go (854 LOC) — DI bootstrap, all routes; 2026-05-20 added MasterDigestAdapter into DiscoveryV2 wire + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker (catalog domain)"
+    cmd_server: "project_admin/backend/cmd/server/main.go (950 LOC) — DI bootstrap, all routes; 2026-05-20 added MasterDigestAdapter into DiscoveryV2 wire + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker; 2026-05-22 (0.9.5) DRIFT_WORKERS Redis consumer pool wiring (all catalog domain). Boot DB-connect ctx is 120s (main.go:52, was 30s) because catalog migrations run on every boot and now take ~24s after the Group D drop/backfill blocks — a 30s ctx would risk a boot timeout."
     cmd_crawler: "project_admin/backend/cmd/crawler/main.go (608 LOC) — JSON-LD scraper for catalog seed (catalog expert covers details)"
     domain: "project_admin/backend/internal/domain/ — AdminUser, Tenant, Membership, Invitation, Session, Challenge, MagicLink, Invoice, Preferences, TenantPreset, TenantComponent, DesignToken, BillingOverview, AuditEntry"
     ports: "project_admin/backend/internal/ports/ — AuthPort, SessionsPort, BillingPort, CanvasPort, AdminCatalogPort, etc."
@@ -242,7 +242,12 @@ frontend_features:
     pages: "CanvasPage (785 LOC) — tldraw editor, preset management, component library, design tokens editor"
     note: "Largest single page; growth area as more design system features land"
   catalog:
-    note: "Owned by `catalog` expert. Pages: ProductsList, ProductDetail, Categories, Junk, Enrichment, Import, Integrations."
+    note: |
+      Owned by `catalog` expert. Pages: ProductsList, ProductDetail, Categories,
+      DetectedAddons, SchemaDriftPage (NEW Alpha 0.9.5 — features/catalog/SchemaDriftPage.jsx
+      + schemaDrift.css; consumes /admin/api/catalog/drift list/{id}/apply/{id}/dismiss),
+      Enrichment, Import, Integrations. Sidebar (DashboardLayout) gained a
+      "Schema drift" sub-link under catalog (lucide GitCompare icon) in Alpha 0.9.5.
   conversations:
     purpose: "View past chat sessions for a tenant — used for QA/debugging"
   settings:
@@ -276,6 +281,9 @@ env_vars:
     - "AUTH_PUBLIC_BASE_URL (alias: PUBLIC_BASE_URL) — scheme+host of admin frontend; used to auto-derive Telegram redirect URI and origin param"
     - "MAXMIND_DB_PATH (2026-05-18) — path to MaxMind GeoLite2-City.mmdb; if unset, geoip.Open returns nil → sessionsUC.geo stays nil and geo_country/geo_city sit empty. UA-only enrichment still runs."
     - "KEEPSTAR_DAILY_SOURCE_PULL (2026-05-20) — set to '1' to enable the daily catalog re-sync ticker (CronDailySourcePull, catalog domain). Off by default — dev/test runs don't burn LLM tokens nightly. Requires ANTHROPIC_API_KEY at boot (catalogV2Orchestrator nil-check)."
+    - "REDIS_URL (2026-05-22, Alpha 0.9.5; catalog/broker domain) — DSN for the schema-drift Redis broker. Empty (default) → cfg.HasRedis()=false → drift worker pool not spawned and apply_v2 runs unchanged (drift detection silently disabled). Loaded in admin's config package; usage owned by catalog expert."
+    - "DRIFT_CLASSIFIER_MODEL (2026-05-22, Alpha 0.9.5; catalog domain) — model id for the drift classifier LLM call; default 'claude-sonnet-4-6'."
+    - "DRIFT_WORKERS (2026-05-22, Alpha 0.9.5; catalog domain) — int, default 5 — concurrent drift-classify worker goroutines consuming the Redis stream."
 
 invariants:
   - "Auth tokens (refresh) are HASHED at rest in admin.sessions. Plaintext only in HTTP layer."
@@ -322,6 +330,10 @@ related_experts:
 active_workstreams:
   tracker: "docs/PRE_LAUNCH_TASKS.md (auth + admin sections), docs/CATALOG_GAPS.md (catalog UI in admin)"
   recent_milestones:
+    - "Alpha 0.9.7–0.9.9 — Group D Phase 1 continuation (2026-05-25, commits ff1241f/22d9f26/870ae5c): all catalog-domain (dead-cosmetics-code removal + D3 categories→junction, D4 stock=Target A, D1b variant=listing table phase) — owned by catalog expert. Admin-owned fallout: NONE substantive. main.go boot DB-connect ctx bumped 30s→120s (main.go:52) so the now-~24s catalog migrations finish within the boot context. No auth/billing/canvas change."
+    - "Alpha 0.9.6 — Group D Phase 1 (2026-05-25, commit ef3c6c2): catalog-domain — admin's AdminCatalogPort (ports/catalog_port.go) DROPPED its 7 Service methods (ListServices/GetService/UpdateService/UpsertMasterService/UpsertServiceListing/GetMasterServicesWithoutEmbedding/SeedServiceEmbedding) and domain.Service/MasterService were removed as catalog.services + catalog.master_services tables were dropped. Admin-side fallout was test-only: fake AdminCatalogPort/AuthPort mocks in auth_test.go + auth_http_scenarios_test.go shed those method stubs. main.go unchanged. catalog expert owns the substance."
+    - "Alpha 0.9.5 — B2 Schema Drift Detection + Redis Broker (2026-05-22, commit 52f22c0): catalog-domain — admin gains /catalog/drift route + SchemaDriftPage frontend + sidebar entry; backend additions (broker port + Redis adapter, drift classifier client, schema_drift usecase + handler) owned by catalog expert. main.go grew to 950 LOC wiring the DRIFT_WORKERS Redis consumer pool."
+    - "Alpha 0.9.4 — Group A + B1 (2026-05-22, commit 4fd39cb): catalog-domain — admin-side regression integration tests added (regression_cosmetics_nil_test.go, regression_inbox_idempotency_test.go). API-drift fixes in listings_test.go / soft_delete_test.go (logger arg for NewCatalogV2WriterAdapter)."
     - "Alpha 0.9.0 — Phase C integration tests (2026-05-19, commit 4e7614f): sc 156 + 141 covered against real Postgres in project_admin/backend/internal/integration_test/ (listings_test.go, soft_delete_test.go, dbtest.go bootstrap)."
     - "Alpha 0.8.1 — Phase E frontend (2026-05-19, commit 6bf3629): SecurityPage + MembersPage added under /settings/{security,members}; MembersPage wires listInvitations + resendInvitation + createInvite. App.jsx route table grew."
     - "Alpha 0.8.0 — auth gaps batch 3 (2026-05-19, commit 1373b9d): backend for sc 60/82/89/177 — DisableTOTP now requires current code (sc 89, 401 on miss), InvitationsUseCase.Resend + InvitationPort.GetByID + POST /invitations/{id}/resend (sc 82), authApi.disableTOTP signature changed to accept code, authApi.listInvitations + resendInvitation added."
@@ -341,9 +353,8 @@ active_workstreams:
     - "Auth full stack — OAuth/2FA/sessions/workspaces/invites — DONE 2026-04-19/21"
   hot_files:
     - "shopify/client.go (1302 LOC) — owned by catalog expert; admin only via OAuth glue"
-    - "catalog_adapter.go (1293 LOC) — catalog domain"
+    - "catalog_adapter.go (1037 LOC, down from 1293 — Group D dropped Service methods + 16-col PIM assignments) — catalog domain"
     - "canvas_adapter.go (870 LOC) — split candidate when more design system features land"
-    - "catalog_migrations.go (849 LOC) — catalog domain"
-    - "cmd/server/main.go (854 LOC, up from 777) — DI bootstrap; 2026-05-20: MasterDigestAdapter wired into DiscoveryV2 ctor + CronDailySourcePull behind KEEPSTAR_DAILY_SOURCE_PULL env (catalog domain); 2026-05-15 evening: NewShopifyIngester takes catalogV2Writer + actionLogAdapter (products/delete soft-delete + webhook_received logging)"
+    - "cmd/server/main.go (950 LOC, up from 854) — DI bootstrap; 2026-05-22 (0.9.5) DRIFT_WORKERS Redis pool; 2026-05-20: MasterDigestAdapter + CronDailySourcePull (catalog domain)"
     - "shopify_v2.go (614 LOC) — catalog domain (install flow + CompleteOAuth 4-return)"
     - "CanvasPage.jsx (785 LOC) — frontend; growth signal as canvas matures"
