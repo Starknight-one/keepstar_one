@@ -65,80 +65,30 @@ func (a *CatalogAdapter) GetTenantBySlug(ctx context.Context, slug string) (*dom
 	return &tenant, nil
 }
 
-const catalogProductSelect = `
-	SELECT
-		p.id, p.tenant_id,
-		COALESCE(p.master_product_id::text, '') as master_product_id,
-		COALESCE(p.master_variant_id::text, '') as master_variant_id,
-		COALESCE(p.name, '') as name,
-		COALESCE(p.display_name, '') as display_name,
-		COALESCE(p.original_name, '') as original_name,
-		COALESCE(p.description, '') as description,
-		p.price, p.currency, COALESCE(s.quantity, 0) as stock_quantity, COALESCE(p.rating, 0) as rating,
-		COALESCE(p.images, '[]') as images, COALESCE(p.tags, '[]') as tags,
-		mp.id as mp_id, mp.sku, mp.name as mp_name, mp.description as mp_description,
-		mp.brand, mp.category_id, mp.images as mp_images,
-		mv.sku as mv_sku, mv.gtins as mv_gtins, mv.size as mv_size,
-		mv.color as mv_color, mv.image_url as mv_image_url,
-		mv.weight_g as mv_weight_g, mv.volume_ml as mv_volume_ml,
-		c.name as category_name,
-		COALESCE(mc.product_form, '') as product_form,
-		COALESCE(mc.texture, '') as texture,
-		COALESCE(mc.routine_step, '') as routine_step,
-		COALESCE(mc.skin_type, '{}'::text[]) as skin_type,
-		COALESCE(mc.concern, '{}'::text[]) as concern,
-		COALESCE(mc.key_ingredients, '{}'::text[]) as key_ingredients,
-		COALESCE(mc.target_area, '{}'::text[]) as target_area,
-		COALESCE(mc.marketing_claim, '') as marketing_claim,
-		COALESCE(mc.benefits, '{}'::text[]) as benefits,
-		COALESCE(p.extra, '{}'::jsonb) as extra,
-		COALESCE(mp.tier3, mp.tier2, '{}'::jsonb) as mp_tier2
+// catalogCategoryJoin resolves a leaf category name via the master_categories
+// junction (Group D: catalog.categories + master_products.category_id dropped).
+const catalogCategoryJoin = `
+	LEFT JOIN LATERAL (
+		SELECT mc2.name FROM catalog.master_product_categories mpc
+		JOIN catalog.master_categories mc2 ON mc2.id = mpc.master_category_id
+		WHERE mpc.master_product_id = mp.id LIMIT 1
+	) cat ON true`
+
+const catalogProductSelect = catalogVectorSelect + `
 	FROM catalog.products p
 	LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
-	LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
-	LEFT JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-	LEFT JOIN catalog.categories c ON mp.category_id = c.id
-	LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
-`
+	LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)` +
+	catalogCategoryJoin
 
-func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filter ports.ProductFilter) (products []domain.Product, total int, err error) {
-	var span *domain.SpanHandle
-	if sc := domain.SpanFromContext(ctx); sc != nil {
-		ctx, span = sc.StartSpan(ctx, "postgres.ListProducts")
-		span.SetAttrs(map[string]any{
-			"tenant_id":  tenantID,
-			"limit":      filter.Limit,
-			"has_search": filter.Search != "",
-			"has_filter": filter.Brand != "" || filter.CategoryName != "" || filter.MinPrice > 0 || filter.MaxPrice > 0,
-		})
-		defer func() {
-			if err != nil {
-				span.SetError(err)
-			} else {
-				span.SetAttr("rows", len(products))
-				span.SetAttr("total", total)
-			}
-			span.End()
-		}()
-	}
-	baseQuery := catalogProductSelect + ` WHERE p.tenant_id = $1 AND p.deleted_at IS NULL`
-	countQuery := `
-		SELECT COUNT(*)
-		FROM catalog.products p
-		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
-		LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
-		LEFT JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
-		LEFT JOIN catalog.stock s ON s.product_id = p.id AND s.tenant_id = p.tenant_id
-		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
-	`
-
-	args := []interface{}{tenantID}
-	argNum := 2
+// catalogFilterConditions translates a ProductFilter into SQL predicates over
+// the vertical-agnostic schema: typed attrs via mp.tier2 jsonb, categories via
+// the master_categories junction. Returns the conditions and the grown
+// args/argNum so caller can append ORDER/LIMIT params after.
+func catalogFilterConditions(filter ports.ProductFilter, args []interface{}, argNum int) ([]string, []interface{}, int) {
 	var conditions []string
-
 	if filter.CategoryID != "" {
-		conditions = append(conditions, fmt.Sprintf("mp.category_id = $%d", argNum))
+		conditions = append(conditions, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM catalog.master_product_categories mpc WHERE mpc.master_product_id = mp.id AND mpc.master_category_id = $%d)", argNum))
 		args = append(args, filter.CategoryID)
 		argNum++
 	}
@@ -179,45 +129,79 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 		}
 	}
 	if filter.CategoryName != "" {
-		conditions = append(conditions, fmt.Sprintf("(c.name ILIKE $%d OR c.slug ILIKE $%d)", argNum, argNum))
+		conditions = append(conditions, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM catalog.master_product_categories mpc JOIN catalog.master_categories mc2 ON mc2.id = mpc.master_category_id WHERE mpc.master_product_id = mp.id AND (mc2.name ILIKE $%d OR mc2.slug ILIKE $%d))", argNum, argNum))
 		args = append(args, "%"+filter.CategoryName+"%")
 		argNum++
 	}
-	if filter.ProductForm != "" {
-		conditions = append(conditions, fmt.Sprintf("mc.product_form = $%d", argNum))
-		args = append(args, filter.ProductForm)
-		argNum++
+	// Typed per-vertical attributes live in mp.tier2 (Group D). Scalars match
+	// with ->>; arrays with @> to_jsonb(value).
+	scalarAttrs := []struct {
+		col string
+		val string
+	}{
+		{"product_form", filter.ProductForm},
+		{"routine_step", filter.RoutineStep},
+		{"texture", filter.Texture},
 	}
-	if filter.SkinType != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mc.skin_type)", argNum))
-		args = append(args, filter.SkinType)
-		argNum++
+	for _, s := range scalarAttrs {
+		if s.val != "" {
+			conditions = append(conditions, fmt.Sprintf("mp.tier2->>'%s' = $%d", s.col, argNum))
+			args = append(args, s.val)
+			argNum++
+		}
 	}
-	if filter.Concern != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mc.concern)", argNum))
-		args = append(args, filter.Concern)
-		argNum++
+	arrayAttrs := []struct {
+		col string
+		val string
+	}{
+		{"skin_type", filter.SkinType},
+		{"concern", filter.Concern},
+		{"key_ingredients", filter.KeyIngredient},
+		{"target_area", filter.TargetArea},
 	}
-	if filter.KeyIngredient != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mc.key_ingredients)", argNum))
-		args = append(args, filter.KeyIngredient)
-		argNum++
+	for _, s := range arrayAttrs {
+		if s.val != "" {
+			conditions = append(conditions, fmt.Sprintf("mp.tier2->'%s' @> to_jsonb($%d::text)", s.col, argNum))
+			args = append(args, s.val)
+			argNum++
+		}
 	}
-	if filter.TargetArea != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(mc.target_area)", argNum))
-		args = append(args, filter.TargetArea)
-		argNum++
+	return conditions, args, argNum
+}
+
+func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filter ports.ProductFilter) (products []domain.Product, total int, err error) {
+	var span *domain.SpanHandle
+	if sc := domain.SpanFromContext(ctx); sc != nil {
+		ctx, span = sc.StartSpan(ctx, "postgres.ListProducts")
+		span.SetAttrs(map[string]any{
+			"tenant_id":  tenantID,
+			"limit":      filter.Limit,
+			"has_search": filter.Search != "",
+			"has_filter": filter.Brand != "" || filter.CategoryName != "" || filter.MinPrice > 0 || filter.MaxPrice > 0,
+		})
+		defer func() {
+			if err != nil {
+				span.SetError(err)
+			} else {
+				span.SetAttr("rows", len(products))
+				span.SetAttr("total", total)
+			}
+			span.End()
+		}()
 	}
-	if filter.RoutineStep != "" {
-		conditions = append(conditions, fmt.Sprintf("mc.routine_step = $%d", argNum))
-		args = append(args, filter.RoutineStep)
-		argNum++
-	}
-	if filter.Texture != "" {
-		conditions = append(conditions, fmt.Sprintf("mc.texture = $%d", argNum))
-		args = append(args, filter.Texture)
-		argNum++
-	}
+	baseQuery := catalogProductSelect + ` WHERE p.tenant_id = $1 AND p.deleted_at IS NULL`
+	countQuery := `
+		SELECT COUNT(*)
+		FROM catalog.products p
+		LEFT JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
+		LEFT JOIN catalog.master_products mp ON mp.id = COALESCE(p.master_product_id, mv.master_product_id)
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
+	`
+
+	args := []interface{}{tenantID}
+	argNum := 2
+	conditions, args, argNum := catalogFilterConditions(filter, args, argNum)
 
 	if len(conditions) > 0 {
 		condStr := " AND " + strings.Join(conditions, " AND ")
@@ -304,10 +288,8 @@ type rowScanner interface {
 // fully-merged domain.Product (typed + Extra + Tier2 + variant + master).
 func scanCatalogProduct(row rowScanner) (*domain.Product, error) {
 	var p domain.Product
-	var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, mpCategoryID, categoryName *string
+	var masterProductID, mpID, mpSKU, mpName, mpDesc, mpBrand, categoryName *string
 	var productImagesJSON, tagsJSON, mpImagesJSON, extraJSON, mpTier2JSON []byte
-	var mpProductForm, mpTexture, mpRoutineStep, mpMarketingClaim *string
-	var mpSkinType, mpConcern, mpKeyIngredients, mpTargetArea, mpBenefits []string
 	var mvSKU, mvSize, mvColor, mvImageURL *string
 	var mvGTINs []string
 	var mvWeightG, mvVolumeML *int
@@ -317,12 +299,9 @@ func scanCatalogProduct(row rowScanner) (*domain.Product, error) {
 		&p.Name, &p.DisplayName, &p.OriginalName,
 		&p.Description, &p.Price, &p.Currency, &p.StockQuantity, &p.Rating, &productImagesJSON, &tagsJSON,
 		&mpID, &mpSKU, &mpName, &mpDesc,
-		&mpBrand, &mpCategoryID, &mpImagesJSON,
+		&mpBrand, &mpImagesJSON,
 		&mvSKU, &mvGTINs, &mvSize, &mvColor, &mvImageURL, &mvWeightG, &mvVolumeML,
 		&categoryName,
-		&mpProductForm, &mpTexture, &mpRoutineStep,
-		&mpSkinType, &mpConcern, &mpKeyIngredients, &mpTargetArea,
-		&mpMarketingClaim, &mpBenefits,
 		&extraJSON, &mpTier2JSON,
 	)
 	if err != nil {
@@ -349,15 +328,6 @@ func scanCatalogProduct(row rowScanner) (*domain.Product, error) {
 		SKU:             mpSKU,
 		CategoryName:    categoryName,
 		ImagesJSON:      mpImagesJSON,
-		ProductForm:     mpProductForm,
-		Texture:         mpTexture,
-		RoutineStep:     mpRoutineStep,
-		SkinType:        mpSkinType,
-		Concern:         mpConcern,
-		KeyIngredients:  mpKeyIngredients,
-		TargetArea:      mpTargetArea,
-		MarketingClaim:  mpMarketingClaim,
-		Benefits:        mpBenefits,
 		Tier2JSON:       mpTier2JSON,
 		VariantSKU:      mvSKU,
 		VariantGTINs:    mvGTINs,
@@ -380,15 +350,6 @@ type masterProductRow struct {
 	SKU             *string
 	CategoryName    *string
 	ImagesJSON      []byte
-	ProductForm     *string
-	Texture         *string
-	RoutineStep     *string
-	SkinType        []string
-	Concern         []string
-	KeyIngredients  []string
-	TargetArea      []string
-	MarketingClaim  *string
-	Benefits        []string
 	Tier2JSON       []byte
 	VariantSKU      *string
 	VariantGTINs    []string
@@ -452,28 +413,55 @@ func mergeProductWithMaster(p *domain.Product, mp masterProductRow) error {
 		}
 	}
 
-	if mp.ProductForm != nil {
-		p.ProductForm = *mp.ProductForm
-	}
-	if mp.Texture != nil {
-		p.Texture = *mp.Texture
-	}
-	if mp.RoutineStep != nil {
-		p.RoutineStep = *mp.RoutineStep
-	}
-	p.SkinType = mp.SkinType
-	p.Concern = mp.Concern
-	p.KeyIngredients = mp.KeyIngredients
-	p.TargetArea = mp.TargetArea
-	if mp.MarketingClaim != nil {
-		p.MarketingClaim = *mp.MarketingClaim
-	}
-	p.Benefits = mp.Benefits
-
+	// Group D: typed attributes are vertical-agnostic and live in tier2 jsonb
+	// (master_cosmetics dropped). Populate the legacy cosmetics-shaped fields
+	// from tier2 so domain.Product — and the pipeline/widget that consume it —
+	// stay unchanged. Non-cosmetics verticals simply leave these empty.
 	if len(mp.Tier2JSON) > 0 {
 		_ = json.Unmarshal(mp.Tier2JSON, &p.Tier2)
 	}
+	p.ProductForm = tier2String(p.Tier2, "product_form")
+	p.Texture = tier2String(p.Tier2, "texture")
+	p.RoutineStep = tier2String(p.Tier2, "routine_step")
+	p.MarketingClaim = tier2String(p.Tier2, "marketing_claim")
+	p.SkinType = tier2Strings(p.Tier2, "skin_type")
+	p.Concern = tier2Strings(p.Tier2, "concern")
+	p.KeyIngredients = tier2Strings(p.Tier2, "key_ingredients")
+	p.TargetArea = tier2Strings(p.Tier2, "target_area")
+	p.Benefits = tier2Strings(p.Tier2, "benefits")
 	return nil
+}
+
+// tier2String reads a scalar string attribute from the tier2 map ("" if absent).
+func tier2String(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if s, ok := m[key].(string); ok {
+		return s
+	}
+	return ""
+}
+
+// tier2Strings reads an array-of-strings attribute from tier2 (nil if absent).
+func tier2Strings(m map[string]any, key string) []string {
+	if m == nil {
+		return nil
+	}
+	raw, ok := m[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if s, ok := e.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // formatPrice converts price-in-kopecks to a display string with thousand
@@ -533,14 +521,16 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 		}()
 	}
 
-	// 1. Category tree.
+	// 1. Category tree — via the master_categories junction (Group D:
+	// catalog.categories + mp.category_id dropped).
 	catQuery := `
 		SELECT c.name, c.slug, COALESCE(pc.slug, '') AS parent_slug,
 		       COUNT(DISTINCT mp.id) AS product_count
 		FROM catalog.products p
 		JOIN catalog.master_products mp ON p.master_product_id = mp.id
-		JOIN catalog.categories c ON mp.category_id = c.id
-		LEFT JOIN catalog.categories pc ON c.parent_id = pc.id
+		JOIN catalog.master_product_categories mpc ON mpc.master_product_id = mp.id
+		JOIN catalog.master_categories c ON c.id = mpc.master_category_id
+		LEFT JOIN catalog.master_categories pc ON c.parent_id = pc.id
 		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
 		GROUP BY c.id, c.name, c.slug, pc.slug
 		ORDER BY product_count DESC
@@ -591,53 +581,47 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 		tree = append(tree, *groupMap[slug])
 	}
 
-	// 2. Shared filters — global distinct values. Reads from master_cosmetics
-	// (vertical-typed, post-rebuild). For non-cosmetics tenants the JOIN
-	// returns no rows → digest has no shared filters, which is correct.
+	// 2. Shared filters — global distinct values from tier2 jsonb (Group D:
+	// master_cosmetics dropped; typed attrs are vertical-agnostic in tier2).
+	// jsonb_array_elements_text is guarded by jsonb_typeof = 'array' so a
+	// scalar/absent key never errors.
 	filterQuery := `
 		SELECT attr_key, ARRAY_AGG(DISTINCT attr_value ORDER BY attr_value) AS all_values
 		FROM (
-			SELECT 'product_form' AS attr_key, mc.product_form AS attr_value
+			SELECT 'product_form' AS attr_key, mp.tier2->>'product_form' AS attr_value
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mc.product_form IS NOT NULL AND mc.product_form != ''
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND COALESCE(mp.tier2->>'product_form','') != ''
 			UNION ALL
-			SELECT 'texture', mc.texture
+			SELECT 'texture', mp.tier2->>'texture'
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mc.texture IS NOT NULL AND mc.texture != ''
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND COALESCE(mp.tier2->>'texture','') != ''
 			UNION ALL
-			SELECT 'routine_step', mc.routine_step
+			SELECT 'routine_step', mp.tier2->>'routine_step'
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND mc.routine_step IS NOT NULL AND mc.routine_step != ''
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND COALESCE(mp.tier2->>'routine_step','') != ''
 			UNION ALL
-			SELECT 'skin_type', unnest(mc.skin_type)
+			SELECT 'skin_type', jsonb_array_elements_text(mp.tier2->'skin_type')
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.skin_type, 1) > 0
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'skin_type') = 'array'
 			UNION ALL
-			SELECT 'concern', unnest(mc.concern)
+			SELECT 'concern', jsonb_array_elements_text(mp.tier2->'concern')
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.concern, 1) > 0
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'concern') = 'array'
 			UNION ALL
-			SELECT 'key_ingredient', unnest(mc.key_ingredients)
+			SELECT 'key_ingredient', jsonb_array_elements_text(mp.tier2->'key_ingredients')
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.key_ingredients, 1) > 0
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'key_ingredients') = 'array'
 			UNION ALL
-			SELECT 'target_area', unnest(mc.target_area)
+			SELECT 'target_area', jsonb_array_elements_text(mp.tier2->'target_area')
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.target_area, 1) > 0
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'target_area') = 'array'
 		) AS attrs
 		WHERE attr_value IS NOT NULL AND attr_value != ''
 		GROUP BY attr_key
@@ -684,16 +668,15 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 		topBrands = append(topBrands, brand)
 	}
 
-	// 4. Top ingredients — read from master_cosmetics.key_ingredients.
-	// For non-cosmetics tenants the JOIN returns 0 rows → empty list.
+	// 4. Top ingredients — from tier2.key_ingredients (Group D). Guarded by
+	// jsonb_typeof so non-array/absent keys yield 0 rows → empty list.
 	ingrQuery := `
 		SELECT ingredient
 		FROM (
-			SELECT unnest(mc.key_ingredients) AS ingredient
+			SELECT jsonb_array_elements_text(mp.tier2->'key_ingredients') AS ingredient
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			JOIN catalog.master_cosmetics mc ON mc.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND array_length(mc.key_ingredients, 1) > 0
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'key_ingredients') = 'array'
 		) AS x
 		WHERE ingredient IS NOT NULL AND ingredient != ''
 		GROUP BY ingredient

@@ -105,6 +105,19 @@ type CatalogV2WriterPort interface {
 	// soft-deleted listing is a no-op. Returns nil even when no row matches
 	// (delete-of-unknown is harmless and surfaces in callers' logs only).
 	SoftDeleteListing(ctx context.Context, tenantID, sourceSystem, sourceID string) error
+
+	// RebuildSearchProjection (re)builds catalog.tenant_search_projection rows
+	// for the given tenant. When masterIDs is non-empty only those masters'
+	// variants are rebuilt (the apply hot path passes the batch's masters);
+	// nil/empty rebuilds the whole tenant (the backfill CLI). It assembles the
+	// *_text columns, computes search_tsv, and — when an embedder is configured
+	// (SetEmbedder) — embeds the combined text. With no embedder, rows are
+	// written with NULL embedding so full-text search still works; a later run
+	// with a key fills vectors (the upsert COALESCEs, never wiping a good
+	// vector). Rows whose listing was soft-deleted/removed are pruned. Returns
+	// the number of projection rows upserted. Best-effort by contract: callers
+	// on the apply path log and continue on error rather than failing apply.
+	RebuildSearchProjection(ctx context.Context, tenantID string, masterIDs []string) (int, error)
 }
 
 // MasterProductUpsert is the Tier-1 master row payload. Apply_v2 fills these

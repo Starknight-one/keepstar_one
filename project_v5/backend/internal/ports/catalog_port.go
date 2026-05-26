@@ -55,9 +55,15 @@ type CatalogPort interface {
 
 	// VectorSearch finds products by pgvector cosine distance against
 	// master_products.embedding. filter may be nil for unfiltered search.
-	// Caller supplies the embedding (typically via EmbeddingPort). Used by
-	// catalog_search for the semantic side of hybrid retrieval.
+	// Caller supplies the embedding (typically via EmbeddingPort). Retained for
+	// non-projection callers; catalog_search now uses SearchProjection.
 	VectorSearch(ctx context.Context, tenantID string, embedding []float32, limit int, filter *VectorFilter) ([]domain.Product, error)
+
+	// SearchProjection ranks catalog.tenant_search_projection by fused cosine +
+	// full-text score (per-tenant slice) and hydrates display fields. embedding
+	// may be nil (FTS-only). filter.Search is the FTS query; other fields narrow
+	// via tier2/junction. This is the single read used by catalog_search.
+	SearchProjection(ctx context.Context, tenantID string, embedding []float32, filter ProductFilter, limit int) ([]domain.Product, error)
 
 	// BuildCatalogDigest assembles a per-tenant compact summary of the catalog
 	// (categories, shared filters, top brands, top ingredients) for inlining

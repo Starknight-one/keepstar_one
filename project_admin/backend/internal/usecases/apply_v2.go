@@ -106,12 +106,31 @@ func (uc *ApplyV2UseCase) AttachSchemaDrift(sd *SchemaDriftUseCase) {
 
 // ApplyResult summarises one ApplyForTenant call.
 type ApplyResult struct {
-	Total         int    `json:"total"`
-	Applied       int    `json:"applied"`
-	Errors        int    `json:"errors"`
-	MappingMisses int    `json:"mapping_misses"`
-	Skipped       int    `json:"skipped"`
-	FirstError    string `json:"first_error,omitempty"`
+	Total          int    `json:"total"`
+	Applied        int    `json:"applied"`
+	Errors         int    `json:"errors"`
+	MappingMisses  int    `json:"mapping_misses"`
+	Skipped        int    `json:"skipped"`
+	ProjectionRows int    `json:"projection_rows"`
+	FirstError     string `json:"first_error,omitempty"`
+}
+
+// uniqueMasterIDs returns the distinct master_product_ids in a listing batch,
+// the set whose search-projection rows the apply hook rebuilds.
+func uniqueMasterIDs(listings []ports.ListingUpsert) []string {
+	seen := make(map[string]struct{}, len(listings))
+	out := make([]string, 0, len(listings))
+	for _, l := range listings {
+		if l.MasterProductID == "" {
+			continue
+		}
+		if _, ok := seen[l.MasterProductID]; ok {
+			continue
+		}
+		seen[l.MasterProductID] = struct{}{}
+		out = append(out, l.MasterProductID)
+	}
+	return out
 }
 
 // ApplyForTenant processes every unapplied inbox row for the tenant via
@@ -315,6 +334,16 @@ func (uc *ApplyV2UseCase) ApplyForTenant(ctx context.Context, tenantID string) (
 			res.Applied += len(listingsBatch)
 			if mErr := uc.inbox.BulkMarkApplied(ctx, appliedItemIDs); mErr != nil {
 				uc.log.Warn("apply_v2_bulk_mark_applied_failed", "count", len(appliedItemIDs), "error", mErr)
+			}
+			// Rebuild the search slice for the masters touched this batch.
+			// Best-effort: a failed rebuild leaves stale/missing projection
+			// rows but never fails apply (matches Stages 4-6).
+			batchMasterIDs := uniqueMasterIDs(listingsBatch)
+			if n, pErr := uc.writer.RebuildSearchProjection(ctx, tenantID, batchMasterIDs); pErr != nil {
+				uc.log.Warn("apply_v2_rebuild_projection_failed",
+					"tenant", tenantID, "masters", len(batchMasterIDs), "error", pErr)
+			} else {
+				res.ProjectionRows += n
 			}
 		}
 

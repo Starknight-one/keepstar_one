@@ -140,9 +140,10 @@ type fakeWriter struct {
 	// create path does NOT.
 	enrichRequests []ports.EnrichRequest
 
-	createCalls     int
-	bindCalls       int
-	softDeleteCalls []softDeleteCall
+	createCalls            int
+	bindCalls              int
+	softDeleteCalls        []softDeleteCall
+	rebuildProjectionCalls [][]string
 }
 
 type softDeleteCall struct {
@@ -289,6 +290,10 @@ func (w *fakeWriter) LookupVertical(_ context.Context, pt string) (string, bool,
 func (w *fakeWriter) SoftDeleteListing(_ context.Context, tenantID, source, sourceID string) error {
 	w.softDeleteCalls = append(w.softDeleteCalls, softDeleteCall{tenantID, source, sourceID})
 	return nil
+}
+func (w *fakeWriter) RebuildSearchProjection(_ context.Context, tenantID string, masterIDs []string) (int, error) {
+	w.rebuildProjectionCalls = append(w.rebuildProjectionCalls, masterIDs)
+	return len(masterIDs), nil
 }
 func (w *fakeWriter) EnrichExistingMaster(_ context.Context, items []ports.EnrichRequest) (int, error) {
 	for _, r := range items {

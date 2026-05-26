@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"time"
-
-	"golang.org/x/sync/errgroup"
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/ports"
@@ -227,111 +224,43 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 		}
 	}
 
-	hasFilters := brand != "" || category != "" || productForm != "" || skinType != "" ||
-		concern != "" || keyIngredient != "" || routineStep != "" || texture != "" || targetArea != ""
-
-	// ── Phase 1 — embed + keyword SQL in parallel ──
-	var (
-		queryEmbedding []float32
-		keywordProducts []domain.Product
-		embedMs, sqlMs int64
-		embedErr       error
-		mu             sync.Mutex
-	)
-
-	g1, ctx1 := errgroup.WithContext(ctx)
-
+	// ── Embed the query (best-effort; nil → FTS-only degradation) ──
+	var queryEmbedding []float32
 	if t.embedding != nil && vectorQuery != "" {
-		g1.Go(func() error {
-			searchText := vectorQuery
-			if brand != "" {
-				// Embed the brand alongside the query so vector results bias
-				// toward the brand without a hard filter (V4 pattern).
-				searchText = vectorQuery + " " + brand
-			}
-			start := time.Now()
-			embeddings, err := t.embedding.Embed(ctx1, []string{searchText})
-			ms := time.Since(start).Milliseconds()
-			mu.Lock()
-			embedMs = ms
-			if err != nil {
-				embedErr = err
-			} else if len(embeddings) > 0 {
-				queryEmbedding = embeddings[0]
-			}
-			mu.Unlock()
-			return nil // never propagate — we degrade to keyword-only
-		})
-	}
-
-	g1.Go(func() error {
-		start := time.Now()
-		ps, _, err := t.catalog.ListProducts(ctx1, tenant.ID, filter)
-		ms := time.Since(start).Milliseconds()
-		mu.Lock()
-		sqlMs = ms
-		if err == nil {
-			keywordProducts = ps
-		}
-		mu.Unlock()
-		return nil // keyword failures fall through to vector-only or empty
-	})
-
-	_ = g1.Wait()
-
-	if embedMs > 0 {
-		meta["embed_ms"] = embedMs
-	}
-	if embedErr != nil {
-		meta["embed_error"] = embedErr.Error()
-	}
-	if sqlMs > 0 {
-		meta["sql_ms"] = sqlMs
-	}
-
-	// ── Phase 2 — vector search (only if embedding succeeded) ──
-	var (
-		vectorProducts []domain.Product
-		vectorMs       int64
-		vectorErr      error
-	)
-	if queryEmbedding != nil {
-		var vf *ports.VectorFilter
-		if hasFilters {
-			vf = &ports.VectorFilter{
-				Brand: brand, CategoryName: category, ProductForm: productForm,
-				SkinType: skinType, Concern: concern, KeyIngredient: keyIngredient,
-				TargetArea: targetArea, RoutineStep: routineStep, Texture: texture,
-			}
+		searchText := vectorQuery
+		if brand != "" {
+			// Embed the brand alongside the query so vector results bias
+			// toward the brand without a hard filter (V4 pattern).
+			searchText = vectorQuery + " " + brand
 		}
 		start := time.Now()
-		vectorProducts, vectorErr = t.catalog.VectorSearch(ctx, tenant.ID, queryEmbedding, limit*2, vf)
-		vectorMs = time.Since(start).Milliseconds()
+		embeddings, err := t.embedding.Embed(ctx, []string{searchText})
+		meta["embed_ms"] = time.Since(start).Milliseconds()
+		if err != nil {
+			meta["embed_error"] = err.Error()
+		} else if len(embeddings) > 0 {
+			queryEmbedding = embeddings[0]
+		}
 	}
 
-	if vectorMs > 0 {
-		meta["vector_ms"] = vectorMs
+	// ── Single fused search over the per-tenant projection slice ──
+	// filter.Limit was 2× for the old RRF over-fetch; SearchProjection takes
+	// the real limit directly.
+	start := time.Now()
+	merged, searchErr := t.catalog.SearchProjection(ctx, tenant.ID, queryEmbedding, filter, limit)
+	meta["search_ms"] = time.Since(start).Milliseconds()
+	if searchErr != nil {
+		meta["search_error"] = searchErr.Error()
 	}
-	if vectorErr != nil {
-		meta["vector_error"] = vectorErr.Error()
-	}
-	meta["keyword_count"] = len(keywordProducts)
-	meta["vector_count"] = len(vectorProducts)
-
-	// ── RRF merge ──
-	merged := rrfMerge(keywordProducts, vectorProducts, limit, hasFilters)
 
 	for i := range merged {
 		NormalizeProduct(&merged[i])
 	}
 
-	switch {
-	case len(keywordProducts) > 0 && len(vectorProducts) > 0:
+	if queryEmbedding != nil {
 		meta["search_type"] = "hybrid"
-	case len(vectorProducts) > 0:
-		meta["search_type"] = "vector"
-	default:
-		meta["search_type"] = "keyword"
+	} else {
+		meta["search_type"] = "fts"
 	}
 	meta["count"] = len(merged)
 	if input != nil {

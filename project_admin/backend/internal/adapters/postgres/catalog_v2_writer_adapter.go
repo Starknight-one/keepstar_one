@@ -8,22 +8,29 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 
 	"keepstar-admin/internal/logger"
 	"keepstar-admin/internal/ports"
+	"keepstar-admin/internal/searchtext"
 )
 
 type CatalogV2WriterAdapter struct {
-	client *Client
-	log    *logger.Logger
+	client   *Client
+	log      *logger.Logger
+	embedder ports.EmbeddingPort // optional; nil → projection rows get NULL embedding
 }
 
 func NewCatalogV2WriterAdapter(client *Client, log *logger.Logger) *CatalogV2WriterAdapter {
 	return &CatalogV2WriterAdapter{client: client, log: log}
 }
+
+// SetEmbedder attaches an embedder used by RebuildSearchProjection. Wired in
+// main.go only when OPENAI_API_KEY is set; left nil otherwise (FTS-only).
+func (a *CatalogV2WriterAdapter) SetEmbedder(e ports.EmbeddingPort) { a.embedder = e }
 
 var _ ports.CatalogV2WriterPort = (*CatalogV2WriterAdapter)(nil)
 
@@ -915,6 +922,229 @@ func (a *CatalogV2WriterAdapter) bulkUpsertListingBatch(ctx context.Context, bat
 		return 0, fmt.Errorf("bulk upsert listing exec: %w", err)
 	}
 	return written, nil
+}
+
+const (
+	projectionEmbedBatch  = 100
+	projectionUpsertBatch = 500
+)
+
+// projRow is one assembled projection row awaiting embedding + upsert.
+type projRow struct {
+	variantID  string
+	masterID   string
+	vertical   string
+	texts      searchtext.ProjectionTexts
+	embLiteral string // pgvector text literal "[...]" or "" → NULL
+}
+
+// RebuildSearchProjection — see ports.CatalogV2WriterPort.
+func (a *CatalogV2WriterAdapter) RebuildSearchProjection(ctx context.Context, tenantID string, masterIDs []string) (int, error) {
+	if tenantID == "" {
+		return 0, fmt.Errorf("rebuild search projection: empty tenant id")
+	}
+
+	rows, err := a.fetchProjectionSources(ctx, tenantID, masterIDs)
+	if err != nil {
+		return 0, err
+	}
+
+	if a.embedder != nil {
+		a.embedProjectionRows(ctx, rows)
+	}
+
+	written := 0
+	for start := 0; start < len(rows); start += projectionUpsertBatch {
+		end := min(start+projectionUpsertBatch, len(rows))
+		n, err := a.upsertProjectionBatch(ctx, tenantID, rows[start:end])
+		if err != nil {
+			return written, fmt.Errorf("upsert projection batch [%d:%d]: %w", start, end, err)
+		}
+		written += n
+	}
+
+	if err := a.pruneStaleProjection(ctx, tenantID, masterIDs); err != nil {
+		// Non-fatal: a stale row only over-includes search results.
+		a.log.Warn("prune stale projection", "tenant", tenantID, "err", err)
+	}
+	return written, nil
+}
+
+func (a *CatalogV2WriterAdapter) fetchProjectionSources(ctx context.Context, tenantID string, masterIDs []string) ([]projRow, error) {
+	q := `
+		SELECT p.master_variant_id, mp.id, COALESCE(mp.vertical,''),
+		       mp.name, COALESCE(mp.brand,''), COALESCE(mp.description,''),
+		       COALESCE(mp.tier2,'{}'::jsonb), COALESCE(mp.tier3,'{}'::jsonb),
+		       COALESCE(mv.color,''), COALESCE(mv.size,''), COALESCE(mv.material,''),
+		       mv.volume_ml, mv.weight_g, COALESCE(mv.axes,'{}'::jsonb),
+		       COALESCE(p.tenant_overrides,'{}'::jsonb)
+		FROM catalog.products p
+		JOIN catalog.master_variants mv ON mv.id = p.master_variant_id
+		JOIN catalog.master_products mp ON mp.id = mv.master_product_id
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL`
+	args := []any{tenantID}
+	if len(masterIDs) > 0 {
+		q += ` AND mp.id = ANY($2::uuid[])`
+		args = append(args, masterIDs)
+	}
+
+	dbRows, err := a.client.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("fetch projection sources: %w", err)
+	}
+	defer dbRows.Close()
+
+	var out []projRow
+	for dbRows.Next() {
+		var variantID, masterID, vertical, name, brand, description, color, size, material string
+		var volumeML, weightG *int
+		var tier2Raw, tier3Raw, axesRaw, overridesRaw []byte
+		if err := dbRows.Scan(&variantID, &masterID, &vertical, &name, &brand, &description,
+			&tier2Raw, &tier3Raw, &color, &size, &material, &volumeML, &weightG, &axesRaw, &overridesRaw); err != nil {
+			return nil, fmt.Errorf("scan projection source: %w", err)
+		}
+		out = append(out, projRow{
+			variantID: variantID,
+			masterID:  masterID,
+			vertical:  vertical,
+			texts: searchtext.BuildProjectionTexts(searchtext.ProjectionSource{
+				Name: name, Brand: brand, Description: description, Vertical: vertical,
+				Tier2: unmarshalJSONBMap(tier2Raw), Tier3: unmarshalJSONBMap(tier3Raw),
+				Color: color, Size: size, Material: material,
+				VolumeML: volumeML, WeightG: weightG, Axes: unmarshalJSONBMap(axesRaw),
+				Overrides: unmarshalJSONBMap(overridesRaw),
+			}),
+		})
+	}
+	return out, dbRows.Err()
+}
+
+// embedProjectionRows fills embLiteral in place. Best-effort: a failed batch
+// leaves those rows with NULL embedding (FTS still works); never returns error.
+func (a *CatalogV2WriterAdapter) embedProjectionRows(ctx context.Context, rows []projRow) {
+	for start := 0; start < len(rows); start += projectionEmbedBatch {
+		end := min(start+projectionEmbedBatch, len(rows))
+		texts := make([]string, end-start)
+		for i := start; i < end; i++ {
+			texts[i-start] = rows[i].texts.SearchText
+		}
+		vecs, err := a.embedder.Embed(ctx, texts)
+		if err != nil {
+			a.log.Warn("embed projection batch", "range", fmt.Sprintf("%d:%d", start, end), "err", err)
+			continue
+		}
+		for i, v := range vecs {
+			rows[start+i].embLiteral = vecLiteral(v)
+		}
+	}
+}
+
+func (a *CatalogV2WriterAdapter) upsertProjectionBatch(ctx context.Context, tenantID string, batch []projRow) (int, error) {
+	if len(batch) == 0 {
+		return 0, nil
+	}
+	mvids := make([]string, len(batch))
+	mpids := make([]string, len(batch))
+	verts := make([]string, len(batch))
+	tier1 := make([]string, len(batch))
+	tier2 := make([]string, len(batch))
+	tier3 := make([]string, len(batch))
+	variant := make([]string, len(batch))
+	override := make([]string, len(batch))
+	emb := make([]string, len(batch))
+	search := make([]string, len(batch))
+	for i, r := range batch {
+		mvids[i] = r.variantID
+		mpids[i] = r.masterID
+		verts[i] = r.vertical
+		tier1[i] = r.texts.Tier1Text
+		tier2[i] = r.texts.Tier2Text
+		tier3[i] = r.texts.Tier3Text
+		variant[i] = r.texts.VariantText
+		override[i] = r.texts.OverrideText
+		emb[i] = r.embLiteral
+		search[i] = r.texts.SearchText
+	}
+
+	var written int
+	err := a.client.pool.QueryRow(ctx, `
+		WITH ins AS (
+			INSERT INTO catalog.tenant_search_projection
+				(tenant_id, master_variant_id, master_product_id, vertical,
+				 tier1_text, tier2_text, tier3_text, variant_text, override_text,
+				 embedding, search_tsv, updated_at)
+			SELECT $1::uuid, t.mvid::uuid, t.mpid::uuid, t.vertical,
+			       t.tier1, t.tier2, t.tier3, t.variant, t.override,
+			       NULLIF(t.emb,'')::vector,
+			       to_tsvector('simple', t.search_text),
+			       NOW()
+			FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+			            $7::text[], $8::text[], $9::text[], $10::text[], $11::text[])
+				AS t(mvid, mpid, vertical, tier1, tier2, tier3, variant, override, emb, search_text)
+			ON CONFLICT (tenant_id, master_variant_id) DO UPDATE
+			SET master_product_id = EXCLUDED.master_product_id,
+			    vertical          = EXCLUDED.vertical,
+			    tier1_text        = EXCLUDED.tier1_text,
+			    tier2_text        = EXCLUDED.tier2_text,
+			    tier3_text        = EXCLUDED.tier3_text,
+			    variant_text      = EXCLUDED.variant_text,
+			    override_text     = EXCLUDED.override_text,
+			    embedding         = COALESCE(EXCLUDED.embedding, tenant_search_projection.embedding),
+			    search_tsv        = EXCLUDED.search_tsv,
+			    updated_at        = NOW()
+			RETURNING 1
+		)
+		SELECT COUNT(*)::int FROM ins
+	`, tenantID, mvids, mpids, verts, tier1, tier2, tier3, variant, override, emb, search).Scan(&written)
+	if err != nil {
+		return 0, fmt.Errorf("projection upsert exec: %w", err)
+	}
+	return written, nil
+}
+
+// pruneStaleProjection removes projection rows whose listing was soft-deleted
+// or removed (no live catalog.products row), scoped to the rebuilt master set.
+func (a *CatalogV2WriterAdapter) pruneStaleProjection(ctx context.Context, tenantID string, masterIDs []string) error {
+	q := `
+		DELETE FROM catalog.tenant_search_projection tsp
+		WHERE tsp.tenant_id = $1`
+	args := []any{tenantID}
+	if len(masterIDs) > 0 {
+		q += ` AND tsp.master_product_id = ANY($2::uuid[])`
+		args = append(args, masterIDs)
+	}
+	q += `
+		  AND NOT EXISTS (
+			SELECT 1 FROM catalog.products p
+			WHERE p.tenant_id = tsp.tenant_id
+			  AND p.master_variant_id = tsp.master_variant_id
+			  AND p.deleted_at IS NULL)`
+	_, err := a.client.pool.Exec(ctx, q, args...)
+	return err
+}
+
+func vecLiteral(v []float32) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, f := range v {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.FormatFloat(float64(f), 'f', -1, 32))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func unmarshalJSONBMap(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 // ----- internal helpers -----

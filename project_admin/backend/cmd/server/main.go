@@ -427,6 +427,10 @@ func main() {
 		agentRunsAdapter := postgres.NewAgentRunsAdapter(dbClient, log)
 		mappingArtifactV2Adapter := postgres.NewMappingArtifactV2Adapter(dbClient, log)
 		catalogV2Writer := postgres.NewCatalogV2WriterAdapter(dbClient, log)
+		if embeddingClient != nil {
+			// Apply-time projection rebuild embeds combined search text.
+			catalogV2Writer.SetEmbedder(embeddingClient)
+		}
 		masterDigestAdapter := postgres.NewMasterDigestAdapter(dbClient, log)
 		rateLimitAdapter := postgres.NewApplyRateLimitAdapter(dbClient, log)
 

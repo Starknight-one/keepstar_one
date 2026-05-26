@@ -1056,6 +1056,34 @@ func (c *Client) RunCatalogMigrations(ctx context.Context) error {
 		`ALTER TABLE catalog.products ALTER COLUMN master_variant_id SET NOT NULL;`,
 	)
 
+	// Search layer: per-tenant denormalized ranking index. One row per
+	// (tenant_id, master_variant_id). Carries search texts + embedding + tsv
+	// only; price/stock/images are hydrated at read time from the canonical
+	// tables, so a price change does not force a re-embed.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS catalog.tenant_search_projection (
+			tenant_id          UUID NOT NULL REFERENCES catalog.tenants(id),
+			master_variant_id  UUID NOT NULL REFERENCES catalog.master_variants(id) ON DELETE CASCADE,
+			master_product_id  UUID NOT NULL REFERENCES catalog.master_products(id) ON DELETE CASCADE,
+			vertical           TEXT,
+			tier1_text         TEXT,
+			tier2_text         TEXT,
+			tier3_text         TEXT,
+			variant_text       TEXT,
+			override_text      TEXT,
+			embedding          vector(384),
+			search_tsv         tsvector,
+			updated_at         TIMESTAMPTZ DEFAULT NOW(),
+			PRIMARY KEY (tenant_id, master_variant_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_tsp_embedding
+			ON catalog.tenant_search_projection USING hnsw (embedding vector_cosine_ops);`,
+		`CREATE INDEX IF NOT EXISTS idx_tsp_search_tsv
+			ON catalog.tenant_search_projection USING gin (search_tsv);`,
+		`CREATE INDEX IF NOT EXISTS idx_tsp_master_product
+			ON catalog.tenant_search_projection (master_product_id);`,
+	)
+
 	for i, m := range migrations {
 		if _, err := c.pool.Exec(ctx, m); err != nil {
 			return fmt.Errorf("catalog migration %d failed: %w", i+1, err)

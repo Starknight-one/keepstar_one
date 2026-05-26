@@ -2,79 +2,22 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	pgvector "github.com/pgvector/pgvector-go"
 	openaiAdapter "keepstar-admin/internal/adapters/openai"
+	"keepstar-admin/internal/searchtext"
 )
 
-// buildEmbeddingText creates a compact semantic text for vector embedding.
-// For PIM-enriched products (v2), uses clean structured data.
-// For legacy products, falls back to name + brand + category.
-func buildEmbeddingText(row productRow) string {
-	if row.enrichmentVersion >= 2 && row.shortName != "" {
-		parts := []string{row.shortName}
-		if row.brand != "" {
-			parts = append(parts, row.brand)
-		}
-		if row.categoryName != "" {
-			parts = append(parts, row.categoryName)
-		}
-		if row.productForm != "" {
-			parts = append(parts, row.productForm)
-		}
-		if row.texture != "" {
-			parts = append(parts, row.texture)
-		}
-		if row.marketingClaim != "" {
-			parts = append(parts, row.marketingClaim)
-		}
-		if len(row.skinType) > 0 {
-			parts = append(parts, strings.Join(row.skinType, " "))
-		}
-		if len(row.concern) > 0 {
-			parts = append(parts, strings.Join(row.concern, " "))
-		}
-		if len(row.keyIngredients) > 0 {
-			parts = append(parts, strings.Join(row.keyIngredients, " "))
-		}
-		if row.routineStep != "" {
-			parts = append(parts, row.routineStep)
-		}
-		return strings.Join(parts, " ")
-	}
-
-	// Legacy fallback
-	text := row.name
-	if row.brand != "" {
-		text += " " + row.brand
-	}
-	if row.categoryName != "" {
-		text += " " + row.categoryName
-	}
-	return text
-}
-
 type productRow struct {
-	id                string
-	name              string
-	brand             string
-	categoryName      string
-	shortName         string
-	productForm       string
-	texture           string
-	routineStep       string
-	marketingClaim    string
-	skinType          []string
-	concern           []string
-	keyIngredients    []string
-	enrichmentVersion int
+	id   string
+	text string
 }
 
 func main() {
@@ -106,31 +49,19 @@ func main() {
 
 	embeddingClient := openaiAdapter.NewEmbeddingClient(openaiKey, "", 384)
 
-	// Step 1: Optionally reset embeddings for enriched products
 	if resetAll {
-		tag, err := pool.Exec(ctx, `UPDATE catalog.master_products SET embedding = NULL WHERE enrichment_version >= 2`)
+		tag, err := pool.Exec(ctx, `UPDATE catalog.master_products SET embedding = NULL`)
 		if err != nil {
 			log.Fatalf("reset embeddings: %v", err)
 		}
-		fmt.Printf("Reset %d embeddings for enriched products\n", tag.RowsAffected())
+		fmt.Printf("Reset %d embeddings\n", tag.RowsAffected())
 	}
 
-	// Step 2: Fetch products without embeddings
-	query := `SELECT mp.id, mp.name, COALESCE(mp.brand, '') as brand,
-		COALESCE(c.name, '') as category_name,
-		COALESCE(mp.short_name, '') as short_name,
-		COALESCE(mp.product_form, '') as product_form,
-		COALESCE(mp.texture, '') as texture,
-		COALESCE(mp.routine_step, '') as routine_step,
-		COALESCE(mp.marketing_claim, '') as marketing_claim,
-		mp.skin_type, mp.concern, mp.key_ingredients,
-		COALESCE(mp.enrichment_version, 0) as enrichment_version
+	// Vertical-agnostic: read tier1 identity + tier2/tier3 jsonb. The legacy
+	// cosmetics columns were dropped in Group D; typed attrs now live in tier2.
+	query := `SELECT mp.id, mp.name, COALESCE(mp.brand,''), COALESCE(mp.description,''),
+		COALESCE(mp.vertical,''), COALESCE(mp.tier2,'{}'::jsonb), COALESCE(mp.tier3,'{}'::jsonb)
 		FROM catalog.master_products mp
-		LEFT JOIN LATERAL (
-			SELECT mc.name FROM catalog.master_product_categories mpc
-			JOIN catalog.master_categories mc ON mc.id = mpc.master_category_id
-			WHERE mpc.master_product_id = mp.id LIMIT 1
-		) c ON true
 		WHERE mp.embedding IS NULL
 		ORDER BY mp.created_at`
 
@@ -142,17 +73,20 @@ func main() {
 
 	var products []productRow
 	for rows.Next() {
-		var p productRow
-		if err := rows.Scan(
-			&p.id, &p.name, &p.brand, &p.categoryName,
-			&p.shortName, &p.productForm, &p.texture, &p.routineStep,
-			&p.marketingClaim, &p.skinType, &p.concern, &p.keyIngredients,
-			&p.enrichmentVersion,
-		); err != nil {
+		var id, name, brand, description, vertical string
+		var tier2Raw, tier3Raw []byte
+		if err := rows.Scan(&id, &name, &brand, &description, &vertical, &tier2Raw, &tier3Raw); err != nil {
 			log.Fatalf("scan product: %v", err)
 		}
-		products = append(products, p)
+		products = append(products, productRow{
+			id: id,
+			text: searchtext.BuildProjectionTexts(searchtext.ProjectionSource{
+				Name: name, Brand: brand, Description: description, Vertical: vertical,
+				Tier2: unmarshalJSONB(tier2Raw), Tier3: unmarshalJSONB(tier3Raw),
+			}).SearchText,
+		})
 	}
+	rows.Close()
 
 	if len(products) == 0 {
 		fmt.Println("No products need embeddings")
@@ -161,13 +95,11 @@ func main() {
 
 	fmt.Printf("Building embeddings for %d products...\n", len(products))
 
-	// Step 3: Build texts
 	texts := make([]string, len(products))
 	for i, p := range products {
-		texts[i] = buildEmbeddingText(p)
+		texts[i] = p.text
 	}
 
-	// Step 4: Embed in batches of 100
 	batchSize := 100
 	embedded := 0
 	for i := 0; i < len(texts); i += batchSize {
@@ -197,4 +129,15 @@ func main() {
 	}
 
 	fmt.Printf("Done: %d/%d products embedded\n", embedded, len(products))
+}
+
+func unmarshalJSONB(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	return m
 }

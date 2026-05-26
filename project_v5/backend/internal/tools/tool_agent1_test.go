@@ -141,6 +141,13 @@ func (c *agent1CatalogPort) VectorSearch(_ context.Context, _ string, _ []float3
 	return c.products, nil
 }
 
+// SearchProjection records the filter (like ListProducts) and returns the
+// canned products — catalog_search now reads through this single method.
+func (c *agent1CatalogPort) SearchProjection(_ context.Context, _ string, _ []float32, f ports.ProductFilter, _ int) ([]domain.Product, error) {
+	c.lastFilter = f
+	return c.products, nil
+}
+
 // ─── catalog_search ──────────────────────────────────────────────────────
 
 func TestCatalogSearchHappyPath(t *testing.T) {
@@ -190,8 +197,9 @@ func TestCatalogSearchHappyPath(t *testing.T) {
 	if cat.lastFilter.MinPrice != 100000 || cat.lastFilter.MaxPrice != 500000 {
 		t.Errorf("price kopecks = %d/%d, want 100000/500000", cat.lastFilter.MinPrice, cat.lastFilter.MaxPrice)
 	}
-	if got, _ := res.Metadata["search_type"].(string); got != "keyword" {
-		t.Errorf("search_type=%q, want keyword", got)
+	// No embedding port wired in this test → degraded full-text mode.
+	if got, _ := res.Metadata["search_type"].(string); got != "fts" {
+		t.Errorf("search_type=%q, want fts", got)
 	}
 }
 
