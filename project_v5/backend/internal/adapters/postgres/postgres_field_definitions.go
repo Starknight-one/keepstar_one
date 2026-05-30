@@ -3,7 +3,11 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/ports"
@@ -34,6 +38,13 @@ func (a *FieldDefinitionAdapter) ListFieldDefinitions(ctx context.Context, tenan
 	`
 	rows, err := a.client.pool.Query(ctx, query, tenantIDOrSlug, string(entityType))
 	if err != nil {
+		if isUndefinedTable(err) {
+			// catalog.field_definitions is optional per-tenant enrichment, not a
+			// hard dependency: when it is absent the Agent2 <fields> block is
+			// derived from real catalog data instead. Degrade, don't fail.
+			slog.WarnContext(ctx, "catalog.field_definitions absent; <fields> will be data-derived", "tenant", tenantIDOrSlug)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("list field definitions: %w", err)
 	}
 	defer rows.Close()
@@ -53,7 +64,25 @@ func (a *FieldDefinitionAdapter) ListFieldDefinitions(ctx context.Context, tenan
 		d.EntityType = domain.EntityType(et)
 		defs = append(defs, d)
 	}
-	return defs, rows.Err()
+	if err := rows.Err(); err != nil {
+		if isUndefinedTable(err) {
+			slog.WarnContext(ctx, "catalog.field_definitions absent; <fields> will be data-derived", "tenant", tenantIDOrSlug)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list field definitions: %w", err)
+	}
+	return defs, nil
+}
+
+// isUndefinedTable reports whether err is a Postgres "undefined_table" error
+// (SQLSTATE 42P01). catalog.field_definitions is optional enrichment, so its
+// absence degrades gracefully rather than failing the Agent2 turn.
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "42P01"
+	}
+	return false
 }
 
 func (a *FieldDefinitionAdapter) GetFieldDefinition(ctx context.Context, tenantIDOrSlug string, entityType domain.EntityType, fieldName string) (*ports.FieldDefinition, error) {
