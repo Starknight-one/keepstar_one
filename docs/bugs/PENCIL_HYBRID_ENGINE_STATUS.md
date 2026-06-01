@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL — documents the V4 Pencil hybrid engine, which is NOT on the production path.** V4 was dropped; V5 is the only chat engine (live at v5-engine-production.up.railway.app). The ops/build modes here were not carried forward to V5. See one_ultra/CLAUDE.md and /SESSION_HANDOFF_2026-05-30.md. Kept for architectural reference on ops/build concepts. (flagged 2026-06-01)
+
 # Pencil Hybrid Engine — Status Report
 
 ## What Was Built

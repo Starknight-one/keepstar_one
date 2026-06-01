@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL — assessment from 2026-04-12 (pre-V5-production).** Current priorities are in /FINAL_PHASE_PLAN.md and docs/PRE_LAUNCH_TASKS.md. This evaluated 4 V4-engine features; work has since moved to V5 production stabilization + decomposition. Kept for reference on the feature complexity estimates. (flagged 2026-06-01)
+
 # Sales-readiness assessment — 4 фичи на оценку
 
 **Дата**: 2026-04-12

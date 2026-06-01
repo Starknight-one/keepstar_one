@@ -1,4 +1,6 @@
 
+> ⚠️ **HISTORICAL — reflects pre-decomposition structure (updated 2026-02-12).** The codebase has since decomposed into separate services (PIM, Connector, Price-Stock, v5-engine, curator). See one_ultra/CLAUDE.md (current routing rules) and .claude/commands/experts/README.md for the live architecture. The two-agent pipeline, hexagonal/domain-layer isolation, and naming/size principles remain good guidance; the file paths (project/, project_admin/), ports, and schema descriptions are outdated. (flagged 2026-06-01)
+
 # Keepstar Architecture Rules
 
 > Этот документ — источник истины для архитектурных решений.

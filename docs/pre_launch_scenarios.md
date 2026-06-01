@@ -1,3 +1,5 @@
+> ⚠️ **PARTIALLY HISTORICAL — data-plane scenarios superseded by the decomposed services.** Sections covering PIM ingest / discovery_v2 / apply_v2 / mapping_artifact describe the pre-decomposition admin catalog ingest flow, which is BEING RETIRED. Current canonical backbone: Connector → PIM → Price-Stock → seam (project_admin/cmd/pim-to-catalog) → admin catalog.* read-model → v5. See /SESSION_HANDOFF_2026-05-30.md. The auth scenarios (sections 1–15) remain relevant. (flagged 2026-06-01)
+
 # Pre-launch user scenarios — пункты 1 (auth) + 2 (PIM)
 
 > Текущая версия проекта: **Alpha 0.5.0** (см. `VERSION` в корне).

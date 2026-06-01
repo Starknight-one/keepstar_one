@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL — this plan has been executed/superseded.** The canonical current V5 architecture is in /FINAL_PHASE_PLAN.md and /SESSION_HANDOFF_2026-05-30.md. V5 is now in production as a modular monolith; the April 6–8 week v9-integration roadmap here is history. Kept for context on the decomposition decision. (flagged 2026-06-01)
+
 # План: интеграция Keepstar_one_v9 в монорепо как фундамент Engine V5
 
 ## Context

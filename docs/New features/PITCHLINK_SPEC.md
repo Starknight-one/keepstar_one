@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL / NOT ACTIVE — design spec for a separate product (PitchLink) that reuses the V4 engine as a library.** The V4 chat engine was dropped (V5 is the only engine), so the V4-as-library premise needs re-validation before any work. Not part of the current roadmap (/FINAL_PHASE_PLAN.md). Kept as a design archive. (flagged 2026-06-01)
+
 # PitchLink — Spec
 
 > Внутреннее рабочее имя — **PitchLink**. Продукт: пользователь загружает любые материалы (PDF, таблицы, сканы, текст, ссылки), говорит «сделай продающую страницу для X» — получает живую веб-ссылку. Делится ссылкой. Видит аналитику. Правит через чат.

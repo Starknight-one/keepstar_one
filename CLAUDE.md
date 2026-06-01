@@ -145,9 +145,14 @@ recommending it.
 ## Pointers
 
 - `.claude/commands/experts/README.md` — expert system architecture
-- `docs/Updates/` — session logs (chronological)
-- `docs/catalog-audit-2026-05-07.md` — current catalog state snapshot
-- `docs/v5-engine-plan.md` — V5 strategic plan + remaining work
-- `docs/v5-known-gaps.md` — V5 A-series gap registry
-- `AI_docs/Manifesto.md` — product vision
-- `AI_docs/ARCHITECTURE_RULES.md` — architectural principles
+- `docs/Updates/` — session logs (chronological, append-only truth log)
+- **`../MANIFESTO.md`** — product vision / north-star (2026-05-29)
+- **`../FINAL_PHASE_PLAN.md`** — current prioritized plan
+- **`../SESSION_HANDOFF_2026-05-30.md`** — latest resume snapshot (source of truth)
+- `docs/PRE_LAUNCH_TASKS.md` — current pre-launch tracker
+- `docs/v5-known-gaps.md` — V5 A-series gap registry (live)
+- `docs/CATALOG_GAPS.md` + `docs/CATALOG_GROUP_D_SPEC.md` — current catalog status + spec
+- `docs/catalog-audit-2026-05-07.md` — ⚠️ HISTORICAL audit (2026-05-07; schema debt since fixed by Group D)
+- `docs/v5-engine-plan.md` — ⚠️ HISTORICAL V5 delivery plan (2026-05-03; superseded by FINAL_PHASE_PLAN.md)
+- `AI_docs/Manifesto.md` — ⚠️ HISTORICAL Feb-2026 vision (superseded by ../MANIFESTO.md)
+- `AI_docs/ARCHITECTURE_RULES.md` — architectural PRINCIPLES still useful; paths/ports/schema are pre-decomposition

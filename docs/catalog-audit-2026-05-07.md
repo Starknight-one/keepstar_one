@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL — captures the state on 2026-05-07.** By 2026-05-25, Group D Phase 1 refactorings (D1a/D1b/D3/D4) were executed and verified on Neon; the schema issues described here (legacy cosmetics columns, empty master_cosmetics, ~0 variants) have been resolved. Kept as a record of the pre-refactor state and the gap analysis that drove Group D. See docs/CATALOG_GROUP_D_SPEC.md § Execution status. (flagged 2026-06-01)
+
 # Catalog spec audit — что построено vs что в спеке
 
 **Дата**: 2026-05-07

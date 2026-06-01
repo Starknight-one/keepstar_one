@@ -10,6 +10,12 @@ V5 is the production chat engine (`project_v5/`, live at
 `v5-engine-production.up.railway.app`). Admin SPA and curator service
 share the same Neon Postgres.
 
+> **New here?** Start with [`../MANIFESTO.md`](../MANIFESTO.md) (product vision /
+> north-star) and [`../FINAL_PHASE_PLAN.md`](../FINAL_PHASE_PLAN.md) (current
+> priorities). The project is decomposing into focused services
+> (PIM · Connector · Price-Stock · v5-engine); this repo is being slimmed toward
+> the v5 engine core. See `CLAUDE.md` for day-to-day navigation.
+
 ## Getting around
 
 - **`CLAUDE.md`** — working context for AI assistants: routing to per-domain experts, dev essentials, 12 working rules.

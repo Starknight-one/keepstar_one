@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL — superseded by docs/v5-known-gaps.md and /SESSION_HANDOFF_2026-05-30.md.** Records bugs fixed through 2026-03-31 (Run 3→Run 4). The demo is now proven end-to-end on prod (2026-05-30); the live gap tracker is docs/v5-known-gaps.md. Kept for reference on iteration cadence. (flagged 2026-06-01)
+
 # E2E Run 3 → Run 4 — Статус багов (2026-03-31)
 
 **Run 3**: 5 PASS / 20 FAIL из 25

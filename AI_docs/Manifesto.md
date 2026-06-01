@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL — superseded by /MANIFESTO.md (2026-05-29).** This describes the pre-decomposition monolith state (Chat + Admin, two-tenant schema). The project has decomposed into PIM, Connector, Price-Stock, and v5-engine as separate services; the product vision has shifted from "AI chat widget" to "data-aware platform for generative UI" («вопрос → интерфейс»). Kept for reference only. (flagged 2026-06-01)
+
 ## Манифест продукта
 
 Keepstar — это SaaS B2B2C.

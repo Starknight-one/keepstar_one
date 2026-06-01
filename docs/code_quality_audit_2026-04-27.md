@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL SNAPSHOT — problem audited 2026-04-27, largely FIXED 2026-04-29.** The legacy project/ (V1/V2 ~17K LOC) called out here was removed two days later. Valuable for the audit methodology and decision rationale, not for current state. Test-coverage / markdown-ratio observations may be partly valid but need re-verification against the post-cleanup codebase. See /SESSION_HANDOFF_2026-05-30.md and docs/LAUNCH_ROADMAP.md §4.2. (flagged 2026-06-01)
+
 # Аудит кодовой базы и архитектуры — 2026-04-27
 
 > Замер размера, сложности и качества проекта Keepstar One Ultra. Сделан в свободном режиме в ответ на вопрос «сколько кода / как мерить качество / что почитать чтобы лучше управлять архитектурой».

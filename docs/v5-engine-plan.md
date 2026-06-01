@@ -1,3 +1,5 @@
+> ⚠️ **HISTORICAL — superseded by /FINAL_PHASE_PLAN.md and /SESSION_HANDOFF_2026-05-30.md.** This is the 2026-05-03 delivery plan (chunks through ~15.5). V5 is now live in production (v5-engine-production.up.railway.app) and the demo is proven end-to-end (2026-05-30); remaining work is the A-series in docs/v5-known-gaps.md. Use for historical context on architecture decisions (Stream A/B, v9-as-foundation, token efficiency) only; do NOT treat as the current roadmap. (flagged 2026-06-01)
+
 # V5 Engine Plan
 
 > **Owner**: Vlad. **Doc author**: Claude (Opus 4.7).
