@@ -48,6 +48,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Fail closed on insecure production config (e.g. default JWT_SECRET).
+	if err := cfg.Validate(); err != nil {
+		log.Error("config_validation_failed", "error", err)
+		os.Exit(1)
+	}
+
 	// Connect to PostgreSQL
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

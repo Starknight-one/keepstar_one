@@ -1,10 +1,18 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// insecureJWTDefault is the development-only fallback for JWT_SECRET. It is
+// PUBLIC (it lives in source), so a production deployment running with it
+// would let anyone forge admin tokens. Validate() refuses to start in
+// production with this value. Referenced from Load() so the two can't drift.
+const insecureJWTDefault = "keepstar-admin-secret-change-me"
 
 type Config struct {
 	Port             string
@@ -73,7 +81,7 @@ func Load() *Config {
 		Port:             getEnv("PORT", getEnv("ADMIN_PORT", "8081")),
 		Environment:      getEnv("ENVIRONMENT", "development"),
 		DatabaseURL:      getEnv("DATABASE_URL", ""),
-		JWTSecret:        getEnv("JWT_SECRET", "keepstar-admin-secret-change-me"),
+		JWTSecret:        getEnv("JWT_SECRET", insecureJWTDefault),
 		OpenAIAPIKey:     getEnv("OPENAI_API_KEY", ""),
 		EmbeddingModel:   getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
 		AnthropicAPIKey:  getEnv("ANTHROPIC_API_KEY", ""),
@@ -118,6 +126,26 @@ func Load() *Config {
 		DriftClassifierModel: getEnv("DRIFT_CLASSIFIER_MODEL", "claude-sonnet-4-6"),
 		DriftWorkers:         getIntEnv("DRIFT_WORKERS", 5),
 	}
+}
+
+// IsProduction reports whether ENVIRONMENT marks this a production deploy.
+func (c *Config) IsProduction() bool {
+	e := strings.ToLower(strings.TrimSpace(c.Environment))
+	return e == "production" || e == "prod"
+}
+
+// Validate enforces production-only safety invariants. Call once after
+// Load(); a non-nil error means the process must NOT start. Today it guards
+// the one foot-gun the audit flagged: a production deploy running with the
+// public insecure JWT_SECRET default (or an empty one) would let anyone
+// forge admin tokens.
+func (c *Config) Validate() error {
+	if c.IsProduction() {
+		if c.JWTSecret == "" || c.JWTSecret == insecureJWTDefault {
+			return fmt.Errorf("JWT_SECRET must be set to a strong, non-default secret in production (refusing to start with the insecure built-in default)")
+		}
+	}
+	return nil
 }
 
 func (c *Config) HasDatabase() bool   { return c.DatabaseURL != "" }
