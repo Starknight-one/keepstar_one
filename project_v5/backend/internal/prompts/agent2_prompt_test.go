@@ -26,7 +26,7 @@ func TestAgent2SystemPromptSectionsPresent(t *testing.T) {
 
 // TestAgent2SystemPromptCacheBudget — sanity-check the prompt body stays
 // over the rough token-budget threshold (4500 tokens × ~4 chars/token =
-// ~18000 chars). Real-token measurement is in engine/tokens; this guards
+// ~18000 chars). Real-token measurement is in measure/tokens; this guards
 // against accidental deletions that would slip the cache gate without
 // running the gated test.
 func TestAgent2SystemPromptCacheBudget(t *testing.T) {

@@ -67,6 +67,9 @@ func (c *fakeCatalog) BuildCatalogDigest(_ context.Context, _ string) (*domain.C
 func (c *fakeCatalog) VectorSearch(_ context.Context, _ string, _ []float32, _ int, _ *ports.VectorFilter) ([]domain.Product, error) {
 	return c.products, nil
 }
+func (c *fakeCatalog) SearchProjection(_ context.Context, _ string, _ []float32, _ ports.ProductFilter, _ int) ([]domain.Product, error) {
+	return c.products, nil
+}
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 
