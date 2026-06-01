@@ -91,10 +91,10 @@ func TestHTTPLiveSmoke(t *testing.T) {
 
 	tracePort := postgres.NewTraceAdapter(pg)
 	sessionH := handlers.NewSessionHandler(statePort, pg.Pool())
-	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, log)
+	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, nil, log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
-	router := handlers.RegisterRoutes(log, catalog, "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH)
+	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH)
 
 	srv := httptest.NewServer(router)
 	defer srv.Close()

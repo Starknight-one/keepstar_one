@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -31,6 +32,15 @@ type Config struct {
 	TenantSlug      string
 	LogLevel        slog.Level
 	StaticDir       string
+	// PipelineRatePerMin caps POST /api/v1/pipeline calls per client IP per
+	// minute (token bucket; burst == this value). <= 0 disables the limit.
+	PipelineRatePerMin int
+	// PipelineDailyUSDCap is the global per-day Anthropic spend ceiling for
+	// the pipeline, summed from the actual reported per-turn cost. Once the
+	// day's spend reaches it, /api/v1/pipeline returns 503 until UTC
+	// midnight. <= 0 disables the cap. Process-local (correct for the
+	// current single-instance deploy; revisit if V5 scales horizontally).
+	PipelineDailyUSDCap float64
 }
 
 // Load reads env vars, applies defaults, and validates required fields.
@@ -45,6 +55,9 @@ func Load() (*Config, error) {
 		TenantSlug:      envOr("TENANT_SLUG", "hey-babes-cosmetics"),
 		LogLevel:        parseLogLevel(envOr("LOG_LEVEL", "info")),
 		StaticDir:       envOr("STATIC_DIR", "./static"),
+
+		PipelineRatePerMin:  envInt("PIPELINE_RATE_PER_MIN", 30),
+		PipelineDailyUSDCap: envFloat("PIPELINE_DAILY_USD_CAP", 10.0),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
@@ -68,6 +81,24 @@ func MustLoad() *Config {
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envFloat(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return f
+		}
 	}
 	return fallback
 }

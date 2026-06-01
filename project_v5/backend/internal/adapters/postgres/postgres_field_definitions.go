@@ -152,6 +152,10 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 	`
 	rows, err := a.client.pool.Query(ctx, query, tenantIDOrSlug, limit)
 	if err != nil {
+		if isUndefinedTable(err) {
+			slog.WarnContext(ctx, "catalog tables absent; SampleFieldValues → empty samples", "tenant", tenantIDOrSlug)
+			return result, nil
+		}
 		return nil, fmt.Errorf("sample field values: %w", err)
 	}
 	defer rows.Close()

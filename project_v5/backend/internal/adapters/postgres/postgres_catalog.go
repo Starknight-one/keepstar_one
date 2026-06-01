@@ -210,6 +210,10 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 	}
 
 	if err = a.client.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		if isUndefinedTable(err) {
+			slog.WarnContext(ctx, "catalog.products/master tables absent; ListProducts degrading to empty", "tenant", tenantID)
+			return nil, 0, nil
+		}
 		err = fmt.Errorf("count products: %w", err)
 		return nil, 0, err
 	}
@@ -243,6 +247,10 @@ func (a *CatalogAdapter) ListProducts(ctx context.Context, tenantID string, filt
 
 	rows, err := a.client.pool.Query(ctx, baseQuery, args...)
 	if err != nil {
+		if isUndefinedTable(err) {
+			slog.WarnContext(ctx, "catalog.products/master tables absent; ListProducts degrading to empty", "tenant", tenantID)
+			return nil, 0, nil
+		}
 		err = fmt.Errorf("query products: %w", err)
 		return nil, 0, err
 	}
@@ -271,6 +279,10 @@ func (a *CatalogAdapter) GetProduct(ctx context.Context, tenantID string, produc
 	p, err := scanCatalogProduct(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrProductNotFound
+		}
+		if isUndefinedTable(err) {
+			slog.WarnContext(ctx, "catalog.products/master tables absent; GetProduct → not found", "tenant", tenantID)
 			return nil, domain.ErrProductNotFound
 		}
 		return nil, fmt.Errorf("query product: %w", err)
@@ -537,6 +549,10 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 	`
 	catRows, err := a.client.pool.Query(ctx, catQuery, tenantID)
 	if err != nil {
+		if isUndefinedTable(err) {
+			slog.WarnContext(ctx, "catalog tables absent; BuildCatalogDigest → empty digest", "tenant", tenantID)
+			return &domain.CatalogDigest{GeneratedAt: time.Now(), TotalProducts: 0}, nil
+		}
 		return nil, fmt.Errorf("query categories: %w", err)
 	}
 	defer catRows.Close()

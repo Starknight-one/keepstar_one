@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/pgvector/pgvector-go"
 	"keepstar_v5/internal/domain"
@@ -62,6 +63,10 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 
 	rows, err := a.client.pool.Query(ctx, query, args...)
 	if err != nil {
+		if isUndefinedTable(err) {
+			slog.WarnContext(ctx, "catalog tables absent; VectorSearch degrading to empty", "tenant", tenantID)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("vector search: %w", err)
 	}
 	defer rows.Close()
@@ -138,6 +143,10 @@ func (a *CatalogAdapter) SearchProjection(ctx context.Context, tenantID string, 
 
 	rows, err := a.client.pool.Query(ctx, query, args...)
 	if err != nil {
+		if isUndefinedTable(err) {
+			slog.WarnContext(ctx, "catalog tables absent; SearchProjection degrading to empty", "tenant", tenantID)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("search projection: %w", err)
 	}
 	defer rows.Close()

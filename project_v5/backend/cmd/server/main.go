@@ -106,7 +106,9 @@ func main() {
 
 	// Handlers + routing.
 	sessionH := handlers.NewSessionHandler(statePort, pgClient.Pool())
-	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, log)
+	pipelineGuard := handlers.NewPipelineGuard(cfg.PipelineRatePerMin, cfg.PipelineDailyUSDCap, log)
+	log.Info("pipeline_guard_configured", "rate_per_min", cfg.PipelineRatePerMin, "daily_usd_cap", cfg.PipelineDailyUSDCap)
+	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, pipelineGuard, log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
 	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH)

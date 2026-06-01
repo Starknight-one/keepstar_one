@@ -25,14 +25,16 @@ import (
 type PipelineHandler struct {
 	pipeline *usecases.PipelineExecute
 	tracer   ports.TracePort // optional; nil disables persistence
+	guard    *PipelineGuard  // optional; nil disables rate/spend limits
 	log      *slog.Logger
 }
 
 // NewPipelineHandler constructs the handler. tracer is optional —
 // nil disables trace persistence (used by tests that don't need it).
+// guard is optional — nil disables rate limiting and the daily spend cap.
 // log is required so the async persist goroutine can log failures.
-func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePort, log *slog.Logger) *PipelineHandler {
-	return &PipelineHandler{pipeline: pipeline, tracer: tracer, log: log}
+func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePort, guard *PipelineGuard, log *slog.Logger) *PipelineHandler {
+	return &PipelineHandler{pipeline: pipeline, tracer: tracer, guard: guard, log: log}
 }
 
 type pipelineRequest struct {
@@ -67,6 +69,21 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	// Guard the only paid-LLM endpoint: per-IP rate limit + global daily
+	// spend ceiling. Checked before we read the body so abusive callers are
+	// rejected cheaply.
+	if ok, reason := h.guard.Allow(clientIP(r)); !ok {
+		switch reason {
+		case "budget":
+			h.log.Warn("pipeline_daily_budget_exceeded", "ip", clientIP(r))
+			http.Error(w, "service temporarily unavailable, try again later", http.StatusServiceUnavailable)
+		default:
+			http.Error(w, "rate limit exceeded, slow down", http.StatusTooManyRequests)
+		}
+		return
+	}
+
 	var req pipelineRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -92,7 +109,10 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		// Persist the failed turn too — operators need to see error
 		// traces in Curator (the dominant debugging signal).
 		h.persistTrace(r.Context(), req, tenant, nil, err)
-		http.Error(w, "pipeline failed: "+err.Error(), http.StatusInternalServerError)
+		// Log the real error server-side; return a generic message so we
+		// don't leak internals (DB errors, prompt detail) to the client.
+		h.log.Error("pipeline_execute_failed", "err", err, "session_id", req.SessionID, "tenant", tenant.Slug)
+		http.Error(w, "pipeline failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -109,6 +129,9 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		out.Spans = sc.Spans()
 	}
 	writeJSON(w, http.StatusOK, out)
+
+	// Record the turn's actual cost against the daily spend ceiling.
+	h.guard.RecordCost(resp.Usage.CostUSD)
 
 	// Trace persistence — fire after the response is on the wire so
 	// the user never waits on this. Caller's request context may be
