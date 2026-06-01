@@ -7,19 +7,21 @@ two-agent LLM pipeline. The merchant embeds a single `<script>` tag
 and gets an AI assistant with visual answers, no in-house dev work.
 
 V5 is the production chat engine (`project_v5/`, live at
-`v5-engine-production.up.railway.app`). Admin SPA and curator service
-share the same Neon Postgres.
+`v5-engine-production.up.railway.app`). **This repo is now the V5 engine
+core** — Admin, Curator, and the Landing were extracted to their own repos
+(`keepstar-admin` / `keepstar-curator` / `keepstar-landing`). All services
+share the same Neon Postgres (flat-moon, owned by Admin).
 
 > **New here?** Start with [`../MANIFESTO.md`](../MANIFESTO.md) (product vision /
 > north-star) and [`../FINAL_PHASE_PLAN.md`](../FINAL_PHASE_PLAN.md) (current
 > priorities). The project is decomposing into focused services
-> (PIM · Connector · Price-Stock · v5-engine); this repo is being slimmed toward
+> (PIM · Connector · Price-Stock · v5-engine); this repo is now slimmed to
 > the v5 engine core. See `CLAUDE.md` for day-to-day navigation.
 
 ## Getting around
 
 - **`CLAUDE.md`** — working context for AI assistants: routing to per-domain experts, dev essentials, 12 working rules.
-- **`.claude/commands/experts/README.md`** — per-domain expertise (catalog, engine-v5, pipeline-agents, widget, admin, curator). Self-updates from code via a SessionEnd hook.
+- **`.claude/commands/experts/README.md`** — per-domain expertise (engine-v5, pipeline-agents, widget). Self-updates from code via a SessionEnd hook.
 - **`docs/Updates/`** — chronological session dev logs.
 - **`docs/CATALOG_GAPS.md`**, **`docs/v5-known-gaps.md`**, **`docs/PRE_LAUNCH_TASKS.md`** — live trackers.
 
@@ -34,10 +36,6 @@ Or per-service:
 ```bash
 cd project_v5/backend     && go run ./cmd/server         # :8084
 cd project_v5/frontend    && npm install && npm run dev  # :5173
-cd project_admin/backend  && go run ./cmd/server         # :8081
-cd project_admin/frontend && npm run dev                 # :5174
-cd curator/backend        && go run ./cmd/server         # :8082
-cd curator/frontend       && npm run dev                 # :5175
 ```
 
 DB: shared Neon Postgres. `DATABASE_URL` lives in `project_v5/.env`.

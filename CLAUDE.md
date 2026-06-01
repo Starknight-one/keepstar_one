@@ -1,7 +1,7 @@
 # Keepstar One Ultra
 
-> Project context kept thin. Anything domain-specific (catalog, engine,
-> pipeline, widget, admin, curator) lives in the experts — they
+> Project context kept thin. Anything domain-specific (engine,
+> pipeline, widget) lives in the experts — they
 > self-update from code (see `.claude/commands/experts/README.md`).
 > This file holds: what the project is, how to navigate, project-specific
 > working rules.
@@ -15,19 +15,21 @@ two-agent LLM pipeline. The merchant embeds a single `<script>` tag
 and gets an AI assistant with visual answers, no in-house dev work.
 
 V5 is the production chat engine (`project_v5/`, live at
-`v5-engine-production.up.railway.app`). V4 (`project_v4/`) is being
-phased out — touch only when the question is V4-specific.
+`v5-engine-production.up.railway.app`). **This monorepo is now the V5
+engine core** — Admin, Curator, and the Landing were extracted to their
+own repos (`keepstar-admin`, `keepstar-curator`, `keepstar-landing`);
+PIM / Connector / Price-Stock are also separate repos.
 
 ## Routing — ask the expert first
 
 | Question is about… | Ask |
 |---|---|
-| Catalog ingest, harvester, discovery agent, mapping artifact, merge_apply, Shopify integration, master_products / master_variants / master_cosmetics, V4 chat catalog read | `/experts:catalog:question` |
 | V5 scene-graph engine: 14 node types, 5 ops, presets, binding, TreeMap, `$ref` resolution | `/experts:engine-v5:question` |
 | V5 pipeline: Agent1/Agent2, prompts, tools, prompt caching, span tracing, anthropic adapter | `/experts:pipeline-agents:question` |
 | V5 widget frontend: Shadow DOM, SceneGraphRenderer, NodeRenderer, action dispatch, fillTemplate | `/experts:widget:question` |
-| Auth, billing, KeepstarCanvas, admin SPA, Resend/Google/Telegram/TOTP adapters | `/experts:admin:question` |
-| Curator service: candidate queues, junk, audit, tenants dashboard, master catalog browse, MergeProxy | `/experts:curator:question` |
+
+> Admin / Curator / catalog ingest now live in their own repos
+> (`keepstar-admin`, `keepstar-curator`) — not in this monorepo.
 
 Reach for an expert BEFORE grep / Read. The expert returns `file:line`
 refs and routes to a related expert when the answer crosses domains.
@@ -48,13 +50,10 @@ refs and routes to a related expert when the answer crosses domains.
 |---|---|---|---|
 | V5 chat backend (production) | `project_v5/backend/` | 8084 | `v5-engine-production.up.railway.app` |
 | V5 widget | `project_v5/frontend/` | 5173 | served by V5 backend |
-| Admin backend | `project_admin/backend/` | 8081 | `admin-production-4ae4.up.railway.app` |
-| Admin frontend | `project_admin/frontend/` | 5174 | (served by admin) |
-| Curator | `curator/` | 8082 (separate) | `curator-production-46d7.up.railway.app` |
 
 - Run everything: `scripts/start_all.sh` (stop: `stop_all.sh`).
 - `psql`: `/opt/homebrew/Cellar/libpq/18.1_1/bin/psql`.
-- DB: shared Neon Postgres. `DATABASE_URL` in `project_v4/.env` works for all services.
+- DB: shared Neon Postgres (flat-moon, owned by Admin). V5 reads `catalog.*` read-only via `DATABASE_URL` in `project_v5/.env`.
 - Tests: `go test ./...` in each backend; `npm test` in each frontend.
 
 ## Project-specific rules
