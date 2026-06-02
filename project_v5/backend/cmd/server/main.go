@@ -62,6 +62,23 @@ func main() {
 		log.Info("migration applied", "name", mig.name)
 	}
 
+	// Catalog schema-version gate. Admin owns catalog.* migrations and stamps
+	// catalog.schema_version after each successful run. Fail LOUD if the DB schema
+	// is behind what this build requires (a deploy-order / drift error); fail OPEN
+	// if the table is absent (bootstrap, or admin not yet deployed) so we never take
+	// the shopper-facing engine down over a missing version row.
+	const minCatalogSchemaVersion = 1
+	if v, present, err := pgClient.CatalogSchemaVersion(bootCtx); err != nil {
+		log.Warn("catalog schema_version check skipped", "err", err)
+	} else if !present {
+		log.Warn("catalog.schema_version absent — proceeding (admin may not have stamped it yet)")
+	} else if v < minCatalogSchemaVersion {
+		log.Error("catalog schema behind required version — refusing to boot", "have", v, "need", minCatalogSchemaVersion)
+		os.Exit(1)
+	} else {
+		log.Info("catalog schema_version ok", "version", v)
+	}
+
 	// Adapters → ports. Preset adapter uses a system fallback registry
 	// so any LLM ask for a name no tenant has authored (product_detail,
 	// empty_not_found, ...) resolves via the embedded JSON shipped with
