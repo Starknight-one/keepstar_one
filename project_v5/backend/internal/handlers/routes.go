@@ -30,6 +30,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //	POST /api/v1/actions                     — like / unlike / cart_add / cart_remove
 //	POST /api/v1/navigation/expand           — drill into detail preset
 //	POST /api/v1/navigation/back             — pop view stack, restore prior template
+//	POST /api/v1/navigation/filter           — deterministic brand re-filter of the current grid
 //
 // Middleware chain (outermost to innermost):
 //
@@ -63,6 +64,7 @@ func RegisterRoutes(
 	mux.HandleFunc("POST /api/v1/actions", action.Action)
 	mux.HandleFunc("POST /api/v1/navigation/expand", navigation.Expand)
 	mux.HandleFunc("POST /api/v1/navigation/back", navigation.Back)
+	mux.HandleFunc("POST /api/v1/navigation/filter", navigation.Filter)
 
 	// Static fileserver (V4 pattern, project_v4/backend/cmd/server/main.go:347-357).
 	// Serves the V5 widget IIFE bundle (widget.js + widget.html) from same

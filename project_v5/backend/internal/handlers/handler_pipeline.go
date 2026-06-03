@@ -57,6 +57,10 @@ type pipelineResponse struct {
 	// the active preset has no registered drill target or the data
 	// zone is empty.
 	Prefetch *usecases.PrefetchPayload `json:"prefetch,omitempty"`
+	// Facets are the data-derived filter dimensions for this result set
+	// (deterministic; computed from the products zone). Empty when there
+	// are no usable filters. The widget renders typed controls from these.
+	Facets []usecases.Facet `json:"facets,omitempty"`
 	// Spans is the request waterfall captured by SpanCollector — useful
 	// for client-side debugging until the /debug/traces UI ships. Empty
 	// (omitted) when the logging middleware didn't attach a collector.
@@ -124,6 +128,7 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		Agent1Ms:  resp.Agent1Ms,
 		Agent2Ms:  resp.Agent2Ms,
 		Prefetch:  resp.Prefetch,
+		Facets:    resp.Facets,
 	}
 	if sc := domain.SpanFromContext(r.Context()); sc != nil {
 		out.Spans = sc.Spans()

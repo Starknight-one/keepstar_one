@@ -36,6 +36,11 @@ type PipelineExecuteResponse struct {
 	// active preset has no registered drill target or the data zone is
 	// empty. See PrefetchBuilder for the build rules.
 	Prefetch *PrefetchPayload
+
+	// Facets are the data-derived filter dimensions for the current result
+	// set (deterministic — computed from the products zone, no LLM). Empty
+	// when there are no usable filters.
+	Facets []Facet
 }
 
 // PipelineExecute is the two-agent orchestrator. Agent1 fetches/filters data
@@ -149,15 +154,19 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		Agent2Ms:  a2.LatencyMs,
 	}
 
-	// Prefetch — best effort; failures log at debug and ship a nil
-	// prefetch so the frontend falls back to a /navigation/expand
-	// round-trip on drill clicks.
-	if uc.prefetch != nil && uc.state != nil {
-		sourcePreset := readPresetInUse(a2.Document)
-		if sourcePreset != "" {
-			state, err := uc.state.GetState(ctx, req.SessionID)
-			if err == nil {
-				resp.Prefetch = uc.prefetch.Build(ctx, req.TenantSlug, sourcePreset, state.Current.Data.Products)
+	// Data-derived filter facets + 1-level navigation prefetch — both read
+	// the products zone after Agent2. Facets are deterministic and depend
+	// only on the data (built on any turn with products); prefetch also
+	// needs a preset with a registered drill target. Best effort: failures
+	// ship empty facets / nil prefetch.
+	if uc.state != nil {
+		if state, err := uc.state.GetState(ctx, req.SessionID); err == nil {
+			products := state.Current.Data.Products
+			resp.Facets = BuildGuidedFacets(products, nil)
+			if uc.prefetch != nil {
+				if sourcePreset := readPresetInUse(a2.Document); sourcePreset != "" {
+					resp.Prefetch = uc.prefetch.Build(ctx, req.TenantSlug, sourcePreset, products)
+				}
 			}
 		}
 	}

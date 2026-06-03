@@ -345,3 +345,108 @@
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(91, 164, 217, 0.18);
 }
+
+/* Filter panel — collapsible drawer in the chat column, holds chips. --- */
+.kw-filter-panel {
+  flex-shrink: 0;
+  border-top: 1px solid var(--kw-border);
+}
+
+.kw-filter-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--kw-gap-sm) var(--kw-gap-md);
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: var(--kw-fs-sm);
+  font-weight: var(--kw-fw-medium);
+  color: var(--kw-text);
+  cursor: pointer;
+}
+
+.kw-filter-caret {
+  color: var(--kw-text-muted);
+}
+
+.kw-filter-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 200ms ease;
+  padding: 0 var(--kw-gap-md);
+}
+
+.kw-filter-panel[data-open='true'] .kw-filter-body {
+  max-height: 240px;
+  overflow-y: auto;
+  padding-bottom: var(--kw-gap-md);
+}
+
+.kw-filter-group-label {
+  font-size: var(--kw-fs-xs);
+  font-weight: var(--kw-fw-semibold);
+  color: var(--kw-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--kw-gap-sm);
+}
+
+.kw-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kw-gap-sm);
+}
+
+.kw-chip {
+  padding: 4px 12px;
+  background: #f1f5f9;
+  color: var(--kw-text);
+  border: 1px solid var(--kw-border);
+  border-radius: 999px;
+  font-size: var(--kw-fs-xs);
+  font-weight: var(--kw-fw-medium);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.kw-chip:hover {
+  border-color: var(--kw-blue);
+}
+
+.kw-chip[data-active='true'] {
+  background: var(--kw-blue);
+  color: white;
+  border-color: var(--kw-blue);
+}
+
+.kw-facet {
+  margin-bottom: var(--kw-gap-md);
+}
+
+.kw-range-row {
+  display: flex;
+  align-items: center;
+  gap: var(--kw-gap-sm);
+}
+
+.kw-range-input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px var(--kw-gap-sm);
+  border: 1px solid var(--kw-border);
+  border-radius: var(--kw-radius);
+  font-size: var(--kw-fs-xs);
+  font-family: inherit;
+  outline: none;
+}
+
+.kw-range-input:focus {
+  border-color: var(--kw-blue);
+}
+
+.kw-range-sep {
+  color: var(--kw-text-muted);
+}

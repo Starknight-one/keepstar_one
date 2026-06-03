@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"time"
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/ports"
+	"keepstar_v5/internal/usecases"
 )
 
 // NavigationHandler owns POST /api/v1/navigation/expand and
@@ -56,6 +58,14 @@ type backRequest struct {
 	TurnID    string `json:"turnId,omitempty"`
 }
 
+type filterRequest struct {
+	SessionID string                   `json:"sessionId"`
+	Filters   []usecases.AppliedFilter `json:"filters"`
+	SortField string                   `json:"sortField,omitempty"` // price | rating | name
+	SortOrder string                   `json:"sortOrder,omitempty"` // asc | desc
+	TurnID    string                   `json:"turnId,omitempty"`
+}
+
 type navResponse struct {
 	Success     bool                   `json:"success"`
 	Document    map[string]interface{} `json:"document,omitempty"`
@@ -64,6 +74,9 @@ type navResponse struct {
 	StackSize   int                    `json:"stackSize"`
 	CanGoBack   bool                   `json:"canGoBack"`
 	PresetInUse string                 `json:"presetInUse,omitempty"`
+	// Facets is set by Filter — the guided, data-derived filter dimensions
+	// recomputed for the active filter set. Omitted by expand/back.
+	Facets []usecases.Facet `json:"facets,omitempty"`
 }
 
 // Expand handles POST /api/v1/navigation/expand.
@@ -257,6 +270,98 @@ func (h *NavigationHandler) Back(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Filter handles POST /api/v1/navigation/filter — a deterministic
+// (no-LLM) re-render of the CURRENT grid preset against the products in
+// the data zone, narrowed by brand. Empty brand resets to the full set.
+// current_data is NOT mutated (the full set is kept so a reset re-renders
+// everything); only current.template is updated. This is the cheap
+// interaction path: a brand chip click re-filters with zero LLM cost.
+func (h *NavigationHandler) Filter(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req filterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" {
+		http.Error(w, "sessionId is required", http.StatusBadRequest)
+		return
+	}
+
+	tenant := TenantFromContext(r.Context())
+	if tenant == nil {
+		http.Error(w, "tenant unresolved", http.StatusInternalServerError)
+		return
+	}
+
+	state, err := h.state.GetState(r.Context(), req.SessionID)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	// The grid can only be re-rendered deterministically when a preset is
+	// stamped on the current template (freestyle / detail views have none).
+	sourcePreset := readPresetInUseMap(state.Current.Template)
+	if sourcePreset == "" {
+		http.Error(w, "no grid preset to filter on the current view", http.StatusBadRequest)
+		return
+	}
+
+	// Apply the active filter set over the FULL current data set (empty set
+	// = reset). current_data is left untouched so a reset shows everything
+	// again and stacked filters always recompute from the same base.
+	filtered := usecases.FilterProducts(state.Current.Data.Products, req.Filters)
+
+	// Optional deterministic sort over the filtered slice (in-memory, no LLM).
+	if req.SortField != "" {
+		filtered = sortProducts(filtered, req.SortField, req.SortOrder)
+	}
+
+	doc, err := h.materialiseGrid(r.Context(), tenant.Slug, sourcePreset, filtered)
+	if err != nil {
+		http.Error(w, "filter render failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	templateMap, err := engineDocToHandlerMap(doc)
+	if err != nil {
+		http.Error(w, "marshal document: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	templateMap[domain.TemplatePresetInUseKey] = sourcePreset
+
+	templateInfo := domain.DeltaInfo{
+		TurnID:    req.TurnID,
+		Trigger:   domain.TriggerWidgetAction,
+		Source:    domain.SourceUser,
+		ActorID:   "user_filter",
+		DeltaType: domain.DeltaTypeUpdate,
+		Path:      "current.template",
+	}
+	if _, err := h.state.UpdateTemplate(r.Context(), req.SessionID, templateMap, templateInfo); err != nil {
+		http.Error(w, "update template: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	stack, _ := h.state.GetViewStack(r.Context(), req.SessionID)
+	// Guided facets — recomputed over the base set with the active filters
+	// so the panel reflects what's still available after filtering.
+	facets := usecases.BuildGuidedFacets(state.Current.Data.Products, req.Filters)
+	writeJSON(w, http.StatusOK, navResponse{
+		Success:     true,
+		Document:    templateMap,
+		ViewMode:    state.View.Mode,
+		Focused:     state.View.Focused,
+		StackSize:   len(stack),
+		CanGoBack:   len(stack) > 0,
+		PresetInUse: sourcePreset,
+		Facets:      facets,
+	})
+}
+
 // materialise loads target preset + components and runs the V5 engine
 // pipeline (Materialise → ResolveAndInline → BindData → InjectDefaultActions)
 // against ONE entity. No replicate fan-out — detail views render a
@@ -289,6 +394,80 @@ func (h *NavigationHandler) materialise(ctx context.Context, tenantSlug string, 
 	engine.BindData(merged, []map[string]any{entity})
 	engine.InjectDefaultActions(merged, domain.EntityTypeProduct, []map[string]any{entity})
 	return merged, nil
+}
+
+// materialiseGrid renders a GRID preset against a LIST of products
+// (replicate fan-out), mirroring the rebuild+preset path of the
+// visual_assembly tool but without the LLM. Used by Filter to re-render
+// the current grid against a filtered product slice deterministically.
+// Note: ops the LLM may have layered on the original grid are not
+// replayed — this renders the clean preset against the filtered data.
+func (h *NavigationHandler) materialiseGrid(ctx context.Context, tenantSlug, presetName string, products []domain.Product) (*engine.Document, error) {
+	preset, err := h.presets.GetPublishedPreset(ctx, tenantSlug, presetName)
+	if err != nil {
+		return nil, fmt.Errorf("load preset %q: %w", presetName, err)
+	}
+	presetDoc, err := unmarshalPresetDoc(preset.DocumentJSON)
+	if err != nil {
+		return nil, fmt.Errorf("parse preset doc: %w", err)
+	}
+
+	componentList, err := h.components.ListPublishedComponents(ctx, tenantSlug)
+	if err != nil {
+		return nil, fmt.Errorf("list components: %w", err)
+	}
+	componentDocs := make([]*engine.Document, 0, len(componentList))
+	for _, c := range componentList {
+		cd, err := unmarshalPresetDoc(c.DocumentJSON)
+		if err != nil {
+			h.log.Debug("filter: component doc unmarshal failed; skipping", "component", c.Name, "err", err)
+			continue
+		}
+		componentDocs = append(componentDocs, cd)
+	}
+
+	data := make([]map[string]any, len(products))
+	for i, p := range products {
+		data[i] = engine.ProductToMap(p)
+	}
+
+	merged := engine.Materialise(presetDoc, componentDocs)
+	engine.ExpandReplicates(merged, len(products))
+	engine.ResolveAndInline(merged)
+	engine.BindData(merged, data)
+	engine.InjectDefaultActions(merged, domain.EntityTypeProduct, data)
+	return merged, nil
+}
+
+// sortProducts returns a sorted COPY of products (never mutates the input,
+// which may alias state.Current.Data). field: price|rating|name; order desc
+// reverses. Unknown field → unchanged copy. Deterministic, no LLM.
+func sortProducts(products []domain.Product, field, order string) []domain.Product {
+	out := make([]domain.Product, len(products))
+	copy(out, products)
+	desc := order == "desc"
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		switch field {
+		case "price":
+			if desc {
+				return a.Price > b.Price
+			}
+			return a.Price < b.Price
+		case "rating":
+			if desc {
+				return a.Rating > b.Rating
+			}
+			return a.Rating < b.Rating
+		case "name":
+			if desc {
+				return a.Name > b.Name
+			}
+			return a.Name < b.Name
+		}
+		return false
+	})
+	return out
 }
 
 // unmarshalPresetDoc parses raw doc bytes into engine.Document.

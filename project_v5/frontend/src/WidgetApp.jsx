@@ -4,6 +4,7 @@ import SceneGraphRenderer from './renderer/SceneGraphRenderer'
 import RenderContext from './renderer/RenderContext'
 import { dispatchAction } from './renderer/actionDispatch'
 import { initSession, pipelineRequest } from './api/client'
+import { filterApply } from './api/actions'
 
 // WidgetApp — root component. Owns:
 //   - sessionId           (created on mount via /session/init)
@@ -25,6 +26,11 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
   const [doc, setDoc] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const [canGoBack, setCanGoBack] = useState(false)
+  // Data-derived filter facets for the current result set (from each
+  // pipeline / filter response) + an epoch that bumps on every new search
+  // so the filter panel clears its selections when the result set changes.
+  const [facets, setFacets] = useState([])
+  const [searchEpoch, setSearchEpoch] = useState(0)
 
   // Prefetch lives in a ref because actionDispatch reads it per click
   // and we don't want a re-render on every refresh. Updated on every
@@ -76,6 +82,8 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
         // canGoBack defaults to false. Drill / back actions update it
         // independently.
         setCanGoBack(false)
+        setFacets(resp.facets || [])
+        setSearchEpoch((e) => e + 1)
         const ack = ackText(resp)
         setMessages((m) => [...m, { role: 'bot', text: ack }])
       } catch (err) {
@@ -84,6 +92,26 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
         setMessages((m) => [...m, { role: 'error', text: err.message }])
       } finally {
         setIsLoading(false)
+      }
+    },
+    [apiBaseUrl, sessionId, tenantSlug],
+  )
+
+  // onFilter — brand chip click. Calls the deterministic filter endpoint
+  // (no LLM) and swaps the document with the re-filtered grid. Empty
+  // brand resets to the full set.
+  const onFilter = useCallback(
+    async ({ filters, sort }) => {
+      if (!sessionId) return
+      try {
+        const resp = await filterApply({ baseUrl: apiBaseUrl, tenantSlug, sessionId, filters, sort })
+        if (resp?.document) setDoc(resp.document)
+        if (Array.isArray(resp?.facets)) setFacets(resp.facets)
+        setCanGoBack(Boolean(resp?.canGoBack))
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[v5-renderer] filter failed', err)
+        setMessages((m) => [...m, { role: 'error', text: err.message }])
       }
     },
     [apiBaseUrl, sessionId, tenantSlug],
@@ -170,6 +198,9 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
         onSend={handleSend}
         isLoading={isLoading}
         inputRef={chatInputRef}
+        facets={facets}
+        searchEpoch={searchEpoch}
+        onFilter={onFilter}
       />
     </div>
   )

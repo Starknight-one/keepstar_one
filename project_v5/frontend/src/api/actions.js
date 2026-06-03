@@ -58,6 +58,27 @@ export async function goBack({ baseUrl, tenantSlug, sessionId }) {
   return res.json()
 }
 
+// filterApply re-renders the current grid preset narrowed by the active
+// filter set — deterministic, no LLM. Empty set resets to the full data.
+// `filters` is the full active set: [{key, type:'enum'|'range', values?,
+// min?, max?}]. Returns the nav response ({document, facets, canGoBack});
+// caller swaps the document and updates the (guided) facets.
+export async function filterApply({ baseUrl, tenantSlug, sessionId, filters, sort }) {
+  const res = await fetch(`${baseUrl}/navigation/filter`, {
+    method: 'POST',
+    headers: {
+      ...tenantHeaders(tenantSlug),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId, filters, sortField: sort?.field, sortOrder: sort?.order }),
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`navigation/filter ${res.status}: ${body}`)
+  }
+  return res.json()
+}
+
 function tenantHeaders(tenantSlug) {
   return tenantSlug ? { 'X-Tenant-Slug': tenantSlug } : {}
 }
