@@ -19,11 +19,13 @@ import (
 // Cache key: tenant slug (or UUID — adapter handles both).
 // Value: the fully-assembled prompt + a built-at timestamp for observability.
 //
-// Invalidation: chunk 6b ships without explicit invalidation. When the
-// tenant_design_context block lands (chunk 6c+), invalidation will hook
-// into a version snapshot identical to V4's pattern.
+// Invalidation: Invalidate(tenant) drops a tenant's cached entry. The
+// curator cockpit calls POST /api/v1/internal/presets/cache-invalidate
+// after a tenant publishes a preset so the next turn rebuilds the
+// <tenant_design_context> block.
 type PromptCache struct {
 	fdPort     ports.FieldDefinitionPort
+	presetPort ports.PresetPort
 	store      sync.Map // tenantKey → *promptCacheEntry
 	entityType domain.EntityType
 }
@@ -34,8 +36,8 @@ type promptCacheEntry struct {
 }
 
 // NewPromptCache constructs a cache. entityType usually "product".
-func NewPromptCache(fdPort ports.FieldDefinitionPort, entityType domain.EntityType) *PromptCache {
-	return &PromptCache{fdPort: fdPort, entityType: entityType}
+func NewPromptCache(fdPort ports.FieldDefinitionPort, presetPort ports.PresetPort, entityType domain.EntityType) *PromptCache {
+	return &PromptCache{fdPort: fdPort, presetPort: presetPort, entityType: entityType}
 }
 
 // GetOrBuild returns the assembled prompt for tenantSlugOrID, building it
@@ -51,7 +53,13 @@ func (c *PromptCache) GetOrBuild(ctx context.Context, tenantSlugOrID string, sam
 	if err != nil {
 		return "", err
 	}
-	assembled := prompts.AssembleSystemPrompt(prompts.Agent2SystemPrompt, fields)
+	// Published-preset catalog. Best-effort enrichment — FormatTenantDesignContext
+	// fails open to an empty block, so a preset-read error never blocks the turn.
+	designContext, err := prompts.FormatTenantDesignContext(ctx, c.presetPort, tenantSlugOrID)
+	if err != nil {
+		return "", err
+	}
+	assembled := prompts.AssembleSystemPrompt(prompts.Agent2SystemPrompt, designContext, fields)
 	c.store.Store(tenantSlugOrID, &promptCacheEntry{prompt: assembled, builtAt: time.Now()})
 	return assembled, nil
 }

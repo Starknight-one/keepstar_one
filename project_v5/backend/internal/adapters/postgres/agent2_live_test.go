@@ -92,7 +92,7 @@ func TestAgent2LiveSmoke(t *testing.T) {
 	registry.Register(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort))
 
 	// Build Agent2 use case.
-	promptCache := usecases.NewPromptCache(fdPort, "product")
+	promptCache := usecases.NewPromptCache(fdPort, presetPort, "product")
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
 
 	// 4. Create session + pre-populate state.Current.Data (Agent1 stand-in).

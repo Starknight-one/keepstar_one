@@ -82,7 +82,7 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	registry.Register(tools.NewStateFilterTool(statePort))
 	registry.Register(tools.NewHistoryLookupTool(statePort))
 
-	promptCache := usecases.NewPromptCache(fdPort, "product")
+	promptCache := usecases.NewPromptCache(fdPort, presetPort, "product")
 	agent1Cache := usecases.NewAgent1PromptCache(catalog)
 	agent1 := usecases.NewAgent1Execute(llm, statePort, catalog, registry, agent1Cache, log)
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
@@ -94,7 +94,8 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, nil, log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
-	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH)
+	presetH := handlers.NewPresetHandler(promptCache)
+	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH, presetH)
 
 	srv := httptest.NewServer(router)
 	defer srv.Close()

@@ -231,17 +231,25 @@ func nameContainsAny(name string, subs ...string) bool {
 	return false
 }
 
-// AssembleSystemPrompt joins the base body, the <fields> block, and any
-// future blocks into a single string with stable separators.
+// AssembleSystemPrompt joins the base body, the <tenant_design_context>
+// block, the <fields> block, and any future blocks into a single string
+// with stable separators.
 //
 // Order matters for the prompt cache: base prompt and tools are cached
-// (V4 pattern) and the fields block typically also stable per-tenant
-// during a session, so it sits inside the cacheable prefix. Anything
-// dynamic per-turn (tree_map, conversation history) is appended by the
-// adapter — NOT here.
-func AssembleSystemPrompt(base, fieldsBlock string) string {
-	if fieldsBlock == "" {
-		return base
+// (V4 pattern) and both per-tenant blocks are stable per-tenant during a
+// session, so they sit inside the cacheable prefix. designContext goes
+// before fields so the agent reads its preset catalog ahead of the field
+// vocabulary it uses to bind. Anything dynamic per-turn (tree_map,
+// conversation history) is appended by the adapter — NOT here. Empty
+// blocks are skipped so a tenant with no presets / no fields produces the
+// same bytes as the baseline.
+func AssembleSystemPrompt(base, designContext, fieldsBlock string) string {
+	out := base
+	if designContext != "" {
+		out += "\n\n" + designContext
 	}
-	return base + "\n\n" + fieldsBlock
+	if fieldsBlock != "" {
+		out += "\n\n" + fieldsBlock
+	}
+	return out
 }

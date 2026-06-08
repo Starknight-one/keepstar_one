@@ -114,7 +114,7 @@ func main() {
 	registry.Register(tools.NewStateFilterTool(statePort))
 	registry.Register(tools.NewHistoryLookupTool(statePort))
 
-	promptCache := usecases.NewPromptCache(fdPort, "product")
+	promptCache := usecases.NewPromptCache(fdPort, presetPort, "product")
 	agent1Cache := usecases.NewAgent1PromptCache(catalogPort)
 	agent1 := usecases.NewAgent1Execute(llm, statePort, catalogPort, registry, agent1Cache, log)
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
@@ -128,7 +128,8 @@ func main() {
 	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, pipelineGuard, log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
-	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH)
+	presetH := handlers.NewPresetHandler(promptCache)
+	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
