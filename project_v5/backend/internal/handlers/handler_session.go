@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
 	"keepstar_v5/internal/ports"
@@ -88,6 +90,75 @@ func (h *SessionHandler) Get(w http.ResponseWriter, r *http.Request) {
 		"step":      state.Step,
 		"current":   state.Current,
 		"view":      state.View,
+	})
+}
+
+// --- Internal control: kill switch (curator cockpit) ---
+
+// checkInternalKey gates the internal control endpoints. Empty env key ⇒ 503
+// (route effectively disabled, never accidentally exposed). Mismatch ⇒ 403.
+// Constant-time compare. These routes are exempt from WithTenant (see
+// middleware_tenant.go) and live under /api/v1/internal/.
+func checkInternalKey(w http.ResponseWriter, r *http.Request) bool {
+	want := os.Getenv("V5_INTERNAL_KEY")
+	if want == "" {
+		http.Error(w, "internal control disabled", http.StatusServiceUnavailable)
+		return false
+	}
+	got := r.Header.Get("X-Internal-Key")
+	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// Kill handles POST /api/v1/internal/session/{id}/kill. Soft-kills a session by
+// stamping killed_at; GetState then refuses it (domain.ErrSessionKilled) so
+// every continuation path stops. Idempotent (no-op if already killed). Never
+// hard-deletes — that would cascade away state/deltas/traces.
+func (h *SessionHandler) Kill(w http.ResponseWriter, r *http.Request) {
+	if !checkInternalKey(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "session id missing", http.StatusBadRequest)
+		return
+	}
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE v5_chat_sessions SET killed_at = NOW(), killed_reason = $2, updated_at = NOW()
+		 WHERE id = $1::uuid AND killed_at IS NULL`,
+		id, r.URL.Query().Get("reason"),
+	)
+	if err != nil {
+		http.Error(w, "kill failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"sessionId": id,
+		"killed":    tag.RowsAffected() > 0, // false ⇒ already killed or unknown id
+	})
+}
+
+// KillAll handles POST /api/v1/internal/sessions/kill-all. Incident kill switch:
+// soft-kills every ACTIVE session (updated within 30 min, not already killed)
+// across ALL tenants. Returns the count killed.
+func (h *SessionHandler) KillAll(w http.ResponseWriter, r *http.Request) {
+	if !checkInternalKey(w, r) {
+		return
+	}
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE v5_chat_sessions SET killed_at = NOW(), killed_reason = $1, updated_at = NOW()
+		 WHERE killed_at IS NULL AND updated_at > NOW() - INTERVAL '30 minutes'`,
+		r.URL.Query().Get("reason"),
+	)
+	if err != nil {
+		http.Error(w, "kill-all failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"killed": tag.RowsAffected(),
 	})
 }
 

@@ -104,14 +104,34 @@ func (a *StateAdapter) GetState(ctx context.Context, sessionID string) (out *dom
 		ctx, span = sc.StartSpan(ctx, "postgres.GetState")
 		span.SetAttr("session_id", sessionID)
 		defer func() {
-			// ErrSessionNotFound is a domain signal, not a transport
-			// failure — don't flag it as span error.
-			if err != nil && err != domain.ErrSessionNotFound {
+			// ErrSessionNotFound / ErrSessionKilled are domain signals, not
+			// transport failures — don't flag them as span errors.
+			if err != nil && err != domain.ErrSessionNotFound && err != domain.ErrSessionKilled {
 				span.SetError(err)
 			}
 			span.End()
 		}()
 	}
+
+	// Killed-session gate. A curator-issued kill stamps v5_chat_sessions.killed_at;
+	// refuse to load state so every continuation path (pipeline / actions /
+	// navigation — all funnel through GetState) stops at once. Cheap PK lookup.
+	var killed bool
+	if e := a.client.pool.QueryRow(ctx,
+		`SELECT killed_at IS NOT NULL FROM v5_chat_sessions WHERE id = $1`, sessionID,
+	).Scan(&killed); e != nil {
+		if e == pgx.ErrNoRows {
+			err = domain.ErrSessionNotFound
+			return nil, err
+		}
+		err = fmt.Errorf("get session killed-state: %w", e)
+		return nil, err
+	}
+	if killed {
+		err = domain.ErrSessionKilled
+		return nil, err
+	}
+
 	var state domain.SessionState
 	var dataJSON, metaJSON, templateJSON, viewFocusedJSON, viewStackJSON, conversationHistoryJSON, agent2HistoryJSON, actionsJSON []byte
 	var viewMode *string

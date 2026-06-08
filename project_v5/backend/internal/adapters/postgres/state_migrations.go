@@ -63,6 +63,11 @@ CREATE INDEX IF NOT EXISTS idx_v5_chat_session_deltas_session_step
     ON v5_chat_session_deltas(session_id, step);
 CREATE INDEX IF NOT EXISTS idx_v5_chat_session_deltas_source
     ON v5_chat_session_deltas(session_id, source);
+
+-- Kill switch (curator cockpit): soft-close a session. killed_at non-NULL ⇒
+-- GetState refuses it (ErrSessionKilled) so the engine stops serving it.
+ALTER TABLE v5_chat_sessions ADD COLUMN IF NOT EXISTS killed_at TIMESTAMPTZ;
+ALTER TABLE v5_chat_sessions ADD COLUMN IF NOT EXISTS killed_reason TEXT;
 `
 
 // RunStateMigrations applies the V5 state schema. Idempotent (CREATE IF NOT EXISTS).

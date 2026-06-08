@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/ports"
@@ -28,6 +29,12 @@ func TenantFromContext(ctx context.Context) *domain.Tenant {
 func WithTenant(catalog ports.CatalogPort, defaultSlug string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Internal control endpoints (curator kill switch) are tenant-agnostic
+			// and gated by X-Internal-Key inside the handler — skip tenant resolution.
+			if strings.HasPrefix(r.URL.Path, "/api/v1/internal/") {
+				next.ServeHTTP(w, r)
+				return
+			}
 			slug := r.Header.Get("X-Tenant-Slug")
 			if slug == "" {
 				slug = defaultSlug

@@ -60,6 +60,10 @@ func RegisterRoutes(
 	mux.HandleFunc("GET /readyz", ReadyzHandler(pool))
 	mux.HandleFunc("POST /api/v1/session/init", session.Init)
 	mux.HandleFunc("GET /api/v1/session/", session.Get)
+	// Internal control (curator cockpit kill switch) — gated by X-Internal-Key
+	// inside the handlers and exempt from WithTenant (middleware_tenant.go).
+	mux.HandleFunc("POST /api/v1/internal/session/{id}/kill", session.Kill)
+	mux.HandleFunc("POST /api/v1/internal/sessions/kill-all", session.KillAll)
 	mux.HandleFunc("POST /api/v1/pipeline", pipeline.Pipeline)
 	mux.HandleFunc("POST /api/v1/actions", action.Action)
 	mux.HandleFunc("POST /api/v1/navigation/expand", navigation.Expand)

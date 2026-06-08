@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -110,6 +111,13 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		UserQuery:  req.Query,
 	})
 	if err != nil {
+		// Killed session: a curator kill stamped killed_at and GetState now
+		// refuses it. Return a clean 409 (not a 500) and skip the error-trace —
+		// this is an intentional close, not a failure.
+		if errors.Is(err, domain.ErrSessionKilled) {
+			http.Error(w, "session closed", http.StatusConflict)
+			return
+		}
 		// Persist the failed turn too — operators need to see error
 		// traces in Curator (the dominant debugging signal).
 		h.persistTrace(r.Context(), req, tenant, nil, err)

@@ -11,6 +11,7 @@ func (e *Error) Unwrap() error { return e.Err }
 
 var (
 	ErrSessionNotFound = &Error{Code: "SESSION_NOT_FOUND", Message: "Session not found"}
+	ErrSessionKilled   = &Error{Code: "SESSION_KILLED", Message: "Session closed"}
 	ErrProductNotFound = &Error{Code: "PRODUCT_NOT_FOUND", Message: "Product not found"}
 	ErrTenantNotFound  = &Error{Code: "TENANT_NOT_FOUND", Message: "tenant not found"}
 	ErrPresetNotFound    = &Error{Code: "PRESET_NOT_FOUND", Message: "preset not found"}
