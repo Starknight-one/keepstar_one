@@ -36,7 +36,16 @@ Engine node pipeline needed **no behavior changes** — nodes are untyped proper
 - frontend: vitest 53/53 (10 new node-type tests asserting rendered inline styles, svg path presence, details/summary structure); `npm run build` ok; `dist/widget.js` 228,431 bytes (~71.3 KB gzip), +8.5 KB vs 219,924 baseline; bundle greps confirm `kw-rect`/`iconFontName` present.
 - Adversarial review (2 lenses) found 1 major — admin emitted `fills` as bare string while the ultra fixture/prompt teach the array form (cross-repo drift the fixture exists to prevent) — **fixed**: admin now emits `[]any{c}`, tests updated both sides, re-verified green. 3 minors fixed: collapsible body forwards `data-scroll`, empty collapsible body not rendered, collapsible×replicate clone now warns + prompt guard sentence. Known accepted nits: `tags` binding absent on tag-less products (atom stays empty inside a collapsed section); `<p>` inside `<summary>` violates the strict content model (browsers tolerate); height-only lines render horizontal (vertical needs both width+height).
 
+## Live verification (prod, 2026-06-10 ~19:00, deployed 12bc932)
+
+- New bundle live: polled `widget.js` on prod — `kw-rect` marker present ~20s after push.
+- Public pipeline smoke on tenant `pim-furniture-demo` (artifacts in `assets/feat-component-vocabulary_smoke_*.json`):
+  - `"compare a few dressers side by side"` → `__presetInUse: product_comparison`, 3 replicate clones, 6 line dividers (2×3 ✓), real bound data (names, "69 $"/"119 $", ratings, brands, Amazon hero URLs). One product lacks image/description in the catalog — atoms degrade silently by design.
+  - `"let me browse through all your nightstands"` → `__presetInUse: product_carousel`, `scroll:"x"` survived to the client, **50 replicate clones** — Agent2 fanned out the whole result set.
+- Internal preview endpoint not exercised (prod secret read denied — fine, public path proved more).
+
 ## Known follow-ups
-- Live smoke on deployed v5: ask for "compare X and Y" / "show me more like this" and confirm Agent2 actually picks `product_comparison`/`product_carousel`; deterministic check via `POST /api/v1/internal/presets/preview?tenant=…` for all 3 new presets once deployed.
+- ~~Live smoke on deployed v5~~ — done, see Live verification above. `product_detail_accordion` not yet exercised live (needs a drill/detail turn) — verify on next demo pass.
+- **`replicate` has no upper clamp** (`readReplicate` clamps negatives only): the carousel smoke fanned out 50 clones; the LLM could legally pick 500. Adjacent to gap A3 (pagination). Suggest a cap (~24) + "show more" as part of the A3 fix — do NOT bury the cap silently in a hotfix.
 - Prompt-cache bust is one-time per tenant on deploy (prompt edit) — expected cost blip.
 - ARCHITECTURE.md renderer section updated; `docs/v5-known-gaps.md` untouched (no A-gap closed/opened by PR1).
