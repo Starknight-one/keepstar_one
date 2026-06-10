@@ -141,13 +141,37 @@ vs V4 при сравнении side-by-side:
 | **A1. Greeting handling** | «Привет» → V5 рендерит `empty_not_found` preset. V4 рендерит greeting card («Привет! Чем могу помочь?») | Agent2 prompt не имеет greeting preset; падает на `empty_not_found` как ближайший «нет данных» fallback. Либо нужен `greeting` system preset, либо Agent2 должен возвращать text_explainer для conversational intent | Add greeting system preset + Agent2 prompt rules для conversational промптов |
 | **A2. Modify-vs-rebuild misclassification** | «Так а крема какие есть?» (после показа тонера) → V5 в modify-mode тыкает existing tree, НЕ вызывает catalog_search. Должен был rebuild со свежими данными | Agent1 NLU rules — нет жёсткого правила «другая категория → catalog_search». V4 имеет такие правила в системном промпте | Port V4 Agent1 rules «когда нужен catalog_search vs state_filter» |
 | **A3. Default replicate count + pagination** | V5 эмитит 3 карточки жёстко на любой search. V4 показывает все matched (e.g. 23 крема) + пагинирует «12 из 23» | Agent2 system prompt диктует replicate=3 как safe default. Backend не имеет pagination concept в frontend prefetch | Untangle replicate limit (Agent2 prompt) + add page state to engine + frontend pagination UI |
-| **A4. Back button absent in widget** | `/api/v1/navigation/back` зашипилось в chunk 11, но виджет НЕ рендерит «← Back» кнопку условно на viewStack.depth > 0 | Frontend `WidgetApp.jsx` / `ChatPanel.jsx` не подписан на viewStack из ответа pipeline | Frontend wiring — show back button when `state.viewStack.length > 0` |
+| **A4. Back button in widget — PARTIALLY CLOSED 2026-06-10** | Виджет теперь рендерит «← Back» (`project_v5/frontend/src/WidgetApp.jsx` ~181-185), backed by server view-stack. Остаток: `canGoBack` — client-side heuristic (drill/back flips local state), НЕ синхронизирован с server `StackSize` | — | Residue (sync `canGoBack` ↔ server `StackSize`) tracked as **Wave 4.3** in `Keepstar_project/CANVAS_MASTER_PLAN.md` |
 | **A5. Skip Agent2 on Agent1 no-op (Vlad's earlier pt)** | V5 всегда зовёт Agent2 LLM, даже когда Agent1 ничего не нашёл / не изменил. V4 скипает Agent2 на «no data change». Стоит ~1s + ~$0.001 на каждый турн где Agent2 не нужен | Pipeline orchestrator не имеет early-exit branching | Port V4 mechanism: if Agent1 returns no tool_call OR `_internal_state_filter` returned identical set OR catalog_search returned same entity ids → skip Agent2, reuse `state.template` |
 | **A6. Layout density / card width** | V5 cards visibly narrower than V4. V4 grid 3 колонки полной ширины, V5 cards rfl сжаты | `product_card.json` имеет жёстко `width: 280` на card frame; V4 имеет dynamic columns based on viewport | Tweak system preset widths or add responsive columns logic в Frame.jsx |
 
 Все шесть гэпов independent — закрываются отдельными чанками. Закрытие
 A1-A4 = критично для visual parity с V4, A5-A6 = optimization /
 polish.
+
+## `catalog.field_definitions` dropped → agent2 500 on every tenant — FIXED 2026-05-30 (`405d740`)
+
+Surfaced while smoke-testing the DEPLOYED v5 against the new PIM-backed furniture tenant:
+`/pipeline` 500'd at `agent2: build system prompt: ... relation "catalog.field_definitions"
+does not exist (SQLSTATE 42P01)`. The table is per-tenant render-vocabulary read ONLY to build
+agent2's `<fields>` block. It was dropped by `project_admin/.../2026-05-14_catalog_flow_rebuild_part1.sql:134`
+(mislabeled "legacy staging"); the V4 migration that created+seeded it went away when V4 was dropped
+(`15ca2fe`). So the prompt-cache read failed HARD (fail-CLOSED) and killed the turn BEFORE the LLM call —
+on **every** tenant, not just furniture. (Binding never touches the table — it's free-form
+`record[fieldBinding]` — so binding itself was never at risk; this was a prompt-assembly bug only.)
+
+| Gap | Fix | Closed in |
+|---|---|---|
+| ~~agent2 fail-CLOSED when the field_definitions read errors (missing table → whole turn 500s)~~ | `ListFieldDefinitions` tolerates pg 42P01 → returns empty + WARN; `FormatFieldsBlock` is now fail-open and builds `<fields>` from the **union** of published defs + fields seen in real sample data (atom type/subtype inferred from name+value). field_definitions = optional polish. Verified: build/vet/2 unit tests + live PROD smoke (`pim-furniture-demo` → bed/sofa cards, "sofas under $300" rendered in-browser). | **`405d740` (2026-05-30)** |
+
+Follow-ups opened by this fix (deferred):
+- **SampleFieldValues is cosmetics-shaped** — reads `products.extra` but NOT `master_products.tier2`;
+  genericize so furniture/other-vertical specs in tier2 also surface in `<fields>`.
+- **B1 — agent1 catalog digest is vertical-locked to cosmetics** (`BuildCatalogDigest` hardcodes
+  skin_type/concern/key_ingredients/product_form/texture/routine_step/target_area). Derive facets from
+  the tenant's real tier2/extra keys → better search on non-cosmetics verticals.
+- **B2 — agent2 has no result-set digest** — only a 1-line count via `<microcontext>`; give it
+  categories/price-range of the current results (crib agent1's digest shape).
 
 ## Locked-in design principles
 
