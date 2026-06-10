@@ -94,7 +94,7 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, nil, log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
-	presetH := handlers.NewPresetHandler(promptCache)
+	presetH := handlers.NewPresetHandler(promptCache, catalog, presetPort, componentPort, log)
 	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH, presetH)
 
 	srv := httptest.NewServer(router)

@@ -120,8 +120,19 @@ func clearReplicateMarkers(n Node) {
 // N clones share the original template's IDs and any post-replicate id
 // lookup (FindNodeByID, ComponentResolver.expandRef which copies refNode.id
 // onto the clone root, override targeting) collapses onto the first clone.
+//
+// Exception: a frame carrying the reserved "actions" hook id keeps it.
+// InjectDefaultActions runs AFTER fan-out and matches empty action bars by
+// that exact id (inject_actions.go isActionsFrame) — re-minting it severs
+// the contract with the system card seeds and with admin's canvas-translate,
+// both of which ship an empty {"id":"actions"} frame inside the replicated
+// card as the injection bridge. Duplicate "actions" ids across clones mirror
+// what component-borne action bars already produce (expandRef keeps inner
+// component ids), so this introduces no new collision class.
 func reIDSubtree(n Node) {
-	n["id"] = GenerateID()
+	if !isActionsFrame(n) {
+		n["id"] = GenerateID()
+	}
 	if HasChildren(n) {
 		for _, c := range Children(n) {
 			reIDSubtree(c)

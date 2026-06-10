@@ -128,7 +128,7 @@ func main() {
 	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, pipelineGuard, log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
-	presetH := handlers.NewPresetHandler(promptCache)
+	presetH := handlers.NewPresetHandler(promptCache, catalogPort, presetPort, componentPort, log)
 	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH)
 
 	srv := &http.Server{
