@@ -1,0 +1,74 @@
+{
+  "version": "2.10",
+  "themes": null,
+  "imports": null,
+  "variables": null,
+  "children": [
+    {
+      "type": "frame",
+      "id": "compare",
+      "layout": {"direction": "row", "wrap": false, "scroll": "x", "gap": "sm"},
+      "children": [
+        {
+          "type": "frame",
+          "id": "card",
+          "replicate": true,
+          "width": 220,
+          "layout": {"direction": "column", "gap": "sm"},
+          "children": [
+            {
+              "type": "image",
+              "id": "hero-img",
+              "fieldBinding": "heroImage",
+              "mediaStyle": {"aspectRatio": "1:1"}
+            },
+            {
+              "type": "text",
+              "id": "title",
+              "fieldBinding": "name",
+              "textStyle": {"fontSize": "md", "lineClamp": 2}
+            },
+            {
+              "type": "line",
+              "id": "divider-1"
+            },
+            {
+              "type": "text",
+              "id": "price",
+              "fieldBinding": "priceFormatted",
+              "format": "currency",
+              "textStyle": {"fontSize": "lg", "fontWeight": "bold"}
+            },
+            {
+              "type": "text",
+              "id": "rating",
+              "fieldBinding": "rating",
+              "format": "stars-compact"
+            },
+            {
+              "type": "line",
+              "id": "divider-2"
+            },
+            {
+              "type": "ref",
+              "id": "card-brand",
+              "ref": "brand-badge-root"
+            },
+            {
+              "type": "text",
+              "id": "desc",
+              "fieldBinding": "description",
+              "textStyle": {"fontSize": "sm", "lineClamp": 3}
+            },
+            {
+              "type": "frame",
+              "id": "actions",
+              "layout": {"direction": "row", "gap": "sm"},
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

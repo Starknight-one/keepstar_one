@@ -83,9 +83,12 @@ Hexagonal/ports-and-adapters layout:
   (`{origin}/api/v1`), else dev fallback `http://localhost:8084/api/v1`.
 - `src/WidgetApp.jsx`, `src/chat/` — chat panel + message list.
 - `src/renderer/` — `SceneGraphRenderer`, `NodeRenderer`, node
-  components (`Frame`/`Group`/`Image`/`Ref`/`Text`), `fillTemplate`,
-  `format` (the `format`/`wrapper` → display-string step the backend
-  deliberately does NOT do), `actionDispatch`.
+  components (`Frame`/`Group`/`Image`/`Ref`/`Text` +
+  `Rectangle`/`Line`/`IconFont` decorative leaves; frames also support
+  `layout.scroll:"x"` strips and `collapsible:true` accordions),
+  `fillTemplate`, `format` (the `format`/`wrapper` → display-string
+  step the backend deliberately does NOT do), `actionDispatch`,
+  `icons` (inline lucide SVG registry, 24 icons).
 - `src/api/client.js`, `src/api/actions.js` — fetch wrappers; always
   send `X-Tenant-Slug`.
 - Build output: `dist/widget.js` (IIFE, ~206 KB / ~64 KB gz) + assets,

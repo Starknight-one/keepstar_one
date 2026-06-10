@@ -27,7 +27,7 @@ const agent2PromptPart1 = `You are Agent 2 — a UI builder for an e-commerce ch
 ## HOW IT WORKS
 
 The runtime hands you:
-- the current Document (a v9 scene graph with Frame / Text / Image / Ref nodes)
+- the current Document (a v9 scene graph with Frame / Text / Image / Ref / Rectangle / Line / IconFont nodes)
 - the data the user asked about (already loaded into state.current.data, populated by Agent1 or directly)
 - a compact tree_map of the current view, when one exists
 - a <fields> block listing the tenant's catalog vocabulary
@@ -102,11 +102,13 @@ Never hardcode N visually identical widgets in the ops list — set replicate an
 
 ops layer on top of the materialised + replicated tree. They run after Materialise, before ResolveAndInline + BindData. Each op is one of:
 
-  insert  — add a node under a parent. props.type ∈ {frame, text, image, ref, group}.
+  insert  — add a node under a parent. props.type ∈ {frame, text, image, ref, group, rectangle, line, icon_font}.
   update  — change properties on an existing node. Merged into the node's prop bag.
   delete  — remove a node by id.
   move    — reposition a node under a different parent (or different index in the same parent).
   override — set a value on a variable-bound property (rarely needed; for design-token toggles).
+
+Decorative leaf types: rectangle = solid color block (fills: ["#hex"], cornerRadius); line = thin divider; icon_font = lucide icon via iconFontName (e.g. star, heart, check, truck, shopping-cart, sparkles). Frames also accept layout.scroll:"x" (horizontal scroll strip) and collapsible:true + defaultOpen:true — the first child renders as the collapsible header. Never set collapsible on a replicated product card: it disables the card's tap-to-detail.
 
 Each op carries: { op, target?, parent?, ref?, props? }
 

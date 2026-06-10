@@ -1,0 +1,47 @@
+{
+  "version": "2.10",
+  "themes": null,
+  "imports": null,
+  "variables": null,
+  "children": [
+    {
+      "type": "frame",
+      "id": "strip",
+      "layout": {"direction": "row", "wrap": false, "scroll": "x", "gap": "md"},
+      "children": [
+        {
+          "type": "frame",
+          "id": "card",
+          "replicate": true,
+          "width": 240,
+          "layout": {"direction": "column", "gap": "sm"},
+          "children": [
+            {
+              "type": "image",
+              "id": "hero-img",
+              "fieldBinding": "heroImage",
+              "mediaStyle": {"aspectRatio": "1:1"}
+            },
+            {
+              "type": "text",
+              "id": "title",
+              "fieldBinding": "name",
+              "textStyle": {"fontSize": "md", "fontWeight": "medium", "lineClamp": 2}
+            },
+            {
+              "type": "ref",
+              "id": "card-meta",
+              "ref": "price-rating-root"
+            },
+            {
+              "type": "frame",
+              "id": "actions",
+              "layout": {"direction": "row", "gap": "sm"},
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

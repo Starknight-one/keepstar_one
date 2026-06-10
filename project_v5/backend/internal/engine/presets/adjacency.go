@@ -24,6 +24,8 @@ var SystemAdjacency = map[string]string{
 	"product_card_compact":    "product_detail",
 	"product_card_horizontal": "product_detail_horizontal",
 	"product_card_list_row":   "product_detail",
+	"product_carousel":        "product_detail",
+	"product_comparison":      "product_detail",
 }
 
 // AdjacentPreset returns the drill target for the given source preset

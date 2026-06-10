@@ -4,10 +4,16 @@ import { dispatchAction } from '../actionDispatch'
 
 // Frame — flexbox container. Reads:
 //   layout.{direction, gap, align, justify, wrap}  → flexbox knobs
+//   layout.scroll === 'x'                          → data-scroll="x"
+//                                                    (horizontal strip)
 //   width / minWidth / maxWidth                    → inline-style sizing
 //                                                    (numbers → px,
 //                                                    strings pass through)
 // Recurses into children. Empty children → empty box (placeholders OK).
+//
+// collapsible === true frames render as a native <details> element —
+// zero JS state. First child becomes the <summary> header; remaining
+// children flow in a body div carrying the usual layout data-attrs.
 //
 // Replicate clones (frames carrying __templateOrigin from the engine
 // fan-out) get an entire-card click handler that fires drill_detail
@@ -18,6 +24,17 @@ export default function Frame({ node }) {
   const ctx = useRenderContext()
   const layout = node.layout || {}
   const children = Array.isArray(node.children) ? node.children : []
+
+  if (node.collapsible === true) {
+    if (node.__templateOrigin) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[v5-renderer] collapsible replicate clone — entire-card drill is disabled',
+        node.id,
+      )
+    }
+    return <CollapsibleFrame node={node} layout={layout} childNodes={children} />
+  }
 
   const drillProps = computeDrillProps(node, ctx)
   const styleProps = sizingStyle(node)
@@ -30,6 +47,7 @@ export default function Frame({ node }) {
       data-align={layout.align || ''}
       data-justify={layout.justify || ''}
       data-wrap={layout.wrap ? 'true' : ''}
+      data-scroll={layout.scroll === 'x' ? 'x' : ''}
       data-id={node.id || ''}
       style={styleProps}
       role={drillProps ? 'button' : undefined}
@@ -41,6 +59,41 @@ export default function Frame({ node }) {
         <NodeRenderer key={c?.id || i} node={c} />
       ))}
     </div>
+  )
+}
+
+// CollapsibleFrame — accordion substrate on the native <details>
+// element. Collapsible frames are never drill cards, so no drill
+// handlers here. The body div doubles as a kw-frame so the existing
+// layout data-attr CSS applies to the collapsed content.
+function CollapsibleFrame({ node, layout, childNodes }) {
+  const [head, ...rest] = childNodes
+  return (
+    <details
+      className="kw-frame kw-collapsible"
+      data-id={node.id || ''}
+      open={node.defaultOpen === true || undefined}
+      style={sizingStyle(node)}
+    >
+      <summary className="kw-summary">
+        {head ? <NodeRenderer node={head} /> : null}
+      </summary>
+      {rest.length > 0 && (
+        <div
+          className="kw-frame kw-collapsible-body"
+          data-direction={layout.direction || 'column'}
+          data-gap={layout.gap || ''}
+          data-align={layout.align || ''}
+          data-justify={layout.justify || ''}
+          data-wrap={layout.wrap ? 'true' : ''}
+          data-scroll={layout.scroll === 'x' ? 'x' : ''}
+        >
+          {rest.map((c, i) => (
+            <NodeRenderer key={c?.id || i} node={c} />
+          ))}
+        </div>
+      )}
+    </details>
   )
 }
 

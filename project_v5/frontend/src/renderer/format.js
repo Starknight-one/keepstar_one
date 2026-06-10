@@ -16,6 +16,8 @@
 
 export function formatValue(content, format) {
   if (content === null || content === undefined || content === '') return ''
+  // Array bindings (e.g. tags) read as a list, not "a,b,c".
+  if (Array.isArray(content)) content = content.join(', ')
   if (!format || format === 'text') return String(content)
 
   switch (format) {

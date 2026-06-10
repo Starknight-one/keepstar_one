@@ -117,3 +117,103 @@ describe('Frame layout — width / maxWidth / minWidth', () => {
     expect(frame.style.minWidth).toBe('')
   })
 })
+
+// Component-vocabulary PR1 — scroll strip + collapsible substrates.
+
+describe('Frame layout — horizontal scroll strip', () => {
+  it("layout.scroll='x' → data-scroll=\"x\" on the rendered frame", () => {
+    const doc = {
+      version: '2.10',
+      children: [
+        {
+          type: 'frame',
+          id: 'strip',
+          layout: { direction: 'row', scroll: 'x', gap: 'md' },
+          children: [],
+        },
+      ],
+    }
+    const { container } = render(<SceneGraphRenderer document={doc} />)
+    const frame = container.querySelector('[data-id="strip"]')
+    expect(frame.getAttribute('data-scroll')).toBe('x')
+  })
+
+  it('layout.scroll missing → empty data-scroll', () => {
+    const doc = {
+      version: '2.10',
+      children: [
+        {
+          type: 'frame',
+          id: 'static',
+          layout: { direction: 'row' },
+          children: [],
+        },
+      ],
+    }
+    const { container } = render(<SceneGraphRenderer document={doc} />)
+    const frame = container.querySelector('[data-id="static"]')
+    expect(frame.getAttribute('data-scroll')).toBe('')
+  })
+})
+
+describe('Frame — collapsible', () => {
+  const collapsibleDoc = (extra = {}) => ({
+    version: '2.10',
+    children: [
+      {
+        type: 'frame',
+        id: 'section',
+        collapsible: true,
+        layout: { direction: 'column', gap: 'sm' },
+        children: [
+          { type: 'text', id: 'head', content: 'Description' },
+          { type: 'text', id: 'body-1', content: 'First paragraph' },
+          { type: 'text', id: 'body-2', content: 'Second paragraph' },
+        ],
+        ...extra,
+      },
+    ],
+  })
+
+  it('renders <details>/<summary>: first child as header, rest in the body', () => {
+    const { container } = render(
+      <SceneGraphRenderer document={collapsibleDoc()} />,
+    )
+    const details = container.querySelector('details.kw-collapsible')
+    expect(details).not.toBeNull()
+    expect(details.getAttribute('data-id')).toBe('section')
+
+    const summary = details.querySelector('summary.kw-summary')
+    expect(summary).not.toBeNull()
+    expect(summary.querySelector('[data-id="head"]')?.textContent).toBe(
+      'Description',
+    )
+
+    const body = details.querySelector('.kw-collapsible-body')
+    expect(body).not.toBeNull()
+    expect(body.getAttribute('data-gap')).toBe('sm')
+    expect(body.querySelector('[data-id="head"]')).toBeNull()
+    expect(body.querySelector('[data-id="body-1"]')?.textContent).toBe(
+      'First paragraph',
+    )
+    expect(body.querySelector('[data-id="body-2"]')?.textContent).toBe(
+      'Second paragraph',
+    )
+  })
+
+  it('defaultOpen=true sets the open attribute', () => {
+    const { container } = render(
+      <SceneGraphRenderer document={collapsibleDoc({ defaultOpen: true })} />,
+    )
+    const details = container.querySelector('details.kw-collapsible')
+    expect(details.hasAttribute('open')).toBe(true)
+  })
+
+  it('no defaultOpen → closed by default', () => {
+    const { container } = render(
+      <SceneGraphRenderer document={collapsibleDoc()} />,
+    )
+    const details = container.querySelector('details.kw-collapsible')
+    expect(details.hasAttribute('open')).toBe(false)
+  })
+})

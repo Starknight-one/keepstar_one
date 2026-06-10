@@ -1,0 +1,102 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "detail",
+      "maxWidth": 720,
+      "layout": {"direction": "column", "gap": "lg"},
+      "children": [
+        {
+          "type": "image",
+          "id": "hero-img",
+          "fieldBinding": "heroImage",
+          "slot": "hero",
+          "mediaStyle": {"aspectRatio": "16:9"}
+        },
+        {
+          "type": "text",
+          "id": "title",
+          "fieldBinding": "name",
+          "slot": "title",
+          "textStyle": {"fontSize": "xl", "fontWeight": "bold"}
+        },
+        {
+          "type": "frame",
+          "id": "price-row",
+          "layout": {"direction": "row", "gap": "md", "align": "center"},
+          "children": [
+            {
+              "type": "text",
+              "id": "price",
+              "fieldBinding": "priceFormatted",
+              "format": "currency",
+              "slot": "price",
+              "textStyle": {"fontSize": "lg", "fontWeight": "bold"}
+            },
+            {
+              "type": "text",
+              "id": "rating",
+              "fieldBinding": "rating",
+              "format": "stars"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "description-section",
+          "collapsible": true,
+          "defaultOpen": true,
+          "layout": {"direction": "column", "gap": "sm"},
+          "children": [
+            {
+              "type": "text",
+              "id": "description-summary",
+              "content": "Description",
+              "textStyle": {"fontWeight": "medium"}
+            },
+            {
+              "type": "text",
+              "id": "description",
+              "fieldBinding": "description",
+              "slot": "description",
+              "textStyle": {"fontSize": "md"}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "details-section",
+          "collapsible": true,
+          "layout": {"direction": "column", "gap": "sm"},
+          "children": [
+            {
+              "type": "text",
+              "id": "details-summary",
+              "content": "Details",
+              "textStyle": {"fontWeight": "medium"}
+            },
+            {
+              "type": "ref",
+              "id": "detail-brand",
+              "ref": "brand-badge-root"
+            },
+            {
+              "type": "text",
+              "id": "detail-tags",
+              "fieldBinding": "tags",
+              "slot": "tags",
+              "textStyle": {"fontSize": "sm"}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "actions",
+          "layout": {"direction": "row", "gap": "md"},
+          "children": []
+        }
+      ]
+    }
+  ]
+}

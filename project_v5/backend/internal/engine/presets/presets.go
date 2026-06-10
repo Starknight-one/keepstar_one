@@ -65,6 +65,20 @@ var EmptyNotFoundJSON []byte
 //go:embed seed/error_generic.json
 var ErrorGenericJSON []byte
 
+// Component-vocabulary PR1 presets — carousel and comparison exercise the
+// widget's horizontal scroll-strip substrate (layout.scroll:"x") and the
+// line divider leaf; the accordion detail exercises collapsible frames
+// (collapsible:true + defaultOpen, first child renders as the header).
+
+//go:embed seed/product_carousel.json
+var ProductCarouselJSON []byte
+
+//go:embed seed/product_comparison.json
+var ProductComparisonJSON []byte
+
+//go:embed seed/product_detail_accordion.json
+var ProductDetailAccordionJSON []byte
+
 // SystemPresetSeeds maps the public preset name to its embedded JSON
 // body. All entries here are served by SystemPresetRegistry as a
 // DB-fallback for any tenant. ProductCard variants share the two
@@ -79,7 +93,10 @@ var SystemPresetSeeds = map[string][]byte{
 	"product_card_compact":      ProductCardCompactJSON,
 	"product_card_horizontal":   ProductCardHorizontalJSON,
 	"product_card_list_row":     ProductCardListRowJSON,
+	"product_carousel":          ProductCarouselJSON,
+	"product_comparison":        ProductComparisonJSON,
 	"product_detail":            ProductDetailJSON,
+	"product_detail_accordion":  ProductDetailAccordionJSON,
 	"product_detail_horizontal": ProductDetailHorizontalJSON,
 	"text_explainer":            TextExplainerJSON,
 	"empty_not_found":           EmptyNotFoundJSON,
@@ -95,7 +112,10 @@ var SystemPresetDefaultReplicate = map[string]bool{
 	"product_card_compact":      true,
 	"product_card_horizontal":   true,
 	"product_card_list_row":     true,
+	"product_carousel":          true,
+	"product_comparison":        true,
 	"product_detail":            false,
+	"product_detail_accordion":  false,
 	"product_detail_horizontal": false,
 	"text_explainer":            false,
 	"empty_not_found":           false,

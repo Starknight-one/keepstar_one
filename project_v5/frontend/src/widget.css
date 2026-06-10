@@ -20,6 +20,7 @@
   --kw-text: #1a1a1a;
   --kw-text-muted: #666666;
   --kw-border: #e5e7eb;
+  --kw-line: #e5e7eb;
   --kw-radius: 8px;
 
   --kw-gap-xs: 4px;
@@ -218,6 +219,57 @@
 .kw-frame[data-gap='lg']  { gap: var(--kw-gap-lg); }
 .kw-frame[data-gap='xl']  { gap: var(--kw-gap-xl); }
 
+/* Scroll strip — carousel substrate (layout.scroll === 'x'). */
+.kw-frame[data-scroll='x'] {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.kw-frame[data-scroll='x'] > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+
+/* Collapsible frame — accordion substrate on native <details>. */
+.kw-collapsible {
+  display: block;
+}
+
+.kw-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--kw-gap-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+.kw-summary::-webkit-details-marker {
+  display: none;
+}
+
+.kw-summary::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--kw-text-muted);
+  border-bottom: 2px solid var(--kw-text-muted);
+  transform: rotate(45deg);
+  transition: transform 120ms ease;
+  flex-shrink: 0;
+}
+
+.kw-collapsible[open] > .kw-summary::after {
+  transform: rotate(-135deg);
+}
+
+.kw-collapsible-body {
+  padding-top: var(--kw-gap-sm);
+}
+
 .kw-text {
   margin: 0;
   line-height: 1.4;
@@ -255,6 +307,19 @@
 
 .kw-image[data-fit='cover']   { object-fit: cover; }
 .kw-image[data-fit='contain'] { object-fit: contain; }
+
+.kw-rect {
+  flex-shrink: 0;
+}
+
+.kw-line {
+  flex-shrink: 0;
+}
+
+.kw-icon {
+  display: block;
+  flex-shrink: 0;
+}
 
 /* Wrapper styles ------------------------------------------------------- */
 
