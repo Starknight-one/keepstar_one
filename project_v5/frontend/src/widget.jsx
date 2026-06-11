@@ -1,13 +1,8 @@
 import { createRoot } from 'react-dom/client'
 import WidgetApp from './WidgetApp'
-import { renderDocument } from './widget-preview'
-
-// All CSS imported as ?inline strings — concatenated and injected into
-// the shadow root. shadowDomCss plugin suppresses regular .css imports
-// in components so nothing leaks into document.head.
-import widgetCss from './widget.css?inline'
-
-const ALL_CSS = [widgetCss].join('\n')
+// ALL_CSS / FONT_HREF live in widget-preview.jsx as the single source —
+// both entries inject the identical stylesheet into their shadow roots.
+import { renderDocument, ALL_CSS, FONT_HREF } from './widget-preview'
 
 ;(function () {
   const script =
@@ -53,8 +48,7 @@ const ALL_CSS = [widgetCss].join('\n')
 
     const fontLink = document.createElement('link')
     fontLink.rel = 'stylesheet'
-    fontLink.href =
-      'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap'
+    fontLink.href = FONT_HREF
     shadow.appendChild(fontLink)
 
     const style = document.createElement('style')

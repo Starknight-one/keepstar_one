@@ -67,8 +67,10 @@ Deliberately NOT routed through `WidgetApp` — it fires `initSession`
 - `npm run build`: `dist/widget.js 232.68 kB │ gzip: 72.58 kB`.
   Bundle markers verified by grep: `window.KeepstarV5Widget={renderDocument:ym}`
   and guard `noAutoMount!==!0&&w()` present in the minified IIFE.
-- **Size delta:** 228,431 → 232,683 bytes (**+4,252 B, +1.9%**) — the
-  preview entry pulls no new deps, just the wiring.
+- **Size delta:** 231,923 → 232,683 bytes (**+760 B, +0.3%**) — the
+  preview entry pulls no new deps, just the wiring. (The builder's
+  original claim of +4,252 B used a stale 228,431 baseline — reviewer
+  caught it; main at merge-base builds 231,923 B.)
 - `cd project_v5/backend && go build ./...` — OK (sanity no-op; backend
   untouched).
 

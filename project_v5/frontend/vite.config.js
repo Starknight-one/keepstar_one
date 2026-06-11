@@ -34,6 +34,11 @@ export default defineConfig(({ mode }) => ({
   build: {
     lib: {
       entry: 'src/widget.jsx',
+      // GUARD: benign today because widget.jsx has no top-level exports
+      // (rollup emits a bare IIFE). If an export is ever added, rollup
+      // will emit `var KeepstarV5Widget = ...` in the classic script and
+      // clobber the window.KeepstarV5Widget global the entry assigns —
+      // keep exports out of widget.jsx (put them in widget-preview.jsx).
       name: 'KeepstarV5Widget',
       fileName: () => 'widget.js',
       formats: ['iife'],

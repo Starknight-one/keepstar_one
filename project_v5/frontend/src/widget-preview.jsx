@@ -1,17 +1,21 @@
 import { createRoot } from 'react-dom/client'
 import SceneGraphRenderer from './renderer/SceneGraphRenderer'
-import RendererErrorBoundary from './renderer/RendererErrorBoundary'
 import RenderContext, { defaultRenderContext } from './renderer/RenderContext'
 
-// Same ?inline mechanism as widget.jsx — Vite dedupes the module, so the
-// CSS string ships once in the bundle regardless of both entries
-// importing it.
+// Single source of the shadow-DOM stylesheet + font for BOTH entries:
+// widget.jsx (chat auto-mount) imports these, so the preview and the
+// merchant widget can never drift apart on CSS.
 import widgetCss from './widget.css?inline'
 
-const ALL_CSS = [widgetCss].join('\n')
+export const ALL_CSS = [widgetCss].join('\n')
 
-const FONT_HREF =
+export const FONT_HREF =
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap'
+
+// Live React roots per host — a repeat renderDocument on the same host
+// must unmount the previous root (not just rip its DOM out) so any
+// future node effects (listeners, timers) can't leak.
+const liveRoots = new WeakMap()
 
 // renderDocument — standalone, network-free renderer for a V5
 // engine.Document. Powers window.KeepstarV5Widget.renderDocument
@@ -24,16 +28,22 @@ const FONT_HREF =
 //   - injects the font link + the same ALL_CSS stylesheet as the main
 //     widget
 //   - renders <SceneGraphRenderer> with the safe no-op RenderContext
-//     defaults inside the existing renderer error boundary — ZERO
+//     defaults (the renderer brings its own error boundary) — ZERO
 //     network calls, no session init, actions no-op
 //   - returns { unmount() } which unmounts the React root and clears
-//     the shadow root
+//     the shadow root; stale handles (superseded by a later
+//     renderDocument on the same host) no-op
 // eslint-disable-next-line no-unused-vars
 export function renderDocument(hostElement, doc, opts = {}) {
   const shadow =
     hostElement.shadowRoot ?? hostElement.attachShadow({ mode: 'open' })
 
-  // Clear prior content — repeat calls on the same host replace it.
+  // Tear down the previous render properly before replacing it.
+  const prev = liveRoots.get(hostElement)
+  if (prev) {
+    liveRoots.delete(hostElement)
+    prev.unmount()
+  }
   while (shadow.firstChild) shadow.removeChild(shadow.firstChild)
 
   const fontLink = document.createElement('link')
@@ -50,16 +60,18 @@ export function renderDocument(hostElement, doc, opts = {}) {
   shadow.appendChild(mountPoint)
 
   const root = createRoot(mountPoint)
+  liveRoots.set(hostElement, root)
   root.render(
     <RenderContext.Provider value={defaultRenderContext}>
-      <RendererErrorBoundary resetKey={doc}>
-        <SceneGraphRenderer document={doc} />
-      </RendererErrorBoundary>
+      <SceneGraphRenderer document={doc} />
     </RenderContext.Provider>,
   )
 
   return {
     unmount() {
+      // A later renderDocument on this host already tore this root down.
+      if (liveRoots.get(hostElement) !== root) return
+      liveRoots.delete(hostElement)
       root.unmount()
       while (shadow.firstChild) shadow.removeChild(shadow.firstChild)
     },
