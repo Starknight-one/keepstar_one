@@ -57,6 +57,15 @@ export function renderDocument(hostElement, doc, opts = {}) {
 
   const mountPoint = document.createElement('div')
   mountPoint.id = 'keepstar-v5-preview-root'
+  // The widget is designed for light merchant pages; previews often sit
+  // inside dark admin chrome, and color/background inherit through the
+  // shadow boundary — pin a light storefront-like canvas so cards look
+  // the way they do on a real page.
+  mountPoint.style.backgroundColor = '#ffffff'
+  mountPoint.style.color = '#111827'
+  mountPoint.style.colorScheme = 'light'
+  mountPoint.style.padding = '16px'
+  mountPoint.style.borderRadius = '8px'
   shadow.appendChild(mountPoint)
 
   const root = createRoot(mountPoint)

@@ -188,14 +188,22 @@ func (h *PresetHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Deterministic product fetch: first `count` by the catalog's default
-	// stable order (created_at DESC) — same port the pipeline data zone uses.
-	products, _, err := h.catalog.ListProducts(r.Context(), tenant.ID, ports.ProductFilter{Limit: count})
+	// Deterministic product fetch over a wider window, preferring
+	// presentation-rich products (image/brand/rating/description). The
+	// newest rows are often ingest-test junk with no media — a preview
+	// full of bare cards reads as a broken preset rather than missing
+	// data (owner hit exactly this on 2026-06-12).
+	window := count * 8
+	if window < 24 {
+		window = 24
+	}
+	products, _, err := h.catalog.ListProducts(r.Context(), tenant.ID, ports.ProductFilter{Limit: window})
 	if err != nil {
 		h.log.Error("preview: list products failed", "tenant", tenantSlug, "err", err)
 		http.Error(w, "list products failed", http.StatusInternalServerError)
 		return
 	}
+	products = pickRichestSamples(products, count)
 	data := make([]map[string]any, len(products))
 	for i, p := range products {
 		m := engine.ProductToMap(p)
@@ -278,4 +286,43 @@ func (h *PresetHandler) ListSystem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"presets": entries,
 	})
+}
+
+// pickRichestSamples keeps `count` products, preferring ones that can
+// actually fill a card's atoms — an image above all, then brand, rating,
+// description. Stable on ties and re-sorted back to the catalog's default
+// order, so previews stay deterministic run to run.
+func pickRichestSamples(products []domain.Product, count int) []domain.Product {
+	if len(products) <= count {
+		return products
+	}
+	type scored struct {
+		idx   int
+		score int
+	}
+	all := make([]scored, len(products))
+	for i, p := range products {
+		s := 0
+		if len(p.Images) > 0 && p.Images[0] != "" {
+			s += 4 // the hero image carries most of a card's look
+		}
+		if p.Brand != "" {
+			s++
+		}
+		if p.Rating > 0 {
+			s++
+		}
+		if p.Description != "" {
+			s++
+		}
+		all[i] = scored{idx: i, score: s}
+	}
+	sort.SliceStable(all, func(a, b int) bool { return all[a].score > all[b].score })
+	picked := all[:count]
+	sort.SliceStable(picked, func(a, b int) bool { return picked[a].idx < picked[b].idx })
+	out := make([]domain.Product, count)
+	for i, s := range picked {
+		out[i] = products[s.idx]
+	}
+	return out
 }
