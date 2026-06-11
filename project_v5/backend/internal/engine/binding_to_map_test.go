@@ -99,9 +99,10 @@ func TestProductToMapTypedWinsOverTier2(t *testing.T) {
 func TestProductToMapEmptyProduct(t *testing.T) {
 	p := domain.Product{ID: "p1"}
 	m := ProductToMap(p)
-	// Only stockQuantity is always written (0 is a meaningful signal).
-	if len(m) != 1 || m["stockQuantity"] != 0 {
-		t.Errorf("empty product should yield {stockQuantity:0}, got %v", m)
+	// Only id (action-entity resolution) and stockQuantity (0 is a
+	// meaningful signal) are always written for a non-empty product row.
+	if len(m) != 2 || m["stockQuantity"] != 0 || m["id"] != "p1" {
+		t.Errorf("empty product should yield {id:p1, stockQuantity:0}, got %v", m)
 	}
 }
 
@@ -134,5 +135,31 @@ func TestServiceToMap(t *testing.T) {
 	}
 	if m["booking_url"] != "https://book.io" {
 		t.Errorf("Extra-only key lost: %v", m)
+	}
+}
+
+// TestProductToMapID — "id" must flow into the binding map: it is the key
+// InjectDefaultActions resolves like/cart entities from (resolveEntityID).
+// Regression for the contract-test follow-up: with "id" absent, every
+// catalog without a vendor-supplied Extra "id" rendered empty action bars.
+func TestProductToMapID(t *testing.T) {
+	p := domain.Product{
+		ID:    "prod-uuid-1",
+		Name:  "X",
+		Extra: map[string]any{"id": "vendor-raw-id"},
+	}
+	m := ProductToMap(p)
+	if m["id"] != "prod-uuid-1" {
+		t.Errorf("id: %v (typed ID must win over vendor Extra id)", m["id"])
+	}
+	if id, ok := resolveEntityID([]map[string]any{m}, 0); !ok || id != "prod-uuid-1" {
+		t.Errorf("resolveEntityID over ProductToMap output: %q ok=%v", id, ok)
+	}
+}
+
+func TestServiceToMapID(t *testing.T) {
+	m := ServiceToMap(domain.Service{ID: "svc-1", Name: "Haircut"})
+	if m["id"] != "svc-1" {
+		t.Errorf("id: %v", m["id"])
 	}
 }

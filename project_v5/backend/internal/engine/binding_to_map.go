@@ -25,6 +25,12 @@ func ProductToMap(p domain.Product) map[string]any {
 	m := make(map[string]any)
 
 	// 1. Typed fields — canonical, win on collision.
+	// "id" is what InjectDefaultActions resolves the action entity from;
+	// without it like/cart buttons silently skip injection (resolveEntityID
+	// finds no key) for every catalog whose Extra lacks a vendor "id".
+	if p.ID != "" {
+		m["id"] = p.ID
+	}
 	if p.Name != "" {
 		m["name"] = p.Name
 	}
@@ -131,6 +137,10 @@ func ProductToMap(p domain.Product) map[string]any {
 // is just Typed > Attributes > Extra.
 func ServiceToMap(s domain.Service) map[string]any {
 	m := make(map[string]any)
+	// Same contract as ProductToMap: "id" feeds InjectDefaultActions.
+	if s.ID != "" {
+		m["id"] = s.ID
+	}
 	if s.Name != "" {
 		m["name"] = s.Name
 	}
