@@ -129,3 +129,7 @@ component_price_rating = components/false/component.
   `systemPresetFallback` is now dead code in practice (taxonomy guard
   forces map completeness); kept as a defensive guard per task spec.
 - Branch not pushed (per task instruction).
+
+## Post-review (2026-06-12 night, main session)
+
+Review verdict: **approve**. Follow-up commit `192a88e`: TestListSystemContract now pins the FULL 14-row name→{category,replicate,kind} table (reviewer proved a flipped category survived the spot-check version by mutation); taxonomy guard extended to SystemPresetDescriptions both directions — the postgres fallback comment is now accurate. Cross-repo e2e (admin proxy → this endpoint → Library UI) smoke-proven on a Neon branch, see keepstar-admin/Updates/2026-06-11_waveA-system-library.md.
