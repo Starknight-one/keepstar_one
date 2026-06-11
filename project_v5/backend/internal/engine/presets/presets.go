@@ -122,6 +122,27 @@ var SystemPresetDefaultReplicate = map[string]bool{
 	"error_generic":             false,
 }
 
+// SystemPresetCategory maps each system preset name to its family in
+// the preset-library taxonomy advertised by the internal listing
+// (GET /api/v1/internal/presets/system). Canonical values: cards |
+// details | states | narrative (components carry their own fixed
+// "components" category in the handler). Every SystemPresetSeeds key
+// must have an entry here — guarded by TestSystemPresetTaxonomyComplete.
+var SystemPresetCategory = map[string]string{
+	"product_card":              "cards",
+	"product_card_compact":      "cards",
+	"product_card_horizontal":   "cards",
+	"product_card_list_row":     "cards",
+	"product_carousel":          "cards",
+	"product_comparison":        "cards",
+	"product_detail":            "details",
+	"product_detail_accordion":  "details",
+	"product_detail_horizontal": "details",
+	"text_explainer":            "narrative",
+	"empty_not_found":           "states",
+	"error_generic":             "states",
+}
+
 // SystemComponentSeeds maps component name → embedded JSON. Mirrors
 // SystemPresetSeeds but for the reusable subtrees referenced by presets
 // via RefNode (e.g. product_card → ref{ref:"price-rating-root"}).
@@ -135,4 +156,24 @@ var SystemPresetDefaultReplicate = map[string]bool{
 var SystemComponentSeeds = map[string][]byte{
 	"price-rating-root": ComponentPriceRatingJSON,
 	"brand-badge-root":  ComponentBrandBadgeJSON,
+}
+
+// SystemComponentDescriptions maps each SystemComponentSeeds key (the
+// engine-internal RefNode target) to a short Agent2-style description
+// for the internal preset-library listing. Every SystemComponentSeeds
+// key must have an entry here — guarded by
+// TestSystemPresetTaxonomyComplete.
+var SystemComponentDescriptions = map[string]string{
+	"price-rating-root": "price + rating row, reused inside card presets",
+	"brand-badge-root":  "brand badge atom, reused inside card presets",
+}
+
+// SystemComponentPublicNames maps each SystemComponentSeeds key to the
+// public name the internal listing advertises (matches the seed file
+// names, e.g. seed/component_price_rating.json). The seed key itself is
+// the ref target node id presets point at — an engine detail we keep
+// off the wire.
+var SystemComponentPublicNames = map[string]string{
+	"price-rating-root": "component_price_rating",
+	"brand-badge-root":  "component_brand_badge",
 }
