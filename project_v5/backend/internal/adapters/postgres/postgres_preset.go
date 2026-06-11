@@ -100,13 +100,19 @@ func (a *PresetAdapter) systemPresetFallback(name string) *domain.Preset {
 		return nil
 	}
 	now := time.Now().UTC()
+	// Real Agent2-visible description; generic string only if the name is
+	// somehow missing from the map (taxonomy guard test prevents drift).
+	description := presets.SystemPresetDescriptions[name]
+	if description == "" {
+		description = "system-default preset"
+	}
 	return &domain.Preset{
 		ID:               "system:" + name,
 		TenantID:         "system",
 		Name:             name,
 		Category:         "system",
 		EntityType:       "product",
-		Description:      "system-default preset",
+		Description:      description,
 		DefaultReplicate: a.systemRegistry.DefaultReplicate(name),
 		Version:          0,
 		Status:           domain.PresetStatusPublished,
