@@ -146,8 +146,11 @@ recommending it.
 - `.claude/commands/experts/README.md` — expert system architecture
 - `docs/Updates/` — session logs (chronological, append-only truth log)
 - **`../MANIFESTO.md`** — product vision / north-star (2026-05-29)
-- **`../FINAL_PHASE_PLAN.md`** — current prioritized plan
-- **`../SESSION_HANDOFF_2026-05-30.md`** — latest resume snapshot (source of truth)
+- **`../CANVAS_MASTER_PLAN.md`** — current plan (canvas/engine wave plan + live status; updated 2026-06-11)
+- `../V5_VS_C1_PARITY.md` — V5 vs Thesys C1 parity track (updated 2026-06-11)
+- `../LLM_VS_DETERMINISM.md` — scoring model: who decides, LLM vs engine (2026-06-11)
+- `../FINAL_PHASE_PLAN.md` — ⚠️ HISTORICAL plan (2026-05-30; superseded by CANVAS_MASTER_PLAN.md)
+- `../SESSION_HANDOFF_2026-05-30.md` — ⚠️ HISTORICAL resume snapshot (2026-05-30; superseded)
 - `docs/PRE_LAUNCH_TASKS.md` — current pre-launch tracker
 - `docs/v5-known-gaps.md` — V5 A-series gap registry (live)
 - `docs/CATALOG_GAPS.md` + `docs/CATALOG_GROUP_D_SPEC.md` — current catalog status + spec

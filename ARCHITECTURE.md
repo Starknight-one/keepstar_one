@@ -91,16 +91,19 @@ Hexagonal/ports-and-adapters layout:
   `icons` (inline lucide SVG registry, 24 icons).
 - `src/api/client.js`, `src/api/actions.js` — fetch wrappers; always
   send `X-Tenant-Slug`.
-- Build output: `dist/widget.js` (IIFE, ~206 KB / ~64 KB gz) + assets,
+- Build output: `dist/widget.js` (IIFE, ~232 KB / ~72 KB gz) + assets,
   copied into the image as `./static` and served by the Go server.
 
 ## Inputs & Outputs (endpoints + contracts)
 
-All endpoints are plain **HTTP/JSON** (no OpenAPI/Swagger spec exists in
-the repo). Tenant is resolved by the `WithTenant` middleware from the
-`X-Tenant-Slug` request header, falling back to the `TENANT_SLUG` env
-default. Endpoint catalog is documented in
-`internal/handlers/routes.go`.
+All endpoints are plain **HTTP/JSON** except `POST
+/api/v1/pipeline/stream`, which is **SSE** (`text/event-stream`). No
+OpenAPI/Swagger spec exists in the repo. Tenant is resolved by the
+`WithTenant` middleware from the `X-Tenant-Slug` request header, falling
+back to the `TENANT_SLUG` env default; the `/api/v1/internal/*` routes
+are exempt from tenant resolution and gated by `X-Internal-Key` instead
+(503 when `V5_INTERNAL_KEY` is unset, 403 on mismatch). Endpoint catalog
+is documented in `internal/handlers/routes.go`.
 
 | Method & path | Purpose | Request | Response |
 |---|---|---|---|
@@ -109,9 +112,15 @@ default. Endpoint catalog is documented in
 | `POST /api/v1/session/init` | Create a chat session. Inserts `v5_chat_sessions` row + shell state. | empty body; `X-Tenant-Slug` | `{sessionId, tenant:{slug,name}}` |
 | `GET /api/v1/session/{id}` | Read session state (debug). | — | `{sessionId, step, current, view}` |
 | `POST /api/v1/pipeline` | **The main turn.** Runs Agent1 → Agent2. Rate-limited + daily spend-capped. | `{sessionId, query}` | `{document, toolCalls, usage, latencyMs, agent1Ms, agent2Ms, prefetch?, spans?}` |
+| `POST /api/v1/pipeline/stream` | Same turn as `/pipeline`, but **SSE**: `stage` frames (`data_start` immediately, `data_done` after Agent1), then terminal `result` (full pipeline response) or `error` (409 session closed / 500). No LLM tokens streamed — frames mark stage boundaries only. Same rate/spend guard. | `{sessionId, query}` | `text/event-stream` frames |
 | `POST /api/v1/actions[?sync=true]` | Backend-resolved actions: `like`/`unlike`/`cart_add`/`cart_remove`. Other kinds → 400. | `{sessionId, kind, entity:{type,id}, params?}` | `{success, actions}` (or 204 on `sync=true`) |
 | `POST /api/v1/navigation/expand` | Drill into detail preset (no LLM; uses `SystemAdjacency` map). | `{sessionId, entityType, entityId, turnId?}` | `{success, document, viewMode, focused, stackSize, canGoBack, presetInUse}` |
 | `POST /api/v1/navigation/back` | Pop view stack, restore prior template. | `{sessionId, turnId?}` | same `navResponse` shape |
+| `POST /api/v1/navigation/filter` | Deterministic re-filter/sort of the current grid (no LLM; brand-chip click path). | `{sessionId, filters, sortField?, sortOrder?, turnId?}` | same `navResponse` shape |
+| `POST /api/v1/internal/session/{id}/kill` | Soft-kill one session (curator kill switch; stamps `killed_at`, idempotent). **X-Internal-Key** gated. | `?reason=` | `{sessionId, killed}` |
+| `POST /api/v1/internal/sessions/kill-all` | Soft-kill every active session across ALL tenants (incident kill switch). X-Internal-Key gated. | `?reason=` | `{killed: <count>}` |
+| `POST /api/v1/internal/presets/cache-invalidate` | Drop the cached Agent2 prompt for a tenant (canvas publish flow). X-Internal-Key gated. | `?tenant=` | `{tenant, invalidated}` |
+| `POST /api/v1/internal/presets/preview` | Zero-LLM preset/draft render against real products (admin canvas preview). Exactly one of `docJson`/`presetName`. X-Internal-Key gated. | `?tenant=` + `{docJson?, presetName?, count?}` | `{document, productCount}` |
 | `GET /` (+ static) | Serves the built widget bundle (`widget.js`, `widget.html`) from `STATIC_DIR` when present; SPA-style `index.html` fallback. | — | static files |
 
 Guard behaviour on `/api/v1/pipeline`: 429 when per-IP rate limit
@@ -148,9 +157,11 @@ EXISTS`, run in `cmd/server/main.go`):
 - `v5_presets` / `v5_preset_versions` and `v5_components` /
   `v5_component_versions` — preset + reusable-component storage
   (`preset_migrations.go`, `component_migrations.go`). This is the
-  **final shape**; a future canvas microservice is intended to write
-  these as a client. DB rows win over the embedded system fallback
-  registry.
+  **final shape**; the write-side client is **keepstar-admin**'s canvas
+  (`internal/canvas/translate.go` +
+  `handlers/handler_canvas_presets.go`), which writes `v5_presets` /
+  `v5_preset_versions` as a DB client. DB rows win over the embedded
+  system fallback registry.
 
 ### Reads (READ-ONLY) — shared `catalog.*` schema ("flat-moon"), owned by Admin
 
@@ -184,9 +195,9 @@ break V5 at runtime (see the `field_definitions` incident in gaps).
 | **Anthropic** | V5 → Anthropic | HTTP API (Messages). The LLM for Agent1 + Agent2. |
 | **OpenAI** | V5 → OpenAI | HTTP API (Embeddings). Optional; feeds vector search. |
 | **Admin / catalog ("flat-moon")** | V5 → catalog | **SHARED DATABASE, read-only.** Same Neon DB via `DATABASE_URL`; direct SQL on `catalog.*`. No HTTP call to Admin. |
-| **Curator** | Curator → V5 data | **SHARED DATABASE.** Curator's backend reads V5's `v5_chat_*` tables directly (its own pgxpool) for the "Chats"/tracing UI. No HTTP between them. |
+| **Curator** | Curator → V5 | **SHARED DATABASE + HTTP.** Curator's backend reads V5's `v5_chat_*` tables directly (its own pgxpool) for the "Chats"/tracing UI, and makes HTTP control calls to V5's internal kill-switch endpoints (`/api/v1/internal/session/{id}/kill`, `/internal/sessions/kill-all`; `X-Internal-Key` auth — `keepstar-curator/backend/internal/adapters/v5_control.go`). |
 | **Merchant storefront / shopper** | Browser → V5 | HTTP/JSON API + embedded `widget.js` served from the same origin. |
-| **Future canvas microservice** | (planned) → V5 tables | Intended to write `v5_presets`/`v5_components` as a DB client. Not built. |
+| **Admin canvas (keepstar-admin)** | Admin → V5 tables + HTTP | Canvas write-side client (shipped): `internal/canvas/translate.go` + `handlers/handler_canvas_presets.go` write `v5_presets`/`v5_preset_versions` as a DB client; preset preview + prompt-cache-invalidate go over V5's `/api/v1/internal/presets/*` endpoints (`X-Internal-Key`). |
 
 ## Run locally
 
@@ -253,6 +264,7 @@ Environment variables (from `config.go` + `.env`):
 | `LOG_LEVEL` | no | `info` | debug/info/warn/error (slog). |
 | `PIPELINE_RATE_PER_MIN` | no | `30` | Per-IP token-bucket on `/api/v1/pipeline`; ≤0 disables. |
 | `PIPELINE_DAILY_USD_CAP` | no | `10.0` | Global daily Anthropic spend ceiling (process-local); ≤0 disables. |
+| `V5_INTERNAL_KEY` | no | — | Gates all `/api/v1/internal/*` endpoints (read via `os.Getenv` in handlers, NOT `config.go`). Unset → internal endpoints return 503, which silently disables the curator kill switch and the canvas preview/cache-invalidate flow. Must match the `X-Internal-Key` curator/admin send. |
 
 Migrations run automatically on boot (idempotent), so a fresh
 environment self-provisions its `v5_*` tables.
@@ -292,13 +304,15 @@ must know:
   `catalog.field_definitions`; Agent2 `/pipeline` 500'd on **every**
   tenant. Fix made the field-definitions read fail-OPEN. Re-audit any
   other hard `catalog.*` dependency.
-- **Open A-series parity gaps vs the old V4 engine** (independent, each
+- **A-series parity gaps vs the old V4 engine** (independent, each
   its own fix): A1 greeting handling (renders `empty_not_found` on
   "hi"); A2 modify-vs-rebuild misclassification (new category sometimes
-  skips `catalog_search`); A3 hard replicate=3 / no pagination; A4 no
-  "← Back" button in widget despite the endpoint existing; A5 Agent2
-  always runs even on Agent1 no-op (~1s + ~$0.001 wasted/turn); A6 card
-  width/density narrower than V4.
+  skips `catalog_search`); A3 hard replicate=3 / no pagination; A4
+  PARTIALLY CLOSED 2026-06-10 — "← Back" button is live in the widget,
+  residue = `canGoBack` ↔ server `StackSize` sync (Wave 4.3 in root
+  `CANVAS_MASTER_PLAN.md`); A5 (skip Agent2 on Agent1 no-op) REJECTED
+  2026-06-11 by owner decision — do NOT implement, see
+  `docs/v5-known-gaps.md`; A6 card width/density narrower than V4.
 - **Agent1 catalog digest is vertical-locked to cosmetics** (B1) —
   `BuildCatalogDigest` hardcodes skin_type/concern/ingredients/etc.;
   search quality degrades on non-cosmetics verticals.
