@@ -84,3 +84,11 @@ Deliberately NOT routed through `WidgetApp` — it fires `initSession`
   options are defined in Wave C.
 - Admin-side contract halves (render-config endpoint, preview modal
   script injection) land in `keepstar-admin`, not here.
+
+## Post-review + live smoke (same night, main session)
+
+Review verdict: **approve**. Follow-ups on the branch:
+- `e8b2a06` — repeat renderDocument now unmounts the prior React root (WeakMap-stashed, stale handles no-op); ALL_CSS/FONT_HREF single-sourced in widget-preview.jsx (widget.jsx imports them — kills the silent CSS drift); redundant outer error boundary dropped; vite lib-name clobber hazard documented; size delta corrected (+760 B real).
+- `e2c80d4` — first OWNER-driven live preview (Neon branch smoke-waveC-visual-preview, real login through the fixed auth) rendered junk test products on dark admin chrome and read as a broken preset. Fixed: preview samples prefer presentation-rich products (image >> brand/rating/description, window 8×count min 24, 3 unit tests); renderDocument pins a light storefront canvas on its mount (shadow-DOM inheritance bled admin dark theme into cards).
+
+Owner verdict after refresh: **"всё отлично"** — visual previews approved for merge.
