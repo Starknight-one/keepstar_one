@@ -142,12 +142,14 @@ vs V4 при сравнении side-by-side:
 | **A2. Modify-vs-rebuild misclassification** | «Так а крема какие есть?» (после показа тонера) → V5 в modify-mode тыкает existing tree, НЕ вызывает catalog_search. Должен был rebuild со свежими данными | Agent1 NLU rules — нет жёсткого правила «другая категория → catalog_search». V4 имеет такие правила в системном промпте | Port V4 Agent1 rules «когда нужен catalog_search vs state_filter» |
 | **A3. Default replicate count + pagination** | V5 эмитит 3 карточки жёстко на любой search. V4 показывает все matched (e.g. 23 крема) + пагинирует «12 из 23» | Agent2 system prompt диктует replicate=3 как safe default. Backend не имеет pagination concept в frontend prefetch | Untangle replicate limit (Agent2 prompt) + add page state to engine + frontend pagination UI |
 | **A4. Back button in widget — PARTIALLY CLOSED 2026-06-10** | Виджет теперь рендерит «← Back» (`project_v5/frontend/src/WidgetApp.jsx` ~181-185), backed by server view-stack. Остаток: `canGoBack` — client-side heuristic (drill/back flips local state), НЕ синхронизирован с server `StackSize` | — | Residue (sync `canGoBack` ↔ server `StackSize`) tracked as **Wave 4.3** in `Keepstar_project/CANVAS_MASTER_PLAN.md` |
-| **A5. Skip Agent2 on Agent1 no-op (Vlad's earlier pt)** | V5 всегда зовёт Agent2 LLM, даже когда Agent1 ничего не нашёл / не изменил. V4 скипает Agent2 на «no data change». Стоит ~1s + ~$0.001 на каждый турн где Agent2 не нужен | Pipeline orchestrator не имеет early-exit branching | Port V4 mechanism: if Agent1 returns no tool_call OR `_internal_state_filter` returned identical set OR catalog_search returned same entity ids → skip Agent2, reuse `state.template` |
+| **A5. Skip Agent2 on Agent1 no-op — REJECTED 2026-06-11 (owner decision)** | ~~V5 всегда зовёт Agent2 LLM, даже когда Agent1 ничего не нашёл / не изменил~~ | Rejected by design, do not re-propose. Even the "obvious" no-op turns carry a judgment about response STRATEGY, not just render: zero results may need recovery (broaden, suggest alternatives, contextual copy) — not a canned empty state; a collapsed filter (12→2 items) may warrant a different shape. A deterministic skip amputates the highest-value LLM moment (failure recovery). Score the TURN, not the final render step. | Perceived-speed wins come from staged streaming (parity item 5.2) and making Agent2 cheaper/faster — not from skipping it |
 | **A6. Layout density / card width** | V5 cards visibly narrower than V4. V4 grid 3 колонки полной ширины, V5 cards rfl сжаты | `product_card.json` имеет жёстко `width: 280` на card frame; V4 имеет dynamic columns based on viewport | Tweak system preset widths or add responsive columns logic в Frame.jsx |
 
 Все шесть гэпов independent — закрываются отдельными чанками. Закрытие
-A1-A4 = критично для visual parity с V4, A5-A6 = optimization /
-polish.
+A1-A4 = критично для visual parity с V4, A6 = optimization / polish.
+A5 отклонён (см. строку). Смежное к A3: у `replicate` нет верхнего
+клампа (live-смоук 2026-06-10: карусель развернулась на 50 клонов) —
+закрыть кламп вместе с пагинацией A3, не отдельным тихим хотфиксом.
 
 ## `catalog.field_definitions` dropped → agent2 500 on every tenant — FIXED 2026-05-30 (`405d740`)
 
