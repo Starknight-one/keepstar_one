@@ -49,5 +49,9 @@ export default defineConfig(({ mode }) => ({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./tests/setup.js'],
+    // Process CSS in tests so `widget.css?inline` yields the real
+    // stylesheet text (widget-preview test asserts it lands in the
+    // shadow root). Vitest default stubs CSS imports to ''.
+    css: true,
   },
 }))

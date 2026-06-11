@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import WidgetApp from './WidgetApp'
+import { renderDocument } from './widget-preview'
 
 // All CSS imported as ?inline strings — concatenated and injected into
 // the shadow root. shadowDomCss plugin suppresses regular .css imports
@@ -13,6 +14,11 @@ const ALL_CSS = [widgetCss].join('\n')
     document.currentScript || document.querySelector('script[src*="widget.js"]')
 
   const devConfig = window.__KEEPSTAR_V5_WIDGET__ || {}
+
+  // Public API — always assigned, even when auto-mount is skipped.
+  // Admin canvas preview loads this same bundle and calls renderDocument
+  // to render an engine document without any session / network activity.
+  window.KeepstarV5Widget = { renderDocument }
 
   const tenantSlug = script?.getAttribute('data-tenant') || devConfig.tenant || null
 
@@ -63,5 +69,10 @@ const ALL_CSS = [widgetCss].join('\n')
     root.render(<WidgetApp tenantSlug={tenantSlug} apiBaseUrl={apiBaseUrl} />)
   }
 
-  mount()
+  // Auto-mount guard: embedders that only want renderDocument (admin
+  // canvas preview) set window.__KEEPSTAR_V5_WIDGET__ = { noAutoMount:
+  // true } BEFORE the script loads. Flag absent/false → mount as today.
+  if (devConfig.noAutoMount !== true) {
+    mount()
+  }
 })()

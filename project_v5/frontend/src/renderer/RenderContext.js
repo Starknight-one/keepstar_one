@@ -19,8 +19,9 @@ import { createContext, useContext } from 'react'
 //   onSearch         — fill chat input with text (search action).
 //
 // Default value gives every callsite a safe no-op so missing-provider
-// tests don't throw.
-const defaultCtx = {
+// tests don't throw. Exported so the standalone preview renderer
+// (widget-preview.jsx) can provide the same safe defaults explicitly.
+export const defaultRenderContext = {
   apiBaseUrl: '',
   tenantSlug: null,
   sessionId: null,
@@ -29,7 +30,7 @@ const defaultCtx = {
   onSearch: () => {},
 }
 
-const RenderContext = createContext(defaultCtx)
+const RenderContext = createContext(defaultRenderContext)
 
 export default RenderContext
 
