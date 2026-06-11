@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine"
+	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/usecases"
 )
@@ -222,5 +224,58 @@ func (h *PresetHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"document":     templateMap,
 		"productCount": len(data),
+	})
+}
+
+// systemPresetEntry is one row of GET /api/v1/internal/presets/system.
+// Field names are a frozen cross-repo contract with the admin canvas —
+// do not rename without bumping both sides.
+type systemPresetEntry struct {
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Category         string `json:"category"`
+	DefaultReplicate bool   `json:"defaultReplicate"`
+	Kind             string `json:"kind"`
+}
+
+// ListSystem handles GET /api/v1/internal/presets/system.
+//
+// Returns the full system preset library (the 12 registry presets plus
+// the 2 reusable components) with the Agent2-visible description, the
+// family category, and the default replicate flag — everything the admin
+// canvas needs to render a registration picker without duplicating the
+// taxonomy. Not tenant-scoped: system presets are by definition shared.
+//
+// Components are advertised under their public names (presets.
+// SystemComponentPublicNames) with kind="component", category=
+// "components", defaultReplicate=false. Sorted by name ascending.
+// Gated by X-Internal-Key (503 when V5_INTERNAL_KEY unset, 403
+// mismatch); exempt from WithTenant like every /api/v1/internal/ route.
+func (h *PresetHandler) ListSystem(w http.ResponseWriter, r *http.Request) {
+	if !checkInternalKey(w, r) {
+		return
+	}
+	entries := make([]systemPresetEntry, 0, len(presets.SystemPresetSeeds)+len(presets.SystemComponentSeeds))
+	for name := range presets.SystemPresetSeeds {
+		entries = append(entries, systemPresetEntry{
+			Name:             name,
+			Description:      presets.SystemPresetDescriptions[name],
+			Category:         presets.SystemPresetCategory[name],
+			DefaultReplicate: presets.SystemPresetDefaultReplicate[name],
+			Kind:             "preset",
+		})
+	}
+	for key := range presets.SystemComponentSeeds {
+		entries = append(entries, systemPresetEntry{
+			Name:             presets.SystemComponentPublicNames[key],
+			Description:      presets.SystemComponentDescriptions[key],
+			Category:         "components",
+			DefaultReplicate: false,
+			Kind:             "component",
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"presets": entries,
 	})
 }

@@ -34,6 +34,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //	POST /api/v1/navigation/filter           — deterministic brand re-filter of the current grid
 //	POST /api/v1/internal/presets/cache-invalidate — drop cached Agent2 prompt for ?tenant= (X-Internal-Key)
 //	POST /api/v1/internal/presets/preview    — zero-LLM preset/draft render for ?tenant= (X-Internal-Key)
+//	GET  /api/v1/internal/presets/system     — system preset library listing (X-Internal-Key)
 //
 // Middleware chain (outermost to innermost):
 //
@@ -70,6 +71,7 @@ func RegisterRoutes(
 	mux.HandleFunc("POST /api/v1/internal/sessions/kill-all", session.KillAll)
 	mux.HandleFunc("POST /api/v1/internal/presets/cache-invalidate", preset.CacheInvalidate)
 	mux.HandleFunc("POST /api/v1/internal/presets/preview", preset.Preview)
+	mux.HandleFunc("GET /api/v1/internal/presets/system", preset.ListSystem)
 	mux.HandleFunc("POST /api/v1/pipeline", pipeline.Pipeline)
 	mux.HandleFunc("POST /api/v1/pipeline/stream", pipeline.PipelineStream)
 	mux.HandleFunc("POST /api/v1/actions", action.Action)

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/ports"
 )
 
@@ -240,6 +241,145 @@ func TestPreviewHappyPathPublishedPreset(t *testing.T) {
 	}
 	if cards := gridCards(t, out.Document); len(cards) != 2 {
 		t.Fatalf("expected 2 replicated cards, got %d", len(cards))
+	}
+}
+
+// --- GET /api/v1/internal/presets/system ------------------------------------
+
+func doListSystem(t *testing.T, h *PresetHandler, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/presets/system", nil)
+	if key != "" {
+		req.Header.Set("X-Internal-Key", key)
+	}
+	rec := httptest.NewRecorder()
+	h.ListSystem(rec, req)
+	return rec
+}
+
+func TestListSystemAuthGate(t *testing.T) {
+	h := previewTestHandler()
+
+	t.Run("key unset → 503", func(t *testing.T) {
+		t.Setenv("V5_INTERNAL_KEY", "")
+		rec := doListSystem(t, h, "anything")
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+	})
+
+	t.Run("wrong key → 403", func(t *testing.T) {
+		t.Setenv("V5_INTERNAL_KEY", "secret")
+		rec := doListSystem(t, h, "wrong")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+	})
+}
+
+// TestListSystemContract pins the frozen cross-repo wire shape the admin
+// canvas consumes: 14 entries (12 presets + 2 components), sorted by
+// name, exact field names, canonical categories. If the registry gains a
+// preset without taxonomy coverage, or a field is renamed, this fails.
+func TestListSystemContract(t *testing.T) {
+	h := previewTestHandler()
+	t.Setenv("V5_INTERNAL_KEY", "secret")
+
+	rec := doListSystem(t, h, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	// Decode into raw maps so we can assert the EXACT field names of the
+	// contract, not just whatever a Go struct happens to tolerate.
+	var out struct {
+		Presets []map[string]interface{} `json:"presets"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	wantNames := []string{
+		"component_brand_badge",
+		"component_price_rating",
+		"empty_not_found",
+		"error_generic",
+		"product_card",
+		"product_card_compact",
+		"product_card_horizontal",
+		"product_card_list_row",
+		"product_carousel",
+		"product_comparison",
+		"product_detail",
+		"product_detail_accordion",
+		"product_detail_horizontal",
+		"text_explainer",
+	}
+	if len(out.Presets) != len(wantNames) {
+		t.Fatalf("entries = %d, want %d (body: %s)", len(out.Presets), len(wantNames), rec.Body.String())
+	}
+
+	wantFields := []string{"name", "description", "category", "defaultReplicate", "kind"}
+	canonical := map[string]bool{"cards": true, "details": true, "components": true, "states": true, "narrative": true}
+	byName := map[string]map[string]interface{}{}
+	for i, entry := range out.Presets {
+		name, _ := entry["name"].(string)
+		if name != wantNames[i] {
+			t.Errorf("entry[%d] name = %q, want %q (sorted ascending)", i, name, wantNames[i])
+		}
+		if len(entry) != len(wantFields) {
+			t.Errorf("entry %q has %d fields, want %d: %v", name, len(entry), len(wantFields), entry)
+		}
+		for _, f := range wantFields {
+			if _, ok := entry[f]; !ok {
+				t.Errorf("entry %q missing contract field %q", name, f)
+			}
+		}
+		if desc, _ := entry["description"].(string); desc == "" {
+			t.Errorf("entry %q has empty description", name)
+		}
+		if cat, _ := entry["category"].(string); !canonical[cat] {
+			t.Errorf("entry %q category = %q, not canonical", name, cat)
+		}
+		byName[name] = entry
+	}
+
+	// Spot-check taxonomy + flags per the frozen contract.
+	spots := []struct {
+		name      string
+		category  string
+		replicate bool
+		kind      string
+	}{
+		{"product_card", "cards", true, "preset"},
+		{"product_detail_accordion", "details", false, "preset"},
+		{"empty_not_found", "states", false, "preset"},
+		{"text_explainer", "narrative", false, "preset"},
+		{"component_price_rating", "components", false, "component"},
+	}
+	for _, s := range spots {
+		entry := byName[s.name]
+		if entry == nil {
+			t.Errorf("entry %q missing", s.name)
+			continue
+		}
+		if got, _ := entry["category"].(string); got != s.category {
+			t.Errorf("%s category = %q, want %q", s.name, got, s.category)
+		}
+		if got, _ := entry["defaultReplicate"].(bool); got != s.replicate {
+			t.Errorf("%s defaultReplicate = %v, want %v", s.name, got, s.replicate)
+		}
+		if got, _ := entry["kind"].(string); got != s.kind {
+			t.Errorf("%s kind = %q, want %q", s.name, got, s.kind)
+		}
+	}
+
+	// Preset descriptions must be the Agent2-visible ones (the same text
+	// SystemPresetsBlock injects into the Agent2 prompt), not a parallel
+	// copy that could drift.
+	if got, _ := byName["product_card"]["description"].(string); got != presets.SystemPresetDescriptions["product_card"] {
+		t.Errorf("product_card description = %q, want SystemPresetDescriptions text %q",
+			got, presets.SystemPresetDescriptions["product_card"])
 	}
 }
 
