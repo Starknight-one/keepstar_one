@@ -1,0 +1,4 @@
++0.36s  HTTP 200
++0.36s  [stage]  {"phase":"data_start"}
++2.41s  [stage]  {"phase":"data_done","signal":"new_search: 50 items found","toolName":"catalog_search","count":50,"empty":false,"bypasse
++4.05s  [result]  preset=product_card  agent1Ms=2050  agent2Ms=1388

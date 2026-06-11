@@ -25,3 +25,15 @@
 - Live prod smoke after deploy: stream a real turn (curl -N + widget devtools), verify Railway edge passes SSE unbuffered (X-Accel-Buffering set; nothing nginx-like in the image — expected fine).
 - WidgetApp-level tests for status-message lifecycle (helpers tested indirectly; first app-level test left for a later slice).
 - `bypassed`/`agent1Ms` fields are emitted but unused by the widget — reserved for a debug overlay.
+
+## Live prod verification (post-deploy, 2026-06-11 ~15:30, main@2ed89de)
+
+Streamed a real turn on tenant `pim-furniture-demo` ("show me office chairs"), frame timestamps via raw socket read (artifact: `assets/feat-staged-streaming_sse_smoke.txt`):
+
+```
++0.36s  [stage]   {"phase":"data_start"}
++2.41s  [stage]   {"phase":"data_done","signal":"new_search: 50 items found",...}
++4.05s  [result]  preset=product_card  agent1Ms=2050  agent2Ms=1388
+```
+
+Frames arrive separately — Railway edge passes SSE through unbuffered. Note for future smokes: python `HTTPResponse.read(n)` BLOCKS until n bytes on chunked responses and fakes "buffering" — use `read1()` (first smoke run was that false alarm).
