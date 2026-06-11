@@ -24,7 +24,7 @@ overview:
 architecture:
   pattern: "Hexagonal — proper ports + adapters, multiple usecase packages, ~30 handlers"
   backend_structure:
-    cmd_server: "project_admin/backend/cmd/server/main.go (950 LOC) — DI bootstrap, all routes; 2026-05-20 added MasterDigestAdapter into DiscoveryV2 wire + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker; 2026-05-22 (0.9.5) DRIFT_WORKERS Redis consumer pool wiring (all catalog domain). Boot DB-connect ctx is 120s (main.go:52, was 30s) because catalog migrations run on every boot and now take ~24s after the Group D drop/backfill blocks — a 30s ctx would risk a boot timeout."
+    cmd_server: "project_admin/backend/cmd/server/main.go (954 LOC) — DI bootstrap, all routes; 2026-05-20 added MasterDigestAdapter into DiscoveryV2 wire + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker; 2026-05-22 (0.9.5) DRIFT_WORKERS Redis consumer pool wiring; 2026-05-26 (0.9.10) catalogV2Writer.SetEmbedder(OpenAI) when embeddingClient != nil (all catalog domain). Boot DB-connect ctx is 120s (main.go:52, was 30s) because catalog migrations run on every boot and now take ~24s after the Group D drop/backfill blocks — a 30s ctx would risk a boot timeout."
     cmd_crawler: "project_admin/backend/cmd/crawler/main.go (608 LOC) — JSON-LD scraper for catalog seed (catalog expert covers details)"
     domain: "project_admin/backend/internal/domain/ — AdminUser, Tenant, Membership, Invitation, Session, Challenge, MagicLink, Invoice, Preferences, TenantPreset, TenantComponent, DesignToken, BillingOverview, AuditEntry"
     ports: "project_admin/backend/internal/ports/ — AuthPort, SessionsPort, BillingPort, CanvasPort, AdminCatalogPort, etc."
@@ -330,6 +330,7 @@ related_experts:
 active_workstreams:
   tracker: "docs/PRE_LAUNCH_TASKS.md (auth + admin sections), docs/CATALOG_GAPS.md (catalog UI in admin)"
   recent_milestones:
+    - "Alpha 0.9.10 — Search layer + V5 repoint (2026-05-26, commit f9516ca): catalog-domain (tenant_search_projection + RebuildSearchProjection + V5 catalog_search repoint) — owned by catalog/pipeline-agents experts. Admin-owned fallout: NONE substantive. main.go gained one wiring line — `catalogV2Writer.SetEmbedder(embeddingClient)` inside the AnthropicAPIKey branch when embeddingClient != nil, so apply-time projection rebuilds embed combined search text. No auth/billing/canvas/route/env change. (New catalog CLIs cmd/build-projection + cmd/rebuild-embeddings are catalog-domain.)"
     - "Alpha 0.9.7–0.9.9 — Group D Phase 1 continuation (2026-05-25, commits ff1241f/22d9f26/870ae5c): all catalog-domain (dead-cosmetics-code removal + D3 categories→junction, D4 stock=Target A, D1b variant=listing table phase) — owned by catalog expert. Admin-owned fallout: NONE substantive. main.go boot DB-connect ctx bumped 30s→120s (main.go:52) so the now-~24s catalog migrations finish within the boot context. No auth/billing/canvas change."
     - "Alpha 0.9.6 — Group D Phase 1 (2026-05-25, commit ef3c6c2): catalog-domain — admin's AdminCatalogPort (ports/catalog_port.go) DROPPED its 7 Service methods (ListServices/GetService/UpdateService/UpsertMasterService/UpsertServiceListing/GetMasterServicesWithoutEmbedding/SeedServiceEmbedding) and domain.Service/MasterService were removed as catalog.services + catalog.master_services tables were dropped. Admin-side fallout was test-only: fake AdminCatalogPort/AuthPort mocks in auth_test.go + auth_http_scenarios_test.go shed those method stubs. main.go unchanged. catalog expert owns the substance."
     - "Alpha 0.9.5 — B2 Schema Drift Detection + Redis Broker (2026-05-22, commit 52f22c0): catalog-domain — admin gains /catalog/drift route + SchemaDriftPage frontend + sidebar entry; backend additions (broker port + Redis adapter, drift classifier client, schema_drift usecase + handler) owned by catalog expert. main.go grew to 950 LOC wiring the DRIFT_WORKERS Redis consumer pool."
@@ -355,6 +356,6 @@ active_workstreams:
     - "shopify/client.go (1302 LOC) — owned by catalog expert; admin only via OAuth glue"
     - "catalog_adapter.go (1037 LOC, down from 1293 — Group D dropped Service methods + 16-col PIM assignments) — catalog domain"
     - "canvas_adapter.go (870 LOC) — split candidate when more design system features land"
-    - "cmd/server/main.go (950 LOC, up from 854) — DI bootstrap; 2026-05-22 (0.9.5) DRIFT_WORKERS Redis pool; 2026-05-20: MasterDigestAdapter + CronDailySourcePull (catalog domain)"
+    - "cmd/server/main.go (954 LOC, up from 854) — DI bootstrap; 2026-05-26 (0.9.10) catalogV2Writer.SetEmbedder(OpenAI); 2026-05-22 (0.9.5) DRIFT_WORKERS Redis pool; 2026-05-20: MasterDigestAdapter + CronDailySourcePull (catalog domain)"
     - "shopify_v2.go (614 LOC) — catalog domain (install flow + CompleteOAuth 4-return)"
     - "CanvasPage.jsx (785 LOC) — frontend; growth signal as canvas matures"

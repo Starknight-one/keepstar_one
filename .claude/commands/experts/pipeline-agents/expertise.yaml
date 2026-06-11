@@ -162,10 +162,12 @@ tools:
   registered_tools:
     catalog_search:
       file: "internal/tools/tool_catalog_search.go"
-      purpose: "Hybrid catalog search — SQL keyword ILIKE + pgvector cosine + RRF merge (chunk 16 port from V4)"
-      constructor: "NewCatalogSearchTool(statePort, catalogPort, embeddingPort) — embeddingPort nil → keyword-only fallback"
-      rrf_fn: "rrfMerge(keyword, vector, limit, hasFilters) — keyword weight 1.5× (2.0× with filters), k=60, stable tie-break by ID"
-      fallback: "embedding failure → SQL-only"
+      purpose: "Fused catalog search over the per-tenant projection slice. Alpha 0.9.10 (2026-05-26) REPLACED the chunk-16 parallel keyword(ListProducts)+vector(VectorSearch)+RRF path with a SINGLE CatalogPort.SearchProjection call (cosine + ts_rank fused inside one SQL CTE over catalog.tenant_search_projection)."
+      constructor: "NewCatalogSearchTool(statePort, catalogPort, embeddingPort) — embeddingPort nil → FTS-only (query not embedded; SearchProjection scores by ts_rank alone)"
+      flow: "embed the vector_query (best-effort; brand appended to bias) → SearchProjection(tenant, embedding|nil, filter, limit). NO over-fetch×2 / NO client-side merge anymore (the filter.Limit=limit*2 still set is vestigial — SearchProjection takes the real `limit` param directly)."
+      meta_fields: "embed_ms, embed_error, search_ms, search_error, search_type (\"hybrid\" when query embedded, \"fts\" when not — old \"vector\"/\"keyword\" values gone), count, input{vector_query,brand,category,...}"
+      rrf_fn: "rrfMerge(keyword, vector, limit, hasFilters) is still DEFINED + unit-tested (data_normalize_test.go) but NO LONGER CALLED by Execute — dead-but-retained after 0.9.10."
+      fallback: "embedding failure or nil embeddingPort → FTS-only (SearchProjection with nil embedding)"
       caller: "Agent1 (catalog_* prefix filter)"
     state_filter:
       file: "internal/tools/tool_state_filter.go"
@@ -221,7 +223,7 @@ llm_adapters:
     token_threshold: "≥ 4500 tokens for stable Haiku cache_read; test with `go test -tags=tokens`"
   openai:
     path: "internal/adapters/openai/"
-    purpose: "EmbeddingPort for catalog vector search (catalog_search hybrid path)"
+    purpose: "EmbeddingPort — V5 side embeds the catalog_search QUERY only (then SearchProjection ranks against pre-embedded slice rows). The slice rows themselves are embedded on the ADMIN write side (RebuildSearchProjection) — see catalog expert."
     env: "OPENAI_API_KEY, EMBEDDING_MODEL (default text-embedding-3-small)"
 
 state_and_trace:
@@ -280,12 +282,12 @@ active_known_gaps:
     A4: "Back button — CLOSED. WidgetApp.jsx canGoBack + handleBack + .kw-back button renders when canGoBack=true; /api/v1/navigation/back wired via dispatchAction kind='back'."
     A5: "Skip Agent2 on Agent1 no-op — pipeline always calls Agent2 LLM even when Agent1 found nothing / identical set; ~1s + $0.001 waste per no-change turn (OPEN)"
     A6: "Layout density — V5 cards narrower than V4; system preset width=280 is rigid vs V4's viewport-responsive columns (OPEN)"
-    hybrid_search: "CLOSED in chunk 16 — catalog_search now runs SQL keyword ILIKE + pgvector cosine + RRF merge; keyword-only fallback when EmbeddingPort nil."
+    hybrid_search: "CLOSED. chunk 16 added SQL keyword + pgvector + RRF; Alpha 0.9.10 (2026-05-26) SUPERSEDED that with CatalogPort.SearchProjection — a single fused cosine + ts_rank query over the per-tenant catalog.tenant_search_projection slice. FTS-only fallback when EmbeddingPort nil. Verified on Neon: 1963/1963 rows embedded."
     deferred: "tree_map injected on every turn with non-empty Document — ~150-400 tokens wasted on preset-only turns; future optimisation"
     deferred2: "catalog digest cached in-process forever (no DB column, no background refresh); no /admin/invalidate-cache yet"
 
 related_experts:
   - "engine-v5 — owns the visual_assembly tool's execution target; op vocabulary + preset names in prompt MUST match engine contract."
-  - "catalog — CatalogPort is data source for catalog_search; FieldDefinitionPort feeds Agent2 <fields> block; BuildCatalogDigest feeds Agent1 <catalog> block."
+  - "catalog — CatalogPort.SearchProjection (over catalog.tenant_search_projection, built admin-side by RebuildSearchProjection) is the data source for catalog_search since Alpha 0.9.10; FieldDefinitionPort feeds Agent2 <fields> block; BuildCatalogDigest feeds Agent1 <catalog> block."
   - "widget — consumes pipeline response (document + prefetch + spans). Shape changes cascade to frontend renderer."
   - "curator — reads v5_chat_session_traces for cross-tenant inspection; ChatsPage/ChatDetailPage depend on trace schema columns."

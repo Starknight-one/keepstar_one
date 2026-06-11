@@ -1,45 +1,36 @@
 # Catalog Expertise
 # Cross-cutting domain: write side in admin (project_admin/), read side in V5
-# (project_v5/). Same Postgres schema (catalog.*). Pipeline rebuilt 2026-05-14:
-# source → inbox_items → discovery_v2 → apply_v2 → master_products + master_cosmetics
-# (+ tier3 fallback) + slim listings. Legacy harvester/discovery/merge/junk
-# code purged 2026-05-15. Evening 2026-05-15: structured-discovering-lollipop
-# rebuild — MappingArtifactV3 (multi-vertical branches + classify_rules),
-# deterministic SKU→GTIN→NormalizedMatchKey cascade in MatchOrCreateMaster,
-# masters are IMMUTABLE on bind, products/delete soft-delete listing webhook.
-# [Condensed — full detail in active_workstreams.recent_milestones below]
-# [0.9.1–0.9.5 condensed — full detail in active_workstreams.recent_milestones]
-# 0.9.1: MappingArtifactV3.ClassifyingField; discovery_v2 master-side tools; pending-
-# approval staging; bulk InboxPort.BulkUpsert + BulkUpsertListing; CronDailySourcePull.
-# 0.9.2: builder-pattern discovery (8 tools + run-scoped draft, tool_error self-correct)
-# + transform empty-input tolerance. 0.9.3: bulk apply (applyOne→preparedApply; page-batch
-# ~2000→~10 roundtrips). 0.9.4 (Group A+B1): coerceStringSlice; idx_master_products_lower_sku;
-# BulkMarkApplied; discovery_v2 patch-from-existing. 0.9.5 (B2): apply_v2 publishes DriftJob
-# to Redis stream `drift_classify`; DRIFT_WORKERS pool runs SchemaDrift.Classify (unmapped
-# inbox fields → DriftClassifierClient labels typo/alias/new) → schema_drift_findings; admin
-# Drift tab {list,/apply,/dismiss}; apply triggers discovery_v2 trigger='manual_drift_apply'.
-# Optional — REDIS_URL empty → schemaDrift nil, apply unchanged.
-# GROUP D Phase 1 (2026-05-25, owner-approved destructive, RUN ON NEON — full detail in
-# active_workstreams.recent_milestones; PIM table phase now STRUCTURALLY COMPLETE):
-# 0.9.6 (ef3c6c2): DROP catalog.services + master_services (0 rows; Service domain/ports/ingest
-#   removed); tier2 jsonb = CANONICAL home for typed per-vertical attrs (vertical-agnostic) —
-#   seed 18 cosmetics field-defs, backfill master_cosmetics→tier2 + 16 legacy master_products
-#   cols→tier2/tier3, DROP master_cosmetics + DROP COLUMN ×16, reconcile=0. apply writes tier2
-#   via BulkMergeTier2.
-# 0.9.7 (ff1241f): Task #7 — dead master_cosmetics code REMOVED (0 grep hits; ports.Master
-#   CosmeticsUpsert KEPT). D3 — DROP COLUMN master_products.category_id + DROP TABLE
-#   catalog.categories (V1); product↔category link now ONLY in master_product_categories;
-#   admin rerouted to LATERAL+recursive-CTE over master_categories.
-# 0.9.8 (22d9f26): D4 Target A — DROP catalog.stock + dead `reserved`; products.stock_quantity
-#   is SOLE stock home (offer = price+currency+stock on listing row); BulkUpdateStock UPDATEs it.
-# 0.9.9 (870ae5c): D1b variant=listing (table phase) — every listing bound to a master_variant
-#   (master_variant_id NOT NULL); variant_kind +'default'; idx_catalog_mv_one_default; apply
-#   ensure-default-then-bind. Real sibling grouping DEFERRED.
-# ⚠️ V5 read-side (postgres_catalog.go) STILL references THREE dropped objects (master_cosmetics
-#   0.9.6, categories/category_id 0.9.7, catalog.stock 0.9.8) → V5 chat/search BROKEN (owner-
-#   authorized; full repoint deferred to the V5 milestone). DEFERRED: D6 vocab (no consumer),
-#   real sibling grouping, V5 read-path rebuild. Spec: docs/CATALOG_GROUP_D_SPEC.md (spec §2.0
-#   prose is stale on master_cosmetics phasing — trust the migration, not the prose).
+# (project_v5/). Same Postgres schema (catalog.*). Pipeline (rebuilt 2026-05-14):
+# source → inbox_items → discovery_v2 → apply_v2 → master_products (+ tier2 typed attrs
+# + tier3 fallback) + slim listings. 2026-05-15 structured-discovering-lollipop rebuild:
+# MappingArtifactV3 (multi-vertical branches + classify_rules), deterministic SKU→GTIN→
+# NormalizedMatchKey cascade, masters IMMUTABLE on bind, products/delete soft-delete.
+# [0.9.1–0.9.5 condensed — FULL detail in active_workstreams.recent_milestones]
+# 0.9.1 ClassifyingField + master-side discovery tools + pending-approval staging + bulk
+# upserts + CronDailySourcePull. 0.9.2 builder-pattern discovery + transform empty-tolerance.
+# 0.9.3 bulk apply (~2000→~10 roundtrips). 0.9.4 lower_sku idx + BulkMarkApplied + patch-from-
+# existing. 0.9.5 (B2) apply publishes DriftJob to Redis stream; DRIFT_WORKERS classify unmapped
+# fields → schema_drift_findings + admin Drift tab (REDIS_URL empty → schemaDrift nil, no-op).
+# GROUP D Phase 1 (2026-05-25, owner-approved destructive, RUN ON NEON — FULL detail in
+# active_workstreams.recent_milestones; PIM table phase now STRUCTURALLY COMPLETE). Net effect:
+# tier2 jsonb is the SOLE vertical-agnostic home for typed attrs; master_cosmetics + 16 legacy
+# typed cols + catalog.services/master_services + catalog.categories(V1) + master_products.category_id
+# + catalog.stock ALL DROPPED. 0.9.6 (ef3c6c2) tier2-canonical + drop services; 0.9.7 (ff1241f)
+# Task#7 dead-cosmetics-code removed + D3 categories→master_product_categories junction; 0.9.8
+# (22d9f26) D4 stock→products.stock_quantity; 0.9.9 (870ae5c) D1b variant=listing (every listing
+# bound to a master_variant NOT NULL; variant_kind +'default'; real sibling grouping DEFERRED).
+# 0.9.10 (f9516ca): SEARCH LAYER + V5 REPOINT — the Group-D V5 breakage is now FIXED.
+#   New catalog.tenant_search_projection (per-tenant denormalized slice: PK(tenant_id,
+#   master_variant_id), *_text cols + embedding vector(384) + search_tsv; price/stock/images
+#   hydrated at read time). New pure internal/searchtext pkg assembles vertical-agnostic
+#   combined text. Writer.RebuildSearchProjection (apply hot path passes batch masterIDs;
+#   CLI cmd/build-projection passes nil = whole tenant) + SetEmbedder (OpenAI, nil→FTS-only).
+#   V5 read-side repointed OFF the 3 dropped objects → tier2 (cosmetics attrs), master_categories
+#   junction (categories), p.stock_quantity (stock); new CatalogPort.SearchProjection (fused
+#   cosine+ts_rank over the slice) is the SINGLE read catalog_search now uses (RRF/parallel
+#   keyword+vector path deleted). Verified on Neon: 1963/1963 rows embedded, hybrid live.
+#   DEFERRED still: D6 vocab (no consumer), real sibling grouping. Spec: docs/CATALOG_GROUP_D_SPEC.md
+#   (spec §2.0 prose is stale on master_cosmetics phasing — trust the migration, not the prose).
 
 overview:
   cross_cutting: true
@@ -50,7 +41,7 @@ overview:
   read_side:
     path: "project_v5/backend/internal/adapters/postgres/postgres_catalog.go (+ postgres_catalog_vector.go)"
     go_module: "keepstar-v5"
-    purpose: "Serve catalog reads to V5 chat pipeline (ListProducts, GetProduct, BuildCatalogDigest, VectorSearch). JOINs master_cosmetics for cosmetics tenants, COALESCEs tier3 → tier2 for non-cosmetics fallback."
+    purpose: "Serve catalog reads to V5 chat pipeline (ListProducts, GetProduct, BuildCatalogDigest, VectorSearch, SearchProjection). Alpha 0.9.10: vertical-agnostic — typed attrs from mp.tier2, categories via master_product_categories junction, stock from p.stock_quantity; catalog_search reads the per-tenant tenant_search_projection slice via SearchProjection (fused cosine+FTS)."
   curator_side:
     path: "curator/backend/internal/adapters/postgres.go"
     purpose: "Read-only browse + manual sync trigger. Legacy candidate/junk/merge-report flows deleted with catalog-v2 rebuild. See `curator` expert."
@@ -60,7 +51,7 @@ schema:
   schemas: ["catalog.*", "admin.* (operational)"]
   core_tables:
     catalog_tenants: "tenants {id, slug, name, type, settings JSONB, catalog_digest JSONB, created_at, updated_at, deleted_at TIMESTAMPTZ NULL} — soft-delete added 2026-05-13; NULL=active."
-    catalog_categories_DROPPED: "categories (V1 single-table tree) — DROPPED 2026-05-25 (Alpha 0.9.7, D3, DROP TABLE CASCADE on Neon). V2 set is canonical: master_categories + master_product_categories (M:N) + tenant_categories + category_mapping. master_products.category_id column also DROPPED — product↔category link now lives ONLY in master_product_categories. ⚠️ V5 read-side still reads V1 categories + mp.category_id = BROKEN (deferred to V5 milestone)."
+    catalog_categories_DROPPED: "categories (V1 single-table tree) — DROPPED 2026-05-25 (Alpha 0.9.7, D3, DROP TABLE CASCADE on Neon). V2 set is canonical: master_categories + master_product_categories (M:N) + tenant_categories + category_mapping. master_products.category_id column also DROPPED — product↔category link now lives ONLY in master_product_categories. V5 read-side repointed to the junction in Alpha 0.9.10 (catalogCategoryJoin LATERAL pick) — no longer broken."
     catalog_master_product_categories: "master_product_categories {master_product_id FK→master_products, master_category_id FK→master_categories} — M:N junction; one master can sit in many categories. Canonical product↔category link since D3 (replaces dropped master_products.category_id). idx_catalog_mpc_category(master_category_id). Read via LATERAL join (catalog_adapter ListProducts/GetProduct pick name LIMIT 1) + recursive-CTE category filter over master_categories. MasterDigestPort joins through here too."
     catalog_master_products: |
       master_products {id, sku UNIQUE, name, description, brand, images JSONB,
@@ -101,8 +92,9 @@ schema:
       TEXT[], product_form, texture, routine_step, routine_time, application_method, scent, spf INT,
       marketing_claim, how_to_use, volume_ml, weight_g, unit_count, extra JSONB}. All 1000 rows
       backfilled into master_products.tier2. apply_v2 now writes tier2 via BulkMergeTier2.
-      ⚠️ STILL REFERENCED (now broken) by V5 read-side postgres_catalog.go LEFT JOINs +
-      distinct-filter queries — repoint to tier2 deferred to the V5 milestone.
+      V5 read-side repointed to mp.tier2 in Alpha 0.9.10 (tier2String/tier2Strings populate
+      the legacy cosmetics-shaped domain.Product fields from tier2; distinct-filter query reads
+      tier2 jsonb keys) — no longer broken.
     catalog_master_variants: "master_variants {id, master_product_id FK, sku, gtins TEXT[], image_url, weight_g, volume_ml, length_mm/width_mm/height_mm, color, size, material, axes JSONB, variant_kind (default|real|addon|bundle), weight_raw, volume_raw, parse_status JSONB, embedding vector(384)}. GROUP D 2026-05-25 (Alpha 0.9.9, D1b table phase): variant=listing model — every catalog.products listing now bound to a master_variant; a simple product gets one synthetic variant_kind='default'. variant_kind CHECK gained 'default'; default treated like real for search (only addon/bundle excluded). apply UpsertListing/BulkUpsertListing now ensure-default-then-bind (apply_v2 still never writes typed variant attrs). Real sibling grouping (7ml+12ml→1 master, N variants) DEFERRED to agents phase. UpsertMasterVariant + FindByGTIN/FindByVendorAndSKU/FindByVendorAndFuzzyName/FindByEmbedding still exposed; UpsertMasterCosmetics/GetMasterCosmetics REMOVED (Task #7)."
     catalog_products: |
       products (listings) {id, tenant_id FK, master_product_id FK NULL, master_variant_id FK NULL,
@@ -117,6 +109,16 @@ schema:
       stock_quantity is the SOLE stock home. BulkUpdateStock UPDATEs this column (was INSERT
       catalog.stock); ListProducts/GetProduct/curator read p.stock_quantity directly.
       GROUP D 2026-05-25 (Alpha 0.9.9): master_variant_id is now NOT NULL (every listing bound).
+    catalog_tenant_search_projection: |
+      tenant_search_projection {tenant_id FK→tenants, master_variant_id FK→master_variants ON DELETE CASCADE,
+      master_product_id FK→master_products ON DELETE CASCADE, vertical TEXT, tier1_text, tier2_text, tier3_text,
+      variant_text, override_text TEXT, embedding vector(384) NULL, search_tsv tsvector, updated_at,
+      PRIMARY KEY(tenant_id, master_variant_id)}. NEW 2026-05-26 (Alpha 0.9.10). Per-tenant DENORMALIZED
+      search slice: ONE row per (tenant, master_variant). Carries search texts + embedding + tsvector ONLY —
+      price/stock/images/rating are hydrated at READ time from the canonical tables (catalog.products etc.),
+      so a price/stock change does NOT force a re-embed. Built by Writer.RebuildSearchProjection (apply hot
+      path + cmd/build-projection backfill). search_tsv = to_tsvector('simple', combined search text). Read by
+      V5 CatalogPort.SearchProjection (fused cosine + ts_rank). embedding NULL when no OPENAI_API_KEY → FTS-only.
     catalog_inbox_items: |
       inbox_items {id, tenant_id FK, source_kind CHECK ('shopify'|'csv'|'sheets'|'manual'),
       external_id, raw JSONB, payload_hash, fetched_at, applied_at TIMESTAMPTZ NULL}.
@@ -191,6 +193,8 @@ schema:
     - "idx_catalog_mpc_category(master_category_id) ON master_product_categories (2026-05-25, D3) — category-filter join after V1 categories drop"
     - "Partial UNIQUE idx_catalog_mv_one_default(master_product_id) WHERE variant_kind='default' (2026-05-25, D1b) — at most one default variant per master; also the ON CONFLICT arbiter for ensure-default"
     - "catalog.stock + idx_catalog_stock_tenant DROPPED 2026-05-25 (D4 Target A) — stock_quantity lives on catalog.products"
+    - "HNSW idx_tsp_embedding ON tenant_search_projection USING hnsw(embedding vector_cosine_ops) (2026-05-26, 0.9.10) — semantic side of SearchProjection"
+    - "GIN idx_tsp_search_tsv ON tenant_search_projection USING gin(search_tsv) (2026-05-26, 0.9.10) — full-text side of SearchProjection; plus idx_tsp_master_product(master_product_id) for prune/rebuild by master set"
   pgvector:
     extension: "CREATE EXTENSION IF NOT EXISTS vector"
     dim: 384
@@ -391,18 +395,20 @@ shopify_integration:
     - "ProductsDeleteAll, CollectionsDeleteAll (destructive testing only)"
 
 read_side_v5:
-  file: "project_v5/backend/internal/adapters/postgres/postgres_catalog.go (727 LOC)"
+  file: "project_v5/backend/internal/adapters/postgres/postgres_catalog.go + postgres_catalog_vector.go"
   adapter: "CatalogAdapter"
-  BROKEN_BY_GROUP_D: "⚠️ As of Alpha 0.9.9 (2026-05-25) this file references THREE dropped objects and is BROKEN: (1) LEFT JOIN catalog.master_cosmetics (~99,130) + distinct-filter queries (~603-639) — table dropped 0.9.6; (2) JOIN catalog.categories + read mp.category_id (~100,131,542-543) + postgres_catalog_vector.go:35 + postgres_field_definitions.go:119 — dropped 0.9.7/D3; (3) JOIN catalog.stock + COALESCE(s.quantity,0) — dropped 0.9.8/D4. Owner authorized breaking V5; ALL THREE fixed together in the V5 read-path rebuild: cosmetics→tier2, categories→master_product_categories junction, stock→p.stock_quantity (postgres_field_definitions.go:107 already reads p.stock_quantity correctly). go build stays green (refs live inside string-constant SQL). Do NOT treat these JOINs as functional."
+  GROUP_D_REPOINT_DONE: "Alpha 0.9.10 (2026-05-26, f9516ca) FIXED the Group-D breakage. All three dropped objects are gone from V5 SQL: (1) master_cosmetics → mp.tier2 jsonb (tier2String/tier2Strings populate the legacy cosmetics-shaped domain.Product fields); (2) catalog.categories + mp.category_id → master_product_categories junction (catalogCategoryJoin LATERAL pick + EXISTS-subquery filters); (3) catalog.stock → p.stock_quantity. The shared SELECT column list catalogVectorSelect lives in postgres_catalog_vector.go and is scanned by the single scanCatalogProduct; ListProducts/VectorSearch/SearchProjection each build only the FROM/JOIN tail."
   read_methods:
-    - "GetTenantBySlug(ctx, slug) — filters deleted_at IS NULL (still works)"
-    - "ListProducts(ctx, tenantID, ProductFilter) → ([]Product, total, error) — LEFT JOIN master_cosmetics (NOW BROKEN); COALESCE(mp.tier3, mp.tier2, '{}'); multi-word query OR-matches on (name, brand) via ILIKE"
-    - "GetProduct(ctx, tenantID, productID) — same JOIN shape; calls mergeProductWithMaster (NOW BROKEN)"
-    - "BuildCatalogDigest(ctx, tenantID) → *CatalogDigest — full table scan; cached in tenants.catalog_digest JSONB; consumed by Agent1 system prompt"
+    - "GetTenantBySlug(ctx, slug) — filters deleted_at IS NULL"
+    - "ListProducts(ctx, tenantID, ProductFilter) → ([]Product, total, error) — FROM products LEFT JOIN master_variants/master_products + catalogCategoryJoin; predicates built by catalogFilterConditions (tier2/junction); multi-word query OR-matches on (name, brand) via ILIKE"
+    - "VectorSearch(ctx, tenantID, embedding, limit, *VectorFilter) — INNER JOIN master_products (embedding NOT NULL), ORDER BY mp.embedding <=> $2; reuses catalogFilterConditions. RETAINED for non-projection callers; catalog_search no longer uses it (uses SearchProjection)"
+    - "SearchProjection(ctx, tenantID, embedding []float32, ProductFilter, limit) → []Product — NEW 0.9.10. The SINGLE read catalog_search uses. CTE 'ranked' over catalog.tenant_search_projection: score = cosine(1-(tsp.embedding<=>$2)) [when embedding non-nil] + ts_rank(tsp.search_tsv, plainto_tsquery('simple',$3)) [when filter.Search non-empty]; WHERE embedding-present OR fts-empty OR search_tsv@@query; other filter fields narrow via catalogFilterConditions; then hydrates display cols from canonical tables via scanCatalogProduct. embedding may be nil → FTS-only graceful degradation. Replaces the old keyword(ListProducts)+vector(VectorSearch)+RRF merge."
+    - "GetProduct(ctx, tenantID, productID) — same JOIN shape; calls mergeProductWithMaster"
+    - "BuildCatalogDigest(ctx, tenantID) → *CatalogDigest — 0.9.10: category tree via master_product_categories→master_categories junction; shared filters = global distinct values from tier2 jsonb (jsonb_array_elements_text guarded by jsonb_typeof='array'); cached in tenants.catalog_digest JSONB; consumed by Agent1 system prompt"
   internal_helpers:
-    - "mergeProductWithMaster(p *Product, mp masterProductRow) — listing-as-overrides: COALESCE(listing.field, master.field). tier3 takes precedence over tier2 (precedence rule chunk-3 plan)."
-    - "Shared distinct filters: queries master_cosmetics directly (NOW BROKEN — table dropped) for skin_type/concern/key_ingredients/target_area/free_from/benefits/product_form distinct lists; future repoint reads master_products.tier2 keys."
-  vector_search: "VectorSearch in postgres_catalog_vector.go — HNSW index; non-NULL embedding required (listings without embedding invisible to vector search)."
+    - "mergeProductWithMaster(p *Product, mp masterProductRow) — listing-as-overrides COALESCE(listing.field, master.field); unmarshals mp.tier2 into p.Tier2; tier2String/tier2Strings derive p.ProductForm/Texture/RoutineStep/MarketingClaim/SkinType/Concern/KeyIngredients/TargetArea/Benefits from tier2 keys (non-cosmetics verticals leave them empty)."
+    - "catalogFilterConditions(filter, args, argNum) → (conditions, args, argNum) — shared predicate builder used by ListProducts + VectorSearch + SearchProjection. Scalars (product_form/routine_step/texture) via mp.tier2->>'k'=$; arrays (skin_type/concern/key_ingredients/target_area) via mp.tier2->'k' @> to_jsonb($::text); categories via master_product_categories EXISTS-subqueries."
+    - "tier2String(m,key)→string / tier2Strings(m,key)→[]string — read scalar/array attrs out of the decoded tier2 map."
 
 usecases_inventory:
   ingest_and_inbox:
@@ -416,7 +422,8 @@ usecases_inventory:
     - "discovery_v2.go (546 LOC) — DiscoveryV2.Discover → *MappingArtifactV3; Sonnet 4.6 agentic loop; constructor takes MasterDigestPort; 19 tools (6 inbox + 5 master + 8 builder); $5/10min/30-turn budget; triggers {first_install, manual, mapping_miss, unknown_vertical}"
     - "discovery_v2_tools.go (812 LOC) — ToolDefs + dispatchTool(ctx, draft *discoveryDraft, inbox, digest, tenantID, ...); 'commit' tool finalizes the run-scoped draft; smokeTestClassify calls inbox.PeekFullRows(5) and runs ClassifyVertical on each sample — covered/sampled stats reported"
     - "discovery_v2_draft.go (506 LOC, NEW 2026-05-21) — discoveryDraft run-scoped builder; per-mutation validation (cached inbox shape with Levenshtein typo suggestions, allowlisted master/cosmetics columns from domain reflection, transform/target type compatibility). Returns tool_error for self-correction in same run."
-    - "apply_v2.go (~900 LOC) — ApplyV2UseCase.ApplyForTenant page-batched bulk staging (BulkMatchOrCreateMaster → split → BulkMergeTier2/BulkMergeTier3/EnrichExistingMaster/BulkUpsertListing); GROUP D 0.9.6: stage-4 now calls BulkMergeTier2 (was BulkUpsertCosmetics); cosmeticsToMap emits tier2.<key> for typed attrs; applyOne returns preparedApply (no DB writes); classifyContextFromRaw(raw, art); mapping_miss loop cap 3/run"
+    - "apply_v2.go (~940 LOC) — ApplyV2UseCase.ApplyForTenant page-batched bulk staging (BulkMatchOrCreateMaster → split → BulkMergeTier2/BulkMergeTier3/EnrichExistingMaster/BulkUpsertListing); GROUP D 0.9.6: stage-4 now calls BulkMergeTier2 (was BulkUpsertCosmetics); cosmeticsToMap emits tier2.<key> for typed attrs; applyOne returns preparedApply (no DB writes); classifyContextFromRaw(raw, art); mapping_miss loop cap 3/run. Alpha 0.9.10: after BulkMarkApplied, per page calls writer.RebuildSearchProjection(tenant, uniqueMasterIDs(listingsBatch)) best-effort (warn 'apply_v2_rebuild_projection_failed', never fails apply — matches stages 4-6); ApplyResult gained ProjectionRows int."
+    - "searchtext/searchtext.go (153 LOC, NEW 2026-05-26) — PURE pkg (no DB/domain imports): BuildProjectionTexts(ProjectionSource)→ProjectionTexts produces the 5 *_text cols + a length-capped (maxSearchText=2000 runes) combined SearchText. Vertical-agnostic: flattenJSONB walks tier2/tier3/axes/overrides in stable key order (deterministic tsvector); buildVariantText folds color/size/material/volume_ml/weight_g. Reused by RebuildSearchProjection + CLIs; unit-tested in searchtext_test.go."
     - "apply_v2_transforms.go (~293 LOC) — getPath(raw, dotted), applyV2Transform (lowercase|trim|split:<delim>|ml_from_string|g_from_string|bool_from_yesno|int|numeric); numeric/int/ml/g return (nil,nil) on empty/whitespace input (Alpha 0.9.2 tolerance); unknown transform = pass-through with warn"
     - "classify_vertical.go (NEW 2026-05-15) — ClassifyVertical(ctx, VerticalAliasLookup, []ClassifyRule, ClassifyContext) → (vertical, ClassifyVerticalSource ∈ {alias, rule, unknown}). Tiny DSL: 'product_type contains X', 'brand = X', 'name contains X', 'tag = X' (case-insensitive)."
     - "match_key.go (NEW 2026-05-15) — NormalizeMatchKey(brand, name): strip non-alphanumeric (unicode \\p{L}\\p{N}), collapse whitespace, lowercase. MUST stay byte-for-byte identical to the Postgres backfill regex in catalog_migrations.go."
@@ -428,7 +435,7 @@ usecases_inventory:
     - "domain/master_digest.go (NEW 2026-05-20) — MasterCategoryNode {ID, Slug, Name, ParentID, Vertical, ProductCount}; MasterCategoryDigest {CategoryID, CategoryName, Vertical, ProductCount, TopBrands[≤10], SampleNames[≤10]}; MasterRef {ID, SKU, Name, Brand, Vertical, GTIN}. Read-only views returned by discovery_v2 master-side tools."
     - "domain/audit.go — added AuditActionApprove/Reject/Expire (NEW 2026-05-20) for the pending-approval lifecycle; Expire is emitted by sweeper that transitions 30-day-stale pending rows to status='expired'"
   ports_catalog_v2:
-    - "ports/catalog_v2_writer_port.go — Per-row: MatchOrCreateMaster (REPLACED UpsertMaster 2026-05-15) → (id, wasCreated, err) 3-stage SKU→GTIN→NormalizedMatchKey cascade insert-on-miss/no-update-on-hit; sets approval_status='pending_approval'+30d-TTL when mp.CreateAsPending=true. UpsertCosmetics, MergeTier3, UpsertListing, SoftDeleteListing(tenant, sourceSystem, sourceID), LookupVertical. Bulk (used by ApplyForTenant): BulkMatchOrCreateMaster([]MasterProductUpsert)→([]MatchResult,err); BulkMergeTier2([]BulkTier2Item)→(count,err) NEW GROUP D 0.9.6 — `tier2 = COALESCE(tier2,'{}') || patch`, same UNNEST shape as BulkMergeTier3, REPLACES the BulkUpsertCosmetics call in apply; BulkMergeTier3([]BulkTier3Item)→(count,err); BulkUpsertListing([]ListingUpsert)→(count,err) UNNEST ~500/chunk; EnrichExistingMaster([]EnrichRequest)→(count,err) stages enrich_scalar_fill+enrich_array_union into master_pending_changes (NOT EXISTS dedup; isEmptyScalar drops nil/''/0). Domain types: MatchResult{MasterID, WasCreated}, BulkTier2Item{MasterProductID, Patch map[string]any}, BulkTier3Item{MasterID, Patch}, EnrichRequest{MasterProductID, TenantID, SourceInboxItemID, Scalars, Arrays}. MasterProductUpsert has CreateAsPending bool. UpsertListing now also ensures+binds the master's default variant (master_variant_id, Alpha 0.9.9). REMOVED 2026-05-25 (Task #7, Alpha 0.9.7): UpsertCosmetics, BulkUpsertCosmetics, BulkCosmeticsItem, ErrCosmeticsSchemaNotReady — gone from port+adapter (0 grep hits). KEEP ports.MasterCosmeticsUpsert (apply uses it as in-memory holder fed to cosmeticsToMap → tier2)."
+    - "ports/catalog_v2_writer_port.go — Per-row: MatchOrCreateMaster (REPLACED UpsertMaster 2026-05-15) → (id, wasCreated, err) 3-stage SKU→GTIN→NormalizedMatchKey cascade insert-on-miss/no-update-on-hit; sets approval_status='pending_approval'+30d-TTL when mp.CreateAsPending=true. UpsertCosmetics, MergeTier3, UpsertListing, SoftDeleteListing(tenant, sourceSystem, sourceID), LookupVertical. Bulk (used by ApplyForTenant): BulkMatchOrCreateMaster([]MasterProductUpsert)→([]MatchResult,err); BulkMergeTier2([]BulkTier2Item)→(count,err) NEW GROUP D 0.9.6 — `tier2 = COALESCE(tier2,'{}') || patch`, same UNNEST shape as BulkMergeTier3, REPLACES the BulkUpsertCosmetics call in apply; BulkMergeTier3([]BulkTier3Item)→(count,err); BulkUpsertListing([]ListingUpsert)→(count,err) UNNEST ~500/chunk; EnrichExistingMaster([]EnrichRequest)→(count,err) stages enrich_scalar_fill+enrich_array_union into master_pending_changes (NOT EXISTS dedup; isEmptyScalar drops nil/''/0). Domain types: MatchResult{MasterID, WasCreated}, BulkTier2Item{MasterProductID, Patch map[string]any}, BulkTier3Item{MasterID, Patch}, EnrichRequest{MasterProductID, TenantID, SourceInboxItemID, Scalars, Arrays}. MasterProductUpsert has CreateAsPending bool. UpsertListing now also ensures+binds the master's default variant (master_variant_id, Alpha 0.9.9). REMOVED 2026-05-25 (Task #7, Alpha 0.9.7): UpsertCosmetics, BulkUpsertCosmetics, BulkCosmeticsItem, ErrCosmeticsSchemaNotReady — gone from port+adapter (0 grep hits). KEEP ports.MasterCosmeticsUpsert (apply uses it as in-memory holder fed to cosmeticsToMap → tier2). NEW 2026-05-26 (Alpha 0.9.10): RebuildSearchProjection(ctx, tenantID, masterIDs []string)→(rows, err) — (re)builds catalog.tenant_search_projection; non-empty masterIDs rebuilds only those masters' variants (apply hot path passes the batch's masters), nil/empty rebuilds the whole tenant (cmd/build-projection backfill); assembles *_text via searchtext.BuildProjectionTexts, computes search_tsv, embeds combined text when an embedder is set (else NULL embedding/FTS-only); ON CONFLICT keeps existing embedding via COALESCE; prunes projection rows with no live listing (best-effort). Adapter (CatalogV2WriterAdapter) gained SetEmbedder(ports.EmbeddingPort) — wired in main.go only when embeddingClient != nil."
     - "ports/inbox_port.go — InboxPort: existing Upsert + NEW BulkUpsert(items []*InboxItem)→(changed int, err) (2026-05-20). Same idempotency/ON CONFLICT semantics; chunked at 500 rows via UNNEST; empty TenantID/ExternalID/SourceKind rows silently skipped; per-row error attribution requires Upsert."
     - "ports/master_digest_port.go (NEW 2026-05-20) — MasterDigestPort: ListMasterCategories(vertical, limit), DigestMasterCategory(categoryID), FindMasterBySKU(sku, case-insensitive), FindMasterByGTIN(gtin), ListMasterBrandsInCategory(categoryID, limit). All global (not tenant-scoped); read-only views of master catalog exposed to discovery_v2 LLM agent."
     - "ports/mapping_artifact_v2_port.go — file name retained; type now *MappingArtifactV3 on Save/Get. Meta.Status enum 'active'|'stale'|'needs_human_review' (was 'validated' pre-2026-05-15)."
@@ -503,8 +510,9 @@ invariants:
   - "products.master_product_id is NULLable — un-linked listings exist legitimately (pre-apply state)."
   - "VectorSearch HNSW index requires non-NULL embedding — listings without embedding are invisible to vector search (keyword/trigram still works)."
   - "apply_v2 is the ONLY path that writes master_products + tier2 + listings (incl. default-variant binding) from inbox. Tier3 absorbs anything unknown (vertical not modeled, unmapped target prefix with valid '.', or cosmetics-fields-but-not-cosmetics-vertical)."
+  - "Alpha 0.9.10 search projection: catalog.tenant_search_projection holds ONLY search texts + embedding + tsvector — price/stock/images/rating are NOT stored there; SearchProjection hydrates them at read time from canonical tables. A price/stock change therefore does NOT need a re-embed. RebuildSearchProjection ON CONFLICT keeps the existing embedding via COALESCE(EXCLUDED.embedding, …) so an FTS-only rebuild (no embedder) never clobbers vectors written by an earlier embedded run. The projection is a DERIVED slice: rebuilding it is always safe; cmd/build-projection recomputes the whole tenant. apply rebuilds only the batch's masters and is best-effort (a failed rebuild leaves stale/missing rows but never fails apply)."
   - "GROUP D 0.9.6: tier2 jsonb on master_products is the SOLE canonical home for typed per-vertical attributes (vertical-agnostic — cosmetics has no special table). master_cosmetics + 16 legacy typed columns (incl. enrichment_version) DROPPED. apply_v2 writes tier2 via BulkMergeTier2. Valid keys per vertical declared in master_field_definitions (18 cosmetics keys seeded). NEVER add a per-vertical typed table (master_electronics etc.) — it goes in tier2."
-  - "tier3 still takes precedence over tier2 in V5 mergeProductWithMaster (COALESCE order: tier3 → tier2 → '{}'). tier3 = search-soup / provenance; tier2 = typed vertical attrs."
+  - "Alpha 0.9.10 CHANGED V5 tier surfacing: the SELECT now exposes mp_tier2 = COALESCE(mp.tier2,'{}') — tier3 is NO LONGER COALESCEd ahead of tier2 into p.Tier2 (was COALESCE(mp.tier3, mp.tier2) pre-0.9.10). tier3 still contributes to SEARCH via the projection's tier3_text column, but typed tier2 attrs surfaced to the chat come from tier2 only. tier3 = search-soup / provenance; tier2 = typed vertical attrs."
   - "master_products is IMMUTABLE on bind (2026-05-15 evening). MatchOrCreateMaster either inserts a fresh row OR returns the existing id untouched. Apply_v2 only writes Tier2/tier3 when wasCreated=true. 2026-05-20: on bind, apply_v2 ALWAYS calls EnrichExistingMaster (one EnrichRequest per inbox row) — proposed scalar fills + array-union elements land in catalog.master_pending_changes for curator approval. Per-tenant marketing differences will live in listing.tenant_overrides (column reserved 2026-05-15; first writer not wired yet)."
   - "Pending-approval staging (2026-05-20): new masters insert with approval_status='pending_approval' + pending_approval_expires_at=NOW()+30d when mp.CreateAsPending=true. Apply_v2 sets CreateAsPending=true unconditionally. Existing legacy rows default to 'approved'. The pending_approval state is INVISIBLE to V5 read-side TODAY (no WHERE approval_status='approved' predicate in postgres_catalog.go) — adding the filter is a downstream follow-up. Curator sweeper transitions pending+expired → 'expired' and emits AuditActionExpire."
   - "EnrichExistingMaster dedup: same (master_id, field, op_kind, pending_value) with status='pending' is filtered via NOT EXISTS at INSERT — re-applying identical inbox rows produces zero new pending entries. Empty-target gating ('fill scalar only when current is NULL/''', 'array union only NEW elements') is enforced at APPROVE time, NOT write time: caller stages everything safely; curator UI shows what would actually change on approval."
@@ -549,12 +557,13 @@ gotchas:
 related_experts:
   - "admin — owns auth/billing/canvas. Catalog write path shares main.go DI with admin; cross-cuts on session/tenant resolution."
   - "pipeline-agents — V5 chat consumes catalog via catalog_search tool; tenant catalog_digest is read by Agent1 system prompt. Schema changes here cascade."
-  - "engine-v5 — scene-graph atoms read from master_products/master_cosmetics/tier3 via fieldBinding. New tier3 keys appear in chat without code change."
+  - "engine-v5 — scene-graph atoms read from master_products/tier2/tier3 via fieldBinding (master_cosmetics dropped Group D). New tier2/tier3 keys appear in chat without code change."
   - "curator — read-only browse + manual sync trigger (CatalogV2Handler routes). Cross-domain SQL identifier safety remains curator's responsibility for any remaining promotion flows."
 
 active_workstreams:
   tracker: "docs/CATALOG_GAPS.md + docs/PRE_LAUNCH_TASKS.md + docs/CATALOG_V2_TEST_SPEC.md"
   recent_milestones:
+    - "Alpha 0.9.10 — Search layer + V5 repoint (2026-05-26, commit f9516ca): NEW catalog.tenant_search_projection per-tenant denormalized slice (PK tenant+master_variant; *_text + embedding vector(384) + search_tsv; price/stock/images hydrated at read time) + 3 indexes (HNSW idx_tsp_embedding, GIN idx_tsp_search_tsv, idx_tsp_master_product). NEW pure internal/searchtext pkg (vertical-agnostic combined-text assembly, maxSearchText=2000 runes). Writer.RebuildSearchProjection (apply hot path passes batch masterIDs; cmd/build-projection CLI passes nil=whole tenant) + SetEmbedder (OpenAI, wired in main.go when embeddingClient!=nil; nil→FTS-only/NULL embedding). apply_v2 per-page best-effort rebuild hook; ApplyResult.ProjectionRows. V5 read-side REPOINTED off the 3 Group-D-dropped objects → mp.tier2 (cosmetics), master_categories junction (categories), p.stock_quantity (stock): new SearchProjection (fused cosine+ts_rank over the slice) is the SINGLE read catalog_search uses (RRF + parallel keyword+vector path DELETED from tool_catalog_search.go); ListProducts/VectorSearch/BuildCatalogDigest all repointed; shared catalogFilterConditions + tier2String/tier2Strings helpers. tier3 no longer COALESCEd ahead of tier2 into p.Tier2 on read. Verified on Neon: 1963/1963 rows embedded, hybrid live. (Also: investor demo rig in demo/.)"
     - "Alpha 0.9.9 — Group D D1b variant=listing, table phase (2026-05-25, commit 870ae5c): every catalog.products listing now bound to a master_variant (master_variant_id NOT NULL). variant_kind CHECK +'default'; partial-unique idx_catalog_mv_one_default. Migration synthesizes a default variant per master + 34 orphan-listing masters, binds all listings (data: 1963 listings all bound, 1951 masters/1951 variants [1947 default + 4 real], 0 integrity mismatches, 0 data loss). apply UpsertListing/BulkUpsertListing ensure-default-then-bind (ON CONFLICT COALESCE keeps a real variant). domain VariantKindDefault. NOT exercised by a seed run yet. Real sibling grouping + variant-aware listing key DEFERRED (agents phase). PIM table phase now STRUCTURALLY COMPLETE."
     - "Alpha 0.9.8 — Group D D4 stock = Target A (2026-05-25, commit 22d9f26): owner reframed — stock+price are both tenant listing facts (offer). Found catalog.stock.reserved dead, stock never filtered/sorted (display-only), writer already split offer across two tables. Decision: consolidate onto the listing row. DROP TABLE catalog.stock + dead reserved col; products.stock_quantity is the SOLE stock home. BulkUpdateStock rewritten INSERT catalog.stock → UPDATE products.stock_quantity; ListProducts/GetProduct read p.stock_quantity (no JOIN); UpdateProduct/UpsertProduct dropped the dual-write. Curator unchanged (already read COALESCE(p.stock_quantity,0)). Neon: 990 stock rows backfilled, sum 2262 preserved, 0 data loss. A hot stock table is a future re-split if throughput demands (not at current volume). ⚠️ V5 still JOINs catalog.stock = BROKEN (V5-milestone)."
     - "Alpha 0.9.7 — Group D Task #7 + D3 (2026-05-25, commit ff1241f): (Task #7) removed all dead master_cosmetics code — UpsertCosmetics/BulkUpsertCosmetics/bulkUpsertCosmeticsBatch/probeCosmeticsSchema, ports.{UpsertCosmetics,BulkUpsertCosmetics,BulkCosmeticsItem,ErrCosmeticsSchemaNotReady}, MasterVariantsAdapter.{Upsert,Get}MasterCosmetics, domain.MasterCosmetics + the 'sync'/'errors' imports they kept alive; 0 grep hits; KEPT ports.MasterCosmeticsUpsert. (D3) DROP COLUMN master_products.category_id + DROP TABLE catalog.categories (V1); product↔category link now ONLY in master_product_categories junction; admin ListProducts/GetProduct rerouted to LATERAL join + recursive-CTE over master_categories; cmd/server sidebar + rebuild-embeddings + seed rerouted. ⚠️ V5 category reads still on V1 = BROKEN (V5-milestone, fixed with master_cosmetics repoint)."
@@ -572,13 +581,14 @@ active_workstreams:
   hot_files:
     - "project_admin/.../shopify/client.go (1302 LOC) — Shopify API; split candidate (products/orders/webhooks/oauth)"
     - "project_admin/.../catalog_adapter.go (1049 LOC) — Group D: category reads rerouted to master_product_categories junction (LATERAL + recursive CTE over master_categories); stock read = p.stock_quantity (catalog.stock JOIN dropped); BulkUpdateStock UPDATEs products"
-    - "project_admin/.../catalog_v2_writer_adapter.go (927 LOC, down from ~1172 — Task #7 removed dead cosmetics methods) — BulkMergeTier2 + BulkMatchOrCreateMaster + BulkMergeTier3 + EnrichExistingMaster + BulkUpsertListing (now ensures+binds default variant)"
-    - "project_admin/.../apply_v2.go (944 LOC) — applyOne→preparedApply (no DB writes); ApplyForTenant page-batched bulk staging; stage-4 BulkMergeTier2"
-    - "project_admin/.../catalog_migrations.go (1065 LOC, up from 891 — Group D D3/D4/D1b drop+backfill+variant-binding blocks)"
+    - "project_admin/.../catalog_v2_writer_adapter.go (1157 LOC, up from 927 — Alpha 0.9.10 RebuildSearchProjection + projection helpers) — BulkMergeTier2 + BulkMatchOrCreateMaster + BulkMergeTier3 + EnrichExistingMaster + BulkUpsertListing (ensures+binds default variant) + RebuildSearchProjection/SetEmbedder"
+    - "project_admin/.../apply_v2.go (973 LOC) — applyOne→preparedApply (no DB writes); ApplyForTenant page-batched bulk staging; stage-4 BulkMergeTier2; 0.9.10 per-page RebuildSearchProjection hook"
+    - "project_admin/.../catalog_migrations.go (1093 LOC) — Group D D3/D4/D1b blocks + 0.9.10 tenant_search_projection table + 3 indexes"
     - "project_admin/.../canvas_adapter.go (870 LOC)"
-    - "project_admin/.../cmd/server/main.go (865 LOC) — MasterDigestAdapter DI + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker"
+    - "project_admin/.../cmd/server/main.go (954 LOC) — MasterDigestAdapter DI + KEEPSTAR_DAILY_SOURCE_PULL 24h ticker + 0.9.10 catalogV2Writer.SetEmbedder when embeddingClient != nil"
     - "project_admin/.../discovery_v2_tools.go (812 LOC, up from 609) — +8 builder tools, 5 master tools, draft-aware dispatcher"
-    - "project_v5/.../postgres_catalog.go (727 LOC) — V5 read-side; master_cosmetics JOIN + tier3-precedence merge"
+    - "project_v5/.../postgres_catalog.go (710 LOC) — V5 read-side; 0.9.10 repointed off master_cosmetics/categories/stock → tier2/junction/p.stock_quantity; catalogFilterConditions + tier2String/tier2Strings"
+    - "project_admin/.../searchtext/searchtext.go (153 LOC, NEW 2026-05-26) — pure vertical-agnostic search-text assembly"
     - "project_admin/.../shopify_v2.go (623 LOC)"
     - "project_admin/.../discovery_v2.go (546 LOC, up from 481) — builder-aware agent loop"
     - "project_admin/.../discovery_v2_draft.go (506 LOC, NEW 2026-05-21) — run-scoped discoveryDraft with at-call-time validation"

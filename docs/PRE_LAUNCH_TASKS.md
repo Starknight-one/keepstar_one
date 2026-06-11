@@ -474,7 +474,7 @@
 - ✅ CSV upload pipeline
 - ✅ Shopify connector (OAuth + product fetch)
 - ✅ Базовая нормализация в `master_products` + `catalog.products`
-- ✅ Per-tenant `field_definitions` сидится при первом импорте
+- ✅ Per-tenant `field_definitions` сидится при первом импорте  ⚠️ **STALE (2026-05-30):** этот код сидинга ушёл вместе с V4, а саму таблицу дропнул `2026-05-14_catalog_flow_rebuild_part1.sql`. v5 agent2 теперь строит `<fields>` блок **из реальных данных каталога** (fail-open), `field_definitions` стала опциональным обогащением. См. `docs/Updates/main_2026-05-30_17-10.md`.
 
 **Что осталось** — это содержание `docs/New features/admin_catalog_design_2026-04-23.md` (final design closed 2026-04-23):
 - Master/Listing split с COALESCE-рендером
