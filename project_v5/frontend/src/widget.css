@@ -130,6 +130,13 @@
   white-space: pre-wrap;
 }
 
+/* Transient per-turn progress line ("Thinking…", "Found N products…").
+   No bubble — muted text only, removed when the turn settles. */
+.kw-msg-status {
+  align-self: flex-start;
+  color: var(--kw-text-muted);
+}
+
 .kw-chat-input {
   padding: var(--kw-gap-md);
   border-top: 1px solid var(--kw-border);
@@ -409,6 +416,55 @@
 .kw-frame--clickable:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(91, 164, 217, 0.18);
+}
+
+/* Skeleton cards — shimmering placeholders shown while Agent2 builds
+   the view. Row geometry mirrors .kw-frame[data-wrap='true'] card grids;
+   card geometry mirrors the product_card preset (width 280). */
+.kw-skeleton-row {
+  width: 100%;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--kw-gap-md);
+}
+
+.kw-skeleton-card {
+  width: 280px;
+  padding: var(--kw-gap-md);
+  border: 1px solid var(--kw-border);
+  border-radius: var(--kw-radius);
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap-sm);
+}
+
+@keyframes kw-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+.kw-skeleton-image,
+.kw-skeleton-bar {
+  border-radius: var(--kw-radius);
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: kw-shimmer 1.4s ease-in-out infinite;
+}
+
+.kw-skeleton-image {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+}
+
+.kw-skeleton-bar {
+  height: 12px;
+  width: 60%;
+}
+
+.kw-skeleton-bar + .kw-skeleton-bar {
+  width: 40%;
 }
 
 /* Filter panel — collapsible drawer in the chat column, holds chips. --- */

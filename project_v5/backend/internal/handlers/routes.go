@@ -27,6 +27,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //	POST /api/v1/session/init                — create session
 //	GET  /api/v1/session/{id}                — read session state (debug)
 //	POST /api/v1/pipeline                    — run Agent2 turn
+//	POST /api/v1/pipeline/stream             — same turn with SSE progress frames
 //	POST /api/v1/actions                     — like / unlike / cart_add / cart_remove
 //	POST /api/v1/navigation/expand           — drill into detail preset
 //	POST /api/v1/navigation/back             — pop view stack, restore prior template
@@ -70,6 +71,7 @@ func RegisterRoutes(
 	mux.HandleFunc("POST /api/v1/internal/presets/cache-invalidate", preset.CacheInvalidate)
 	mux.HandleFunc("POST /api/v1/internal/presets/preview", preset.Preview)
 	mux.HandleFunc("POST /api/v1/pipeline", pipeline.Pipeline)
+	mux.HandleFunc("POST /api/v1/pipeline/stream", pipeline.PipelineStream)
 	mux.HandleFunc("POST /api/v1/actions", action.Action)
 	mux.HandleFunc("POST /api/v1/navigation/expand", navigation.Expand)
 	mux.HandleFunc("POST /api/v1/navigation/back", navigation.Back)

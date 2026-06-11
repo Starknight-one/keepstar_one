@@ -80,6 +80,11 @@ func (rw *recordingWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap exposes the underlying writer so http.ResponseController can reach
+// optional interfaces (http.Flusher, deadlines) the wrapper doesn't forward —
+// without it, SSE handlers behind this middleware can't flush incrementally.
+func (rw *recordingWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
 // newRequestID returns a fresh 16-hex-char request id (8 bytes of
 // crypto/rand). Short enough to scan, long enough to be unique across a
 // service lifetime.

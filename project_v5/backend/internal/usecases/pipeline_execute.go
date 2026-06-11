@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"keepstar_v5/internal/domain"
@@ -17,6 +18,26 @@ type PipelineExecuteRequest struct {
 	TenantSlug string
 	UserQuery  string
 	TurnID     string
+
+	// OnStage, when non-nil, receives a progress signal between pipeline
+	// stages (currently once, after Agent1) so callers can stream progress
+	// to the client. Invoked synchronously on the request goroutine — it
+	// must be fast, anything slow delays Agent2. nil = exactly the current
+	// (non-streaming) behavior.
+	OnStage func(StageEvent)
+}
+
+// StageEvent describes one completed pipeline stage for OnStage consumers.
+// Mirrors the microcontext signal handed to Agent2 plus the Agent1
+// diagnostics the streaming handler puts on the wire.
+type StageEvent struct {
+	Phase    string
+	Signal   string
+	ToolName string
+	Count    int
+	Empty    bool
+	Bypassed bool
+	Agent1Ms int64
 }
 
 // PipelineExecuteResponse aggregates Agent1 + Agent2 into a single shape the
@@ -105,6 +126,22 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 	}
 
 	microcontext := composeMicrocontext(a1)
+
+	if req.OnStage != nil {
+		// Empty checks the tool result, not ProductsFound: on "0 hits,
+		// previous data preserved" the count still shows the stale data.
+		// Both catalog_search and _internal_state_filter emit the
+		// "empty:" prefix in that case.
+		req.OnStage(StageEvent{
+			Phase:    "data_done",
+			Signal:   microcontext,
+			ToolName: a1.ToolName,
+			Count:    a1.ProductsFound,
+			Empty:    a1.ToolResult != nil && strings.HasPrefix(a1.ToolResult.Content, "empty:"),
+			Bypassed: a1.Bypassed,
+			Agent1Ms: a1.LatencyMs,
+		})
+	}
 
 	// ── Agent2 ──
 	a2, err := uc.agent2.Execute(ctx, Agent2ExecuteRequest{

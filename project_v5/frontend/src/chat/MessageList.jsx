@@ -15,6 +15,8 @@ export default function MessageList({ messages }) {
               ? 'kw-msg-user'
               : m.role === 'error'
               ? 'kw-msg-error'
+              : m.role === 'status'
+              ? 'kw-msg-status'
               : 'kw-msg-bot')
           }
         >

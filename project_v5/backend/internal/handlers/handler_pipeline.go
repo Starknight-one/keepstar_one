@@ -24,10 +24,16 @@ import (
 // handler fires a best-effort goroutine that persists the trace
 // (chunk 13) into v5_chat_session_traces so Curator UI can read it.
 type PipelineHandler struct {
-	pipeline *usecases.PipelineExecute
+	pipeline pipelineRunner
 	tracer   ports.TracePort // optional; nil disables persistence
 	guard    *PipelineGuard  // optional; nil disables rate/spend limits
 	log      *slog.Logger
+}
+
+// pipelineRunner is the slice of *usecases.PipelineExecute the handler
+// needs — an interface so tests can stub the orchestrator.
+type pipelineRunner interface {
+	Execute(context.Context, usecases.PipelineExecuteRequest) (*usecases.PipelineExecuteResponse, error)
 }
 
 // NewPipelineHandler constructs the handler. tracer is optional —

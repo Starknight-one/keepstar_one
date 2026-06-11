@@ -3,8 +3,9 @@ import ChatPanel from './chat/ChatPanel'
 import SceneGraphRenderer from './renderer/SceneGraphRenderer'
 import RenderContext from './renderer/RenderContext'
 import { dispatchAction } from './renderer/actionDispatch'
-import { initSession, pipelineRequest } from './api/client'
+import { initSession, pipelineSmartRequest } from './api/client'
 import { filterApply } from './api/actions'
+import SkeletonCards from './chat/SkeletonCards'
 
 // WidgetApp — root component. Owns:
 //   - sessionId           (created on mount via /session/init)
@@ -31,6 +32,9 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
   // so the filter panel clears its selections when the result set changes.
   const [facets, setFacets] = useState([])
   const [searchEpoch, setSearchEpoch] = useState(0)
+  // Skeleton-card count while a streamed turn is between "data found"
+  // and "view rendered" (null = show doc / empty state as usual).
+  const [pendingCards, setPendingCards] = useState(null)
 
   // Prefetch lives in a ref because actionDispatch reads it per click
   // and we don't want a re-render on every refresh. Updated on every
@@ -59,6 +63,21 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
     }
   }, [apiBaseUrl, tenantSlug])
 
+  // Shared success path — streamed and fallback turns return the same
+  // pipeline response shape and land here.
+  const applyPipelineResponse = useCallback((resp) => {
+    setDoc(resp.document || null)
+    prefetchRef.current = resp.prefetch || { adjacentTemplate: {}, entities: {} }
+    // A new pipeline turn resets the view stack on the backend so
+    // canGoBack defaults to false. Drill / back actions update it
+    // independently.
+    setCanGoBack(false)
+    setFacets(resp.facets || [])
+    setSearchEpoch((e) => e + 1)
+    const ack = ackText(resp)
+    setMessages((m) => [...m, { role: 'bot', text: ack }])
+  }, [])
+
   const handleSend = useCallback(
     async (query) => {
       setMessages((m) => [...m, { role: 'user', text: query }])
@@ -67,8 +86,15 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
         return
       }
       setIsLoading(true)
+      setMessages((m) => [...m, { role: 'status', text: 'Thinking…' }])
+      const onStage = (ev) => {
+        if (ev.phase !== 'data_done') return
+        const { text, cards } = stageStatus(ev)
+        if (cards != null) setPendingCards(cards)
+        setMessages((m) => replaceTrailingStatus(m, text))
+      }
       try {
-        const resp = await pipelineRequest({ baseUrl: apiBaseUrl, tenantSlug, sessionId, query })
+        const resp = await pipelineSmartRequest({ baseUrl: apiBaseUrl, tenantSlug, sessionId, query, onStage })
         // eslint-disable-next-line no-console
         console.debug('[v5-renderer] spans', summariseSpans(resp.spans), {
           latencyMs: resp.latencyMs,
@@ -76,25 +102,18 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
           agent2Ms: resp.agent2Ms,
           prefetched: resp.prefetch ? Object.keys(resp.prefetch.adjacentTemplate || {}) : [],
         })
-        setDoc(resp.document || null)
-        prefetchRef.current = resp.prefetch || { adjacentTemplate: {}, entities: {} }
-        // A new pipeline turn resets the view stack on the backend so
-        // canGoBack defaults to false. Drill / back actions update it
-        // independently.
-        setCanGoBack(false)
-        setFacets(resp.facets || [])
-        setSearchEpoch((e) => e + 1)
-        const ack = ackText(resp)
-        setMessages((m) => [...m, { role: 'bot', text: ack }])
+        setMessages(dropTrailingStatus)
+        applyPipelineResponse(resp)
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[v5-renderer] pipeline failed', err)
-        setMessages((m) => [...m, { role: 'error', text: err.message }])
+        setMessages((m) => [...dropTrailingStatus(m), { role: 'error', text: err.message }])
       } finally {
+        setPendingCards(null)
         setIsLoading(false)
       }
     },
-    [apiBaseUrl, sessionId, tenantSlug],
+    [apiBaseUrl, sessionId, tenantSlug, applyPipelineResponse],
   )
 
   // onFilter — brand chip click. Calls the deterministic filter endpoint
@@ -183,7 +202,9 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
             ← Back
           </button>
         )}
-        {doc ? (
+        {pendingCards != null ? (
+          <SkeletonCards count={pendingCards} />
+        ) : doc ? (
           <RenderContext.Provider value={renderCtx}>
             <SceneGraphRenderer document={doc} />
           </RenderContext.Provider>
@@ -204,6 +225,43 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
       />
     </div>
   )
+}
+
+// Maps a data_done stage frame onto the transient status line plus the
+// number of skeleton cards to show (null = leave skeletons untouched).
+function stageStatus(ev) {
+  if (ev.empty) return { text: 'Nothing matched — composing an answer…', cards: null }
+  if (ev.toolName === 'catalog_search') {
+    return {
+      text: `Found ${ev.count} products — building the view…`,
+      cards: ev.count > 0 ? Math.min(ev.count, 6) : null,
+    }
+  }
+  if (ev.toolName === '_internal_state_filter') {
+    return {
+      text: `Narrowed down to ${ev.count} — updating…`,
+      cards: ev.count > 0 ? Math.min(ev.count, 6) : null,
+    }
+  }
+  if (ev.toolName === '_internal_history_lookup') {
+    return { text: 'Checking earlier in this chat…', cards: null }
+  }
+  return { text: 'Composing a response…', cards: null }
+}
+
+// Status lines are transient by definition: replace/drop them wherever
+// they sit — another message (e.g. a facet-filter error bubble) may have
+// landed after them mid-turn.
+function replaceTrailingStatus(messages, text) {
+  if (!messages.some((m) => m.role === 'status')) return messages
+  const out = messages.filter((m) => m.role !== 'status')
+  out.push({ role: 'status', text })
+  return out
+}
+
+function dropTrailingStatus(messages) {
+  if (!messages.some((m) => m.role === 'status')) return messages
+  return messages.filter((m) => m.role !== 'status')
 }
 
 function summariseSpans(spans) {
