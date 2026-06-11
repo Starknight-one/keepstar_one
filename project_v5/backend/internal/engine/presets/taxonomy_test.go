@@ -32,6 +32,20 @@ func TestSystemPresetTaxonomyComplete(t *testing.T) {
 		}
 	}
 
+	// Descriptions drift both ways too: a seed without a description ships
+	// a blank field to the admin canvas AND a generic fallback line to
+	// Agent2; an orphan description entry hides a rename.
+	for name := range SystemPresetSeeds {
+		if SystemPresetDescriptions[name] == "" {
+			t.Errorf("SystemPresetSeeds[%q] has no SystemPresetDescriptions entry", name)
+		}
+	}
+	for name := range SystemPresetDescriptions {
+		if _, ok := SystemPresetSeeds[name]; !ok {
+			t.Errorf("SystemPresetDescriptions[%q] has no matching seed", name)
+		}
+	}
+
 	for key := range SystemComponentSeeds {
 		if SystemComponentDescriptions[key] == "" {
 			t.Errorf("SystemComponentSeeds[%q] has no SystemComponentDescriptions entry", key)

@@ -344,18 +344,30 @@ func TestListSystemContract(t *testing.T) {
 		byName[name] = entry
 	}
 
-	// Spot-check taxonomy + flags per the frozen contract.
+	// Pin the FULL frozen taxonomy table — every entry, not a spot-check.
+	// The taxonomy is a frozen cross-repo contract (admin family tabs key
+	// off these exact values); a flipped category or replicate flag on ANY
+	// row must fail here.
 	spots := []struct {
 		name      string
 		category  string
 		replicate bool
 		kind      string
 	}{
-		{"product_card", "cards", true, "preset"},
-		{"product_detail_accordion", "details", false, "preset"},
-		{"empty_not_found", "states", false, "preset"},
-		{"text_explainer", "narrative", false, "preset"},
+		{"component_brand_badge", "components", false, "component"},
 		{"component_price_rating", "components", false, "component"},
+		{"empty_not_found", "states", false, "preset"},
+		{"error_generic", "states", false, "preset"},
+		{"product_card", "cards", true, "preset"},
+		{"product_card_compact", "cards", true, "preset"},
+		{"product_card_horizontal", "cards", true, "preset"},
+		{"product_card_list_row", "cards", true, "preset"},
+		{"product_carousel", "cards", true, "preset"},
+		{"product_comparison", "cards", true, "preset"},
+		{"product_detail", "details", false, "preset"},
+		{"product_detail_accordion", "details", false, "preset"},
+		{"product_detail_horizontal", "details", false, "preset"},
+		{"text_explainer", "narrative", false, "preset"},
 	}
 	for _, s := range spots {
 		entry := byName[s.name]
