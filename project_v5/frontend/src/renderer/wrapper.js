@@ -32,6 +32,10 @@ function WrappedContent({ content, wrapper, node }) {
         {
           className,
           type: 'button',
+          // actionKind (stamped by InjectDefaultActions) drives per-kind
+          // styling via [data-action-kind] — black round add, translucent
+          // round like. Absent → the neutral default .kw-button.
+          'data-action-kind': node?.actionKind || undefined,
           onClick: (e) => {
             e.stopPropagation()
             if (node?.action) {

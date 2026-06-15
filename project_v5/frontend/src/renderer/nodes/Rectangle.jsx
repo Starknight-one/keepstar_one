@@ -1,4 +1,5 @@
 import { firstSolidColor } from '../fills'
+import { positionStyle } from '../decoration'
 
 // Rectangle — decorative leaf node. Reads:
 //   fills        → first solid color → background (gradient/image/mesh
@@ -7,6 +8,7 @@ import { firstSolidColor } from '../fills'
 //   stroke       → {thickness, fill} → border
 //   width / height / minWidth / maxWidth → numbers → px, strings pass
 //   opacity      → inline style
+//   position:"absolute" + top/left/right/bottom/zIndex → overlay
 // No children rendered (leaf).
 
 export default function Rectangle({ node }) {
@@ -32,6 +34,7 @@ function rectStyle(node) {
   const mn = sizeValue(node.minWidth)
   if (mn !== undefined) out.minWidth = mn
   if (typeof node.opacity === 'number') out.opacity = node.opacity
+  Object.assign(out, positionStyle(node))
   return Object.keys(out).length > 0 ? out : undefined
 }
 

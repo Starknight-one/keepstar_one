@@ -1,5 +1,6 @@
 import { ICONS } from '../icons'
 import { firstSolidColor } from '../fills'
+import { positionStyle } from '../decoration'
 
 // IconFont — inline lucide icon leaf. Reads:
 //   iconFontName  → lucide kebab-case id, looked up in the ICONS
@@ -19,6 +20,7 @@ export default function IconFont({ node }) {
   }
 
   const color = firstSolidColor(node.fill)
+  const style = { ...(color ? { color } : {}), ...positionStyle(node) }
   return (
     <svg
       className="kw-icon"
@@ -32,7 +34,7 @@ export default function IconFont({ node }) {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
-      style={color ? { color } : undefined}
+      style={Object.keys(style).length > 0 ? style : undefined}
       aria-hidden="true"
     >
       {glyph}

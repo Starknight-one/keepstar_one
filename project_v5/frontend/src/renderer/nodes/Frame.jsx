@@ -1,14 +1,27 @@
 import NodeRenderer from '../NodeRenderer'
 import { useRenderContext } from '../RenderContext'
 import { dispatchAction } from '../actionDispatch'
+import {
+  decorationStyle,
+  positionStyle,
+  relativeStyle,
+} from '../decoration'
 
 // Frame — flexbox container. Reads:
 //   layout.{direction, gap, align, justify, wrap}  → flexbox knobs
 //   layout.scroll === 'x'                          → data-scroll="x"
 //                                                    (horizontal strip)
+//   layout.padding                                 → inner padding
+//                                                    (number / [v,h] / [t,r,b,l])
 //   width / minWidth / maxWidth                    → inline-style sizing
 //                                                    (numbers → px,
 //                                                    strings pass through)
+//   fill / cornerRadius / stroke / effect / clip   → visual decoration
+//                                                    (see decoration.js) —
+//                                                    absence renders identically
+//   position:"absolute" + top/left/right/bottom    → overlay positioning;
+//                                                    a frame with any absolute
+//                                                    child becomes relative
 // Recurses into children. Empty children → empty box (placeholders OK).
 //
 // collapsible === true frames render as a native <details> element —
@@ -37,7 +50,7 @@ export default function Frame({ node }) {
   }
 
   const drillProps = computeDrillProps(node, ctx)
-  const styleProps = sizingStyle(node)
+  const styleProps = frameStyle(node)
 
   return (
     <div
@@ -73,7 +86,7 @@ function CollapsibleFrame({ node, layout, childNodes }) {
       className="kw-frame kw-collapsible"
       data-id={node.id || ''}
       open={node.defaultOpen === true || undefined}
-      style={sizingStyle(node)}
+      style={frameStyle(node)}
     >
       <summary className="kw-summary">
         {head ? <NodeRenderer node={head} /> : null}
@@ -95,6 +108,26 @@ function CollapsibleFrame({ node, layout, childNodes }) {
       )}
     </details>
   )
+}
+
+// frameStyle composes the frame's full inline style: sizing + visual
+// decoration (fill/radius/stroke/shadow/clip/padding) + positioning.
+// Order is deliberate:
+//   1. sizing/decoration first (base look),
+//   2. relativeStyle — make the frame the containing block IF it hosts an
+//      absolute child (so overlays anchor here),
+//   3. positionStyle LAST — if this frame is itself an absolute overlay,
+//      position:absolute wins over the relative marker.
+// Returns undefined when empty so React adds no style attribute (a plain
+// frame renders exactly as before).
+function frameStyle(node) {
+  const out = {
+    ...sizingStyle(node),
+    ...decorationStyle(node),
+    ...relativeStyle(node),
+    ...positionStyle(node),
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 // sizingStyle turns node.width / minWidth / maxWidth into an inline

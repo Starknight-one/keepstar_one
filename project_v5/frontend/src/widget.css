@@ -31,6 +31,7 @@
 
   --kw-fs-xs: 11px;
   --kw-fs-sm: 13px;
+  --kw-fs-base: 14px;
   --kw-fs-md: 15px;
   --kw-fs-lg: 18px;
   --kw-fs-xl: 22px;
@@ -282,9 +283,10 @@
   line-height: 1.4;
 }
 
-.kw-text[data-fontsize='xs']  { font-size: var(--kw-fs-xs); }
-.kw-text[data-fontsize='sm']  { font-size: var(--kw-fs-sm); }
-.kw-text[data-fontsize='md']  { font-size: var(--kw-fs-md); }
+.kw-text[data-fontsize='xs']   { font-size: var(--kw-fs-xs); }
+.kw-text[data-fontsize='sm']   { font-size: var(--kw-fs-sm); }
+.kw-text[data-fontsize='base'] { font-size: var(--kw-fs-base); }
+.kw-text[data-fontsize='md']   { font-size: var(--kw-fs-md); }
 .kw-text[data-fontsize='lg']  { font-size: var(--kw-fs-lg); }
 .kw-text[data-fontsize='xl']  { font-size: var(--kw-fs-xl); }
 .kw-text[data-fontsize='2xl'] { font-size: var(--kw-fs-2xl); }
@@ -360,17 +362,47 @@
   font-weight: var(--kw-fw-medium);
 }
 
+/* Default button — neutral dark pill (gradient retired). Any button with
+   no action-kind hint falls back to this sane, non-gradient look. */
 .kw-button {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 8px 16px;
-  background: linear-gradient(225deg, var(--kw-blue), var(--kw-orange));
+  background: var(--kw-text);
   color: white;
   border: none;
-  border-radius: var(--kw-radius);
+  border-radius: 999px;
   font-size: var(--kw-fs-sm);
   font-weight: var(--kw-fw-semibold);
   font-family: inherit;
+  line-height: 1;
   cursor: pointer;
+}
+
+/* Add-to-cart — black round 32px control with a white "+" and a subtle
+   shadow. Sits bottom-right over the body, straddling the image edge. */
+.kw-button[data-action-kind='cart_add'] {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: var(--kw-text);
+  color: #ffffff;
+  font-size: var(--kw-fs-lg);
+  font-weight: var(--kw-fw-medium);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+/* Like — translucent white round 28px control with a heart-gray icon.
+   Sits top-right over the hero image. */
+.kw-button[data-action-kind='like'] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: #ffffffcc;
+  color: var(--kw-text-muted);
+  font-size: var(--kw-fs-sm);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .kw-link {

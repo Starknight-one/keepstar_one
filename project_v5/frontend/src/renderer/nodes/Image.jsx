@@ -1,14 +1,24 @@
+import { radiusValue, positionStyle } from '../decoration'
+
 // Image — leaf node carrying either:
 //   node.fills[0].url      — set by binding when fieldBinding resolves
 //                            an image. Mode "fill" implies cover.
 //   node.content (URL str) — fallback shape used by some atoms.
 // Reads node.mediaStyle for {aspectRatio, objectFit}.
+//   cornerRadius           → number / [tl,tr,br,bl] → rounded corners
+//                            (e.g. a hero rounding its top corners)
+//   position:"absolute" + top/left/right/bottom/zIndex → overlay
 
 export default function Image({ node }) {
   const url = pickURL(node)
   if (!url) return null
 
   const ms = node.mediaStyle || {}
+  const style = {}
+  const radius = radiusValue(node.cornerRadius)
+  if (radius !== undefined) style.borderRadius = radius
+  Object.assign(style, positionStyle(node))
+
   return (
     <img
       className="kw-image"
@@ -17,6 +27,7 @@ export default function Image({ node }) {
       data-id={node.id || ''}
       data-aspect={ms.aspectRatio || ''}
       data-fit={ms.objectFit || 'cover'}
+      style={Object.keys(style).length > 0 ? style : undefined}
       loading="lazy"
     />
   )
