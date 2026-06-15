@@ -56,7 +56,7 @@ func TestFormatFieldsBlock_FailsOpenAndDerivesFromData(t *testing.T) {
 		},
 	}
 
-	block, err := FormatFieldsBlock(context.Background(), port, "pim-furniture-demo", domain.EntityTypeProduct, 3)
+	block, err := FormatFieldsBlock(context.Background(), port, "pim-furniture-demo", domain.EntityTypeProduct, 3, true, true)
 	if err != nil {
 		t.Fatalf("expected fail-open (nil error), got %v", err)
 	}
@@ -93,6 +93,70 @@ func TestFormatFieldsBlock_FailsOpenAndDerivesFromData(t *testing.T) {
 	}
 }
 
+// LEAK-1 regression guard: when the tenant hides price/stock, the <fields>
+// block must NOT advertise those fields or leak their real sample values into
+// the cached system prompt — otherwise the LLM sees prices the catalog tool
+// suppresses at bind time. Hidden price drops price/priceFormatted/currency;
+// hidden stock drops stockQuantity. Covers BOTH published definitions and
+// data-only (sample-derived) fields.
+func TestFormatFieldsBlock_HidesPriceStockWhenInvisible(t *testing.T) {
+	port := stubFieldDefPort{
+		// price has a PUBLISHED definition; stockQuantity is data-only — both
+		// paths must be suppressed.
+		defs: []ports.FieldDefinition{
+			{FieldName: "price", EntityType: domain.EntityTypeProduct, AtomType: domain.AtomTypeNumber, AtomSubtype: domain.SubtypeCurrency, Label: "Price", Priority: 1},
+			{FieldName: "name", EntityType: domain.EntityTypeProduct, AtomType: domain.AtomTypeText, AtomSubtype: domain.SubtypeString, Label: "Name", Priority: 2},
+		},
+		samples: map[string][]interface{}{
+			"name":          {"COSRX Snail Serum"},
+			"price":         {250000},
+			"currency":      {"RUB"},
+			"stockQuantity": {7},
+			"brand":         {"COSRX"},
+		},
+	}
+
+	block, err := FormatFieldsBlock(context.Background(), port, "acme", domain.EntityTypeProduct, 3, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, hidden := range []string{"price", "priceFormatted", "currency", "stockQuantity"} {
+		if ln := lineFor(block, hidden); ln != "" {
+			t.Errorf("hidden field %q still advertised in block:\n%s", hidden, ln)
+		}
+	}
+	// The real price sample value must not appear anywhere in the prompt.
+	if strings.Contains(block, "250000") {
+		t.Errorf("real price sample leaked into prompt:\n%s", block)
+	}
+	// Non-suppressed fields stay.
+	if lineFor(block, "name") == "" || lineFor(block, "brand") == "" {
+		t.Errorf("non-suppressed fields dropped:\n%s", block)
+	}
+}
+
+// Default visible (both flags true) leaves price/stock in the block — proves
+// the suppression is opt-in and other tenants don't regress.
+func TestFormatFieldsBlock_DefaultVisibleKeepsPriceStock(t *testing.T) {
+	port := stubFieldDefPort{
+		samples: map[string][]interface{}{
+			"name":          {"COSRX Snail Serum"},
+			"price":         {250000},
+			"stockQuantity": {7},
+		},
+	}
+	block, err := FormatFieldsBlock(context.Background(), port, "acme", domain.EntityTypeProduct, 3, true, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if lineFor(block, "price") == "" {
+		t.Errorf("default-visible tenant lost price field:\n%s", block)
+	}
+	if lineFor(block, "stockQuantity") == "" {
+		t.Errorf("default-visible tenant lost stockQuantity field:\n%s", block)
+	}
+}
+
 // Published definitions stay authoritative and come first (by priority); fields
 // seen only in the data are appended. field_definitions is enrichment, not a
 // gate — but when present it wins on metadata.
@@ -107,7 +171,7 @@ func TestFormatFieldsBlock_UnionPublishedAndDataOnly(t *testing.T) {
 		},
 	}
 
-	block, err := FormatFieldsBlock(context.Background(), port, "t", domain.EntityTypeProduct, 3)
+	block, err := FormatFieldsBlock(context.Background(), port, "t", domain.EntityTypeProduct, 3, true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

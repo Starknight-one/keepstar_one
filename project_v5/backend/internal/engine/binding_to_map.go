@@ -19,8 +19,9 @@ import (
 // and DB-side aligned.
 //
 // Empty/zero-valued typed fields are skipped so they don't shadow Tier2 or
-// Extra values for the same key. Only `StockQuantity` is always written —
-// 0 is a meaningful "out of stock" signal, not absence.
+// Extra values for the same key. `StockQuantity` is written only when > 0:
+// a 0 means stock is absent or suppressed by the tenant's stock-visibility
+// flag (see tool_catalog_search), so it must not bind.
 func ProductToMap(p domain.Product) map[string]any {
 	m := make(map[string]any)
 
@@ -55,7 +56,9 @@ func ProductToMap(p domain.Product) map[string]any {
 	if p.Rating > 0 {
 		m["rating"] = p.Rating
 	}
-	m["stockQuantity"] = p.StockQuantity
+	if p.StockQuantity > 0 {
+		m["stockQuantity"] = p.StockQuantity
+	}
 	if p.Brand != "" {
 		m["brand"] = p.Brand
 	}

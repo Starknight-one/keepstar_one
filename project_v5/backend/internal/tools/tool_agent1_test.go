@@ -261,6 +261,105 @@ func TestCatalogSearchBrandStrippedFromSearch(t *testing.T) {
 	}
 }
 
+// TestCatalogSearchHidesPriceStockInJSONB is the LEAK-2 regression guard.
+// Zeroing the typed Price/StockQuantity fields is not enough: ProductToMap
+// also layers Tier2 (master JSONB) and Extra (per-listing JSONB) and fills any
+// empty key — so a 'price'/'currency'/'stockQuantity' entry inside Extra/Tier2
+// would re-introduce a hidden field at bind time. The suppression block must
+// strip those keys from both maps too. This matters because it's the single
+// chokepoint that keeps a tenant's hidden prices off the rendered widget.
+func TestCatalogSearchHidesPriceStockInJSONB(t *testing.T) {
+	state := newAgent1StatePort(nil)
+	cat := &agent1CatalogPort{
+		tenant: &domain.Tenant{
+			ID:       "tnt-1",
+			Slug:     "acme",
+			Settings: map[string]any{"priceVisible": false, "stockVisible": false},
+		},
+		products: []domain.Product{
+			{
+				ID: "p1", Name: "Serum",
+				Price: 250000, PriceFormatted: "2500 ₽", Currency: "RUB", StockQuantity: 7,
+				// Hidden fields also lurk in the JSONB layers — these must NOT
+				// survive suppression or binding re-introduces them.
+				Extra: map[string]interface{}{"price": 250000, "currency": "RUB", "color": "blue"},
+				Tier2: map[string]interface{}{"priceFormatted": "2500 ₽", "stockQuantity": 7, "material": "glass"},
+			},
+		},
+	}
+	tool := NewCatalogSearchTool(state, cat, nil)
+	_, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "acme"},
+		map[string]interface{}{"vector_query": "serum"},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(state.dataSeen.Products) != 1 {
+		t.Fatalf("expected 1 product in state, got %d", len(state.dataSeen.Products))
+	}
+	got := state.dataSeen.Products[0]
+
+	// Typed fields zeroed (existing behaviour).
+	if got.Price != 0 || got.PriceFormatted != "" || got.Currency != "" {
+		t.Errorf("typed price not suppressed: price=%d formatted=%q currency=%q", got.Price, got.PriceFormatted, got.Currency)
+	}
+	if got.StockQuantity != 0 {
+		t.Errorf("typed stock not suppressed: stockQuantity=%d", got.StockQuantity)
+	}
+
+	// JSONB layers must no longer carry the hidden keys (the LEAK-2 fix).
+	for _, k := range []string{"price", "priceFormatted", "currency", "stockQuantity"} {
+		if _, ok := got.Extra[k]; ok {
+			t.Errorf("hidden key %q still present in Extra: %+v", k, got.Extra)
+		}
+		if _, ok := got.Tier2[k]; ok {
+			t.Errorf("hidden key %q still present in Tier2: %+v", k, got.Tier2)
+		}
+	}
+	// Non-suppressed JSONB keys are untouched.
+	if got.Extra["color"] != "blue" {
+		t.Errorf("non-suppressed Extra key clobbered: %+v", got.Extra)
+	}
+	if got.Tier2["material"] != "glass" {
+		t.Errorf("non-suppressed Tier2 key clobbered: %+v", got.Tier2)
+	}
+}
+
+// TestCatalogSearchDefaultVisibleKeepsJSONB proves the suppression is hide-only:
+// with no visibility flags set (the default), price/stock survive in both typed
+// fields and the JSONB layers — other tenants must not regress.
+func TestCatalogSearchDefaultVisibleKeepsJSONB(t *testing.T) {
+	state := newAgent1StatePort(nil)
+	cat := &agent1CatalogPort{
+		tenant: &domain.Tenant{ID: "tnt-1", Slug: "acme"}, // no Settings → default visible
+		products: []domain.Product{
+			{
+				ID: "p1", Name: "Serum", Price: 250000, StockQuantity: 7,
+				Extra: map[string]interface{}{"price": 250000},
+				Tier2: map[string]interface{}{"stockQuantity": 7},
+			},
+		},
+	}
+	tool := NewCatalogSearchTool(state, cat, nil)
+	if _, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "acme"},
+		map[string]interface{}{"vector_query": "serum"},
+	); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := state.dataSeen.Products[0]
+	if got.Price != 250000 || got.StockQuantity != 7 {
+		t.Errorf("default-visible tenant lost typed price/stock: price=%d stock=%d", got.Price, got.StockQuantity)
+	}
+	if got.Extra["price"] != 250000 {
+		t.Errorf("default-visible tenant lost Extra price: %+v", got.Extra)
+	}
+	if got.Tier2["stockQuantity"] != 7 {
+		t.Errorf("default-visible tenant lost Tier2 stock: %+v", got.Tier2)
+	}
+}
+
 // ─── _internal_state_filter ──────────────────────────────────────────────
 
 func TestStateFilterByBrand(t *testing.T) {

@@ -41,12 +41,21 @@ import (
 // SampleLimit ≤ 0 disables samples (block becomes purely declarative).
 // Sample fetch errors are non-fatal: the block lands without samples
 // rather than blocking prompt assembly.
+//
+// priceVisible / stockVisible carry the tenant's hide-only visibility flags.
+// When priceVisible is false the 'price', 'priceFormatted' and 'currency'
+// fields (and their real samples) are OMITTED from the block; when
+// stockVisible is false 'stockQuantity' is omitted. Without this the LLM
+// would see real prices/stock in its cached system prompt even though the
+// catalog tool suppresses them at bind time — a leak. Defaults are visible.
 func FormatFieldsBlock(
 	ctx context.Context,
 	fdPort ports.FieldDefinitionPort,
 	tenantSlugOrID string,
 	entityType domain.EntityType,
 	sampleLimit int,
+	priceVisible bool,
+	stockVisible bool,
 ) (string, error) {
 	// Published per-tenant vocabulary is best-effort ENRICHMENT, not a gate.
 	// A read failure (e.g. catalog.field_definitions is absent) must not kill
@@ -67,6 +76,21 @@ func FormatFieldsBlock(
 		if got, err := fdPort.SampleFieldValues(ctx, tenantSlugOrID, entityType, sampleLimit); err == nil {
 			samples = got
 		}
+	}
+
+	// Per-tenant price/stock suppression: drop hidden fields (definitions AND
+	// samples) before assembly so the LLM never sees a vocabulary or real value
+	// the catalog tool suppresses at bind time. Hide-only: only an explicit
+	// false hides; defaults (visible) leave the block untouched.
+	if !priceVisible {
+		defs = removeFieldDefs(defs, "price", "priceFormatted", "currency")
+		delete(samples, "price")
+		delete(samples, "priceFormatted")
+		delete(samples, "currency")
+	}
+	if !stockVisible {
+		defs = removeFieldDefs(defs, "stockQuantity")
+		delete(samples, "stockQuantity")
 	}
 
 	// Authoritative published definitions first, ordered by priority.
@@ -211,6 +235,27 @@ func looksLikeImageField(name string, sample interface{}) bool {
 		}
 	}
 	return false
+}
+
+// removeFieldDefs returns defs with any definition whose FieldName is in
+// `names` dropped. Used to suppress hidden price/stock fields from the
+// published-definition list (the sample map is filtered separately).
+func removeFieldDefs(defs []ports.FieldDefinition, names ...string) []ports.FieldDefinition {
+	if len(defs) == 0 {
+		return defs
+	}
+	drop := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		drop[n] = struct{}{}
+	}
+	out := defs[:0]
+	for _, d := range defs {
+		if _, hidden := drop[d.FieldName]; hidden {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 func isNumericValue(v interface{}) bool {

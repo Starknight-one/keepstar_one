@@ -82,7 +82,7 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	registry.Register(tools.NewStateFilterTool(statePort))
 	registry.Register(tools.NewHistoryLookupTool(statePort))
 
-	promptCache := usecases.NewPromptCache(fdPort, presetPort, "product")
+	promptCache := usecases.NewPromptCache(fdPort, presetPort, catalog, "product")
 	agent1Cache := usecases.NewAgent1PromptCache(catalog)
 	agent1 := usecases.NewAgent1Execute(llm, statePort, catalog, registry, agent1Cache, log)
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)

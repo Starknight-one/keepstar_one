@@ -81,7 +81,7 @@ func setupPipeline(t *testing.T, stateProducts, catalogProducts []domain.Product
 	agent1 := NewAgent1Execute(llm1, state, cat, registry, NewAgent1PromptCache(cat), log)
 
 	llm2 := &fakeLLM{resp: &domain.LLMResponse{StopReason: "end_turn"}}
-	agent2 := NewAgent2Execute(llm2, state, registry, NewPromptCache(noopFieldDefPort{}, noopPresetPort{}, "product"))
+	agent2 := NewAgent2Execute(llm2, state, registry, NewPromptCache(noopFieldDefPort{}, noopPresetPort{}, cat, "product"))
 
 	return NewPipelineExecute(agent1, agent2, state, nil, log)
 }

@@ -115,7 +115,10 @@ func (t *StateFilterTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 		}, nil
 	}
 
-	fields := extractProductFields(filtered[0])
+	// Products here come from state, where catalog_search already suppressed
+	// price for tenants that hide it (Price zeroed). Mirror that: advertise a
+	// price field only when the data actually carries one.
+	fields := extractProductFields(filtered[0], filtered[0].Price > 0)
 
 	data := domain.StateData{Products: filtered}
 	stateMeta := domain.StateMeta{

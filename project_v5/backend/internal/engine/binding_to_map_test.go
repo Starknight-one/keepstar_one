@@ -99,10 +99,14 @@ func TestProductToMapTypedWinsOverTier2(t *testing.T) {
 func TestProductToMapEmptyProduct(t *testing.T) {
 	p := domain.Product{ID: "p1"}
 	m := ProductToMap(p)
-	// Only id (action-entity resolution) and stockQuantity (0 is a
-	// meaningful signal) are always written for a non-empty product row.
-	if len(m) != 2 || m["stockQuantity"] != 0 || m["id"] != "p1" {
-		t.Errorf("empty product should yield {id:p1, stockQuantity:0}, got %v", m)
+	// Only id (action-entity resolution) is written for a bare product row.
+	// stockQuantity is no longer bound at 0: a 0 means stock is absent or
+	// suppressed by the tenant's stock-visibility flag, so it must not bind.
+	if len(m) != 1 || m["id"] != "p1" {
+		t.Errorf("empty product should yield {id:p1}, got %v", m)
+	}
+	if _, ok := m["stockQuantity"]; ok {
+		t.Errorf("stockQuantity should be omitted when 0, got %v", m["stockQuantity"])
 	}
 }
 

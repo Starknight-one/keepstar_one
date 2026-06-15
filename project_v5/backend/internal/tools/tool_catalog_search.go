@@ -257,6 +257,36 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 		NormalizeProduct(&merged[i])
 	}
 
+	// ── Per-tenant price/stock visibility (hide-only; default visible) ──
+	// settingVisible treats nil/missing/non-bool as visible; only an explicit
+	// boolean false hides. Suppression happens after normalization so the
+	// zeroed values stay zeroed downstream (binding skips zero price/stock).
+	//
+	// This is the single suppression chokepoint: zeroing the TYPED struct
+	// fields is not enough, because binding_to_map.ProductToMap also layers
+	// Tier2 (master JSONB) and Extra (per-listing JSONB) and fills any key the
+	// typed fields left empty — so a hidden 'price'/'currency'/'stockQuantity'
+	// could re-enter from JSONB at bind time and render. We therefore also
+	// delete those keys from Extra and Tier2 here so nothing downstream can
+	// re-introduce a suppressed field. Defaults (visible) are untouched.
+	priceVisible := settingVisible(tenant.Settings, "priceVisible")
+	if !priceVisible {
+		for i := range merged {
+			merged[i].Price = 0
+			merged[i].PriceFormatted = ""
+			merged[i].Currency = ""
+			deleteKeys(merged[i].Extra, "price", "priceFormatted", "currency")
+			deleteKeys(merged[i].Tier2, "price", "priceFormatted", "currency")
+		}
+	}
+	if !settingVisible(tenant.Settings, "stockVisible") {
+		for i := range merged {
+			merged[i].StockQuantity = 0
+			deleteKeys(merged[i].Extra, "stockQuantity")
+			deleteKeys(merged[i].Tier2, "stockQuantity")
+		}
+	}
+
 	if queryEmbedding != nil {
 		meta["search_type"] = "hybrid"
 	} else {
@@ -298,7 +328,7 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 		}, nil
 	}
 
-	fields := extractProductFields(merged[0])
+	fields := extractProductFields(merged[0], priceVisible)
 
 	data := domain.StateData{Products: merged}
 	stateMeta := domain.StateMeta{
@@ -379,8 +409,13 @@ func rrfMerge(keyword, vector []domain.Product, limit int, hasFilters bool) []do
 
 // extractProductFields lists the typed fields populated on the first result.
 // Agent2's prompt-cache fields block reads StateMeta.Fields downstream.
-func extractProductFields(p domain.Product) []string {
-	fields := []string{"id", "name", "price"}
+// priceVisible gates the "price" field: when the tenant hides price we omit
+// it so StateMeta.Fields doesn't advertise a field the binding won't supply.
+func extractProductFields(p domain.Product, priceVisible bool) []string {
+	fields := []string{"id", "name"}
+	if priceVisible {
+		fields = append(fields, "price")
+	}
 	if p.Description != "" {
 		fields = append(fields, "description")
 	}
@@ -415,6 +450,26 @@ func extractProductFields(p domain.Product) []string {
 		fields = append(fields, "keyIngredients")
 	}
 	return fields
+}
+
+// settingVisible reads a hide-only visibility flag from tenant settings.
+// Thin wrapper over domain.SettingVisible — the single source of truth shared
+// with the Agent2 <fields> prompt block (usecases/prompt_cache.go).
+func settingVisible(settings map[string]any, key string) bool {
+	return domain.SettingVisible(settings, key)
+}
+
+// deleteKeys removes the given keys from m (no-op on a nil map). Used to strip
+// suppressed price/stock entries out of Product.Extra / Product.Tier2 so the
+// JSONB layers in binding_to_map.ProductToMap can never re-introduce a field
+// the tenant has hidden.
+func deleteKeys(m map[string]interface{}, keys ...string) {
+	if m == nil {
+		return
+	}
+	for _, k := range keys {
+		delete(m, k)
+	}
 }
 
 // removeSubstringIgnoreCase removes the first occurrence of substr from s,
