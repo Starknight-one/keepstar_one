@@ -368,6 +368,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
   padding: 8px 16px;
   background: var(--kw-text);
   color: white;
@@ -388,9 +390,8 @@
   padding: 0;
   background: var(--kw-text);
   color: #ffffff;
-  font-size: var(--kw-fs-lg);
+  font-size: 22px;
   font-weight: var(--kw-fw-medium);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 
 /* Like — translucent white round 28px control with a heart-gray icon.
