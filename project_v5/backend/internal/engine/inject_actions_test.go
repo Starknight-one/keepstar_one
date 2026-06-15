@@ -150,7 +150,120 @@ func TestInjectDefaultActions_RespectsExplicitChildren(t *testing.T) {
 	}
 }
 
+// Slot routing: when a clone declares typed `acceptsAction` slots, the
+// like button must land in the like-slot and the cart_add button in the
+// cart-slot — different parents — and the legacy "actions" frame must be
+// left untouched (slot routing wins).
+func TestInjectDefaultActions_SlotRouting(t *testing.T) {
+	likeSlot := func() Node {
+		return Node{"type": NodeTypeFrame, "id": "like-slot", "acceptsAction": "like", "children": []Node{}}
+	}
+	cartSlot := func() Node {
+		return Node{"type": NodeTypeFrame, "id": "cart-slot", "acceptsAction": "cart_add", "children": []Node{}}
+	}
+	doc := &Document{
+		Version: DocumentVersion,
+		Children: []Node{
+			cloneFrame("clone-0", 0, "card", []Node{
+				likeSlot(),
+				cartSlot(),
+				actionsFrame(), // legacy frame also present — must stay empty
+			}),
+			cloneFrame("clone-1", 1, "card", []Node{
+				likeSlot(),
+				cartSlot(),
+			}),
+		},
+	}
+	data := []map[string]any{
+		{"id": "p-1", "name": "A"},
+		{"id": "p-2", "name": "B"},
+	}
+
+	// clone-0: 2 slots; clone-1: 2 slots → 4 frames populated.
+	if got := InjectDefaultActions(doc, domain.EntityTypeProduct, data); got != 4 {
+		t.Fatalf("expected 4 slots populated, got %d", got)
+	}
+
+	for i, root := range doc.Children {
+		id := data[i]["id"].(string)
+
+		like := findChildByID(root, "like-slot")
+		likeKids := Children(like)
+		if len(likeKids) != 1 {
+			t.Fatalf("clone %d: like-slot expected 1 button, got %d", i, len(likeKids))
+		}
+		assertButton(t, likeKids[0], domain.UserActionLike, id)
+		assertActionKind(t, likeKids[0], domain.UserActionLike)
+
+		cart := findChildByID(root, "cart-slot")
+		cartKids := Children(cart)
+		if len(cartKids) != 1 {
+			t.Fatalf("clone %d: cart-slot expected 1 button, got %d", i, len(cartKids))
+		}
+		assertButton(t, cartKids[0], domain.UserActionCartAdd, id)
+		assertActionKind(t, cartKids[0], domain.UserActionCartAdd)
+	}
+
+	// clone-0's legacy "actions" frame stayed empty (slot routing won).
+	legacy := findChildByID(doc.Children[0], "actions")
+	if got := len(Children(legacy)); got != 0 {
+		t.Errorf("legacy actions frame must stay empty under slot routing, got %d children", got)
+	}
+}
+
+// Slot routing idempotency: re-running must not duplicate slot buttons.
+func TestInjectDefaultActions_SlotRoutingIdempotent(t *testing.T) {
+	doc := &Document{
+		Version: DocumentVersion,
+		Children: []Node{
+			cloneFrame("clone-0", 0, "card", []Node{
+				{"type": NodeTypeFrame, "id": "like-slot", "acceptsAction": "like", "children": []Node{}},
+			}),
+		},
+	}
+	data := []map[string]any{{"id": "p-1"}}
+	if got := InjectDefaultActions(doc, domain.EntityTypeProduct, data); got != 1 {
+		t.Fatalf("first pass: expected 1, got %d", got)
+	}
+	if got := InjectDefaultActions(doc, domain.EntityTypeProduct, data); got != 0 {
+		t.Fatalf("second pass: expected 0 (idempotent), got %d", got)
+	}
+	like := findChildByID(doc.Children[0], "like-slot")
+	if got := len(Children(like)); got != 1 {
+		t.Fatalf("expected 1 button after idempotent re-run, got %d", got)
+	}
+}
+
+// Default (legacy) injection must still stamp actionKind so the frontend
+// can style the buttons even outside slot routing.
+func TestInjectDefaultActions_StampsActionKind(t *testing.T) {
+	doc := &Document{
+		Version: DocumentVersion,
+		Children: []Node{
+			cloneFrame("clone-0", 0, "card", []Node{actionsFrame()}),
+		},
+	}
+	data := []map[string]any{{"id": "p-1"}}
+	InjectDefaultActions(doc, domain.EntityTypeProduct, data)
+	actions := findChildByID(doc.Children[0], "actions")
+	kids := Children(actions)
+	if len(kids) != 2 {
+		t.Fatalf("expected 2 buttons, got %d", len(kids))
+	}
+	assertActionKind(t, kids[0], domain.UserActionLike)
+	assertActionKind(t, kids[1], domain.UserActionCartAdd)
+}
+
 // Helpers.
+
+func assertActionKind(t *testing.T, n Node, want domain.UserActionKind) {
+	t.Helper()
+	got, _ := n["actionKind"].(string)
+	if got != string(want) {
+		t.Fatalf("expected actionKind=%s, got %q", want, got)
+	}
+}
 
 func cloneFrame(id string, dataIndex int, originID string, children []Node) Node {
 	return Node{
