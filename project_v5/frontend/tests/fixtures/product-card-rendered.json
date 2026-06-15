@@ -1,0 +1,675 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "children": [
+        {
+          "__templateOrigin": "card",
+          "children": [
+            {
+              "children": [
+                {
+                  "__bound": true,
+                  "fieldBinding": "heroImage",
+                  "fills": [
+                    {
+                      "mode": "fill",
+                      "type": "image",
+                      "url": "https://picsum.photos/seed/rice-cleanser/600/600"
+                    }
+                  ],
+                  "id": "sPSXJ",
+                  "mediaStyle": {
+                    "aspectRatio": "1:1"
+                  },
+                  "type": "image"
+                },
+                {
+                  "children": [
+                    {
+                      "__bound": true,
+                      "content": "Bestseller",
+                      "fieldBinding": "badge",
+                      "id": "537L7",
+                      "textStyle": {
+                        "color": "#FFFFFF",
+                        "fontSize": "xs",
+                        "fontWeight": "bold"
+                      },
+                      "type": "text"
+                    }
+                  ],
+                  "cornerRadius": "full",
+                  "fill": "#FF9800",
+                  "hideWhenEmpty": true,
+                  "id": "YfMFx",
+                  "layout": {
+                    "direction": "row",
+                    "padding": [
+                      2,
+                      10
+                    ]
+                  },
+                  "left": 10,
+                  "position": "absolute",
+                  "top": 10,
+                  "type": "frame",
+                  "zIndex": 2
+                },
+                {
+                  "acceptsAction": "like",
+                  "children": [
+                    {
+                      "action": {
+                        "entity": {
+                          "id": "rice-cleansing-cream",
+                          "type": "product"
+                        },
+                        "kind": "like"
+                      },
+                      "actionKind": "like",
+                      "content": "♥",
+                      "id": "DaYVh",
+                      "type": "text",
+                      "wrapper": "button"
+                    }
+                  ],
+                  "id": "E8Sth",
+                  "layout": {
+                    "direction": "row"
+                  },
+                  "position": "absolute",
+                  "right": 8,
+                  "top": 8,
+                  "type": "frame",
+                  "zIndex": 2
+                },
+                {
+                  "acceptsAction": "cart_add",
+                  "bottom": -16,
+                  "children": [
+                    {
+                      "action": {
+                        "entity": {
+                          "id": "rice-cleansing-cream",
+                          "type": "product"
+                        },
+                        "kind": "cart_add"
+                      },
+                      "actionKind": "cart_add",
+                      "content": "+",
+                      "id": "mttbI",
+                      "type": "text",
+                      "wrapper": "button"
+                    }
+                  ],
+                  "id": "SaI6l",
+                  "layout": {
+                    "direction": "row"
+                  },
+                  "position": "absolute",
+                  "right": 12,
+                  "type": "frame",
+                  "zIndex": 3
+                }
+              ],
+              "id": "LDN3K",
+              "layout": {
+                "direction": "column"
+              },
+              "type": "frame"
+            },
+            {
+              "children": [
+                {
+                  "__bound": true,
+                  "content": "Rice Cleansing Cream",
+                  "fieldBinding": "name",
+                  "id": "O45SR",
+                  "textStyle": {
+                    "color": "#1a1a1a",
+                    "fontSize": "base",
+                    "fontWeight": "semibold",
+                    "lineClamp": 2
+                  },
+                  "type": "text"
+                },
+                {
+                  "children": [
+                    {
+                      "__bound": true,
+                      "content": "$119.00",
+                      "fieldBinding": "priceFormatted",
+                      "format": "currency",
+                      "id": "lEd6j",
+                      "textStyle": {
+                        "color": "#1a1a1a",
+                        "fontSize": "sm",
+                        "fontWeight": "bold"
+                      },
+                      "type": "text"
+                    },
+                    {
+                      "__bound": true,
+                      "content": 4,
+                      "fieldBinding": "rating",
+                      "format": "stars-compact",
+                      "id": "cXrFH",
+                      "textStyle": {
+                        "color": "#666666",
+                        "fontSize": "xs"
+                      },
+                      "type": "text"
+                    }
+                  ],
+                  "id": "nEn4D",
+                  "layout": {
+                    "align": "center",
+                    "direction": "row",
+                    "gap": "sm"
+                  },
+                  "type": "frame"
+                },
+                {
+                  "__bound": true,
+                  "content": "The Saem",
+                  "fieldBinding": "brand",
+                  "id": "wUYgT",
+                  "textStyle": {
+                    "color": "#999999",
+                    "fontSize": "xs"
+                  },
+                  "type": "text"
+                }
+              ],
+              "id": "XKYF4",
+              "layout": {
+                "direction": "column",
+                "gap": "xs",
+                "padding": [
+                  10,
+                  14,
+                  14,
+                  14
+                ]
+              },
+              "type": "frame"
+            }
+          ],
+          "clip": true,
+          "cornerRadius": 16,
+          "dataIndex": 0,
+          "effect": [
+            {
+              "blur": 12,
+              "color": "#00000010",
+              "offset": {
+                "x": 0,
+                "y": 2
+              },
+              "type": "shadow"
+            }
+          ],
+          "fill": "#FFFFFF",
+          "id": "LvIa0",
+          "layout": {
+            "direction": "column",
+            "gap": "sm"
+          },
+          "stroke": {
+            "fill": "#ECECEC",
+            "thickness": 1
+          },
+          "type": "frame",
+          "width": 280
+        },
+        {
+          "__templateOrigin": "card",
+          "children": [
+            {
+              "children": [
+                {
+                  "__bound": true,
+                  "fieldBinding": "heroImage",
+                  "fills": [
+                    {
+                      "mode": "fill",
+                      "type": "image",
+                      "url": "https://picsum.photos/seed/avocado-cleanser/600/600"
+                    }
+                  ],
+                  "id": "50n0L",
+                  "mediaStyle": {
+                    "aspectRatio": "1:1"
+                  },
+                  "type": "image"
+                },
+                {
+                  "children": [
+                    {
+                      "fieldBinding": "badge",
+                      "id": "vGqJK",
+                      "textStyle": {
+                        "color": "#FFFFFF",
+                        "fontSize": "xs",
+                        "fontWeight": "bold"
+                      },
+                      "type": "text"
+                    }
+                  ],
+                  "cornerRadius": "full",
+                  "fill": "#FF9800",
+                  "hideWhenEmpty": true,
+                  "id": "Pcnbs",
+                  "layout": {
+                    "direction": "row",
+                    "padding": [
+                      2,
+                      10
+                    ]
+                  },
+                  "left": 10,
+                  "position": "absolute",
+                  "top": 10,
+                  "type": "frame",
+                  "zIndex": 2
+                },
+                {
+                  "acceptsAction": "like",
+                  "children": [
+                    {
+                      "action": {
+                        "entity": {
+                          "id": "avocado-cleansing-cream",
+                          "type": "product"
+                        },
+                        "kind": "like"
+                      },
+                      "actionKind": "like",
+                      "content": "♥",
+                      "id": "ljXqg",
+                      "type": "text",
+                      "wrapper": "button"
+                    }
+                  ],
+                  "id": "ojJh7",
+                  "layout": {
+                    "direction": "row"
+                  },
+                  "position": "absolute",
+                  "right": 8,
+                  "top": 8,
+                  "type": "frame",
+                  "zIndex": 2
+                },
+                {
+                  "acceptsAction": "cart_add",
+                  "bottom": -16,
+                  "children": [
+                    {
+                      "action": {
+                        "entity": {
+                          "id": "avocado-cleansing-cream",
+                          "type": "product"
+                        },
+                        "kind": "cart_add"
+                      },
+                      "actionKind": "cart_add",
+                      "content": "+",
+                      "id": "G3jU3",
+                      "type": "text",
+                      "wrapper": "button"
+                    }
+                  ],
+                  "id": "3SCN7",
+                  "layout": {
+                    "direction": "row"
+                  },
+                  "position": "absolute",
+                  "right": 12,
+                  "type": "frame",
+                  "zIndex": 3
+                }
+              ],
+              "id": "D3mKi",
+              "layout": {
+                "direction": "column"
+              },
+              "type": "frame"
+            },
+            {
+              "children": [
+                {
+                  "__bound": true,
+                  "content": "Avocado Cleansing Cream",
+                  "fieldBinding": "name",
+                  "id": "hUax1",
+                  "textStyle": {
+                    "color": "#1a1a1a",
+                    "fontSize": "base",
+                    "fontWeight": "semibold",
+                    "lineClamp": 2
+                  },
+                  "type": "text"
+                },
+                {
+                  "children": [
+                    {
+                      "__bound": true,
+                      "content": "$99.00",
+                      "fieldBinding": "priceFormatted",
+                      "format": "currency",
+                      "id": "L2cUo",
+                      "textStyle": {
+                        "color": "#1a1a1a",
+                        "fontSize": "sm",
+                        "fontWeight": "bold"
+                      },
+                      "type": "text"
+                    },
+                    {
+                      "__bound": true,
+                      "content": 4.3,
+                      "fieldBinding": "rating",
+                      "format": "stars-compact",
+                      "id": "GM223",
+                      "textStyle": {
+                        "color": "#666666",
+                        "fontSize": "xs"
+                      },
+                      "type": "text"
+                    }
+                  ],
+                  "id": "sLeX0",
+                  "layout": {
+                    "align": "center",
+                    "direction": "row",
+                    "gap": "sm"
+                  },
+                  "type": "frame"
+                },
+                {
+                  "__bound": true,
+                  "content": "The Saem",
+                  "fieldBinding": "brand",
+                  "id": "JhZOd",
+                  "textStyle": {
+                    "color": "#999999",
+                    "fontSize": "xs"
+                  },
+                  "type": "text"
+                }
+              ],
+              "id": "gOUCz",
+              "layout": {
+                "direction": "column",
+                "gap": "xs",
+                "padding": [
+                  10,
+                  14,
+                  14,
+                  14
+                ]
+              },
+              "type": "frame"
+            }
+          ],
+          "clip": true,
+          "cornerRadius": 16,
+          "dataIndex": 1,
+          "effect": [
+            {
+              "blur": 12,
+              "color": "#00000010",
+              "offset": {
+                "x": 0,
+                "y": 2
+              },
+              "type": "shadow"
+            }
+          ],
+          "fill": "#FFFFFF",
+          "id": "lLrmf",
+          "layout": {
+            "direction": "column",
+            "gap": "sm"
+          },
+          "stroke": {
+            "fill": "#ECECEC",
+            "thickness": 1
+          },
+          "type": "frame",
+          "width": 280
+        },
+        {
+          "__templateOrigin": "card",
+          "children": [
+            {
+              "children": [
+                {
+                  "__bound": true,
+                  "fieldBinding": "heroImage",
+                  "fills": [
+                    {
+                      "mode": "fill",
+                      "type": "image",
+                      "url": "https://picsum.photos/seed/spot-cream/600/600"
+                    }
+                  ],
+                  "id": "0D5tR",
+                  "mediaStyle": {
+                    "aspectRatio": "1:1"
+                  },
+                  "type": "image"
+                },
+                {
+                  "children": [
+                    {
+                      "__bound": true,
+                      "content": "Sale",
+                      "fieldBinding": "badge",
+                      "id": "yXdA5",
+                      "textStyle": {
+                        "color": "#FFFFFF",
+                        "fontSize": "xs",
+                        "fontWeight": "bold"
+                      },
+                      "type": "text"
+                    }
+                  ],
+                  "cornerRadius": "full",
+                  "fill": "#FF9800",
+                  "hideWhenEmpty": true,
+                  "id": "B0KWf",
+                  "layout": {
+                    "direction": "row",
+                    "padding": [
+                      2,
+                      10
+                    ]
+                  },
+                  "left": 10,
+                  "position": "absolute",
+                  "top": 10,
+                  "type": "frame",
+                  "zIndex": 2
+                },
+                {
+                  "acceptsAction": "like",
+                  "children": [
+                    {
+                      "action": {
+                        "entity": {
+                          "id": "ac-ultimate-spot-cream",
+                          "type": "product"
+                        },
+                        "kind": "like"
+                      },
+                      "actionKind": "like",
+                      "content": "♥",
+                      "id": "xtA38",
+                      "type": "text",
+                      "wrapper": "button"
+                    }
+                  ],
+                  "id": "Q71kj",
+                  "layout": {
+                    "direction": "row"
+                  },
+                  "position": "absolute",
+                  "right": 8,
+                  "top": 8,
+                  "type": "frame",
+                  "zIndex": 2
+                },
+                {
+                  "acceptsAction": "cart_add",
+                  "bottom": -16,
+                  "children": [
+                    {
+                      "action": {
+                        "entity": {
+                          "id": "ac-ultimate-spot-cream",
+                          "type": "product"
+                        },
+                        "kind": "cart_add"
+                      },
+                      "actionKind": "cart_add",
+                      "content": "+",
+                      "id": "WfVIW",
+                      "type": "text",
+                      "wrapper": "button"
+                    }
+                  ],
+                  "id": "aWmlD",
+                  "layout": {
+                    "direction": "row"
+                  },
+                  "position": "absolute",
+                  "right": 12,
+                  "type": "frame",
+                  "zIndex": 3
+                }
+              ],
+              "id": "daQwF",
+              "layout": {
+                "direction": "column"
+              },
+              "type": "frame"
+            },
+            {
+              "children": [
+                {
+                  "__bound": true,
+                  "content": "AC Ultimate Spot Cream",
+                  "fieldBinding": "name",
+                  "id": "vl6xp",
+                  "textStyle": {
+                    "color": "#1a1a1a",
+                    "fontSize": "base",
+                    "fontWeight": "semibold",
+                    "lineClamp": 2
+                  },
+                  "type": "text"
+                },
+                {
+                  "children": [
+                    {
+                      "__bound": true,
+                      "content": "$319.00",
+                      "fieldBinding": "priceFormatted",
+                      "format": "currency",
+                      "id": "jrZFw",
+                      "textStyle": {
+                        "color": "#1a1a1a",
+                        "fontSize": "sm",
+                        "fontWeight": "bold"
+                      },
+                      "type": "text"
+                    },
+                    {
+                      "__bound": true,
+                      "content": 4,
+                      "fieldBinding": "rating",
+                      "format": "stars-compact",
+                      "id": "opYwb",
+                      "textStyle": {
+                        "color": "#666666",
+                        "fontSize": "xs"
+                      },
+                      "type": "text"
+                    }
+                  ],
+                  "id": "7drYn",
+                  "layout": {
+                    "align": "center",
+                    "direction": "row",
+                    "gap": "sm"
+                  },
+                  "type": "frame"
+                },
+                {
+                  "__bound": true,
+                  "content": "COSRX",
+                  "fieldBinding": "brand",
+                  "id": "z0lyI",
+                  "textStyle": {
+                    "color": "#999999",
+                    "fontSize": "xs"
+                  },
+                  "type": "text"
+                }
+              ],
+              "id": "b8yyd",
+              "layout": {
+                "direction": "column",
+                "gap": "xs",
+                "padding": [
+                  10,
+                  14,
+                  14,
+                  14
+                ]
+              },
+              "type": "frame"
+            }
+          ],
+          "clip": true,
+          "cornerRadius": 16,
+          "dataIndex": 2,
+          "effect": [
+            {
+              "blur": 12,
+              "color": "#00000010",
+              "offset": {
+                "x": 0,
+                "y": 2
+              },
+              "type": "shadow"
+            }
+          ],
+          "fill": "#FFFFFF",
+          "id": "OQFiv",
+          "layout": {
+            "direction": "column",
+            "gap": "sm"
+          },
+          "stroke": {
+            "fill": "#ECECEC",
+            "thickness": 1
+          },
+          "type": "frame",
+          "width": 280
+        }
+      ],
+      "id": "grid",
+      "layout": {
+        "direction": "row",
+        "gap": "md",
+        "justify": "start",
+        "wrap": true
+      },
+      "type": "frame"
+    }
+  ]
+}
