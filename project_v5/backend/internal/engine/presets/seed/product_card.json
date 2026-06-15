@@ -15,6 +15,13 @@
           "replicate": true,
           "width": 280,
           "layout": {"direction": "column", "gap": "sm"},
+          "fill": "#FFFFFF",
+          "cornerRadius": 16,
+          "stroke": {"thickness": 1, "fill": "#ECECEC"},
+          "effect": [
+            {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+          ],
+          "clip": true,
           "children": [
             {
               "type": "frame",
@@ -26,37 +33,90 @@
                   "id": "hero-img",
                   "fieldBinding": "heroImage",
                   "mediaStyle": {"aspectRatio": "1:1"}
+                },
+                {
+                  "type": "frame",
+                  "id": "badge",
+                  "hideWhenEmpty": true,
+                  "position": "absolute",
+                  "top": 10,
+                  "left": 10,
+                  "zIndex": 2,
+                  "fill": "#FF9800",
+                  "cornerRadius": "full",
+                  "layout": {"direction": "row", "padding": [2, 10]},
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "badge-text",
+                      "fieldBinding": "badge",
+                      "textStyle": {"fontSize": "xs", "fontWeight": "bold", "color": "#FFFFFF"}
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "like-slot",
+                  "acceptsAction": "like",
+                  "position": "absolute",
+                  "top": 8,
+                  "right": 8,
+                  "zIndex": 2,
+                  "layout": {"direction": "row"},
+                  "children": []
+                },
+                {
+                  "type": "frame",
+                  "id": "add-slot",
+                  "acceptsAction": "cart_add",
+                  "position": "absolute",
+                  "bottom": -16,
+                  "right": 12,
+                  "zIndex": 3,
+                  "layout": {"direction": "row"},
+                  "children": []
                 }
               ]
             },
             {
               "type": "frame",
               "id": "info",
-              "layout": {"direction": "column", "gap": "xs"},
+              "layout": {"direction": "column", "gap": "xs", "padding": [10, 14, 14, 14]},
               "children": [
                 {
                   "type": "text",
                   "id": "title",
                   "fieldBinding": "name",
-                  "textStyle": {"fontSize": "lg", "fontWeight": "bold", "lineClamp": 2}
+                  "textStyle": {"fontSize": "base", "fontWeight": "semibold", "lineClamp": 2, "color": "#1a1a1a"}
                 },
                 {
-                  "type": "ref",
-                  "id": "card-meta",
-                  "ref": "price-rating-root"
+                  "type": "frame",
+                  "id": "price-row",
+                  "layout": {"direction": "row", "gap": "sm", "align": "center"},
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "price",
+                      "fieldBinding": "priceFormatted",
+                      "format": "currency",
+                      "textStyle": {"fontSize": "sm", "fontWeight": "bold", "color": "#1a1a1a"}
+                    },
+                    {
+                      "type": "text",
+                      "id": "rating",
+                      "fieldBinding": "rating",
+                      "format": "stars-compact",
+                      "textStyle": {"fontSize": "xs", "color": "#666666"}
+                    }
+                  ]
                 },
                 {
-                  "type": "ref",
-                  "id": "card-brand",
-                  "ref": "brand-badge-root"
+                  "type": "text",
+                  "id": "brand",
+                  "fieldBinding": "brand",
+                  "textStyle": {"fontSize": "xs", "color": "#999999"}
                 }
               ]
-            },
-            {
-              "type": "frame",
-              "id": "actions",
-              "layout": {"direction": "row", "gap": "sm"},
-              "children": []
             }
           ]
         }

@@ -199,6 +199,66 @@ describe('Image cornerRadius', () => {
   })
 })
 
+describe('Graceful degradation — empty optional fields', () => {
+  it('a bound text that resolved to empty renders nothing (no empty <p>)', () => {
+    const { container } = renderDoc({
+      type: 'frame',
+      id: 'wrap',
+      children: [
+        // badge field absent → content undefined → renders null
+        { type: 'text', id: 'badge-text', fieldBinding: 'badge' },
+        { type: 'text', id: 'title', content: 'Real Title' },
+      ],
+    })
+    expect(container.querySelector('[data-id="badge-text"]')).toBeNull()
+    expect(container.querySelector('[data-id="title"]')?.textContent).toBe(
+      'Real Title',
+    )
+  })
+
+  it('hideWhenEmpty frame disappears when its only bound child is empty', () => {
+    const { container } = renderDoc({
+      type: 'frame',
+      id: 'hero',
+      children: [
+        {
+          type: 'frame',
+          id: 'badge',
+          hideWhenEmpty: true,
+          fill: '#FF9800',
+          children: [{ type: 'text', id: 'badge-text', fieldBinding: 'badge' }],
+        },
+      ],
+    })
+    // The orange pill must not render at all (no stray empty badge).
+    expect(container.querySelector('[data-id="badge"]')).toBeNull()
+  })
+
+  it('hideWhenEmpty frame stays when its bound child has content', () => {
+    const { container } = renderDoc({
+      type: 'frame',
+      id: 'hero',
+      children: [
+        {
+          type: 'frame',
+          id: 'badge',
+          hideWhenEmpty: true,
+          fill: '#FF9800',
+          children: [
+            { type: 'text', id: 'badge-text', fieldBinding: 'badge', content: 'Sale' },
+          ],
+        },
+      ],
+    })
+    const badge = container.querySelector('[data-id="badge"]')
+    expect(badge).not.toBeNull()
+    expect(badge.style.background).toContain('rgb(255, 152, 0)')
+    expect(container.querySelector('[data-id="badge-text"]')?.textContent).toBe(
+      'Sale',
+    )
+  })
+})
+
 describe('Action-kind button styling hook', () => {
   it('actionKind → data-action-kind on the rendered button', () => {
     const { container } = renderDoc({

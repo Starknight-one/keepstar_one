@@ -148,3 +148,39 @@ export function positionStyle(node) {
 export function relativeStyle(node) {
   return hasAbsoluteChild(node) ? { position: 'relative' } : {}
 }
+
+// rendersNothing — would a node draw no visible content? Used by Frame's
+// opt-in `hideWhenEmpty` so a decorative wrapper (e.g. an orange badge
+// pill bound to an optional "badge" field) disappears entirely when its
+// data is absent, instead of showing a stray empty pill.
+//   - bound text that resolved to empty/undefined content → nothing
+//   - image with no URL → nothing
+//   - frame/group → nothing only if ALL children render nothing
+//   - any other leaf (rectangle / line / icon_font) → something
+export function rendersNothing(node) {
+  if (!node || typeof node !== 'object') return true
+  switch (node.type) {
+    case 'text': {
+      const c = node.content
+      return c === undefined || c === null || c === ''
+    }
+    case 'image':
+      return !imageHasURL(node)
+    case 'frame':
+    case 'group': {
+      const kids = Array.isArray(node.children) ? node.children : []
+      return kids.every(rendersNothing)
+    }
+    default:
+      return false
+  }
+}
+
+function imageHasURL(node) {
+  const fills = Array.isArray(node.fills) ? node.fills : []
+  if (fills[0] && typeof fills[0] === 'object' && fills[0].url) return true
+  if (typeof node.content === 'string' && node.content.startsWith('http')) {
+    return true
+  }
+  return false
+}

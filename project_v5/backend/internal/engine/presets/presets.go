@@ -10,18 +10,22 @@ package presets
 import _ "embed"
 
 // ProductCardJSON is the v9-style scene-graph preset for a product card.
-// Chunk 5 refactored it to consume two reusable components via Refs
-// (price-rating-root, brand-badge-root) — the "card" Frame keeps
-// replicate:true and inline atoms for the hero image and title; the
-// remaining meta and brand surfaces are RefNodes pointing into components.
+// The 2026-06-15 redesign rebuilt it on the renderer's capability layer: a
+// decorated "card" Frame (fill/cornerRadius/stroke/effect/clip, replicate
+// true), a hero frame holding the image plus absolutely-positioned overlays
+// (optional badge pill, like-slot, add-slot), and an info frame with the
+// title, an inline price+rating row, and plain muted brand text. It no
+// longer references the price-rating-root / brand-badge-root components
+// (those stay for the list-row preset); like→like-slot and cart_add→add-slot
+// are wired via acceptsAction slots (see inject_actions.go).
 //
 //go:embed seed/product_card.json
 var ProductCardJSON []byte
 
 // ProductCardListRowJSON is a horizontal list-row variant used to validate
 // that v9 RefNode reuse actually works across structurally distinct
-// presets. Same component refs as ProductCardJSON, plus a description
-// atom unique to this layout.
+// presets. Still references the shared components (price-rating-root,
+// brand-badge-root), plus a description atom unique to this layout.
 //
 //go:embed seed/product_card_list_row.json
 var ProductCardListRowJSON []byte

@@ -5,6 +5,7 @@ import {
   decorationStyle,
   positionStyle,
   relativeStyle,
+  rendersNothing,
 } from '../decoration'
 
 // Frame — flexbox container. Reads:
@@ -22,6 +23,9 @@ import {
 //   position:"absolute" + top/left/right/bottom    → overlay positioning;
 //                                                    a frame with any absolute
 //                                                    child becomes relative
+//   hideWhenEmpty:true                             → render nothing when the
+//                                                    frame would draw no visible
+//                                                    content (optional badge etc.)
 // Recurses into children. Empty children → empty box (placeholders OK).
 //
 // collapsible === true frames render as a native <details> element —
@@ -37,6 +41,12 @@ export default function Frame({ node }) {
   const ctx = useRenderContext()
   const layout = node.layout || {}
   const children = Array.isArray(node.children) ? node.children : []
+
+  // Opt-in graceful degradation: a decorative wrapper (e.g. the orange
+  // badge pill) bound to an optional field hides itself entirely when that
+  // field is absent, instead of drawing an empty pill. Only frames that
+  // explicitly carry hideWhenEmpty:true participate.
+  if (node.hideWhenEmpty === true && rendersNothing(node)) return null
 
   if (node.collapsible === true) {
     if (node.__templateOrigin) {

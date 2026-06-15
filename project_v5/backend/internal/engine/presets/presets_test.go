@@ -7,13 +7,19 @@ import (
 	"keepstar_v5/internal/engine"
 )
 
-// TestProductCardSeedRoundTrip — chunk 5 refactor moved price/rating/brand
-// out of inline atoms and into RefNodes. The card now carries hero+title
-// directly and points at two components for meta + brand.
+// TestProductCardSeedRoundTrip — the product-card redesign (2026-06-15)
+// rebuilt the card around the renderer's new capability layer: a decorated
+// card frame (fill/cornerRadius/stroke/effect/clip), a hero frame holding
+// the image plus absolutely-positioned overlays (badge / like-slot /
+// add-slot), and an info frame whose price+rating are INLINE (the
+// brand-badge ref was dropped — brand is now plain muted text).
 //
-// Chunk 12 added a top-level grid-wrapper frame so flex-wrap renders the
-// replicate clones as a sensible row-of-cards instead of stacking them.
-// The card frame is now nested inside the wrapper at children[0].
+// The price-rating-root / brand-badge-root components stay in the registry
+// for the other presets, but product_card no longer references them.
+//
+// The top-level grid wrapper (flex-wrap row-of-cards) and the
+// replicate:true card frame are preserved — the canvas/binding pipeline
+// keys off them.
 func TestProductCardSeedRoundTrip(t *testing.T) {
 	if len(ProductCardJSON) == 0 {
 		t.Fatal("ProductCardJSON is empty — embed broken")
@@ -41,34 +47,152 @@ func TestProductCardSeedRoundTrip(t *testing.T) {
 		t.Errorf("card frame must carry replicate:true")
 	}
 
-	// Two refs expected, pointing at the chunk-5 components.
-	refs := map[string]string{}
 	bindings := map[string]string{}
+	var refCount int
 	engine.WalkNodes(card, func(n engine.Node, _ int) {
 		if engine.NodeType(n) == engine.NodeTypeRef {
-			refs[engine.NodeID(n)], _ = n["ref"].(string)
+			refCount++
 		}
 		if fb, ok := n["fieldBinding"].(string); ok && fb != "" {
 			bindings[engine.NodeID(n)] = fb
 		}
 	})
-	wantRefs := map[string]string{
-		"card-meta":  "price-rating-root",
-		"card-brand": "brand-badge-root",
+
+	// Redesign inlines everything — no component refs remain in the card.
+	if refCount != 0 {
+		t.Errorf("product_card must not reference components anymore, found %d refs", refCount)
 	}
-	for id, want := range wantRefs {
-		if refs[id] != want {
-			t.Errorf("ref %q points at %q, want %q (full: %v)", id, refs[id], want, refs)
-		}
-	}
-	// Inline bindings that survived the refactor.
+
+	// All four demo fields bind inline: hero image, title, price, rating,
+	// brand (badge is optional — present below but allowed to be missing).
 	wantInline := map[string]string{
-		"hero-img": "heroImage",
-		"title":    "name",
+		"hero-img":   "heroImage",
+		"title":      "name",
+		"price":      "priceFormatted",
+		"rating":     "rating",
+		"brand":      "brand",
+		"badge-text": "badge",
 	}
 	for id, want := range wantInline {
 		if bindings[id] != want {
 			t.Errorf("inline binding %q = %q, want %q (full: %v)", id, bindings[id], want, bindings)
+		}
+	}
+
+	// Typed action slots exist so InjectDefaultActions routes the heart over
+	// the hero and the add over the body (different parents).
+	likeSlot := engine.FindNodeByID(&doc, "like-slot")
+	if likeSlot == nil || likeSlot["acceptsAction"] != "like" {
+		t.Errorf("like-slot frame missing or not acceptsAction:like (%v)", likeSlot)
+	}
+	addSlot := engine.FindNodeByID(&doc, "add-slot")
+	if addSlot == nil || addSlot["acceptsAction"] != "cart_add" {
+		t.Errorf("add-slot frame missing or not acceptsAction:cart_add (%v)", addSlot)
+	}
+
+	// The card frame carries the new decoration capability props.
+	if card["fill"] != "#FFFFFF" {
+		t.Errorf("card fill = %v, want #FFFFFF", card["fill"])
+	}
+	if cr, _ := card["cornerRadius"].(float64); cr != 16 {
+		t.Errorf("card cornerRadius = %v, want 16", card["cornerRadius"])
+	}
+	if clip, _ := card["clip"].(bool); !clip {
+		t.Errorf("card clip = %v, want true", card["clip"])
+	}
+}
+
+// TestProductCardSeedRendersThroughPipeline — the redesigned product_card
+// must survive the full zero-LLM render chain (Materialise → ExpandReplicates
+// → ResolveAndInline → BindData → InjectDefaultActions) with realistic data:
+// fan out to N bound cards, route like→like-slot and cart_add→add-slot, and
+// leave the legacy "actions" frame absent (slot routing). An optional badge
+// field that's missing must NOT be reported as a fatal bind error here — it
+// surfaces as a Missing diagnostic the renderer degrades on, so we assert
+// the demo's required fields bound and the slots got their buttons.
+func TestProductCardSeedRendersThroughPipeline(t *testing.T) {
+	var preset engine.Document
+	if err := json.Unmarshal(ProductCardJSON, &preset); err != nil {
+		t.Fatalf("unmarshal preset: %v", err)
+	}
+	// No component refs anymore — materialise with an empty component set.
+	doc := engine.Materialise(&preset, nil)
+
+	data := []map[string]any{
+		{"id": "p-0", "name": "Rice Cleansing Cream", "brand": "The Saem", "priceFormatted": "$119.00", "rating": 4.0, "heroImage": "https://img.test/rice.jpg", "badge": "Bestseller"},
+		{"id": "p-1", "name": "Avocado Cleansing Cream", "brand": "The Saem", "priceFormatted": "$99.00", "rating": 4.3, "heroImage": "https://img.test/avocado.jpg"},
+	}
+
+	engine.ExpandReplicates(doc, len(data))
+	if stats := engine.ResolveAndInline(doc); len(stats.Failed) > 0 {
+		t.Fatalf("ResolveAndInline failed refs: %v", stats.Failed)
+	}
+	engine.BindData(doc, data)
+	populated := engine.InjectDefaultActions(doc, "product", data)
+
+	// Two clones × two typed slots = four frames populated.
+	if populated != len(data)*2 {
+		t.Fatalf("expected %d slots populated, got %d", len(data)*2, populated)
+	}
+
+	grid := engine.FindNodeByID(doc, "grid")
+	if grid == nil {
+		t.Fatal("grid frame missing after pipeline")
+	}
+	clones := engine.Children(grid)
+	if len(clones) != len(data) {
+		t.Fatalf("expected %d clones, got %d", len(data), len(clones))
+	}
+
+	for i, clone := range clones {
+		got := map[string]any{}
+		engine.WalkNodes(clone, func(n engine.Node, _ int) {
+			if fb, _ := n["fieldBinding"].(string); fb != "" {
+				got[fb] = n["content"]
+			}
+		})
+		if got["name"] != data[i]["name"] {
+			t.Errorf("clone[%d] name = %v, want %v", i, got["name"], data[i]["name"])
+		}
+		if got["brand"] != data[i]["brand"] {
+			t.Errorf("clone[%d] brand = %v, want %v", i, got["brand"], data[i]["brand"])
+		}
+		if got["priceFormatted"] != data[i]["priceFormatted"] {
+			t.Errorf("clone[%d] price = %v, want %v", i, got["priceFormatted"], data[i]["priceFormatted"])
+		}
+		if got["rating"] != data[i]["rating"] {
+			t.Errorf("clone[%d] rating = %v, want %v", i, got["rating"], data[i]["rating"])
+		}
+
+		// ExpandReplicates re-mints descendant ids, so the slots are found
+		// by their stable acceptsAction attribute, not by id. The like-slot
+		// must hold the heart, the add-slot the plus — different parents.
+		var likeBtn, addBtn engine.Node
+		engine.WalkNodes(clone, func(n engine.Node, _ int) {
+			switch n["acceptsAction"] {
+			case "like":
+				if kids := engine.Children(n); len(kids) == 1 {
+					likeBtn = kids[0]
+				} else {
+					t.Errorf("clone[%d] like-slot expected 1 button, got %d", i, len(kids))
+				}
+			case "cart_add":
+				if kids := engine.Children(n); len(kids) == 1 {
+					addBtn = kids[0]
+				} else {
+					t.Errorf("clone[%d] add-slot expected 1 button, got %d", i, len(kids))
+				}
+			}
+		})
+		if likeBtn == nil || likeBtn["actionKind"] != "like" {
+			t.Errorf("clone[%d] like-slot button missing/wrong kind: %v", i, likeBtn)
+		}
+		if addBtn == nil || addBtn["actionKind"] != "cart_add" {
+			t.Errorf("clone[%d] add-slot button missing/wrong kind: %v", i, addBtn)
+		}
+		// No legacy "actions" frame in the redesign.
+		if legacy := engine.FindNodeByID(clone, "actions"); legacy != nil {
+			t.Errorf("clone[%d] unexpected legacy actions frame", i)
 		}
 	}
 }
