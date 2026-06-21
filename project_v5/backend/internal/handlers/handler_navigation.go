@@ -33,15 +33,22 @@ type NavigationHandler struct {
 	state      ports.StatePort
 	presets    ports.PresetPort
 	components ports.ComponentPort
+	themes     ports.ThemePort
 	log        *slog.Logger
 }
 
-// NewNavigationHandler constructs the handler with its three deps.
-func NewNavigationHandler(state ports.StatePort, presetPort ports.PresetPort, componentPort ports.ComponentPort, log *slog.Logger) *NavigationHandler {
+// NewNavigationHandler constructs the handler with its deps. themes is
+// optional (nil → default theme attached) and exists so the deterministic
+// drill/back/filter documents carry the same doc.theme the chat/preview
+// paths attach — otherwise a custom tenant theme would be stripped by the
+// widget on the first navigation (the frontend drops --kw-* on a theme-less
+// document).
+func NewNavigationHandler(state ports.StatePort, presetPort ports.PresetPort, componentPort ports.ComponentPort, themes ports.ThemePort, log *slog.Logger) *NavigationHandler {
 	return &NavigationHandler{
 		state:      state,
 		presets:    presetPort,
 		components: componentPort,
+		themes:     themes,
 		log:        log,
 	}
 }
@@ -187,6 +194,7 @@ func (h *NavigationHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	attachThemeToDocument(r.Context(), templateMap, h.themes, tenant, h.log)
 	writeJSON(w, http.StatusOK, navResponse{
 		Success:     true,
 		Document:    templateMap,
@@ -259,6 +267,11 @@ func (h *NavigationHandler) Back(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Restored snapshots carry the pre-drill template (no theme stored in
+	// state); re-attach the resolved theme so /back keeps a custom tenant
+	// theme. TenantFromContext is fail-open in attachThemeToDocument (nil →
+	// defaults), so an unresolved tenant degrades to the static look.
+	attachThemeToDocument(r.Context(), templateMap, h.themes, TenantFromContext(r.Context()), h.log)
 	writeJSON(w, http.StatusOK, navResponse{
 		Success:     true,
 		Document:    templateMap,
@@ -350,6 +363,7 @@ func (h *NavigationHandler) Filter(w http.ResponseWriter, r *http.Request) {
 	// Guided facets — recomputed over the base set with the active filters
 	// so the panel reflects what's still available after filtering.
 	facets := usecases.BuildGuidedFacets(state.Current.Data.Products, req.Filters)
+	attachThemeToDocument(r.Context(), templateMap, h.themes, tenant, h.log)
 	writeJSON(w, http.StatusOK, navResponse{
 		Success:     true,
 		Document:    templateMap,

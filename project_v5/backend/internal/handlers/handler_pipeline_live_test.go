@@ -90,12 +90,14 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	pipeline := usecases.NewPipelineExecute(agent1, agent2, statePort, prefetchBuilder, log)
 
 	tracePort := postgres.NewTraceAdapter(pg)
+	themePort := postgres.NewThemeStore(pg)
 	sessionH := handlers.NewSessionHandler(statePort, pg.Pool())
-	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, nil, log)
+	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, nil, themePort, log)
 	actionH := handlers.NewActionHandler(statePort)
-	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
-	presetH := handlers.NewPresetHandler(promptCache, catalog, presetPort, componentPort, log)
-	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH, presetH)
+	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, themePort, log)
+	presetH := handlers.NewPresetHandler(promptCache, catalog, presetPort, componentPort, themePort, log)
+	themeH := handlers.NewThemeHandler(themePort, log)
+	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH, presetH, themeH)
 
 	srv := httptest.NewServer(router)
 	defer srv.Close()

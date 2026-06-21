@@ -27,6 +27,7 @@ type PipelineHandler struct {
 	pipeline pipelineRunner
 	tracer   ports.TracePort // optional; nil disables persistence
 	guard    *PipelineGuard  // optional; nil disables rate/spend limits
+	themes   ports.ThemePort // optional; nil → default theme attached
 	log      *slog.Logger
 }
 
@@ -39,9 +40,11 @@ type pipelineRunner interface {
 // NewPipelineHandler constructs the handler. tracer is optional —
 // nil disables trace persistence (used by tests that don't need it).
 // guard is optional — nil disables rate limiting and the daily spend cap.
-// log is required so the async persist goroutine can log failures.
-func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePort, guard *PipelineGuard, log *slog.Logger) *PipelineHandler {
-	return &PipelineHandler{pipeline: pipeline, tracer: tracer, guard: guard, log: log}
+// themes is optional — nil attaches the canonical default theme to the
+// rendered document (zero visual change). log is required so the async
+// persist goroutine can log failures.
+func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePort, guard *PipelineGuard, themes ports.ThemePort, log *slog.Logger) *PipelineHandler {
+	return &PipelineHandler{pipeline: pipeline, tracer: tracer, guard: guard, themes: themes, log: log}
 }
 
 type pipelineRequest struct {
@@ -144,6 +147,7 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		Prefetch:  resp.Prefetch,
 		Facets:    resp.Facets,
 	}
+	attachThemeToDocument(r.Context(), out.Document, h.themes, tenant, h.log)
 	if sc := domain.SpanFromContext(r.Context()); sc != nil {
 		out.Spans = sc.Spans()
 	}

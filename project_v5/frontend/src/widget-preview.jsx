@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import SceneGraphRenderer from './renderer/SceneGraphRenderer'
 import RenderContext, { defaultRenderContext } from './renderer/RenderContext'
+import { applyTheme, tokensFromDoc } from './theme-style'
 
 // Single source of the shadow-DOM stylesheet + font for BOTH entries:
 // widget.jsx (chat auto-mount) imports these, so the preview and the
@@ -33,7 +34,9 @@ const liveRoots = new WeakMap()
 //   - returns { unmount() } which unmounts the React root and clears
 //     the shadow root; stale handles (superseded by a later
 //     renderDocument on the same host) no-op
-// eslint-disable-next-line no-unused-vars
+//   - injects the doc's design-system theme (doc.theme.tokens) as a
+//     :host{ --kw-… } override after widget.css; falls back to
+//     opts.theme.tokens when the standalone doc carries none
 export function renderDocument(hostElement, doc, opts = {}) {
   const shadow =
     hostElement.shadowRoot ?? hostElement.attachShadow({ mode: 'open' })
@@ -54,6 +57,13 @@ export function renderDocument(hostElement, doc, opts = {}) {
   const style = document.createElement('style')
   style.textContent = ALL_CSS
   shadow.appendChild(style)
+
+  // Design-system theme: inject AFTER the static widget.css so the
+  // tenant's --kw-* tokens override the hardcoded defaults. Precedence
+  // doc.theme || opts.theme || none (admin preview passes opts.theme
+  // when the standalone doc carries no theme). No tokens => nothing is
+  // injected and widget.css defaults stand (byte-identical).
+  applyTheme(shadow, tokensFromDoc(doc, opts))
 
   const mountPoint = document.createElement('div')
   mountPoint.id = 'keepstar-v5-preview-root'

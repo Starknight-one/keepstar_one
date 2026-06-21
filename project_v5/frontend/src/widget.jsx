@@ -60,7 +60,16 @@ import { renderDocument, ALL_CSS, FONT_HREF } from './widget-preview'
     shadow.appendChild(mountPoint)
 
     const root = createRoot(mountPoint)
-    root.render(<WidgetApp tenantSlug={tenantSlug} apiBaseUrl={apiBaseUrl} />)
+    // Pass the shadow root down so WidgetApp can inject the per-tenant
+    // design-system theme (doc.theme.tokens) as a :host{ --kw-… }
+    // override AFTER the static widget.css <style> appended above.
+    root.render(
+      <WidgetApp
+        tenantSlug={tenantSlug}
+        apiBaseUrl={apiBaseUrl}
+        shadowRoot={shadow}
+      />,
+    )
   }
 
   // Auto-mount guard: embedders that only want renderDocument (admin

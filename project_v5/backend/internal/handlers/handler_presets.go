@@ -28,6 +28,7 @@ type PresetHandler struct {
 	catalog     ports.CatalogPort
 	presets     ports.PresetPort
 	components  ports.ComponentPort
+	themes      ports.ThemePort // optional; nil → default theme attached to preview
 	log         *slog.Logger
 }
 
@@ -40,6 +41,7 @@ func NewPresetHandler(
 	catalog ports.CatalogPort,
 	presetPort ports.PresetPort,
 	componentPort ports.ComponentPort,
+	themePort ports.ThemePort,
 	log *slog.Logger,
 ) *PresetHandler {
 	return &PresetHandler{
@@ -47,6 +49,7 @@ func NewPresetHandler(
 		catalog:     catalog,
 		presets:     presetPort,
 		components:  componentPort,
+		themes:      themePort,
 		log:         log,
 	}
 }
@@ -228,6 +231,10 @@ func (h *PresetHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "marshal document failed", http.StatusInternalServerError)
 		return
 	}
+
+	// Attach doc.theme so the preview render matches what chat will paint.
+	// tenant resolved above; tenant.ID keys the same v5_themes lookup.
+	templateMap["theme"] = resolveThemeMap(r.Context(), h.themes, tenant.ID, h.log)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"document":     templateMap,

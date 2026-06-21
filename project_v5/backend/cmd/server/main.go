@@ -54,6 +54,7 @@ func main() {
 		{"preset", pgClient.RunPresetMigrations},
 		{"component", pgClient.RunComponentMigrations},
 		{"trace", pgClient.RunTraceMigrations},
+		{"theme", pgClient.RunThemeMigrations},
 	} {
 		if err := mig.run(bootCtx); err != nil {
 			log.Error("migration failed", "name", mig.name, "err", err)
@@ -91,6 +92,7 @@ func main() {
 	componentPort := postgres.NewComponentAdapterWithSystem(pgClient, systemComponentRegistry)
 	fdPort := postgres.NewFieldDefinitionAdapter(pgClient)
 	tracePort := postgres.NewTraceAdapter(pgClient)
+	themePort := postgres.NewThemeStore(pgClient)
 
 	// LLM client.
 	llm := anthropicAdapter.NewClient(cfg.AnthropicAPIKey, cfg.LLMModel)
@@ -125,11 +127,12 @@ func main() {
 	sessionH := handlers.NewSessionHandler(statePort, pgClient.Pool())
 	pipelineGuard := handlers.NewPipelineGuard(cfg.PipelineRatePerMin, cfg.PipelineDailyUSDCap, log)
 	log.Info("pipeline_guard_configured", "rate_per_min", cfg.PipelineRatePerMin, "daily_usd_cap", cfg.PipelineDailyUSDCap)
-	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, pipelineGuard, log)
+	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, pipelineGuard, themePort, log)
 	actionH := handlers.NewActionHandler(statePort)
-	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, log)
-	presetH := handlers.NewPresetHandler(promptCache, catalogPort, presetPort, componentPort, log)
-	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH)
+	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, themePort, log)
+	presetH := handlers.NewPresetHandler(promptCache, catalogPort, presetPort, componentPort, themePort, log)
+	themeH := handlers.NewThemeHandler(themePort, log)
+	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH, themeH)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

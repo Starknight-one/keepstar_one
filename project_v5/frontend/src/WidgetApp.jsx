@@ -6,6 +6,7 @@ import { dispatchAction } from './renderer/actionDispatch'
 import { initSession, pipelineSmartRequest } from './api/client'
 import { filterApply } from './api/actions'
 import SkeletonCards from './chat/SkeletonCards'
+import { applyTheme, tokensFromDoc } from './theme-style'
 
 // WidgetApp — root component. Owns:
 //   - sessionId           (created on mount via /session/init)
@@ -21,7 +22,7 @@ import SkeletonCards from './chat/SkeletonCards'
 // drill_detail uses the prefetch payload for instant navigation
 // (no round-trip).
 
-export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
+export default function WidgetApp({ tenantSlug, apiBaseUrl, shadowRoot }) {
   const [sessionId, setSessionId] = useState(null)
   const [messages, setMessages] = useState([])
   const [doc, setDoc] = useState(null)
@@ -62,6 +63,18 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl }) {
       cancelled = true
     }
   }, [apiBaseUrl, tenantSlug])
+
+  // Design-system theme: each turn's document carries doc.theme.tokens
+  // (the per-tenant --kw-* set; default tokens with isDefault:true when
+  // no tenant row exists). Inject/replace a single :host{ --kw-… }
+  // <style> in the shadow root AFTER widget.css so it overrides. No
+  // tokens => no override block, widget.css defaults stand
+  // (byte-identical). The shadow root persists across drill/back/filter
+  // doc swaps, so re-applying here keeps the override in place.
+  useEffect(() => {
+    if (!shadowRoot) return
+    applyTheme(shadowRoot, tokensFromDoc(doc))
+  }, [shadowRoot, doc])
 
   // Shared success path — streamed and fallback turns return the same
   // pipeline response shape and land here.

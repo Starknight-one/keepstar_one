@@ -13,6 +13,13 @@
  *     .kw-chat          width:360px right column — chat panel here
  */
 
+/* --kw-* DESIGN-SYSTEM TOKEN DEFAULTS.
+ * These are the byte-identical fallback the per-tenant theme overrides.
+ * The runtime theme injector (src/theme-style.js) emits a later
+ * :host{ --kw-…: … } block from doc.theme.tokens that wins by DOM order.
+ * KEEP IN LOCKSTEP: if you change a value here, update the canonical
+ * default tokens on the backend (v5_themes default attach) so
+ * isDefault:true tenants don't drift from this hardcode. */
 :host, :root {
   --kw-blue: #5BA4D9;
   --kw-orange: #F0924A;

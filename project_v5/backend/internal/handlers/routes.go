@@ -35,6 +35,8 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //	POST /api/v1/internal/presets/cache-invalidate — drop cached Agent2 prompt for ?tenant= (X-Internal-Key)
 //	POST /api/v1/internal/presets/preview    — zero-LLM preset/draft render for ?tenant= (X-Internal-Key)
 //	GET  /api/v1/internal/presets/system     — system preset library listing (X-Internal-Key)
+//	GET  /api/v1/internal/theme              — read resolved theme for ?tenant= (X-Internal-Key)
+//	PUT  /api/v1/internal/theme              — upsert tenant theme override for ?tenant= (X-Internal-Key)
 //
 // Middleware chain (outermost to innermost):
 //
@@ -59,6 +61,7 @@ func RegisterRoutes(
 	action *ActionHandler,
 	navigation *NavigationHandler,
 	preset *PresetHandler,
+	theme *ThemeHandler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", HealthHandler)
@@ -72,6 +75,10 @@ func RegisterRoutes(
 	mux.HandleFunc("POST /api/v1/internal/presets/cache-invalidate", preset.CacheInvalidate)
 	mux.HandleFunc("POST /api/v1/internal/presets/preview", preset.Preview)
 	mux.HandleFunc("GET /api/v1/internal/presets/system", preset.ListSystem)
+	// Admin-facing theme read/write for the named tenant (X-Internal-Key,
+	// exempt from WithTenant). GET + PUT on the same path.
+	mux.HandleFunc("GET /api/v1/internal/theme", theme.Theme)
+	mux.HandleFunc("PUT /api/v1/internal/theme", theme.Theme)
 	mux.HandleFunc("POST /api/v1/pipeline", pipeline.Pipeline)
 	mux.HandleFunc("POST /api/v1/pipeline/stream", pipeline.PipelineStream)
 	mux.HandleFunc("POST /api/v1/actions", action.Action)
