@@ -295,6 +295,74 @@ func (h *PresetHandler) ListSystem(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// SystemDoc handles GET /api/v1/internal/presets/system/doc?name=<name>.
+//
+// Returns the compiled doc_json for a single built-in system preset (or
+// reusable component) by its public name — the seed bytes parsed into an
+// engine.Document and re-serialised in the canonical Document shape (the
+// same round-trip the preview path applies before rendering). The admin
+// canvas calls this to GET-OR-CREATE a per-tenant design: it takes the
+// returned docJson, runs canvas.Decompile, and stores the v9 result.
+//
+// Lookup is over the in-process system registries (tenant-agnostic, since
+// system presets are by definition shared): presets resolve via
+// presets.SystemPresetSeeds keyed by name; the two reusable components
+// resolve via their public name (presets.SystemComponentPublicNames) back
+// to presets.SystemComponentSeeds. Unknown name → 404 {"error":"unknown
+// preset"}.
+//
+// Response: {"docJson": <document object>}. Gated by X-Internal-Key (503
+// when V5_INTERNAL_KEY unset, 403 mismatch); exempt from WithTenant like
+// every /api/v1/internal/ route.
+func (h *PresetHandler) SystemDoc(w http.ResponseWriter, r *http.Request) {
+	if !checkInternalKey(w, r) {
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "name query param missing", http.StatusBadRequest)
+		return
+	}
+
+	raw, ok := systemPresetDocBytes(name)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]interface{}{"error": "unknown preset"})
+		return
+	}
+
+	doc, err := unmarshalPresetDoc(raw)
+	if err != nil {
+		h.log.Error("system doc: seed unparsable", "name", name, "err", err)
+		http.Error(w, "system preset document unparsable", http.StatusInternalServerError)
+		return
+	}
+	docMap, err := engineDocToHandlerMap(doc)
+	if err != nil {
+		h.log.Error("system doc: marshal document failed", "name", name, "err", err)
+		http.Error(w, "marshal document failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"docJson": docMap})
+}
+
+// systemPresetDocBytes resolves a public system preset/component name to
+// its embedded seed JSON. Presets key directly into SystemPresetSeeds;
+// the two reusable components are advertised under their public names
+// (SystemComponentPublicNames maps the engine-internal ref id to the
+// public name), so we reverse that to reach SystemComponentSeeds.
+func systemPresetDocBytes(name string) ([]byte, bool) {
+	if raw, ok := presets.SystemPresetSeeds[name]; ok {
+		return raw, true
+	}
+	for refID, publicName := range presets.SystemComponentPublicNames {
+		if publicName == name {
+			raw, ok := presets.SystemComponentSeeds[refID]
+			return raw, ok
+		}
+	}
+	return nil, false
+}
+
 // pickRichestSamples keeps `count` products, preferring ones that can
 // actually fill a card's atoms — an image above all, then brand, rating,
 // description. Stable on ties and re-sorted back to the catalog's default

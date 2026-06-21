@@ -395,6 +395,103 @@ func TestListSystemContract(t *testing.T) {
 	}
 }
 
+// --- GET /api/v1/internal/presets/system/doc --------------------------------
+
+func doSystemDoc(t *testing.T, h *PresetHandler, name, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/presets/system/doc?name="+name, nil)
+	if key != "" {
+		req.Header.Set("X-Internal-Key", key)
+	}
+	rec := httptest.NewRecorder()
+	h.SystemDoc(rec, req)
+	return rec
+}
+
+func TestSystemDocAuthGate(t *testing.T) {
+	h := previewTestHandler()
+
+	t.Run("key unset → 503", func(t *testing.T) {
+		t.Setenv("V5_INTERNAL_KEY", "")
+		rec := doSystemDoc(t, h, "product_card", "anything")
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+	})
+
+	t.Run("wrong key → 403", func(t *testing.T) {
+		t.Setenv("V5_INTERNAL_KEY", "secret")
+		rec := doSystemDoc(t, h, "product_card", "wrong")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+	})
+}
+
+func TestSystemDocMissingName(t *testing.T) {
+	h := previewTestHandler()
+	t.Setenv("V5_INTERNAL_KEY", "secret")
+	rec := doSystemDoc(t, h, "", "secret")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSystemDocUnknownName(t *testing.T) {
+	h := previewTestHandler()
+	t.Setenv("V5_INTERNAL_KEY", "secret")
+	rec := doSystemDoc(t, h, "ghost_preset", "secret")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "unknown preset" {
+		t.Errorf("error = %q, want %q", body.Error, "unknown preset")
+	}
+}
+
+// TestSystemDocAllNames pins the cross-repo contract: every one of the 14
+// built-in system preset/component names resolves to a non-empty docJson
+// object that round-trips as an engine.Document (a top-level "children"
+// array). The admin canvas calls this per name to seed per-tenant designs.
+func TestSystemDocAllNames(t *testing.T) {
+	h := previewTestHandler()
+	t.Setenv("V5_INTERNAL_KEY", "secret")
+
+	names := []string{
+		"product_card", "product_card_compact", "product_card_horizontal",
+		"product_card_list_row", "product_carousel", "product_comparison",
+		"product_detail", "product_detail_accordion", "product_detail_horizontal",
+		"text_explainer", "empty_not_found", "error_generic",
+		"component_price_rating", "component_brand_badge",
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			rec := doSystemDoc(t, h, name, "secret")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+			}
+			var out struct {
+				DocJSON map[string]interface{} `json:"docJson"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if out.DocJSON == nil {
+				t.Fatalf("docJson is null/missing for %q", name)
+			}
+			if _, ok := out.DocJSON["children"]; !ok {
+				t.Errorf("docJson for %q missing top-level children array", name)
+			}
+		})
+	}
+}
+
 func TestPreviewCountCappedAt12(t *testing.T) {
 	h := previewTestHandler()
 	t.Setenv("V5_INTERNAL_KEY", "secret")

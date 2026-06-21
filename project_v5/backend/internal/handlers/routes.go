@@ -35,6 +35,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //	POST /api/v1/internal/presets/cache-invalidate — drop cached Agent2 prompt for ?tenant= (X-Internal-Key)
 //	POST /api/v1/internal/presets/preview    — zero-LLM preset/draft render for ?tenant= (X-Internal-Key)
 //	GET  /api/v1/internal/presets/system     — system preset library listing (X-Internal-Key)
+//	GET  /api/v1/internal/presets/system/doc — compiled doc_json for one system preset by ?name= (X-Internal-Key)
 //	GET  /api/v1/internal/theme              — read resolved theme for ?tenant= (X-Internal-Key)
 //	PUT  /api/v1/internal/theme              — upsert tenant theme override for ?tenant= (X-Internal-Key)
 //
@@ -75,6 +76,7 @@ func RegisterRoutes(
 	mux.HandleFunc("POST /api/v1/internal/presets/cache-invalidate", preset.CacheInvalidate)
 	mux.HandleFunc("POST /api/v1/internal/presets/preview", preset.Preview)
 	mux.HandleFunc("GET /api/v1/internal/presets/system", preset.ListSystem)
+	mux.HandleFunc("GET /api/v1/internal/presets/system/doc", preset.SystemDoc)
 	// Admin-facing theme read/write for the named tenant (X-Internal-Key,
 	// exempt from WithTenant). GET + PUT on the same path.
 	mux.HandleFunc("GET /api/v1/internal/theme", theme.Theme)
