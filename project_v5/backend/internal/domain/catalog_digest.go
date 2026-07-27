@@ -10,12 +10,28 @@ import (
 // format (~300-400 tokens) — sent once per session in Agent1's system prompt
 // and cached by Anthropic.
 type CatalogDigest struct {
-	GeneratedAt    time.Time             `json:"generated_at"`
-	TotalProducts  int                   `json:"total_products"`
-	CategoryTree   []DigestCategoryGroup `json:"category_tree"`
-	SharedFilters  []DigestSharedFilter  `json:"shared_filters"`
-	TopBrands      []string              `json:"top_brands,omitempty"`
-	TopIngredients []string              `json:"top_ingredients,omitempty"`
+	GeneratedAt   time.Time             `json:"generated_at"`
+	TotalProducts int                   `json:"total_products"`
+	CategoryTree  []DigestCategoryGroup `json:"category_tree"`
+	SharedFilters []DigestSharedFilter  `json:"shared_filters"`
+	TopBrands     []string              `json:"top_brands,omitempty"`
+	// TopIngredients is legacy (cosmetics-era digest) — the generic
+	// SharedFilters carry keyIngredients now. Kept for JSON compat.
+	TopIngredients []string `json:"top_ingredients,omitempty"`
+	// NumericRanges are number-typed tier2 attributes (volumeMl, rooms,
+	// areaM2, …) with their observed min/max — the LLM uses them via
+	// filters.min_{key}/max_{key}.
+	NumericRanges []DigestNumericRange `json:"numeric_ranges,omitempty"`
+	// PriceMin/PriceMax are in DOLLARS (major units) per the USD contract.
+	PriceMin float64 `json:"price_min,omitempty"`
+	PriceMax float64 `json:"price_max,omitempty"`
+}
+
+// DigestNumericRange is one number-typed attribute with its value range.
+type DigestNumericRange struct {
+	Key string  `json:"key"`
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
 }
 
 // DigestCategoryGroup is a root category with leaf children.
@@ -74,6 +90,16 @@ func (d *CatalogDigest) ToPromptText() string {
 		}
 	}
 
+	if d.PriceMax > 0 || len(d.NumericRanges) > 0 {
+		b.WriteString("\nranges:\n")
+		if d.PriceMax > 0 {
+			b.WriteString(fmt.Sprintf("  price: $%g-$%g\n", d.PriceMin, d.PriceMax))
+		}
+		for _, r := range d.NumericRanges {
+			b.WriteString(fmt.Sprintf("  %s: %g-%g\n", r.Key, r.Min, r.Max))
+		}
+	}
+
 	if len(d.TopBrands) > 0 {
 		b.WriteString(fmt.Sprintf("\nbrands(%d): %s\n", len(d.TopBrands), strings.Join(d.TopBrands, ", ")))
 	}
@@ -82,6 +108,6 @@ func (d *CatalogDigest) ToPromptText() string {
 		b.WriteString(fmt.Sprintf("ingredients(%d): %s\n", len(d.TopIngredients), strings.Join(d.TopIngredients, ", ")))
 	}
 
-	b.WriteString("\nenum value → filters.{key}, free text → vector_query\n")
+	b.WriteString("\nenum value → filters.{key} · numeric range → filters.min_{key}/max_{key} · price (USD) → filters.min_price/max_price · free text → vector_query\n")
 	return b.String()
 }

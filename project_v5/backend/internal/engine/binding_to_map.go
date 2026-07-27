@@ -143,6 +143,24 @@ func ProductToMap(p domain.Product) map[string]any {
 	return m
 }
 
+// CamelToSnake is the inverse of SnakeToCamel: volumeMl → volume_ml.
+// Used to map LLM-facing camelCase filter keys back onto the raw tier2
+// column keys (which are snake_case in the wild).
+func CamelToSnake(k string) string {
+	var b strings.Builder
+	for i, r := range k {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				b.WriteByte('_')
+			}
+			b.WriteRune(r - 'A' + 'a')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // SnakeToCamel converts snake_case to camelCase; keys already in camelCase
 // pass through unchanged. Only ASCII underscores are treated as separators.
 // Exported: the postgres field-sampling adapter normalises tier2 keys with

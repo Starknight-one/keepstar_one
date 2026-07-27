@@ -193,6 +193,17 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 			toolDefs = append(toolDefs, d)
 		}
 	}
+	// Per-tenant search contract: swap catalog_search's static (legacy
+	// cosmetics) filter schema for one generated from this tenant's
+	// digest. CacheTools is off for Agent1, so a per-tenant schema does
+	// not fragment the Anthropic prompt cache.
+	if schema := uc.promptCache.SearchSchema(ctx, req.TenantSlug); schema != nil {
+		for i := range toolDefs {
+			if toolDefs[i].Name == "catalog_search" {
+				toolDefs[i].InputSchema = schema
+			}
+		}
+	}
 
 	cfg := ports.CacheConfig{
 		// CacheTools deliberately OFF — V5 Agent1 tool defs sum below

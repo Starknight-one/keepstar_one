@@ -50,6 +50,9 @@ func (a *CatalogAdapter) VectorSearch(ctx context.Context, tenantID string, embe
 			Concern: filter.Concern, KeyIngredient: filter.KeyIngredient,
 			TargetArea: filter.TargetArea, RoutineStep: filter.RoutineStep,
 			Texture: filter.Texture,
+			Attrs:   filter.Attrs,
+			AttrMin: filter.AttrMin,
+			AttrMax: filter.AttrMax,
 		}, args, argNum)
 		for _, c := range conds {
 			query += " AND " + c

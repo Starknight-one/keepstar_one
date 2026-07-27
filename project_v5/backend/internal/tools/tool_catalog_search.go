@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,92 +39,165 @@ func NewCatalogSearchTool(state ports.StatePort, catalog ports.CatalogPort, embe
 
 var _ Tool = (*CatalogSearchTool)(nil)
 
+// knownFilterKeys are the filter properties handled by dedicated typed
+// parsing above; everything else routes through the generic tier2 path.
+var knownFilterKeys = map[string]bool{
+	"brand": true, "category": true, "min_price": true, "max_price": true,
+	"product_form": true, "skin_type": true, "concern": true,
+	"key_ingredient": true, "routine_step": true, "texture": true,
+	"target_area": true,
+}
+
 // Definition mirrors V4's tool_catalog_search.go:32-121 minus the `service`
 // entity_type (V5 catalog has products only — re-add when services land).
+// The static definition ships the legacy cosmetics filter vocabulary as a
+// fallback; per-tenant schemas (built from the catalog digest via
+// CatalogSearchSchemaForDigest) replace it at request time in agent1.
 func (t *CatalogSearchTool) Definition() domain.ToolDefinition {
 	return domain.ToolDefinition{
 		Name:        "catalog_search",
 		Description: "Catalog search for products. Put structured/exact filters in 'filters'. Put semantic search intent in 'vector_query' in user's original language.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"vector_query": map[string]interface{}{
-					"type":        "string",
-					"description": "Semantic search in user's original language. Example: 'кроссы для бега', 'lightweight laptop for work'.",
-				},
-				"filters": map[string]interface{}{
-					"type":        "object",
-					"description": "Exact filters. Only include filters you're confident about.",
-					"properties": map[string]interface{}{
-						"brand": map[string]interface{}{
-							"type":        "string",
-							"description": "Brand name (e.g. COSRX, MEDI-PEEL, Holika Holika)",
-						},
-						"category": map[string]interface{}{
-							"type":        "string",
-							"description": "Category name (e.g. Сыворотки, Кремы)",
-						},
-						"min_price": map[string]interface{}{
-							"type":        "number",
-							"description": "Minimum price in USD (dollars, major units)",
-						},
-						"max_price": map[string]interface{}{
-							"type":        "number",
-							"description": "Maximum price in USD (dollars, major units)",
-						},
-						"product_form": map[string]interface{}{
-							"type":        "string",
-							"enum":        []string{"cream", "gel", "serum", "toner", "essence", "lotion", "oil", "balm", "foam", "mousse", "mist", "spray", "powder", "stick", "patch", "sheet-mask", "wash-off-mask", "peel", "scrub", "soap"},
-							"description": "Product form/type",
-						},
-						"skin_type": map[string]interface{}{
-							"type":        "string",
-							"enum":        []string{"normal", "dry", "oily", "combination", "sensitive", "acne-prone", "mature"},
-							"description": "Target skin type",
-						},
-						"concern": map[string]interface{}{
-							"type":        "string",
-							"enum":        []string{"hydration", "anti-aging", "brightening", "acne", "pores", "dark-spots", "redness", "sun-protection", "exfoliation", "firmness", "dark-circles", "lip-dryness", "oil-control", "texture", "dullness"},
-							"description": "Skin concern to address",
-						},
-						"key_ingredient": map[string]interface{}{
-							"type":        "string",
-							"enum":        []string{"hyaluronic-acid", "niacinamide", "retinol", "vitamin-c", "salicylic-acid", "glycolic-acid", "centella-asiatica", "ceramides", "peptides", "snail-mucin", "tea-tree", "aloe-vera", "collagen", "aha-bha", "squalane", "shea-butter", "argan-oil", "rice-extract", "green-tea", "propolis", "mugwort", "panthenol", "zinc", "turmeric", "charcoal"},
-							"description": "Key active ingredient",
-						},
-						"routine_step": map[string]interface{}{
-							"type":        "string",
-							"enum":        []string{"cleansing", "toning", "exfoliation", "treatment", "moisturizing", "sun-protection", "makeup"},
-							"description": "Step in skincare routine",
-						},
-						"texture": map[string]interface{}{
-							"type":        "string",
-							"enum":        []string{"watery", "gel", "milky", "creamy", "thick", "oily", "powdery", "foamy", "balmy"},
-							"description": "Product texture",
-						},
-						"target_area": map[string]interface{}{
-							"type":        "string",
-							"enum":        []string{"face", "eye-area", "lips", "neck", "body", "hands", "feet", "scalp"},
-							"description": "Target application area",
-						},
-					},
-				},
-				"sort_by": map[string]interface{}{
-					"type": "string",
-					"enum": []string{"price", "rating", "name"},
-				},
-				"sort_order": map[string]interface{}{
-					"type": "string",
-					"enum": []string{"asc", "desc"},
-				},
-				"limit": map[string]interface{}{
-					"type":        "integer",
-					"description": "Max results (default 50, 0 = no limit)",
-				},
+		InputSchema: CatalogSearchInputSchema(legacyFilterProperties()),
+	}
+}
+
+// CatalogSearchInputSchema assembles the full tool InputSchema around the
+// given filter properties. One skeleton for both the static (legacy) and
+// per-tenant (digest-driven) schemas so they can never drift.
+func CatalogSearchInputSchema(filterProps map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"vector_query": map[string]interface{}{
+				"type":        "string",
+				"description": "Semantic search in user's original language. Example: 'кроссы для бега', 'lightweight laptop for work'.",
 			},
-			"required": []string{"vector_query"},
+			"filters": map[string]interface{}{
+				"type":        "object",
+				"description": "Exact filters. Only include filters you're confident about.",
+				"properties":  filterProps,
+			},
+			"sort_by": map[string]interface{}{
+				"type": "string",
+				"enum": []string{"price", "rating", "name"},
+			},
+			"sort_order": map[string]interface{}{
+				"type": "string",
+				"enum": []string{"asc", "desc"},
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Max results (default 50, 0 = no limit)",
+			},
+		},
+		"required": []string{"vector_query"},
+	}
+}
+
+// baseFilterProperties are the filter keys every tenant gets regardless of
+// vertical: brand, category and the USD price range.
+func baseFilterProperties() map[string]interface{} {
+	return map[string]interface{}{
+		"brand": map[string]interface{}{
+			"type":        "string",
+			"description": "Brand name",
+		},
+		"category": map[string]interface{}{
+			"type":        "string",
+			"description": "Category name",
+		},
+		"min_price": map[string]interface{}{
+			"type":        "number",
+			"description": "Minimum price in USD (dollars, major units)",
+		},
+		"max_price": map[string]interface{}{
+			"type":        "number",
+			"description": "Maximum price in USD (dollars, major units)",
 		},
 	}
+}
+
+// CatalogSearchSchemaForDigest builds the per-tenant InputSchema from the
+// catalog digest: every shared enum filter becomes an enum property, every
+// number-typed attribute becomes a min_{key}/max_{key} number pair. This is
+// the "operation contract generated from the tenant's data" pattern the
+// operations layer will reuse.
+func CatalogSearchSchemaForDigest(d *domain.CatalogDigest) map[string]interface{} {
+	if d == nil || d.TotalProducts == 0 {
+		return nil
+	}
+	props := baseFilterProperties()
+	if d.PriceMax > 0 {
+		props["min_price"].(map[string]interface{})["description"] = fmt.Sprintf("Minimum price in USD (catalog range $%g-$%g)", d.PriceMin, d.PriceMax)
+		props["max_price"].(map[string]interface{})["description"] = fmt.Sprintf("Maximum price in USD (catalog range $%g-$%g)", d.PriceMin, d.PriceMax)
+	}
+	for _, f := range d.SharedFilters {
+		if len(f.Values) == 0 {
+			continue
+		}
+		props[f.Key] = map[string]interface{}{
+			"type":        "string",
+			"enum":        append([]string(nil), f.Values...),
+			"description": "Exact attribute match",
+		}
+	}
+	for _, r := range d.NumericRanges {
+		props["min_"+r.Key] = map[string]interface{}{
+			"type":        "number",
+			"description": fmt.Sprintf("Minimum %s (range %g-%g)", r.Key, r.Min, r.Max),
+		}
+		props["max_"+r.Key] = map[string]interface{}{
+			"type":        "number",
+			"description": fmt.Sprintf("Maximum %s (range %g-%g)", r.Key, r.Min, r.Max),
+		}
+	}
+	return CatalogSearchInputSchema(props)
+}
+
+// legacyFilterProperties is the pre-digest cosmetics vocabulary, kept as the
+// fallback when no digest exists for a tenant.
+func legacyFilterProperties() map[string]interface{} {
+	props := baseFilterProperties()
+	for k, v := range map[string]interface{}{
+		"product_form": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"cream", "gel", "serum", "toner", "essence", "lotion", "oil", "balm", "foam", "mousse", "mist", "spray", "powder", "stick", "patch", "sheet-mask", "wash-off-mask", "peel", "scrub", "soap"},
+			"description": "Product form/type",
+		},
+		"skin_type": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"normal", "dry", "oily", "combination", "sensitive", "acne-prone", "mature"},
+			"description": "Target skin type",
+		},
+		"concern": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"hydration", "anti-aging", "brightening", "acne", "pores", "dark-spots", "redness", "sun-protection", "exfoliation", "firmness", "dark-circles", "lip-dryness", "oil-control", "texture", "dullness"},
+			"description": "Skin concern to address",
+		},
+		"key_ingredient": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"hyaluronic-acid", "niacinamide", "retinol", "vitamin-c", "salicylic-acid", "glycolic-acid", "centella-asiatica", "ceramides", "peptides", "snail-mucin", "tea-tree", "aloe-vera", "collagen", "aha-bha", "squalane", "shea-butter", "argan-oil", "rice-extract", "green-tea", "propolis", "mugwort", "panthenol", "zinc", "turmeric", "charcoal"},
+			"description": "Key active ingredient",
+		},
+		"routine_step": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"cleansing", "toning", "exfoliation", "treatment", "moisturizing", "sun-protection", "makeup"},
+			"description": "Step in skincare routine",
+		},
+		"texture": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"watery", "gel", "milky", "creamy", "thick", "oily", "powdery", "foamy", "balmy"},
+			"description": "Product texture",
+		},
+		"target_area": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"face", "eye-area", "lips", "neck", "body", "hands", "feet", "scalp"},
+			"description": "Target application area",
+		},
+	} {
+		props[k] = v
+	}
+	return props
 }
 
 // Execute parses tool input, runs hybrid retrieval, and writes the merged
@@ -149,6 +223,9 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 	var minPriceMajor, maxPriceMajor int
 	var productForm, skinType, concern, keyIngredient, routineStep, texture, targetArea string
 
+	attrs := map[string]string{}
+	attrMin := map[string]float64{}
+	attrMax := map[string]float64{}
 	if filters, ok := input["filters"].(map[string]interface{}); ok {
 		brand, _ = filters["brand"].(string)
 		category, _ = filters["category"].(string)
@@ -165,6 +242,39 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 		routineStep, _ = filters["routine_step"].(string)
 		texture, _ = filters["texture"].(string)
 		targetArea, _ = filters["target_area"].(string)
+
+		// Per-tenant schema path: any key beyond the known vocabulary is a
+		// generic tier2 predicate. min_/max_ prefixed numbers become range
+		// bounds; strings become exact/contains matches. Unknown shapes are
+		// dropped silently (schema is advisory at the LLM boundary).
+		for k, raw := range filters {
+			if knownFilterKeys[k] {
+				continue
+			}
+			if rest, ok := strings.CutPrefix(k, "min_"); ok && rest != "" {
+				if v, isNum := raw.(float64); isNum {
+					attrMin[rest] = v
+					continue
+				}
+			}
+			if rest, ok := strings.CutPrefix(k, "max_"); ok && rest != "" {
+				if v, isNum := raw.(float64); isNum {
+					attrMax[rest] = v
+					continue
+				}
+			}
+			switch v := raw.(type) {
+			case string:
+				if v != "" {
+					attrs[k] = v
+				}
+			case float64:
+				attrs[k] = strconv.FormatFloat(v, 'f', -1, 64)
+			}
+		}
+		if len(attrs)+len(attrMin)+len(attrMax) > 0 {
+			meta["generic_attrs"] = len(attrs) + len(attrMin) + len(attrMax)
+		}
 	}
 
 	// LLM speaks dollars (major units); postgres stores integer cents.
@@ -196,13 +306,16 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 	}
 
 	filter := ports.ProductFilter{
-		Search:        vectorQuery,
-		Brand:         brand,
-		CategoryName:  category,
-		MinPrice:      minPriceCents,
-		MaxPrice:      maxPriceCents,
-		SortField:     sortBy,
-		SortOrder:     sortOrder,
+		Search:       vectorQuery,
+		Brand:        brand,
+		CategoryName: category,
+		MinPrice:     minPriceCents,
+		MaxPrice:     maxPriceCents,
+		SortField:    sortBy,
+		SortOrder:    sortOrder,
+		Attrs:        attrs,
+		AttrMin:      attrMin,
+		AttrMax:      attrMax,
 		// Over-fetch each branch by 2× so RRF has a richer pool to merge
 		// before truncating to `limit`. V4 does the same.
 		Limit:         limit * 2,

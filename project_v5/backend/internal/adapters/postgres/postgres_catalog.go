@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/ports"
 )
 
@@ -84,6 +87,51 @@ const catalogProductSelect = catalogVectorSelect + `
 // the vertical-agnostic schema: typed attrs via mp.tier2 jsonb, categories via
 // the master_categories junction. Returns the conditions and the grown
 // args/argNum so caller can append ORDER/LIMIT params after.
+// safeTier2Key gates attribute keys that get interpolated into SQL text.
+// Values always travel as parameters; keys must look like identifiers.
+var tier2KeyRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+
+func safeTier2Key(k string) bool { return tier2KeyRe.MatchString(k) }
+
+// tier2KeyCandidates returns the unique spellings to probe for a key:
+// the key as given plus its snake_case twin (LLM speaks camelCase, tier2
+// in the wild is snake_case).
+func tier2KeyCandidates(k string) []string {
+	if s := engine.CamelToSnake(k); s != k {
+		return []string{k, s}
+	}
+	return []string{k}
+}
+
+// tier2NumericCond builds a numeric range predicate over a tier2 key,
+// guarded by jsonb_typeof so a string-valued twin never errors the cast.
+func tier2NumericCond(k, op string, argNum int) string {
+	var ors []string
+	for _, col := range tier2KeyCandidates(k) {
+		ors = append(ors, fmt.Sprintf(
+			"(jsonb_typeof(mp.tier2->'%s') = 'number' AND (mp.tier2->>'%s')::numeric %s $%d)", col, col, op, argNum))
+	}
+	return "(" + strings.Join(ors, " OR ") + ")"
+}
+
+func sortedAttrKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedNumKeys(m map[string]float64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func catalogFilterConditions(filter ports.ProductFilter, args []interface{}, argNum int) ([]string, []interface{}, int) {
 	var conditions []string
 	if filter.CategoryID != "" {
@@ -166,6 +214,44 @@ func catalogFilterConditions(filter ports.ProductFilter, args []interface{}, arg
 			args = append(args, s.val)
 			argNum++
 		}
+	}
+
+	// Generic tier2 predicates (per-tenant schema path). Keys are
+	// interpolated into SQL, so they MUST pass the identifier gate; values
+	// always travel as parameters. Each key matches both its given
+	// spelling and its snake_case twin, and both scalar (->> =) and array
+	// (@>) shapes.
+	for _, k := range sortedAttrKeys(filter.Attrs) {
+		v := filter.Attrs[k]
+		if v == "" || !safeTier2Key(k) {
+			continue
+		}
+		var ors []string
+		for _, col := range tier2KeyCandidates(k) {
+			ors = append(ors,
+				fmt.Sprintf("mp.tier2->>'%s' = $%d", col, argNum),
+				fmt.Sprintf("(jsonb_typeof(mp.tier2->'%s') = 'array' AND mp.tier2->'%s' @> to_jsonb($%d::text))", col, col, argNum),
+			)
+		}
+		conditions = append(conditions, "("+strings.Join(ors, " OR ")+")")
+		args = append(args, v)
+		argNum++
+	}
+	for _, k := range sortedNumKeys(filter.AttrMin) {
+		if !safeTier2Key(k) {
+			continue
+		}
+		conditions = append(conditions, tier2NumericCond(k, ">=", argNum))
+		args = append(args, filter.AttrMin[k])
+		argNum++
+	}
+	for _, k := range sortedNumKeys(filter.AttrMax) {
+		if !safeTier2Key(k) {
+			continue
+		}
+		conditions = append(conditions, tier2NumericCond(k, "<=", argNum))
+		args = append(args, filter.AttrMax[k])
+		argNum++
 	}
 	return conditions, args, argNum
 }
@@ -593,51 +679,30 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 		tree = append(tree, *groupMap[slug])
 	}
 
-	// 2. Shared filters — global distinct values from tier2 jsonb (Group D:
-	// master_cosmetics dropped; typed attrs are vertical-agnostic in tier2).
-	// jsonb_array_elements_text is guarded by jsonb_typeof = 'array' so a
-	// scalar/absent key never errors.
+	// 2. Shared enum filters — derived from the tenant's ACTUAL tier2 key
+	// set (string scalars + text arrays), not a hardcoded vertical
+	// vocabulary. Values longer than 40 chars read as free text, not
+	// filter values; keys whose values all fail that gate (how_to_use…)
+	// disappear entirely. Keys are camelCase-normalised to match the
+	// binding/facet/<fields> vocabulary.
 	filterQuery := `
-		SELECT attr_key, ARRAY_AGG(DISTINCT attr_value ORDER BY attr_value) AS all_values
+		SELECT k, val, COUNT(*) AS cnt
 		FROM (
-			SELECT 'product_form' AS attr_key, mp.tier2->>'product_form' AS attr_value
+			SELECT e.key AS k, e.value #>> '{}' AS val
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND COALESCE(mp.tier2->>'product_form','') != ''
+			CROSS JOIN LATERAL jsonb_each(COALESCE(mp.tier2, '{}'::jsonb)) AS e(key, value)
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(e.value) = 'string'
 			UNION ALL
-			SELECT 'texture', mp.tier2->>'texture'
+			SELECT e.key, jsonb_array_elements_text(e.value)
 			FROM catalog.products p
 			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND COALESCE(mp.tier2->>'texture','') != ''
-			UNION ALL
-			SELECT 'routine_step', mp.tier2->>'routine_step'
-			FROM catalog.products p
-			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND COALESCE(mp.tier2->>'routine_step','') != ''
-			UNION ALL
-			SELECT 'skin_type', jsonb_array_elements_text(mp.tier2->'skin_type')
-			FROM catalog.products p
-			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'skin_type') = 'array'
-			UNION ALL
-			SELECT 'concern', jsonb_array_elements_text(mp.tier2->'concern')
-			FROM catalog.products p
-			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'concern') = 'array'
-			UNION ALL
-			SELECT 'key_ingredient', jsonb_array_elements_text(mp.tier2->'key_ingredients')
-			FROM catalog.products p
-			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'key_ingredients') = 'array'
-			UNION ALL
-			SELECT 'target_area', jsonb_array_elements_text(mp.tier2->'target_area')
-			FROM catalog.products p
-			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'target_area') = 'array'
-		) AS attrs
-		WHERE attr_value IS NOT NULL AND attr_value != ''
-		GROUP BY attr_key
-		ORDER BY attr_key
+			CROSS JOIN LATERAL jsonb_each(COALESCE(mp.tier2, '{}'::jsonb)) AS e(key, value)
+			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(e.value) = 'array'
+		) AS vals
+		WHERE val IS NOT NULL AND val <> '' AND length(val) <= 40
+		GROUP BY k, val
+		ORDER BY k, cnt DESC, val
 	`
 	filterRows, err := a.client.pool.Query(ctx, filterQuery, tenantID)
 	if err != nil {
@@ -645,14 +710,89 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 	}
 	defer filterRows.Close()
 
-	var sharedFilters []domain.DigestSharedFilter
+	type valCount struct {
+		val string
+		cnt int
+	}
+	perKey := map[string][]valCount{}
+	var keyOrder []string
 	for filterRows.Next() {
-		var key string
-		var values []string
-		if err := filterRows.Scan(&key, &values); err != nil {
+		var k, val string
+		var cnt int
+		if err := filterRows.Scan(&k, &val, &cnt); err != nil {
 			return nil, fmt.Errorf("scan filter: %w", err)
 		}
-		sharedFilters = append(sharedFilters, domain.DigestSharedFilter{Key: key, Values: values})
+		ck := engine.SnakeToCamel(k)
+		if digestSkipKeys[ck] {
+			continue
+		}
+		if _, seen := perKey[ck]; !seen {
+			keyOrder = append(keyOrder, ck)
+		}
+		perKey[ck] = append(perKey[ck], valCount{val, cnt})
+	}
+
+	// Gates (calibrated on live data 2026-07-27): identifier-like keys
+	// (no value groups >= 2 products) and near-free-text keys (> 60
+	// distinct values, e.g. benefits with 1764) drop; clean enums
+	// (<= 24 distinct) ship up to 20 values; mid-cardinality keys
+	// (concern 27, keyIngredients 56) ship their top 12 by frequency —
+	// still a useful prompt vocabulary. Rows arrive pre-sorted (cnt DESC).
+	var sharedFilters []domain.DigestSharedFilter
+	for _, ck := range keyOrder {
+		vals := perKey[ck]
+		if len(vals) < 2 || vals[0].cnt < 2 {
+			continue
+		}
+		valueCap := 20
+		if len(vals) > 24 {
+			if len(vals) > 60 {
+				continue
+			}
+			valueCap = 12
+		}
+		values := make([]string, 0, valueCap)
+		for i, vc := range vals {
+			if i == valueCap {
+				break
+			}
+			values = append(values, vc.val)
+		}
+		sharedFilters = append(sharedFilters, domain.DigestSharedFilter{Key: ck, Values: values})
+	}
+
+	// 2b. Numeric ranges — number-typed tier2 keys + the price column.
+	numQuery := `
+		SELECT e.key, MIN((e.value #>> '{}')::numeric) AS mn, MAX((e.value #>> '{}')::numeric) AS mx
+		FROM catalog.products p
+		JOIN catalog.master_products mp ON p.master_product_id = mp.id
+		CROSS JOIN LATERAL jsonb_each(COALESCE(mp.tier2, '{}'::jsonb)) AS e(key, value)
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(e.value) = 'number'
+		GROUP BY e.key
+		HAVING COUNT(*) >= 2 AND MIN((e.value #>> '{}')::numeric) < MAX((e.value #>> '{}')::numeric)
+		ORDER BY e.key
+	`
+	var numericRanges []domain.DigestNumericRange
+	if numRows, err := a.client.pool.Query(ctx, numQuery, tenantID); err != nil {
+		a.log.Warn("digest_numeric_query_failed", "error", err)
+	} else {
+		defer numRows.Close()
+		for numRows.Next() {
+			var k string
+			var mn, mx float64
+			if err := numRows.Scan(&k, &mn, &mx); err != nil {
+				a.log.Warn("digest_numeric_scan_failed", "error", err)
+				break
+			}
+			numericRanges = append(numericRanges, domain.DigestNumericRange{Key: engine.SnakeToCamel(k), Min: mn, Max: mx})
+		}
+	}
+
+	var priceMinCents, priceMaxCents int
+	if err := a.client.pool.QueryRow(ctx,
+		`SELECT COALESCE(MIN(price),0), COALESCE(MAX(price),0) FROM catalog.products WHERE tenant_id = $1 AND deleted_at IS NULL AND price > 0`,
+		tenantID).Scan(&priceMinCents, &priceMaxCents); err != nil {
+		a.log.Warn("digest_price_range_failed", "error", err)
 	}
 
 	// 3. Top brands.
@@ -680,43 +820,22 @@ func (a *CatalogAdapter) BuildCatalogDigest(ctx context.Context, tenantID string
 		topBrands = append(topBrands, brand)
 	}
 
-	// 4. Top ingredients — from tier2.key_ingredients (Group D). Guarded by
-	// jsonb_typeof so non-array/absent keys yield 0 rows → empty list.
-	ingrQuery := `
-		SELECT ingredient
-		FROM (
-			SELECT jsonb_array_elements_text(mp.tier2->'key_ingredients') AS ingredient
-			FROM catalog.products p
-			JOIN catalog.master_products mp ON p.master_product_id = mp.id
-			WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND jsonb_typeof(mp.tier2->'key_ingredients') = 'array'
-		) AS x
-		WHERE ingredient IS NOT NULL AND ingredient != ''
-		GROUP BY ingredient
-		ORDER BY COUNT(*) DESC
-		LIMIT 30
-	`
-	var topIngredients []string
-	if ingrRows, err := a.client.pool.Query(ctx, ingrQuery, tenantID); err != nil {
-		// Not fatal — digest is still useful without top ingredients.
-		a.log.Warn("digest_ingredients_query_failed", "error", err)
-	} else {
-		defer ingrRows.Close()
-		for ingrRows.Next() {
-			var name string
-			if err := ingrRows.Scan(&name); err != nil {
-				a.log.Warn("digest_ingredient_scan_failed", "error", err)
-				break
-			}
-			topIngredients = append(topIngredients, name)
-		}
-	}
-
 	return &domain.CatalogDigest{
-		GeneratedAt:    time.Now(),
-		TotalProducts:  totalProducts,
-		CategoryTree:   tree,
-		SharedFilters:  sharedFilters,
-		TopBrands:      topBrands,
-		TopIngredients: topIngredients,
+		GeneratedAt:   time.Now(),
+		TotalProducts: totalProducts,
+		CategoryTree:  tree,
+		SharedFilters: sharedFilters,
+		TopBrands:     topBrands,
+		NumericRanges: numericRanges,
+		PriceMin:      float64(priceMinCents) / 100,
+		PriceMax:      float64(priceMaxCents) / 100,
 	}, nil
+}
+
+// digestSkipKeys are tier2 keys never useful as prompt-facing filters
+// (free marketing/how-to text; the 40-char value gate covers most, these
+// are belt-and-braces).
+var digestSkipKeys = map[string]bool{
+	"marketingClaim": true,
+	"howToUse":       true,
 }

@@ -28,6 +28,15 @@ type ProductFilter struct {
 	TargetArea    string
 	RoutineStep   string
 	Texture       string
+
+	// Generic tier2 predicates — the per-tenant schema path. Keys are
+	// tier2 attribute names (either camelCase or raw snake_case; the
+	// adapter matches both spellings). Attrs = exact/contains match on a
+	// scalar or array attribute; AttrMin/AttrMax = numeric range on a
+	// number-typed attribute.
+	Attrs   map[string]string
+	AttrMin map[string]float64
+	AttrMax map[string]float64
 }
 
 // VectorFilter narrows VectorSearch before cosine ranking. Mirrors V4's
@@ -44,6 +53,11 @@ type VectorFilter struct {
 	TargetArea    string
 	RoutineStep   string
 	Texture       string
+
+	// Generic tier2 predicates — same semantics as ProductFilter.
+	Attrs   map[string]string
+	AttrMin map[string]float64
+	AttrMax map[string]float64
 }
 
 // CatalogPort exposes read access to the shared catalog.* schema (owned by
