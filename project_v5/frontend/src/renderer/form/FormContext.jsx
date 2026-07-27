@@ -161,6 +161,8 @@ export function FormProvider({ node, children }) {
             endpoint: action.endpoint,
             values: payload,
             formId,
+            sessionId: renderCtx?.sessionId || undefined,
+            blockId: renderCtx?.blockId || undefined,
           })
         } else if (action.kind === 'operation_invoke') {
           resp = await invokeOperation({

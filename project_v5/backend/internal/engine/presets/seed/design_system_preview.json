@@ -1,0 +1,148 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "design-system",
+      "maxWidth": 720,
+      "layout": {"direction": "column", "gap": "md", "padding": [20, 24, 24, 24]},
+      "fill": "#FFFFFF",
+      "cornerRadius": 16,
+      "stroke": {"thickness": 1, "fill": "#ECECEC"},
+      "effect": [
+        {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "ds-head",
+          "layout": {"direction": "row", "gap": "sm", "align": "center"},
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "ds-icon",
+              "iconFontName": "sparkles",
+              "width": 18,
+              "height": 18,
+              "fill": "#F0924A"
+            },
+            {
+              "type": "text",
+              "id": "ds-title",
+              "content": "Your design system",
+              "textStyle": {"fontSize": "lg", "fontWeight": "semibold", "color": "#1a1a1a"}
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "ds-sub",
+          "content": "The brand tokens your storefront and CRM ship with — applied the moment you confirm.",
+          "textStyle": {"fontSize": "sm", "color": "#666666"}
+        },
+        {
+          "type": "frame",
+          "id": "ds-swatches",
+          "layout": {"direction": "row", "wrap": true, "gap": "sm"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "ds-swatch-blue",
+              "width": 104,
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {"type": "rectangle", "id": "ds-chip-blue", "width": 104, "height": 56, "cornerRadius": 8, "fill": "#5BA4D9"},
+                {"type": "text", "id": "ds-name-blue", "content": "Sky blue", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#1a1a1a"}},
+                {"type": "text", "id": "ds-hex-blue", "content": "#5BA4D9", "textStyle": {"fontSize": "xs", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ds-swatch-orange",
+              "width": 104,
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {"type": "rectangle", "id": "ds-chip-orange", "width": 104, "height": 56, "cornerRadius": 8, "fill": "#F0924A"},
+                {"type": "text", "id": "ds-name-orange", "content": "Signal orange", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#1a1a1a"}},
+                {"type": "text", "id": "ds-hex-orange", "content": "#F0924A", "textStyle": {"fontSize": "xs", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ds-swatch-ink",
+              "width": 104,
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {"type": "rectangle", "id": "ds-chip-ink", "width": 104, "height": 56, "cornerRadius": 8, "fill": "#1a1a1a"},
+                {"type": "text", "id": "ds-name-ink", "content": "Ink", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#1a1a1a"}},
+                {"type": "text", "id": "ds-hex-ink", "content": "#1a1a1a", "textStyle": {"fontSize": "xs", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ds-swatch-slate",
+              "width": 104,
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {"type": "rectangle", "id": "ds-chip-slate", "width": 104, "height": 56, "cornerRadius": 8, "fill": "#666666"},
+                {"type": "text", "id": "ds-name-slate", "content": "Slate", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#1a1a1a"}},
+                {"type": "text", "id": "ds-hex-slate", "content": "#666666", "textStyle": {"fontSize": "xs", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ds-swatch-mist",
+              "width": 104,
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {"type": "rectangle", "id": "ds-chip-mist", "width": 104, "height": 56, "cornerRadius": 8, "fill": "#e5e7eb"},
+                {"type": "text", "id": "ds-name-mist", "content": "Mist", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#1a1a1a"}},
+                {"type": "text", "id": "ds-hex-mist", "content": "#e5e7eb", "textStyle": {"fontSize": "xs", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ds-swatch-paper",
+              "width": 104,
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {"type": "rectangle", "id": "ds-chip-paper", "width": 104, "height": 56, "cornerRadius": 8, "fill": "#ffffff", "stroke": {"thickness": 1, "fill": "#ECECEC"}},
+                {"type": "text", "id": "ds-name-paper", "content": "Paper", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#1a1a1a"}},
+                {"type": "text", "id": "ds-hex-paper", "content": "#ffffff", "textStyle": {"fontSize": "xs", "color": "#999999"}}
+              ]
+            }
+          ]
+        },
+        {
+          "type": "line",
+          "id": "ds-div"
+        },
+        {
+          "type": "frame",
+          "id": "ds-type",
+          "layout": {"direction": "column", "gap": "xs"},
+          "children": [
+            {
+              "type": "text",
+              "id": "ds-type-heading",
+              "content": "Aa — interface headlines",
+              "textStyle": {"fontSize": "2xl", "fontWeight": "bold", "color": "#1a1a1a"}
+            },
+            {
+              "type": "text",
+              "id": "ds-type-body",
+              "content": "Body text at 14 px — clean, neutral, readable on every surface.",
+              "textStyle": {"fontSize": "base", "color": "#1a1a1a"}
+            },
+            {
+              "type": "text",
+              "id": "ds-type-caption",
+              "content": "Type scale 11–36 px · corner radius 8 px · spacing steps 4–32 px",
+              "textStyle": {"fontSize": "xs", "color": "#999999"}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

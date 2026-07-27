@@ -114,7 +114,9 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	var systemPrompt string
 	{
 		_, promptSpan := withSpan(ctx, "agent2.prompt")
-		systemPrompt, err = uc.promptCache.GetOrBuild(ctx, req.TenantSlug, 3)
+		// Per-form base prompt (R24): storefront keeps its exact bytes;
+		// onboarding/crm append the compose_turn (+ choreography) blocks.
+		systemPrompt, err = uc.promptCache.GetOrBuildForm(ctx, req.TenantSlug, 3, mode)
 		if err != nil {
 			promptSpan.SetError(err)
 		}

@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"keepstar_v5/internal/adapters"
 	anthropicAdapter "keepstar_v5/internal/adapters/anthropic"
 	"keepstar_v5/internal/adapters/openai"
 	"keepstar_v5/internal/adapters/postgres"
@@ -25,6 +26,7 @@ import (
 	"keepstar_v5/internal/operations"
 	"keepstar_v5/internal/operations/seed"
 	"keepstar_v5/internal/ports"
+	"keepstar_v5/internal/prompts"
 	"keepstar_v5/internal/tools"
 	"keepstar_v5/internal/usecases"
 )
@@ -168,6 +170,38 @@ func main() {
 	// unprocessed with a warn — never leave this out of boot wiring.
 	entityWrite.SetAutomationRunner(usecases.NewOperationRunner(registry, log))
 
+	// Turn protocol (§4.7, R9 as owner-overridden): compose_turn is the
+	// visual-plane operation of the onboarding + CRM forms. Registered under
+	// its §3.1 seed row BEFORE SeedTemplates, like every other executor.
+	registry.RegisterExecutor(domain.KindVisual, operations.WrapComposeTurn(tools.NewComposeTurnTool(statePort, presetPort, componentPort)))
+
+	// Onboarding plane (M3, §4.3): the deterministic ManifestApplier + the 11
+	// meta executors. The StateAdapter satisfies OnboardingStatePort (manifest
+	// zone); the OnboardingAdapter owns the ingest/surface tokens; the
+	// AdminGateway speaks the R7 service-route family (unset env → every call
+	// answers ErrAdminGatewayNotConfigured and the endpoints 503 honestly).
+	onboardingTokens := postgres.NewOnboardingAdapter(pgClient)
+	adminGateway := adapters.NewAdminGateway(cfg.AdminBaseURL, cfg.AdminServiceKey, log)
+	manifestApplier := usecases.NewManifestApplier(usecases.ManifestApplierConfig{
+		State:          statePort,
+		Tokens:         onboardingTokens,
+		Gateway:        adminGateway,
+		Entities:       entityPort,
+		Ops:            operationStore,
+		Themes:         themePort,
+		Registry:       registry,
+		SurfaceBaseURL: cfg.PublicBaseURL,
+		Log:            log,
+	})
+	operations.RegisterMetaExecutors(registry, operations.MetaExecutorDeps{
+		Onboarding: statePort,
+		State:      statePort,
+		Store:      operationStore,
+		Embedder:   embeddingPort,
+		Applier:    manifestApplier,
+		Log:        log,
+	})
+
 	// Boot seed (§3.1): wrap rows from the registered executors + the 18
 	// spec templates (6 executors, compose_turn, 11 onboarding meta-ops),
 	// idempotent upsert on name, descriptions embedded when the embedder is
@@ -181,6 +215,11 @@ func main() {
 
 	promptCache := usecases.NewPromptCache(fdPort, presetPort, catalogPort, "product")
 	agent1Cache := usecases.NewAgent1PromptCache(catalogPort)
+	// Per-form prompts (R17 seam + R24 additions). Storefront stays the
+	// unregistered fallback — its prompt bytes are untouched (duty C3).
+	agent1Cache.SetFormPrompt(domain.ModeOnboarding, prompts.OnboardingAgent1SystemPrompt)
+	promptCache.SetFormPrompt(domain.ModeOnboarding, prompts.OnboardingAgent2SystemPrompt())
+	promptCache.SetFormPrompt(domain.ModeCRM, prompts.Agent2SystemPrompt+prompts.ComposeTurnAgent2Addition)
 	agent1 := usecases.NewAgent1Execute(llm, statePort, catalogPort, registry, agent1Cache, log)
 	agent2 := usecases.NewAgent2Execute(llm, statePort, registry, promptCache)
 	prefetchBuilder := usecases.NewPrefetchBuilder(presetPort, componentPort, log)
@@ -201,6 +240,18 @@ func main() {
 	// routes. The operations handler checks it internally; routes.go fronts
 	// /session/init, /actions and /navigation/* with the same instance.
 	cheapGuard := handlers.NewCheapGuard(cfg.CheapRatePerMin, log)
+	// M3 runtime deps for the onboarding endpoints (upload door, step
+	// submit, resume manifest, success-plaque render).
+	onboardH.SetOnboardingDeps(handlers.OnboardDeps{
+		OnboardState: statePort,
+		Tokens:       onboardingTokens,
+		Gateway:      adminGateway,
+		Applier:      manifestApplier,
+		Presets:      presetPort,
+		Components:   componentPort,
+		Themes:       themePort,
+		CheapGuard:   cheapGuard,
+	})
 	log.Info("cheap_guard_configured", "rate_per_min", cfg.CheapRatePerMin)
 	operationsH := handlers.NewOperationsHandler(registry, statePort, presetPort, componentPort, themePort, pgClient.Pool(), cheapGuard, log)
 	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH, themeH, onboardH, cacheH, operationsH, cheapGuard)

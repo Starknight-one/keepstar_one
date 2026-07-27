@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keepstar — Storefront</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #ffffff; }
+    </style>
+  </head>
+  <body>
+    <!-- Served by the v5 fileserver at GET /s/{tenantSlug} (RUNTIME_SPEC
+         §5.1). The mount parses the tenant slug from the path and the
+         API base from the page origin. -->
+    <script>
+      window.__KEEPSTAR_V5_WIDGET__ = { noAutoMount: true }
+    </script>
+    <script src="/widget.js"></script>
+    <script>
+      window.KeepstarV5Widget.mountStorefront()
+    </script>
+  </body>
+</html>

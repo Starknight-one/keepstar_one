@@ -22,7 +22,12 @@ import { applyTheme, tokensFromDoc } from './theme-style'
 // drill_detail uses the prefetch payload for instant navigation
 // (no round-trip).
 
-export default function WidgetApp({ tenantSlug, apiBaseUrl, shadowRoot }) {
+// mode (optional, R17): passed through to /session/init — absent keeps
+// the legacy bodyless request (embedded widget), "storefront" is what
+// the /s/{slug} page mount sends. variant: 'overlay' (default — the
+// embedded translucent overlay) | 'page' (the /s/{slug} storefront page:
+// same layout on a solid page background, §5.1).
+export default function WidgetApp({ tenantSlug, apiBaseUrl, shadowRoot, mode, variant }) {
   const [sessionId, setSessionId] = useState(null)
   const [messages, setMessages] = useState([])
   const [doc, setDoc] = useState(null)
@@ -49,7 +54,7 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl, shadowRoot }) {
 
   useEffect(() => {
     let cancelled = false
-    initSession({ baseUrl: apiBaseUrl, tenantSlug })
+    initSession({ baseUrl: apiBaseUrl, tenantSlug, mode })
       .then((res) => {
         if (cancelled) return
         setSessionId(res.sessionId)
@@ -65,7 +70,7 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl, shadowRoot }) {
     return () => {
       cancelled = true
     }
-  }, [apiBaseUrl, tenantSlug])
+  }, [apiBaseUrl, tenantSlug, mode])
 
   // Design-system theme: each turn's document carries doc.theme.tokens
   // (the per-tenant --kw-* set; default tokens with isDefault:true when
@@ -213,7 +218,7 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl, shadowRoot }) {
   }
 
   return (
-    <div className="kw-overlay">
+    <div className={'kw-overlay' + (variant === 'page' ? ' kw-overlay--page' : '')}>
       <div className="kw-display">
         {canGoBack && (
           <button className="kw-back" type="button" onClick={handleBack}>

@@ -23,6 +23,16 @@ var SystemPresetDescriptions = map[string]string{
 	"text_explainer":            "literal-text widget (title + body) for LLM explanations",
 	"empty_not_found":           "empty state (\"nothing found\")",
 	"error_generic":             "error state",
+	"design_system_preview":     "brand design-token preview: color swatches + type scale (onboarding)",
+	"uploader_card":             "universal catalog uploader (CSV/JSON, 20 MB); disarmed until the plan is confirmed",
+	"operation_card":            "operation explainer card: input → does → output → why (replicates over library results)",
+	"registration_form":         "owner account registration form (name / email / password, secure step submit)",
+	"booking_form":              "book-a-showing form on a listing: preferred time + contact details",
+	"lead_table":                "lead list rows for CRM chat: status, contact, listing, preferred time",
+	"lead_detail":               "single lead detail with status-advance buttons",
+	"success_plaque":            "operation success plaque, bound from the operation result",
+	"surface_links":             "issued surface addresses (storefront + CRM URLs, replicates over surfaceLink)",
+	"manifest_summary":          "assembly build receipt rows (replicates over manifestStep)",
 }
 
 // SystemPresetsBlock is the preset-catalog section injected into Agent2's

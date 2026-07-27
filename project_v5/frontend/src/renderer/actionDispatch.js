@@ -143,6 +143,8 @@ async function dispatchFormSubmit(action, ctx) {
       endpoint: action.endpoint,
       values: action.params || {},
       formId: action.formId,
+      sessionId: ctx?.sessionId || undefined,
+      blockId: ctx?.blockId || undefined,
     })
     return applyServerResult(resp, ctx)
   } catch (err) {

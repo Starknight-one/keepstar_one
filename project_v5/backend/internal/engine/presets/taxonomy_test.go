@@ -14,6 +14,8 @@ func TestSystemPresetTaxonomyComplete(t *testing.T) {
 		"components": true,
 		"states":     true,
 		"narrative":  true,
+		"forms":      true, // §5.2 form-primitive presets (runtime v1)
+		"onboarding": true, // onboarding-form widgets (RUNTIME_SPEC §5.3)
 	}
 
 	for name := range SystemPresetSeeds {

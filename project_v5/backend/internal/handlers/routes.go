@@ -26,7 +26,12 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //	GET  /readyz                             — readiness probe (DB ping)
 //	POST /api/v1/session/init                — create session (optional {mode, k} body, R17)
 //	GET  /api/v1/session/{id}                — read session state (debug)
+//	POST /api/v1/onboard/gate                — password gate → ks_onboard cookie (R5; 5/min/IP)
 //	POST /api/v1/onboard/session             — create mode=onboarding session (ks_onboard cookie, R5/R17)
+//	GET  /api/v1/onboard/session             — resume ?sessionId= → {manifest, lastTemplate, transcript} (§5.1)
+//	POST /api/v1/onboard/upload              — multipart {token, file} → admin import proxy (R25, §5.4)
+//	GET  /api/v1/onboard/upload/{jobId}      — honest import job status; completes the ingest step (R25)
+//	POST /api/v1/onboard/step/{stepId}/submit — R6 PII choke point (registration form_submit)
 //	POST /api/v1/pipeline                    — run Agent2 turn
 //	POST /api/v1/pipeline/stream             — same turn with SSE progress frames
 //	POST /api/v1/actions                     — like / unlike / cart_add / cart_remove
@@ -41,6 +46,9 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //	GET  /api/v1/internal/presets/system/doc — compiled doc_json for one system preset by ?name= (X-Internal-Key)
 //	GET  /api/v1/internal/theme              — read resolved theme for ?tenant= (X-Internal-Key)
 //	PUT  /api/v1/internal/theme              — upsert tenant theme override for ?tenant= (X-Internal-Key)
+//	GET  /onboard                            — onboarding page host (password gate → chat, §5.1)
+//	GET  /s/{tenantSlug}                     — public storefront page host (§5.1)
+//	GET  /crm/{tenantSlug}                   — chat-first CRM page host (?k= surface token, R13)
 //
 // Middleware chain (outermost to innermost):
 //
@@ -90,9 +98,16 @@ func RegisterRoutes(
 	mux.HandleFunc("GET /readyz", ReadyzHandler(pool))
 	mux.HandleFunc("POST /api/v1/session/init", withCheap(session.Init))
 	mux.HandleFunc("GET /api/v1/session/", session.Get)
-	// Onboarding (R5/R17) — ks_onboard cookie gated inside the handler,
-	// exempt from WithTenant (system tenant resolved server-side).
+	// Onboarding (R5/R17/R25/R6) — ks_onboard cookie gated inside the
+	// handlers, exempt from WithTenant (system tenant resolved server-side).
+	// The gate route carries its own spec-fixed 5/min/IP guard; upload and
+	// step-submit ride the shared cheap bucket inside the handler.
+	mux.HandleFunc("POST /api/v1/onboard/gate", onboard.Gate)
 	mux.HandleFunc("POST /api/v1/onboard/session", onboard.CreateSession)
+	mux.HandleFunc("GET /api/v1/onboard/session", onboard.GetSession)
+	mux.HandleFunc("POST /api/v1/onboard/upload", onboard.Upload)
+	mux.HandleFunc("GET /api/v1/onboard/upload/{jobId}", onboard.UploadStatus)
+	mux.HandleFunc("POST /api/v1/onboard/step/{stepId}/submit", onboard.StepSubmit)
 	// Internal control (curator cockpit kill switch) — gated by X-Internal-Key
 	// inside the handlers and exempt from WithTenant (middleware_tenant.go).
 	mux.HandleFunc("POST /api/v1/internal/session/{id}/kill", session.Kill)
@@ -125,6 +140,26 @@ func RegisterRoutes(
 	// all is skipped and unknown paths get the default mux 404.
 	if staticDir != "" {
 		if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
+			// Page hosts (RUNTIME_SPEC §5.1) — explicit routes ahead of the
+			// catch-all. Each serves ONE built HTML file; the page's mount
+			// script parses the tenant slug / surface token from the URL
+			// client-side, so the server needs no per-tenant logic here.
+			// These paths are tenant-exempt (middleware_tenant.go): plain
+			// HTML must not 400/503 on tenant lookup.
+			servePage := func(file string) http.HandlerFunc {
+				page := filepath.Join(staticDir, file)
+				return func(w http.ResponseWriter, r *http.Request) {
+					if !fileExists(page) {
+						http.NotFound(w, r)
+						return
+					}
+					http.ServeFile(w, r, page)
+				}
+			}
+			mux.HandleFunc("GET /onboard", servePage("onboard.html"))
+			mux.HandleFunc("GET /s/{tenantSlug}", servePage("storefront.html"))
+			mux.HandleFunc("GET /crm/{tenantSlug}", servePage("crm.html"))
+
 			fs := http.FileServer(http.Dir(staticDir))
 			mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 				path := filepath.Join(staticDir, r.URL.Path)

@@ -364,6 +364,7 @@ describe('form_submit flow (R6 — registration path)', () => {
     expect(init.credentials).toBe('include')
     const body = JSON.parse(init.body)
     expect(body).toEqual({
+      sessionId: 's-1',
       formId: 'registration',
       values: { name: 'Vlad', email: 'v@k.one', password: 'hunter22' },
     })

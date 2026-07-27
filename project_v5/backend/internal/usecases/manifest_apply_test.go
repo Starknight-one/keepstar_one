@@ -1,0 +1,601 @@
+package usecases
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+
+	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/ports"
+)
+
+// --- fakes (applier-prefixed: the package's other fakes serve other suites) ---
+
+// applierStatePort records every persisted manifest snapshot AND every delta
+// so tests can assert the FULL persistence surface (the R6 test greps it).
+type applierStatePort struct {
+	manifest  *domain.OnboardingManifest
+	snapshots [][]byte // marshaled manifest at each UpdateOnboarding
+	deltas    []domain.DeltaInfo
+	failWrite bool
+}
+
+func (s *applierStatePort) GetOnboarding(_ context.Context, _ string) (*domain.OnboardingManifest, error) {
+	if s.manifest == nil {
+		return nil, nil
+	}
+	// Round-trip like the DB does so tests catch anything non-serializable.
+	raw, err := json.Marshal(s.manifest)
+	if err != nil {
+		return nil, err
+	}
+	var m domain.OnboardingManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (s *applierStatePort) UpdateOnboarding(_ context.Context, _ string, m *domain.OnboardingManifest, info domain.DeltaInfo) (int, error) {
+	if s.failWrite {
+		return 0, errors.New("state write refused")
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return 0, err
+	}
+	s.snapshots = append(s.snapshots, raw)
+	var cp domain.OnboardingManifest
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		return 0, err
+	}
+	s.manifest = &cp
+	s.deltas = append(s.deltas, info)
+	return len(s.snapshots), nil
+}
+
+// persistedJSON is everything the fake ever wrote: manifest snapshots +
+// deltas — the surface the R6 password assertion scans.
+func (s *applierStatePort) persistedJSON(t *testing.T) string {
+	t.Helper()
+	var b strings.Builder
+	for _, snap := range s.snapshots {
+		b.Write(snap)
+	}
+	raw, err := json.Marshal(s.deltas)
+	if err != nil {
+		t.Fatalf("marshal deltas: %v", err)
+	}
+	b.Write(raw)
+	return b.String()
+}
+
+type applierTokens struct {
+	ingestMints  int
+	surfaceMints int
+	usedTokens   []string
+}
+
+func (f *applierTokens) MintIngestToken(_ context.Context, sessionID, tenantID string, formats []string, _ time.Duration) (*ports.IngestToken, error) {
+	f.ingestMints++
+	return &ports.IngestToken{
+		Token: fmt.Sprintf("ingest-token-%d", f.ingestMints), SessionID: sessionID,
+		TenantID: tenantID, Formats: formats, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}, nil
+}
+func (f *applierTokens) GetIngestToken(context.Context, string) (*ports.IngestToken, error) {
+	return nil, errors.New("not implemented")
+}
+func (f *applierTokens) MarkIngestTokenUsed(_ context.Context, token string) error {
+	f.usedTokens = append(f.usedTokens, token)
+	return nil
+}
+func (f *applierTokens) MintSurfaceToken(context.Context, string) (string, error) {
+	f.surfaceMints++
+	return fmt.Sprintf("surface-token-%d", f.surfaceMints), nil
+}
+
+type applierGateway struct {
+	createCalls    int
+	provisionCalls int
+	adoptCalls     int
+	// seenPassword records what crossed into ProvisionUser — the ONE place
+	// the password is allowed to reach (R6).
+	seenPassword string
+	provisionErr error
+}
+
+func (g *applierGateway) CreateTenant(_ context.Context, name, _ string) (*ports.AdminTenant, error) {
+	g.createCalls++
+	return &ports.AdminTenant{TenantID: "11111111-2222-3333-4444-555555555555", Slug: "acme-realty"}, nil
+}
+func (g *applierGateway) ProvisionUser(_ context.Context, _, _, password, _ string) (string, error) {
+	g.provisionCalls++
+	if g.provisionErr != nil {
+		return "", g.provisionErr
+	}
+	g.seenPassword = password
+	return "user-42", nil
+}
+func (g *applierGateway) AdoptPresets(_ context.Context, _ string, names []string) (*ports.AdminAdoptResult, error) {
+	g.adoptCalls++
+	return &ports.AdminAdoptResult{Adopted: names, BindingReports: []map[string]any{}, Invalidated: true}, nil
+}
+func (g *applierGateway) StartImport(context.Context, string, string, io.Reader) (*ports.AdminImportJob, error) {
+	return nil, errors.New("not implemented")
+}
+func (g *applierGateway) ImportStatus(context.Context, string, string) (*ports.AdminImportStatus, error) {
+	return nil, errors.New("not implemented")
+}
+
+// applierEntities implements ports.EntityPort with call recording and
+// injectable failure on UpsertValueSet (halt-and-retry test).
+type applierEntities struct {
+	calls       []string
+	valueSetErr error
+}
+
+func (e *applierEntities) UpsertEntityDefinition(_ context.Context, def *domain.EntityDefinition) error {
+	e.calls = append(e.calls, "entity:"+def.Slug+":"+def.TenantID)
+	return nil
+}
+func (e *applierEntities) GetEntityDefinition(context.Context, string, string) (*domain.EntityDefinition, error) {
+	return nil, errors.New("not implemented")
+}
+func (e *applierEntities) ListEntityDefinitions(context.Context, string) ([]domain.EntityDefinition, error) {
+	return nil, nil
+}
+func (e *applierEntities) UpsertValueSet(_ context.Context, vs *domain.ValueSet) error {
+	if e.valueSetErr != nil {
+		return e.valueSetErr
+	}
+	e.calls = append(e.calls, "valueset:"+vs.Slug)
+	return nil
+}
+func (e *applierEntities) GetValueSet(context.Context, string, string) (*domain.ValueSet, error) {
+	return nil, errors.New("not implemented")
+}
+func (e *applierEntities) ListValueSets(context.Context, string) ([]domain.ValueSet, error) {
+	return nil, nil
+}
+func (e *applierEntities) CreateRecord(context.Context, *domain.EntityRecord) (*domain.EntityRecord, *domain.RuntimeEvent, error) {
+	return nil, nil, errors.New("not implemented")
+}
+func (e *applierEntities) UpdateRecord(context.Context, string, string, map[string]any) (*domain.EntityRecord, *domain.RuntimeEvent, error) {
+	return nil, nil, errors.New("not implemented")
+}
+func (e *applierEntities) TransitionStatus(context.Context, string, string, string) (*domain.EntityRecord, *domain.RuntimeEvent, error) {
+	return nil, nil, errors.New("not implemented")
+}
+func (e *applierEntities) GetRecord(context.Context, string, string) (*domain.EntityRecord, error) {
+	return nil, errors.New("not implemented")
+}
+func (e *applierEntities) QueryRecords(context.Context, string, string, domain.RecordFilter) ([]domain.EntityRecord, int, error) {
+	return nil, 0, errors.New("not implemented")
+}
+func (e *applierEntities) UpsertAutomation(_ context.Context, a *domain.Automation) error {
+	e.calls = append(e.calls, "automation:"+a.Name)
+	return nil
+}
+func (e *applierEntities) ListAutomations(context.Context, string, string) ([]domain.Automation, error) {
+	return nil, nil
+}
+func (e *applierEntities) MarkEventProcessed(context.Context, int64) error { return nil }
+
+type applierOps struct{ enabled []string }
+
+func (o *applierOps) SearchLibrary(context.Context, []float32, string, []string, int) ([]domain.OperationTemplate, error) {
+	return nil, nil
+}
+func (o *applierOps) EnableOperation(_ context.Context, tenantID, template, instance string, _ map[string]any) (*domain.TenantOperation, error) {
+	o.enabled = append(o.enabled, template+"/"+instance)
+	return &domain.TenantOperation{TenantID: tenantID, Name: instance}, nil
+}
+func (o *applierOps) UpdateInstanceConfig(context.Context, string, string, map[string]any) error {
+	return nil
+}
+func (o *applierOps) DisableOperation(context.Context, string, string) error { return nil }
+func (o *applierOps) ListEnabled(context.Context, string) ([]domain.TenantOperation, error) {
+	return nil, nil
+}
+
+type applierThemes struct{ upserts []string }
+
+func (t *applierThemes) GetTheme(context.Context, string) (domain.Theme, error) {
+	return domain.DefaultTheme(), nil
+}
+func (t *applierThemes) UpsertTheme(_ context.Context, slugOrID string, _ domain.ThemeTokens) error {
+	t.upserts = append(t.upserts, slugOrID)
+	return nil
+}
+
+type applierRegistry struct{ invalidated []string }
+
+func (r *applierRegistry) RegisterExecutor(domain.OperationKind, ports.Executor) {}
+func (r *applierRegistry) DefinitionsFor(context.Context, string, domain.PipelineMode, domain.AgentPlane, domain.Role) []domain.ToolDefinition {
+	return nil
+}
+func (r *applierRegistry) Get(context.Context, string, string) (*domain.OperationSpec, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *applierRegistry) Execute(context.Context, domain.OperationContext, domain.ToolCall) (*domain.OperationResult, error) {
+	return nil, errors.New("not implemented")
+}
+func (r *applierRegistry) InvalidateTenant(slug string) { r.invalidated = append(r.invalidated, slug) }
+
+// --- helpers ---
+
+type applierFixture struct {
+	state    *applierStatePort
+	tokens   *applierTokens
+	gateway  *applierGateway
+	entities *applierEntities
+	ops      *applierOps
+	themes   *applierThemes
+	registry *applierRegistry
+	ap       *ManifestApplier
+}
+
+func newApplierFixture(m *domain.OnboardingManifest) *applierFixture {
+	f := &applierFixture{
+		state:    &applierStatePort{manifest: m},
+		tokens:   &applierTokens{},
+		gateway:  &applierGateway{},
+		entities: &applierEntities{},
+		ops:      &applierOps{},
+		themes:   &applierThemes{},
+		registry: &applierRegistry{},
+	}
+	f.ap = NewManifestApplier(ManifestApplierConfig{
+		State:          f.state,
+		Tokens:         f.tokens,
+		Gateway:        f.gateway,
+		Entities:       f.entities,
+		Ops:            f.ops,
+		Themes:         f.themes,
+		Registry:       f.registry,
+		SurfaceBaseURL: "https://v5.example.test",
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	return f
+}
+
+func step(id, op string, params map[string]any) domain.ManifestStep {
+	return domain.ManifestStep{ID: id, Op: op, Params: params, Status: domain.ManifestStepProposed}
+}
+
+func stepByID(t *testing.T, m *domain.OnboardingManifest, id string) *domain.ManifestStep {
+	t.Helper()
+	for i := range m.Steps {
+		if m.Steps[i].ID == id {
+			return &m.Steps[i]
+		}
+	}
+	t.Fatalf("step %q not found", id)
+	return nil
+}
+
+func realtorManifest() *domain.OnboardingManifest {
+	return &domain.OnboardingManifest{
+		Version: 1,
+		Steps: []domain.ManifestStep{
+			// Deliberately staged with create_tenant NOT first — the applier
+			// must force it first regardless of LLM emission order.
+			step("s-entity", "define_entity", map[string]any{
+				"entity": map[string]any{
+					"slug": "lead", "name": "Lead",
+					"fields": []any{map[string]any{"key": "name", "label": "Name", "type": "text"}},
+				},
+			}),
+			step("s-tenant", "create_tenant", map[string]any{"name": "Acme Realty", "vertical": "real estate agency"}),
+			step("s-vset", "define_value_set", map[string]any{
+				"slug": "lead_pipeline", "name": "Lead pipeline",
+				"values": []any{map[string]any{"value": "new", "label": "New"}},
+			}),
+			step("s-ops", "enable_operations", map[string]any{
+				"operations": []any{map[string]any{"template": "schedule_slot", "instance": "book_showing", "config": map[string]any{"entity": "lead"}}},
+			}),
+			step("s-door", "issue_ingest_door", map[string]any{"formats": []any{"csv", "json"}}),
+			step("s-reg", "register_user", map[string]any{"role": "owner"}),
+			step("s-urls", "issue_surface_urls", map[string]any{}),
+		},
+	}
+}
+
+// --- tests ---
+
+// The applier must run create_tenant FIRST (R22: stage order with
+// create_tenant forced first) even when the LLM staged it later, and the
+// tenant identity must reach every subsequent in-process write.
+func TestApplyForcesCreateTenantFirst(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	m, err := f.ap.Apply(context.Background(), "sess-1", "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if f.gateway.createCalls != 1 {
+		t.Fatalf("create tenant calls = %d, want 1", f.gateway.createCalls)
+	}
+	if m.Tenant.Slug != "acme-realty" || m.Tenant.ID == "" {
+		t.Fatalf("tenant identity not recorded: %+v", m.Tenant)
+	}
+	// define_entity ran with the created tenant id — proof of ordering.
+	if len(f.entities.calls) == 0 || f.entities.calls[0] != "entity:lead:"+m.Tenant.ID {
+		t.Fatalf("entity write missing tenant id (ordering broken): %v", f.entities.calls)
+	}
+	// R22: brand-default theme written in-process at create_tenant time.
+	if len(f.themes.upserts) != 1 || f.themes.upserts[0] != m.Tenant.ID {
+		t.Fatalf("brand-default theme not written for tenant: %v", f.themes.upserts)
+	}
+	// Registry spec cache dropped after tenant mutations (§6.1).
+	if len(f.registry.invalidated) == 0 {
+		t.Errorf("registry.InvalidateTenant never called after mutations")
+	}
+}
+
+// A failed step halts the run (steps after it stay un-applied) and a retry
+// re-runs FROM it without repeating earlier side effects (idempotency:
+// create_tenant must not mint a second tenant).
+func TestApplyHaltsOnFailureAndRetryResumes(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	f.entities.valueSetErr = errors.New("db exploded")
+
+	m, err := f.ap.Apply(context.Background(), "sess-1", "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got := stepByID(t, m, "s-vset").Status; got != domain.ManifestStepFailed {
+		t.Fatalf("value-set step status = %q, want failed", got)
+	}
+	if got := stepByID(t, m, "s-ops").Status; got != domain.ManifestStepAccepted {
+		t.Fatalf("post-failure step status = %q, want accepted (halt means NOT applied)", got)
+	}
+	if len(f.ops.enabled) != 0 {
+		t.Fatalf("enable_operations ran past a halted run: %v", f.ops.enabled)
+	}
+
+	// Retry: the failure is gone; the run resumes from the failed step.
+	f.entities.valueSetErr = nil
+	m, err = f.ap.Apply(context.Background(), "sess-1", "")
+	if err != nil {
+		t.Fatalf("retry Apply: %v", err)
+	}
+	if got := stepByID(t, m, "s-vset").Status; got != domain.ManifestStepApplied {
+		t.Fatalf("value-set step after retry = %q, want applied", got)
+	}
+	if f.gateway.createCalls != 1 {
+		t.Fatalf("create tenant called %d times across retry, want 1 (idempotency guard)", f.gateway.createCalls)
+	}
+	if vsStep := stepByID(t, m, "s-vset"); vsStep.Attempt != 2 {
+		t.Errorf("failed step attempt = %d, want 2", vsStep.Attempt)
+	}
+}
+
+// issue_surface_urls refuses (rests at accepted, run does NOT halt) until
+// every other step applied; once they are, it mints the CRM token and both
+// URLs.
+func TestApplySurfaceURLsWaitThenIssue(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	m, err := f.ap.Apply(context.Background(), "sess-1", "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	urls := stepByID(t, m, "s-urls")
+	if urls.Status != domain.ManifestStepAccepted {
+		t.Fatalf("surface step status = %q, want accepted (waiting)", urls.Status)
+	}
+	if _, ok := urls.Result["waiting"]; !ok {
+		t.Fatalf("waiting reason missing: %v", urls.Result)
+	}
+	if f.tokens.surfaceMints != 0 {
+		t.Fatalf("surface token minted while steps pending")
+	}
+
+	// Complete the two trigger steps out of band.
+	if _, err := f.ap.ExecuteStep(context.Background(), "sess-1", "s-reg", map[string]any{
+		"email": "owner@acme.test", "password": "pw",
+	}); err != nil {
+		t.Fatalf("ExecuteStep: %v", err)
+	}
+	if err := f.ap.CompleteIngestStep(context.Background(), "sess-1", &ports.AdminImportStatus{
+		Status: "completed", Processed: 20, ProjectionRows: 20, Invalidated: true,
+	}); err != nil {
+		t.Fatalf("CompleteIngestStep: %v", err)
+	}
+
+	m, err = f.ap.Apply(context.Background(), "sess-1", "")
+	if err != nil {
+		t.Fatalf("final Apply: %v", err)
+	}
+	urls = stepByID(t, m, "s-urls")
+	if urls.Status != domain.ManifestStepApplied {
+		t.Fatalf("surface step = %q, want applied; result %v", urls.Status, urls.Result)
+	}
+	sf, _ := urls.Result["storefrontUrl"].(string)
+	crm, _ := urls.Result["crmUrl"].(string)
+	if sf != "https://v5.example.test/s/acme-realty" {
+		t.Errorf("storefront url = %q", sf)
+	}
+	if !strings.HasPrefix(crm, "https://v5.example.test/crm/acme-realty?k=surface-token-") {
+		t.Errorf("crm url = %q", crm)
+	}
+}
+
+// THE R6 test (REQUIRED by the work order): the registration password
+// reaches the admin gateway and NOTHING ELSE — not one persisted manifest
+// snapshot, not one delta. The assertion greps the full persistence surface.
+func TestExecuteStepRegisterUser_PasswordNeverPersisted(t *testing.T) {
+	const password = "sup3r-secret-PW-!"
+	f := newApplierFixture(realtorManifest())
+	if _, err := f.ap.Apply(context.Background(), "sess-1", ""); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	st, err := f.ap.ExecuteStep(context.Background(), "sess-1", "s-reg", map[string]any{
+		"name": "Olga", "email": "owner@acme.test", "password": password,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStep: %v", err)
+	}
+	if f.gateway.seenPassword != password {
+		t.Fatalf("gateway did not receive the password — the ONE allowed path is broken")
+	}
+	if st.Status != domain.ManifestStepApplied {
+		t.Fatalf("register step status = %q, want applied", st.Status)
+	}
+	if st.Result["userId"] != "user-42" || st.Result["email"] != "owner@acme.test" {
+		t.Fatalf("register step result = %v", st.Result)
+	}
+
+	persisted := f.state.persistedJSON(t)
+	if strings.Contains(persisted, password) {
+		t.Fatalf("PASSWORD LEAKED into persisted manifest/delta state (R6 violation)")
+	}
+	if strings.Contains(persisted, `"password"`) {
+		t.Fatalf("a 'password' key reached persisted state (R6 violation)")
+	}
+}
+
+// A provisioning failure keeps the step accepted (re-submittable) and still
+// never persists the password.
+func TestExecuteStepRegisterUser_FailureStaysAccepted(t *testing.T) {
+	const password = "another-secret-9"
+	f := newApplierFixture(realtorManifest())
+	if _, err := f.ap.Apply(context.Background(), "sess-1", ""); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	f.gateway.provisionErr = errors.New("admin responded 400: weak password policy")
+
+	_, err := f.ap.ExecuteStep(context.Background(), "sess-1", "s-reg", map[string]any{
+		"email": "owner@acme.test", "password": password,
+	})
+	if err == nil {
+		t.Fatalf("ExecuteStep succeeded despite gateway failure")
+	}
+	m, _ := f.state.GetOnboarding(context.Background(), "sess-1")
+	if got := stepByID(t, m, "s-reg").Status; got != domain.ManifestStepAccepted {
+		t.Fatalf("register step after failure = %q, want accepted (re-submittable)", got)
+	}
+	if strings.Contains(f.state.persistedJSON(t), password) {
+		t.Fatalf("PASSWORD LEAKED on the failure path (R6 violation)")
+	}
+}
+
+// ExecuteStep error contract for the handler mapping.
+func TestExecuteStepErrors(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	ctx := context.Background()
+
+	// Manifest still fully proposed → the register step is not ready.
+	if _, err := f.ap.ExecuteStep(ctx, "sess-1", "s-reg", map[string]any{"email": "a@b.c", "password": "x"}); !errors.Is(err, ErrStepNotReady) {
+		t.Errorf("proposed step: err = %v, want ErrStepNotReady", err)
+	}
+	if _, err := f.ap.ExecuteStep(ctx, "sess-1", "nope", nil); !errors.Is(err, ErrStepNotFound) {
+		t.Errorf("unknown step: err = %v, want ErrStepNotFound", err)
+	}
+	if _, err := f.ap.ExecuteStep(ctx, "sess-1", "s-entity", nil); !errors.Is(err, ErrStepNotSubmittable) {
+		t.Errorf("non-register step: err = %v, want ErrStepNotSubmittable", err)
+	}
+
+	if _, err := f.ap.Apply(ctx, "sess-1", ""); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := f.ap.ExecuteStep(ctx, "sess-1", "s-reg", map[string]any{"email": "", "password": ""}); !errors.Is(err, ErrInvalidSubmit) {
+		t.Errorf("empty creds: err = %v, want ErrInvalidSubmit", err)
+	}
+
+	empty := &applierStatePort{}
+	f2 := newApplierFixture(nil)
+	f2.state = empty
+	f2.ap = NewManifestApplier(ManifestApplierConfig{State: empty, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if _, err := f2.ap.ExecuteStep(ctx, "sess-x", "s-reg", nil); !errors.Is(err, ErrNoManifest) {
+		t.Errorf("no manifest: err = %v, want ErrNoManifest", err)
+	}
+}
+
+// upTo applies only the ordered prefix up to and including the named step.
+func TestApplyUpTo(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	m, err := f.ap.Apply(context.Background(), "sess-1", "s-entity")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	// Order is tenant → entity (forced-first tenant, then stage order).
+	if got := stepByID(t, m, "s-tenant").Status; got != domain.ManifestStepApplied {
+		t.Fatalf("tenant step = %q, want applied", got)
+	}
+	if got := stepByID(t, m, "s-entity").Status; got != domain.ManifestStepApplied {
+		t.Fatalf("entity step = %q, want applied", got)
+	}
+	if got := stepByID(t, m, "s-vset").Status; got != domain.ManifestStepProposed {
+		t.Fatalf("beyond-upTo step = %q, want proposed (untouched)", got)
+	}
+}
+
+// The upload-door lifecycle: mint at apply (rests accepted), job recorded,
+// completion applies the step, consumes the token, and is idempotent.
+func TestIngestDoorLifecycle(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	ctx := context.Background()
+	m, err := f.ap.Apply(ctx, "sess-1", "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	door := stepByID(t, m, "s-door")
+	if door.Status != domain.ManifestStepAccepted {
+		t.Fatalf("door step = %q, want accepted", door.Status)
+	}
+	tok, _ := door.Result["token"].(string)
+	if tok == "" {
+		t.Fatalf("no ingest token minted: %v", door.Result)
+	}
+
+	// Re-apply must NOT mint a second token (armed uploader already bound it).
+	if _, err := f.ap.Apply(ctx, "sess-1", ""); err != nil {
+		t.Fatalf("re-Apply: %v", err)
+	}
+	if f.tokens.ingestMints != 1 {
+		t.Fatalf("ingest mints = %d, want 1", f.tokens.ingestMints)
+	}
+
+	if err := f.ap.RecordUploadJob(ctx, "sess-1", "job-7", "listings.csv"); err != nil {
+		t.Fatalf("RecordUploadJob: %v", err)
+	}
+	// A failed import keeps the door open (R25).
+	if err := f.ap.RecordIngestFailure(ctx, "sess-1", []string{"row 3: no name"}); err != nil {
+		t.Fatalf("RecordIngestFailure: %v", err)
+	}
+	m, _ = f.state.GetOnboarding(ctx, "sess-1")
+	door = stepByID(t, m, "s-door")
+	if door.Status != domain.ManifestStepAccepted {
+		t.Fatalf("door after failure = %q, want accepted", door.Status)
+	}
+	if door.Result["lastError"] == "" {
+		t.Fatalf("failure not recorded: %v", door.Result)
+	}
+
+	st := &ports.AdminImportStatus{Status: "completed", Processed: 20, ProjectionRows: 20, Invalidated: true}
+	if err := f.ap.CompleteIngestStep(ctx, "sess-1", st); err != nil {
+		t.Fatalf("CompleteIngestStep: %v", err)
+	}
+	if err := f.ap.CompleteIngestStep(ctx, "sess-1", st); err != nil { // idempotent
+		t.Fatalf("second CompleteIngestStep: %v", err)
+	}
+	m, _ = f.state.GetOnboarding(ctx, "sess-1")
+	door = stepByID(t, m, "s-door")
+	if door.Status != domain.ManifestStepApplied {
+		t.Fatalf("door after completion = %q, want applied", door.Status)
+	}
+	if door.Result["projectionRows"] != float64(20) { // JSON round-trip: numbers → float64
+		t.Fatalf("honest outcome missing: %v", door.Result)
+	}
+	if len(f.tokens.usedTokens) != 1 || f.tokens.usedTokens[0] != tok {
+		t.Fatalf("ingest token not consumed exactly once: %v", f.tokens.usedTokens)
+	}
+}

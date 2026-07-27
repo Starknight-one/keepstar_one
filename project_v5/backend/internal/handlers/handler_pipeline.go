@@ -64,10 +64,6 @@ func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePo
 // otherwise a staff (CRM-token) session on tenant B would escalate turns
 // run against tenant A. Mismatches degrade to storefront/visitor, the same
 // floor every stranger gets.
-//
-// TODO(runtime-v1 M3): when session mode is onboarding, the pipeline
-// handler must also require the ks_onboard cookie (checkOnboardCookie) and
-// enforce the 60-turn session cap (§6.3) — M3 owns both.
 func (h *PipelineHandler) sessionFormRole(ctx context.Context, sessionID, tenantID string) (domain.PipelineMode, domain.Role) {
 	mode, role := domain.ModeStorefront, domain.RoleVisitor
 	if h.pool == nil {
@@ -93,6 +89,49 @@ func (h *PipelineHandler) sessionFormRole(ctx context.Context, sessionID, tenant
 		role = domain.Role(ro)
 	}
 	return mode, role
+}
+
+// onboardingTurnCapText is the §6.3 graceful answer once an onboarding
+// session exhausts its 60-turn budget — a normal 200 turn with one text
+// block, never an error status.
+const onboardingTurnCapText = "This onboarding session has reached its turn limit. Please start a fresh session to continue assembling your workspace — everything already applied is saved."
+
+// onboardingTurnsExhausted reads the session's conversation history and
+// reports whether the §6.3 60-turn cap is reached. Fail-open on any read
+// error (a broken state row should surface as the pipeline's own error, not
+// a silent cap).
+func (h *PipelineHandler) onboardingTurnsExhausted(ctx context.Context, sessionID string) bool {
+	if h.pool == nil {
+		return false
+	}
+	var raw []byte
+	err := h.pool.QueryRow(ctx,
+		`SELECT COALESCE(conversation_history, '[]'::jsonb) FROM v5_chat_session_state WHERE session_id = $1::uuid`,
+		sessionID,
+	).Scan(&raw)
+	if err != nil {
+		return false
+	}
+	var history []domain.LLMMessage
+	if err := json.Unmarshal(raw, &history); err != nil {
+		return false
+	}
+	return OnboardingTurnCapReached(history)
+}
+
+// onboardingCapResponse is the graceful cap turn: one inline text block +
+// an empty document (blocks-aware shells render the text; legacy renderers
+// show nothing rather than an error).
+func onboardingCapResponse() pipelineResponse {
+	return pipelineResponse{
+		Document: map[string]interface{}{},
+		Blocks: []domain.TurnBlock{{
+			BlockID: "turn-cap",
+			Kind:    "text",
+			Text:    onboardingTurnCapText,
+			Display: "inline",
+		}},
+	}
 }
 
 type pipelineRequest struct {
@@ -123,6 +162,11 @@ type pipelineResponse struct {
 	// for client-side debugging until the /debug/traces UI ships. Empty
 	// (omitted) when the logging middleware didn't attach a collector.
 	Spans []domain.Span `json:"spans,omitempty"`
+	// Blocks is the ordered TurnBlock list of a composed turn (§4.7 wire:
+	// `blocks:[TurnBlock]` next to `document`; the document stays the last
+	// screen-class doc for back-compat). Omitted on legacy single-document
+	// turns — old bundles drop unknown keys and are unaffected.
+	Blocks []domain.TurnBlock `json:"blocks,omitempty"`
 }
 
 // Pipeline handles POST /api/v1/pipeline.
@@ -167,6 +211,18 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 	// Tenant-scoped: a session from another tenant lends nothing.
 	mode, role := h.sessionFormRole(r.Context(), req.SessionID, tenant.ID)
 
+	// Onboarding form turns require the R5 cookie (checked before any LLM
+	// spend) and respect the §6.3 60-turn cap with a graceful text answer.
+	if mode == domain.ModeOnboarding {
+		if !checkOnboardCookie(w, r) {
+			return
+		}
+		if h.onboardingTurnsExhausted(r.Context(), req.SessionID) {
+			writeJSON(w, http.StatusOK, onboardingCapResponse())
+			return
+		}
+	}
+
 	resp, err := h.pipeline.Execute(r.Context(), usecases.PipelineExecuteRequest{
 		SessionID:  req.SessionID,
 		TenantSlug: tenant.Slug,
@@ -201,6 +257,7 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		Agent2Ms:  resp.Agent2Ms,
 		Prefetch:  resp.Prefetch,
 		Facets:    resp.Facets,
+		Blocks:    resp.Blocks,
 	}
 	attachThemeToDocument(r.Context(), out.Document, h.themes, tenant, h.log)
 	if sc := domain.SpanFromContext(r.Context()); sc != nil {

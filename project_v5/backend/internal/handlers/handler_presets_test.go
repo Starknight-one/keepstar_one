@@ -278,7 +278,7 @@ func TestListSystemAuthGate(t *testing.T) {
 }
 
 // TestListSystemContract pins the frozen cross-repo wire shape the admin
-// canvas consumes: 14 entries (12 presets + 2 components), sorted by
+// canvas consumes: 24 entries (22 presets + 2 components), sorted by
 // name, exact field names, canonical categories. If the registry gains a
 // preset without taxonomy coverage, or a field is renamed, this fails.
 func TestListSystemContract(t *testing.T) {
@@ -300,10 +300,16 @@ func TestListSystemContract(t *testing.T) {
 	}
 
 	wantNames := []string{
+		"booking_form",
 		"component_brand_badge",
 		"component_price_rating",
+		"design_system_preview",
 		"empty_not_found",
 		"error_generic",
+		"lead_detail",
+		"lead_table",
+		"manifest_summary",
+		"operation_card",
 		"product_card",
 		"product_card_compact",
 		"product_card_horizontal",
@@ -313,14 +319,18 @@ func TestListSystemContract(t *testing.T) {
 		"product_detail",
 		"product_detail_accordion",
 		"product_detail_horizontal",
+		"registration_form",
+		"success_plaque",
+		"surface_links",
 		"text_explainer",
+		"uploader_card",
 	}
 	if len(out.Presets) != len(wantNames) {
 		t.Fatalf("entries = %d, want %d (body: %s)", len(out.Presets), len(wantNames), rec.Body.String())
 	}
 
 	wantFields := []string{"name", "description", "category", "defaultReplicate", "kind"}
-	canonical := map[string]bool{"cards": true, "details": true, "components": true, "states": true, "narrative": true}
+	canonical := map[string]bool{"cards": true, "details": true, "components": true, "states": true, "narrative": true, "forms": true, "onboarding": true}
 	byName := map[string]map[string]interface{}{}
 	for i, entry := range out.Presets {
 		name, _ := entry["name"].(string)
@@ -354,10 +364,16 @@ func TestListSystemContract(t *testing.T) {
 		replicate bool
 		kind      string
 	}{
+		{"booking_form", "forms", false, "preset"},
 		{"component_brand_badge", "components", false, "component"},
 		{"component_price_rating", "components", false, "component"},
+		{"design_system_preview", "onboarding", false, "preset"},
 		{"empty_not_found", "states", false, "preset"},
 		{"error_generic", "states", false, "preset"},
+		{"lead_detail", "details", false, "preset"},
+		{"lead_table", "cards", true, "preset"},
+		{"manifest_summary", "onboarding", true, "preset"},
+		{"operation_card", "onboarding", true, "preset"},
 		{"product_card", "cards", true, "preset"},
 		{"product_card_compact", "cards", true, "preset"},
 		{"product_card_horizontal", "cards", true, "preset"},
@@ -367,7 +383,11 @@ func TestListSystemContract(t *testing.T) {
 		{"product_detail", "details", false, "preset"},
 		{"product_detail_accordion", "details", false, "preset"},
 		{"product_detail_horizontal", "details", false, "preset"},
+		{"registration_form", "forms", false, "preset"},
+		{"success_plaque", "states", false, "preset"},
+		{"surface_links", "onboarding", true, "preset"},
 		{"text_explainer", "narrative", false, "preset"},
+		{"uploader_card", "onboarding", false, "preset"},
 	}
 	for _, s := range spots {
 		entry := byName[s.name]

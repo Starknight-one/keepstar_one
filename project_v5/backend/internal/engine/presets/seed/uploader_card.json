@@ -1,0 +1,61 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "uploader",
+      "maxWidth": 720,
+      "layout": {"direction": "column", "gap": "sm", "padding": [20, 24, 24, 24]},
+      "fill": "#FFFFFF",
+      "cornerRadius": 16,
+      "stroke": {"thickness": 1, "fill": "#ECECEC"},
+      "effect": [
+        {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "up-head",
+          "layout": {"direction": "row", "gap": "sm", "align": "center"},
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "up-icon",
+              "iconFontName": "package",
+              "width": 18,
+              "height": 18,
+              "fill": "#5BA4D9"
+            },
+            {
+              "type": "text",
+              "id": "up-title",
+              "content": "Universal uploader",
+              "textStyle": {"fontSize": "lg", "fontWeight": "semibold", "color": "#1a1a1a"}
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "up-sub",
+          "content": "Drop in your catalog — a CSV with a header row, or a JSON array of flat objects. Columns map automatically; extra columns ride along as attributes.",
+          "textStyle": {"fontSize": "sm", "color": "#666666"}
+        },
+        {
+          "type": "upload",
+          "id": "up-input",
+          "name": "file",
+          "accept": [".csv", ".json"],
+          "maxSizeMb": 20,
+          "disarmed": true,
+          "note": "The uploader activates once you confirm the plan."
+        },
+        {
+          "type": "text",
+          "id": "up-foot",
+          "content": "Up to 20 MB per file.",
+          "textStyle": {"fontSize": "xs", "color": "#999999"}
+        }
+      ]
+    }
+  ]
+}

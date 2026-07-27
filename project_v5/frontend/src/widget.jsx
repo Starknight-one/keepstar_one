@@ -3,6 +3,7 @@ import WidgetApp from './WidgetApp'
 // ALL_CSS / FONT_HREF live in widget-preview.jsx as the single source —
 // both entries inject the identical stylesheet into their shadow roots.
 import { renderDocument, ALL_CSS, FONT_HREF } from './widget-preview'
+import { mountStorefront, mountCRM, mountOnboarding } from './mounts'
 
 ;(function () {
   const script =
@@ -10,10 +11,11 @@ import { renderDocument, ALL_CSS, FONT_HREF } from './widget-preview'
 
   const devConfig = window.__KEEPSTAR_V5_WIDGET__ || {}
 
-  // Public API — always assigned, even when auto-mount is skipped.
-  // Admin canvas preview loads this same bundle and calls renderDocument
-  // to render an engine document without any session / network activity.
-  window.KeepstarV5Widget = { renderDocument }
+  // Public API — always assigned, even when auto-mount is skipped
+  // (RUNTIME_SPEC §5.1). Admin canvas preview calls renderDocument
+  // (network-free); the /onboard, /s/{slug} and /crm/{slug} host pages
+  // set noAutoMount and call their page mount.
+  window.KeepstarV5Widget = { renderDocument, mountStorefront, mountCRM, mountOnboarding }
 
   const tenantSlug = script?.getAttribute('data-tenant') || devConfig.tenant || null
 

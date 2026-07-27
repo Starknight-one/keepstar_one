@@ -1,0 +1,94 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "manifest-summary",
+      "maxWidth": 720,
+      "layout": {"direction": "column", "gap": "sm", "padding": [20, 24, 24, 24]},
+      "fill": "#FFFFFF",
+      "cornerRadius": 16,
+      "stroke": {"thickness": 1, "fill": "#ECECEC"},
+      "effect": [
+        {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "ms-head",
+          "layout": {"direction": "row", "gap": "sm", "align": "center"},
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "ms-icon",
+              "iconFontName": "badge-check",
+              "width": 18,
+              "height": 18,
+              "fill": "#5BA4D9"
+            },
+            {
+              "type": "text",
+              "id": "ms-title",
+              "content": "Build receipt",
+              "textStyle": {"fontSize": "lg", "fontWeight": "semibold", "color": "#1a1a1a"}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ms-row",
+          "replicate": true,
+          "layout": {"direction": "row", "gap": "md", "align": "center", "justify": "space-between", "padding": [10, 12, 10, 12]},
+          "fill": "#FFFFFF",
+          "cornerRadius": 10,
+          "stroke": {"thickness": 1, "fill": "#ECECEC"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "ms-row-main",
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ms-step-title",
+                  "fieldBinding": "title",
+                  "textStyle": {"fontSize": "base", "fontWeight": "semibold", "color": "#1a1a1a"}
+                },
+                {
+                  "type": "frame",
+                  "id": "ms-detail-wrap",
+                  "hideWhenEmpty": true,
+                  "layout": {"direction": "row"},
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ms-detail",
+                      "fieldBinding": "detail",
+                      "textStyle": {"fontSize": "sm", "color": "#666666"}
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ms-status-pill",
+              "hideWhenEmpty": true,
+              "fill": "#5BA4D9",
+              "cornerRadius": "full",
+              "layout": {"direction": "row", "padding": [2, 10]},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ms-status",
+                  "fieldBinding": "statusLabel",
+                  "textStyle": {"fontSize": "xs", "fontWeight": "bold", "color": "#FFFFFF"}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

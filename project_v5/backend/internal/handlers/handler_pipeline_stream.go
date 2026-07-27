@@ -37,11 +37,17 @@ type streamErrorFrame struct {
 //
 //	event: stage   {"phase":"data_start"}            — emitted immediately
 //	event: stage   {"phase":"data_done", ...}        — after Agent1
-//	event: result  {<full pipelineResponse JSON>}    — terminal
+//	event: block   {<TurnBlock JSON>}                — per compose_turn block,
+//	                                                   AS PRODUCED (0..8; R9 as
+//	                                                   overridden by owner)
+//	event: result  {<full pipelineResponse JSON>}    — terminal; carries the
+//	                                                   full blocks[] array +
+//	                                                   back-compat document
 //
 // Mid-stream failures emit a terminal `error` frame ({409,"session closed"}
 // or {500,"pipeline failed"}) instead. No LLM tokens are streamed and no
-// agent is skipped — frames mark stage boundaries only.
+// agent is skipped — stage frames mark stage boundaries; block frames are
+// real per-block streaming, flushed the moment each block is assembled.
 func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -75,6 +81,19 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// R17: mode + role from the session row (mirrors Pipeline()) —
+	// tenant-scoped: a session from another tenant lends nothing. Resolved
+	// BEFORE the SSE headers so the onboarding cookie gate can still answer
+	// with a plain 403/503 status.
+	mode, role := h.sessionFormRole(r.Context(), req.SessionID, tenant.ID)
+	capped := false
+	if mode == domain.ModeOnboarding {
+		if !checkOnboardCookie(w, r) {
+			return
+		}
+		capped = h.onboardingTurnsExhausted(r.Context(), req.SessionID)
+	}
+
 	// From here on the response is a stream: SSE headers, never a
 	// Content-Length, and writeJSON must not be used.
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -106,11 +125,13 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	writeFrame("stage", map[string]string{"phase": "data_start"})
+	// §6.3 turn cap: a graceful terminal result frame, no LLM spend.
+	if capped {
+		writeFrame("result", onboardingCapResponse())
+		return
+	}
 
-	// R17: mode + role from the session row (mirrors Pipeline()) —
-	// tenant-scoped: a session from another tenant lends nothing.
-	mode, role := h.sessionFormRole(r.Context(), req.SessionID, tenant.ID)
+	writeFrame("stage", map[string]string{"phase": "data_start"})
 
 	resp, err := h.pipeline.Execute(r.Context(), usecases.PipelineExecuteRequest{
 		SessionID:  req.SessionID,
@@ -128,6 +149,13 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 				Bypassed: ev.Bypassed,
 				Agent1Ms: ev.Agent1Ms,
 			})
+		},
+		// Real per-block streaming (final owner decision 3): each TurnBlock
+		// compose_turn produces goes on the wire immediately as its own
+		// frame — writeFrame flushes per frame. Invoked synchronously on
+		// this goroutine, so frame order == block order.
+		OnBlock: func(b domain.TurnBlock) {
+			writeFrame("block", b)
 		},
 	})
 	if err != nil {
@@ -152,6 +180,7 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 		Agent2Ms:  resp.Agent2Ms,
 		Prefetch:  resp.Prefetch,
 		Facets:    resp.Facets,
+		Blocks:    resp.Blocks,
 	}
 	attachThemeToDocument(r.Context(), out.Document, h.themes, tenant, h.log)
 	if sc := domain.SpanFromContext(r.Context()); sc != nil {

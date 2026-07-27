@@ -1,0 +1,157 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "op-list",
+      "layout": {"direction": "column", "gap": "md"},
+      "children": [
+        {
+          "type": "frame",
+          "id": "op-card",
+          "replicate": true,
+          "layout": {"direction": "column", "gap": "sm", "padding": [16, 20, 20, 20]},
+          "fill": "#FFFFFF",
+          "cornerRadius": 16,
+          "stroke": {"thickness": 1, "fill": "#ECECEC"},
+          "effect": [
+            {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "op-head",
+              "layout": {"direction": "row", "gap": "sm", "align": "center", "justify": "space-between"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "op-title",
+                  "fieldBinding": "title",
+                  "textStyle": {"fontSize": "base", "fontWeight": "semibold", "color": "#1a1a1a"}
+                },
+                {
+                  "type": "frame",
+                  "id": "op-kind-pill",
+                  "hideWhenEmpty": true,
+                  "fill": "#5BA4D9",
+                  "cornerRadius": "full",
+                  "layout": {"direction": "row", "padding": [2, 10]},
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "op-kind",
+                      "fieldBinding": "kind",
+                      "textStyle": {"fontSize": "xs", "fontWeight": "bold", "color": "#FFFFFF"}
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "op-desc",
+              "fieldBinding": "description",
+              "textStyle": {"fontSize": "sm", "color": "#666666", "lineClamp": 3}
+            },
+            {
+              "type": "line",
+              "id": "op-div"
+            },
+            {
+              "type": "frame",
+              "id": "op-row-input",
+              "hideWhenEmpty": true,
+              "layout": {"direction": "row", "gap": "sm"},
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "op-label-input",
+                  "width": 56,
+                  "layout": {"direction": "column"},
+                  "children": [
+                    {"type": "text", "id": "op-label-input-text", "content": "Input", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "op-value-input",
+                  "fieldBinding": "inputSummary",
+                  "textStyle": {"fontSize": "sm", "color": "#1a1a1a"}
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "op-row-does",
+              "hideWhenEmpty": true,
+              "layout": {"direction": "row", "gap": "sm"},
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "op-label-does",
+                  "width": 56,
+                  "layout": {"direction": "column"},
+                  "children": [
+                    {"type": "text", "id": "op-label-does-text", "content": "Does", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "op-value-does",
+                  "fieldBinding": "does",
+                  "textStyle": {"fontSize": "sm", "color": "#1a1a1a"}
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "op-row-output",
+              "hideWhenEmpty": true,
+              "layout": {"direction": "row", "gap": "sm"},
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "op-label-output",
+                  "width": 56,
+                  "layout": {"direction": "column"},
+                  "children": [
+                    {"type": "text", "id": "op-label-output-text", "content": "Output", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "op-value-output",
+                  "fieldBinding": "outputSummary",
+                  "textStyle": {"fontSize": "sm", "color": "#1a1a1a"}
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "op-row-why",
+              "hideWhenEmpty": true,
+              "layout": {"direction": "row", "gap": "sm"},
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "op-label-why",
+                  "width": 56,
+                  "layout": {"direction": "column"},
+                  "children": [
+                    {"type": "text", "id": "op-label-why-text", "content": "Why", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#F0924A"}}
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "op-value-why",
+                  "fieldBinding": "why",
+                  "textStyle": {"fontSize": "sm", "color": "#1a1a1a"}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

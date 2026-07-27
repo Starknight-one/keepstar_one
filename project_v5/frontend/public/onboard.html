@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keepstar — Onboarding</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #ffffff; }
+    </style>
+  </head>
+  <body>
+    <!-- Served by the v5 fileserver at GET /onboard (RUNTIME_SPEC §5.1).
+         Same origin as the API — the mount derives the base URL from the
+         page origin; the ks_onboard gate cookie (R5) is same-site. -->
+    <script>
+      window.__KEEPSTAR_V5_WIDGET__ = { noAutoMount: true }
+    </script>
+    <script src="/widget.js"></script>
+    <script>
+      window.KeepstarV5Widget.mountOnboarding()
+    </script>
+  </body>
+</html>

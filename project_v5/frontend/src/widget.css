@@ -759,3 +759,293 @@
   color: #15803d;
   border: 1px solid #bbf7d0;
 }
+
+/* Upload node (RUNTIME_SPEC §5.2 upload, R25 two-phase uploader) ------- */
+.kw-upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap-sm);
+  width: 100%;
+  padding: var(--kw-gap-md);
+  border: 1px dashed var(--kw-border);
+  border-radius: var(--kw-radius);
+  background: color-mix(in srgb, var(--kw-blue) 4%, var(--kw-bg));
+}
+
+.kw-upload[data-armed='false'] {
+  opacity: 0.7;
+}
+
+/* The native file input stays for a11y/tests; the styled button drives it. */
+.kw-upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.kw-upload-button {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  background: var(--kw-blue);
+  color: white;
+  border: none;
+  border-radius: 999px;
+  font-size: var(--kw-fs-sm);
+  font-weight: var(--kw-fw-semibold);
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: filter 120ms ease, opacity 120ms ease;
+}
+
+.kw-upload-button:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.kw-upload-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.kw-upload-note {
+  margin: 0;
+  font-size: var(--kw-fs-xs);
+  color: var(--kw-text-muted);
+}
+
+.kw-upload-status {
+  margin: 0;
+  padding: var(--kw-gap-sm) var(--kw-gap-md);
+  border-radius: var(--kw-radius);
+  font-size: var(--kw-fs-sm);
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--kw-blue) 8%, var(--kw-bg));
+  color: var(--kw-text);
+}
+
+.kw-upload-status[data-status='failed'] {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.kw-upload-status[data-status='done'] {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+/* Page shells (RUNTIME_SPEC §5.1) ------------------------------------- */
+
+/* Storefront page (/s/{slug}) — same overlay layout on a SOLID page
+   background: the widget IS the page, not a layer over a merchant site. */
+.kw-overlay--page {
+  background: var(--kw-bg);
+}
+
+/* Chat-first page (onboarding / CRM, R13): one centered chat column IS
+   the page. Onboarding ~720px, CRM wide. */
+.kw-chatpage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 999999;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--kw-bg);
+  color: var(--kw-text);
+}
+
+.kw-chatpage-col {
+  width: 100%;
+  max-width: 720px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--kw-gap-md);
+}
+
+.kw-chatpage--crm .kw-chatpage-col {
+  max-width: 960px;
+}
+
+.kw-chatpage-header {
+  display: flex;
+  align-items: center;
+  gap: var(--kw-gap-sm);
+  padding: var(--kw-gap-md) 0;
+  border-bottom: 1px solid var(--kw-border);
+}
+
+.kw-chatpage-title {
+  font-size: var(--kw-fs-md);
+  font-weight: var(--kw-fw-semibold);
+}
+
+.kw-chatpage-badge {
+  padding: 2px 10px;
+  background: var(--kw-blue);
+  color: white;
+  border-radius: 999px;
+  font-size: var(--kw-fs-xs);
+  font-weight: var(--kw-fw-medium);
+}
+
+.kw-chatpage-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--kw-gap-md) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap-sm);
+}
+
+/* One composed turn — its text bubbles + inline documents stack with
+   the same rhythm as plain messages. */
+.kw-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap-sm);
+  align-self: stretch;
+}
+
+/* Inline rendered document inside the chat column (§5.1 InlineBlock). */
+.kw-inline-block {
+  align-self: stretch;
+  width: 100%;
+  border: 1px solid var(--kw-border);
+  border-radius: var(--kw-radius);
+  padding: var(--kw-gap-md);
+  background: var(--kw-bg);
+  overflow-x: auto;
+}
+
+.kw-inline-block .kw-display-inner {
+  max-width: 100%;
+}
+
+.kw-chatpage-input {
+  display: flex;
+  gap: var(--kw-gap-sm);
+  padding: var(--kw-gap-md) 0 var(--kw-gap-lg);
+  border-top: 1px solid var(--kw-border);
+}
+
+.kw-chatpage-input input {
+  flex: 1;
+  padding: var(--kw-gap-sm) var(--kw-gap-md);
+  border: 1px solid var(--kw-border);
+  border-radius: var(--kw-radius);
+  font-size: var(--kw-fs-sm);
+  font-family: inherit;
+  outline: none;
+}
+
+.kw-chatpage-input input:focus {
+  border-color: var(--kw-blue);
+}
+
+.kw-chatpage-input button {
+  padding: var(--kw-gap-sm) var(--kw-gap-md);
+  background: linear-gradient(225deg, var(--kw-blue), var(--kw-orange));
+  color: white;
+  border: none;
+  border-radius: var(--kw-radius);
+  font-weight: var(--kw-fw-semibold);
+  font-size: var(--kw-fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.kw-chatpage-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Gate / access pages (R5 password gate, CRM denied, R13) ------------- */
+
+.kw-gate {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999999;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--kw-bg);
+  color: var(--kw-text);
+}
+
+.kw-gate-card {
+  width: min(380px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap-md);
+  padding: var(--kw-gap-xl);
+  border: 1px solid var(--kw-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(91, 164, 217, 0.12);
+}
+
+/* Brand wordmark — light blue → orange gradient text (never purple). */
+.kw-gate-logo {
+  font-size: var(--kw-fs-2xl);
+  font-weight: var(--kw-fw-bold);
+  background: linear-gradient(225deg, var(--kw-blue), var(--kw-orange));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.kw-gate-subtitle {
+  font-size: var(--kw-fs-sm);
+  color: var(--kw-text-muted);
+  line-height: 1.5;
+}
+
+.kw-gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap-sm);
+}
+
+.kw-gate-button {
+  padding: 10px 20px;
+  background: linear-gradient(225deg, var(--kw-blue), var(--kw-orange));
+  color: white;
+  border: none;
+  border-radius: var(--kw-radius);
+  font-size: var(--kw-fs-sm);
+  font-weight: var(--kw-fw-semibold);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.kw-gate-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.kw-gate-error {
+  margin: 0;
+  font-size: var(--kw-fs-xs);
+  color: #b91c1c;
+}
+
+.kw-gate-note {
+  margin: 0;
+  font-size: var(--kw-fs-sm);
+  color: var(--kw-text-muted);
+  line-height: 1.5;
+}

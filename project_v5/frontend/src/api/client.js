@@ -9,25 +9,38 @@
 // Both calls send X-Tenant-Slug per V4 convention; the V5 router's
 // tenant middleware reads it.
 
-export async function initSession({ baseUrl, tenantSlug }) {
-  const res = await fetch(`${baseUrl}/session/init`, {
+// initSession — mode/k are OPTIONAL (R17): absent mode sends NO body
+// (legacy embeds, byte-identical request), mode:"storefront"|"crm" sends
+// {mode, k?}. mode=crm carries the surface token k (R13) — an invalid or
+// absent token is a 403; the thrown error carries `.status` so shells can
+// tell access-denied (403 → denied page) from an outage.
+export async function initSession({ baseUrl, tenantSlug, mode, k }) {
+  const init = {
     method: 'POST',
     headers: tenantHeaders(tenantSlug),
-  })
+  }
+  if (mode) {
+    init.headers = { ...init.headers, 'Content-Type': 'application/json' }
+    init.body = JSON.stringify(k ? { mode, k } : { mode })
+  }
+  const res = await fetch(`${baseUrl}/session/init`, init)
   if (!res.ok) {
     const body = await res.text()
-    throw new Error(`session/init ${res.status}: ${body}`)
+    const err = new Error(`session/init ${res.status}: ${body}`)
+    err.status = res.status
+    throw err
   }
   return res.json()
 }
 
-export async function pipelineRequest({ baseUrl, tenantSlug, sessionId, query }) {
+export async function pipelineRequest({ baseUrl, tenantSlug, sessionId, query, credentials }) {
   const res = await fetch(`${baseUrl}/pipeline`, {
     method: 'POST',
     headers: {
       ...tenantHeaders(tenantSlug),
       'Content-Type': 'application/json',
     },
+    credentials,
     body: JSON.stringify({ sessionId, query }),
   })
   if (!res.ok) {
@@ -38,9 +51,16 @@ export async function pipelineRequest({ baseUrl, tenantSlug, sessionId, query })
 }
 
 // pipelineStreamRequest — SSE-over-POST variant of pipelineRequest.
-// Emits each `stage` frame payload through onStage and resolves with
-// the `result` frame payload (same shape as the /pipeline JSON body).
-export async function pipelineStreamRequest({ baseUrl, tenantSlug, sessionId, query, onStage }) {
+// Emits each `stage` frame payload through onStage, each `block` frame
+// (a TurnBlock — R9 + final owner decision 3: composed turns stream
+// their text/document blocks one by one, in real production order)
+// through onBlock, and resolves with the `result` frame payload (same
+// shape as the /pipeline JSON body). When the terminal frame carries no
+// blocks[] but block frames arrived, the streamed blocks are attached
+// to the resolved payload so callers see ONE canonical field. Turns
+// without block frames resolve exactly as before (legacy
+// single-document turns, back-compat).
+export async function pipelineStreamRequest({ baseUrl, tenantSlug, sessionId, query, onStage, onBlock, credentials }) {
   const res = await fetch(`${baseUrl}/pipeline/stream`, {
     method: 'POST',
     headers: {
@@ -48,6 +68,7 @@ export async function pipelineStreamRequest({ baseUrl, tenantSlug, sessionId, qu
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     },
+    credentials,
     body: JSON.stringify({ sessionId, query }),
   })
   if (!res.ok) {
@@ -58,6 +79,7 @@ export async function pipelineStreamRequest({ baseUrl, tenantSlug, sessionId, qu
   const decoder = new TextDecoder()
   let buffer = ''
   let sawFrame = false
+  const streamedBlocks = []
   try {
     for (;;) {
       const { done, value } = await reader.read()
@@ -80,8 +102,29 @@ export async function pipelineStreamRequest({ baseUrl, tenantSlug, sessionId, qu
             // eslint-disable-next-line no-console
             console.warn('[v5-widget] onStage callback failed', cbErr)
           }
+        } else if (frame.event === 'block') {
+          // Contract: data IS one TurnBlock {blockId, kind, text?,
+          // document?, display?}. Anything else is a server/client
+          // contract drift — warn loudly, never render junk.
+          const b = frame.data
+          if (b && typeof b === 'object' && (b.kind === 'text' || b.kind === 'document')) {
+            streamedBlocks.push(b)
+            try {
+              onBlock?.(b)
+            } catch (cbErr) {
+              // eslint-disable-next-line no-console
+              console.warn('[v5-widget] onBlock callback failed', cbErr)
+            }
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('[v5-widget] block frame with unknown shape dropped', b)
+          }
         } else if (frame.event === 'result') {
-          return frame.data
+          const data = frame.data
+          if (data && typeof data === 'object' && !Array.isArray(data.blocks) && streamedBlocks.length > 0) {
+            data.blocks = streamedBlocks
+          }
+          return data
         } else if (frame.event === 'error') {
           const err = new Error(`pipeline ${frame.data.status}: ${frame.data.message}`)
           err.serverAnswered = true

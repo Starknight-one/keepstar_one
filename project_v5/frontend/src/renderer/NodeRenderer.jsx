@@ -11,6 +11,7 @@ import Select from './nodes/Select'
 import DateInput from './nodes/DateInput'
 import Textarea from './nodes/Textarea'
 import Submit from './nodes/Submit'
+import Upload from './nodes/Upload'
 import { FormProvider } from './form/FormContext'
 
 // NodeRenderer — type dispatcher for V5 scene-graph nodes. Backend has
@@ -23,10 +24,11 @@ import { FormProvider } from './form/FormContext'
 //   line          → divider leaf (horizontal or vertical rule)
 //   icon_font     → lucide icon leaf via iconFontName
 //   ref           → opaque resolved subtree (treated transparently)
-//   input / select / datetime / textarea / submit
+//   input / select / datetime / textarea / submit / upload
 //                 → form primitives (RUNTIME_SPEC §5.2); a frame
 //                   carrying formId wraps its subtree in a FormProvider
-//                   (values/errors/status live there, Frame untouched)
+//                   (values/errors/status live there, Frame untouched);
+//                   upload is self-contained (R25 two-phase, no form)
 //
 // Anything else logs a warn and renders nothing — diagnostic for new
 // node types the renderer doesn't handle yet (ellipse, polygon, etc.).
@@ -67,6 +69,8 @@ export default function NodeRenderer({ node }) {
       return <Textarea node={node} />
     case 'submit':
       return <Submit node={node} />
+    case 'upload':
+      return <Upload node={node} />
     default:
       // eslint-disable-next-line no-console
       console.warn('[v5-renderer] unknown node type', t, node?.id)

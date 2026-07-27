@@ -1,0 +1,97 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "lead-list",
+      "layout": {"direction": "column", "gap": "sm"},
+      "children": [
+        {
+          "type": "frame",
+          "id": "lead-row",
+          "replicate": true,
+          "layout": {"direction": "row", "gap": "md", "align": "center", "justify": "space-between", "padding": [12, 16, 12, 16]},
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "stroke": {"thickness": 1, "fill": "#ECECEC"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "lead-main",
+              "layout": {"direction": "column", "gap": "xs"},
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lead-title-row",
+                  "layout": {"direction": "row", "gap": "sm", "align": "center"},
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lead-name",
+                      "fieldBinding": "name",
+                      "textStyle": {"fontSize": "base", "fontWeight": "semibold", "color": "#1a1a1a"}
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lead-status-pill",
+                      "hideWhenEmpty": true,
+                      "fill": "#5BA4D9",
+                      "cornerRadius": "full",
+                      "layout": {"direction": "row", "padding": [2, 10]},
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "lead-status",
+                          "fieldBinding": "statusLabel",
+                          "textStyle": {"fontSize": "xs", "fontWeight": "bold", "color": "#FFFFFF"}
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "lead-contact-row",
+                  "layout": {"direction": "row", "gap": "sm"},
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lead-phone",
+                      "fieldBinding": "phone",
+                      "textStyle": {"fontSize": "sm", "color": "#666666"}
+                    },
+                    {
+                      "type": "text",
+                      "id": "lead-listing",
+                      "fieldBinding": "refTitle",
+                      "textStyle": {"fontSize": "sm", "color": "#666666"}
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "lead-when",
+              "layout": {"direction": "column", "gap": "xs", "align": "end"},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "lead-time",
+                  "fieldBinding": "preferredTimeFormatted",
+                  "textStyle": {"fontSize": "sm", "fontWeight": "semibold", "color": "#1a1a1a"}
+                },
+                {
+                  "type": "text",
+                  "id": "lead-created",
+                  "fieldBinding": "createdAtFormatted",
+                  "textStyle": {"fontSize": "xs", "color": "#999999"}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

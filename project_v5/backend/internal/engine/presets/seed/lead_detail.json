@@ -1,0 +1,224 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "lead-detail",
+      "formId": "lead_detail",
+      "maxWidth": 720,
+      "layout": {"direction": "column", "gap": "md", "padding": [20, 24, 24, 24]},
+      "fill": "#FFFFFF",
+      "cornerRadius": 16,
+      "stroke": {"thickness": 1, "fill": "#ECECEC"},
+      "effect": [
+        {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "ld-head",
+          "layout": {"direction": "row", "gap": "sm", "align": "center", "justify": "space-between"},
+          "children": [
+            {
+              "type": "text",
+              "id": "ld-name",
+              "fieldBinding": "name",
+              "textStyle": {"fontSize": "xl", "fontWeight": "bold", "color": "#1a1a1a"}
+            },
+            {
+              "type": "frame",
+              "id": "ld-status-pill",
+              "hideWhenEmpty": true,
+              "fill": "#5BA4D9",
+              "cornerRadius": "full",
+              "layout": {"direction": "row", "padding": [2, 12]},
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ld-status",
+                  "fieldBinding": "statusLabel",
+                  "textStyle": {"fontSize": "xs", "fontWeight": "bold", "color": "#FFFFFF"}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "line",
+          "id": "ld-div-top"
+        },
+        {
+          "type": "frame",
+          "id": "ld-row-phone",
+          "hideWhenEmpty": true,
+          "layout": {"direction": "row", "gap": "sm"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "ld-label-phone",
+              "width": 96,
+              "layout": {"direction": "column"},
+              "children": [
+                {"type": "text", "id": "ld-label-phone-text", "content": "Phone", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "text",
+              "id": "ld-value-phone",
+              "fieldBinding": "phone",
+              "textStyle": {"fontSize": "sm", "color": "#1a1a1a"}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ld-row-email",
+          "hideWhenEmpty": true,
+          "layout": {"direction": "row", "gap": "sm"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "ld-label-email",
+              "width": 96,
+              "layout": {"direction": "column"},
+              "children": [
+                {"type": "text", "id": "ld-label-email-text", "content": "Email", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "text",
+              "id": "ld-value-email",
+              "fieldBinding": "email",
+              "textStyle": {"fontSize": "sm", "color": "#1a1a1a"}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ld-row-listing",
+          "hideWhenEmpty": true,
+          "layout": {"direction": "row", "gap": "sm"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "ld-label-listing",
+              "width": 96,
+              "layout": {"direction": "column"},
+              "children": [
+                {"type": "text", "id": "ld-label-listing-text", "content": "Listing", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "text",
+              "id": "ld-value-listing",
+              "fieldBinding": "refTitle",
+              "textStyle": {"fontSize": "sm", "color": "#1a1a1a"}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ld-row-time",
+          "hideWhenEmpty": true,
+          "layout": {"direction": "row", "gap": "sm"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "ld-label-time",
+              "width": 96,
+              "layout": {"direction": "column"},
+              "children": [
+                {"type": "text", "id": "ld-label-time-text", "content": "Preferred time", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "text",
+              "id": "ld-value-time",
+              "fieldBinding": "preferredTimeFormatted",
+              "textStyle": {"fontSize": "sm", "fontWeight": "semibold", "color": "#1a1a1a"}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ld-row-message",
+          "hideWhenEmpty": true,
+          "layout": {"direction": "row", "gap": "sm"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "ld-label-message",
+              "width": 96,
+              "layout": {"direction": "column"},
+              "children": [
+                {"type": "text", "id": "ld-label-message-text", "content": "Message", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "text",
+              "id": "ld-value-message",
+              "fieldBinding": "message",
+              "textStyle": {"fontSize": "sm", "color": "#1a1a1a"}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ld-row-created",
+          "hideWhenEmpty": true,
+          "layout": {"direction": "row", "gap": "sm"},
+          "children": [
+            {
+              "type": "frame",
+              "id": "ld-label-created",
+              "width": 96,
+              "layout": {"direction": "column"},
+              "children": [
+                {"type": "text", "id": "ld-label-created-text", "content": "Received", "textStyle": {"fontSize": "xs", "fontWeight": "semibold", "color": "#999999"}}
+              ]
+            },
+            {
+              "type": "text",
+              "id": "ld-value-created",
+              "fieldBinding": "createdAtFormatted",
+              "textStyle": {"fontSize": "xs", "color": "#999999"}
+            }
+          ]
+        },
+        {
+          "type": "input",
+          "id": "ld-record-id",
+          "name": "id",
+          "inputType": "hidden",
+          "fieldBinding": "id",
+          "required": true
+        },
+        {
+          "type": "line",
+          "id": "ld-div-bottom"
+        },
+        {
+          "type": "frame",
+          "id": "ld-advance",
+          "layout": {"direction": "row", "gap": "sm", "wrap": true},
+          "children": [
+            {
+              "type": "submit",
+              "id": "ld-adv-contacted",
+              "label": "Mark contacted",
+              "loadingLabel": "Updating…",
+              "action": {"kind": "operation_invoke", "operation": "advance_lead", "params": {"to_status": "contacted"}}
+            },
+            {
+              "type": "submit",
+              "id": "ld-adv-booked",
+              "label": "Showing booked",
+              "loadingLabel": "Updating…",
+              "action": {"kind": "operation_invoke", "operation": "advance_lead", "params": {"to_status": "showing_booked"}}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

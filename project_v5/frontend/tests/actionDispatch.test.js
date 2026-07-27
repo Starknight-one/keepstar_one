@@ -256,7 +256,7 @@ describe('dispatchAction — form_submit (standalone button, R6)', () => {
     // not appended to the /v1 base.
     expect(url).toBe('http://api/api/v1/onboard/step/s1/submit')
     expect(init.credentials).toBe('include')
-    expect(JSON.parse(init.body)).toEqual({ values: { name: 'V' } })
+    expect(JSON.parse(init.body)).toEqual({ sessionId: 's-1', values: { name: 'V' } })
   })
 
   it('refuses a non-same-origin endpoint before any network activity', async () => {

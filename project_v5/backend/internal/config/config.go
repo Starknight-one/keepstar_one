@@ -46,6 +46,17 @@ type Config struct {
 	// /operations/invoke and the onboarding submit routes share ONE bucket.
 	// <= 0 disables the limit.
 	CheapRatePerMin int
+	// AdminBaseURL + AdminServiceKey address the admin service-route family
+	// (RUNTIME_SPEC.md R7, §5.5) consumed by the ManifestApplier. Optional —
+	// when either is blank the AdminGateway answers every call with
+	// ErrAdminGatewayNotConfigured and the onboarding endpoints 503 honestly.
+	AdminBaseURL    string
+	AdminServiceKey string
+	// PublicBaseURL is the public v5 origin issue_surface_urls builds the
+	// storefront/CRM addresses on (e.g. https://v5-engine-dev.up.railway.app).
+	// Optional — unset fails the issue_surface_urls step loudly, never
+	// silently mints wrong URLs.
+	PublicBaseURL string
 }
 
 // Load reads env vars, applies defaults, and validates required fields.
@@ -64,6 +75,10 @@ func Load() (*Config, error) {
 		PipelineRatePerMin:  envInt("PIPELINE_RATE_PER_MIN", 30),
 		PipelineDailyUSDCap: envFloat("PIPELINE_DAILY_USD_CAP", 10.0),
 		CheapRatePerMin:     envInt("CHEAP_RATE_PER_MIN", 120),
+
+		AdminBaseURL:    os.Getenv("ADMIN_BASE_URL"),
+		AdminServiceKey: os.Getenv("ADMIN_SERVICE_KEY"),
+		PublicBaseURL:   os.Getenv("PUBLIC_BASE_URL"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")

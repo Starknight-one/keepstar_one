@@ -83,6 +83,74 @@ var ProductComparisonJSON []byte
 //go:embed seed/product_detail_accordion.json
 var ProductDetailAccordionJSON []byte
 
+// Interface-runtime v1 presets (RUNTIME_SPEC.md §5.3, R20) — the seeds the
+// three forms (storefront / crm / onboarding) compose beyond the product
+// catalog. Binding vocabularies are cross-lane contracts:
+//
+//   - operation_card replicates over the SYNTHETIC `opCard` EntitySet (R23)
+//     built from search_library hits: EntityToMap camelCases the LibraryHit
+//     fields + card content → title, kind, description, inputSummary, does,
+//     outputSummary, why.
+//   - lead_table / lead_detail bind the EntityToMap vocabulary of the demo
+//     lead definition (exec_demo_bundle.go): name, phone, email, message,
+//     preferredTimeFormatted, refTitle, statusLabel, createdAtFormatted, id.
+//   - booking_form binds the ProductToMap vocabulary of the listing it is
+//     drilled from (hidden listingId input ← fieldBinding "id", §5.2).
+//   - success_plaque binds resultBindData (handler_operations.go): summary
+//     (+ operation / outcome / recordId / entityKind available).
+//   - design_system_preview renders the DefaultThemeTokens values as static
+//     content — byte-equal to what the create_tenant applier writes (R22),
+//     so the preview never lies about the applied tokens.
+//   - uploader_card ships `disarmed:true` (R25); the armed beat-3 re-render
+//     flips it and binds the minted ingest token via render-time ops.
+//   - registration_form submits via form_submit (R6) — credentials never
+//     enter the operation registry; the seed's endpoint assumes the
+//     register_user step id, override via ops when step ids differ.
+//
+// Form presets (registration_form / booking_form / lead_detail) carry a
+// `formId` frame + §5.2 form primitives and deliberately contain NO
+// "actions"-id frames or acceptsAction slots, so InjectDefaultActions
+// stays a no-op on them.
+
+//go:embed seed/design_system_preview.json
+var DesignSystemPreviewJSON []byte
+
+//go:embed seed/uploader_card.json
+var UploaderCardJSON []byte
+
+//go:embed seed/operation_card.json
+var OperationCardJSON []byte
+
+//go:embed seed/registration_form.json
+var RegistrationFormJSON []byte
+
+//go:embed seed/booking_form.json
+var BookingFormJSON []byte
+
+//go:embed seed/lead_table.json
+var LeadTableJSON []byte
+
+//go:embed seed/lead_detail.json
+var LeadDetailJSON []byte
+
+//go:embed seed/success_plaque.json
+var SuccessPlaqueJSON []byte
+
+// surface_links replicates over the SYNTHETIC `surfaceLink` EntitySet
+// (meta_apply_manifest.go, written once issue_surface_urls applies):
+// {label, url, surface}. URLs render as visible text — BindData never
+// touches action params, so a clickable external_link cannot be seeded.
+//
+//go:embed seed/surface_links.json
+var SurfaceLinksJSON []byte
+
+// manifest_summary replicates over the SYNTHETIC `manifestStep` EntitySet
+// (refreshed after every applier run): {op, title, status, statusLabel,
+// detail} — the final "вот всё твоё ПО" build receipt.
+//
+//go:embed seed/manifest_summary.json
+var ManifestSummaryJSON []byte
+
 // SystemPresetSeeds maps the public preset name to its embedded JSON
 // body. All entries here are served by SystemPresetRegistry as a
 // DB-fallback for any tenant. ProductCard variants share the two
@@ -105,6 +173,16 @@ var SystemPresetSeeds = map[string][]byte{
 	"text_explainer":            TextExplainerJSON,
 	"empty_not_found":           EmptyNotFoundJSON,
 	"error_generic":             ErrorGenericJSON,
+	"design_system_preview":     DesignSystemPreviewJSON,
+	"uploader_card":             UploaderCardJSON,
+	"operation_card":            OperationCardJSON,
+	"registration_form":         RegistrationFormJSON,
+	"booking_form":              BookingFormJSON,
+	"lead_table":                LeadTableJSON,
+	"lead_detail":               LeadDetailJSON,
+	"success_plaque":            SuccessPlaqueJSON,
+	"surface_links":             SurfaceLinksJSON,
+	"manifest_summary":          ManifestSummaryJSON,
 }
 
 // SystemPresetDefaultReplicate captures the default-replicate behaviour
@@ -124,14 +202,25 @@ var SystemPresetDefaultReplicate = map[string]bool{
 	"text_explainer":            false,
 	"empty_not_found":           false,
 	"error_generic":             false,
+	"design_system_preview":     false,
+	"uploader_card":             false,
+	"operation_card":            true,
+	"registration_form":         false,
+	"booking_form":              false,
+	"lead_table":                true,
+	"lead_detail":               false,
+	"success_plaque":            false,
+	"surface_links":             true,
+	"manifest_summary":          true,
 }
 
 // SystemPresetCategory maps each system preset name to its family in
 // the preset-library taxonomy advertised by the internal listing
 // (GET /api/v1/internal/presets/system). Canonical values: cards |
-// details | states | narrative (components carry their own fixed
-// "components" category in the handler). Every SystemPresetSeeds key
-// must have an entry here — guarded by TestSystemPresetTaxonomyComplete.
+// details | states | narrative | forms | onboarding (components carry
+// their own fixed "components" category in the handler). Every
+// SystemPresetSeeds key must have an entry here — guarded by
+// TestSystemPresetTaxonomyComplete.
 var SystemPresetCategory = map[string]string{
 	"product_card":              "cards",
 	"product_card_compact":      "cards",
@@ -145,6 +234,16 @@ var SystemPresetCategory = map[string]string{
 	"text_explainer":            "narrative",
 	"empty_not_found":           "states",
 	"error_generic":             "states",
+	"design_system_preview":     "onboarding",
+	"uploader_card":             "onboarding",
+	"operation_card":            "onboarding",
+	"registration_form":         "forms",
+	"booking_form":              "forms",
+	"lead_table":                "cards",
+	"lead_detail":               "details",
+	"success_plaque":            "states",
+	"surface_links":             "onboarding",
+	"manifest_summary":          "onboarding",
 }
 
 // SystemComponentSeeds maps component name → embedded JSON. Mirrors

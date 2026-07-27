@@ -1,0 +1,83 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "booking-form",
+      "formId": "booking_form",
+      "maxWidth": 480,
+      "layout": {"direction": "column", "gap": "md", "padding": [20, 24, 24, 24]},
+      "fill": "#FFFFFF",
+      "cornerRadius": 16,
+      "stroke": {"thickness": 1, "fill": "#ECECEC"},
+      "effect": [
+        {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+      ],
+      "children": [
+        {
+          "type": "text",
+          "id": "booking-title",
+          "content": "Book a showing",
+          "textStyle": {"fontSize": "lg", "fontWeight": "semibold", "color": "#1a1a1a"}
+        },
+        {
+          "type": "frame",
+          "id": "booking-listing",
+          "hideWhenEmpty": true,
+          "layout": {"direction": "row", "gap": "sm"},
+          "children": [
+            {
+              "type": "text",
+              "id": "booking-listing-name",
+              "fieldBinding": "name",
+              "textStyle": {"fontSize": "sm", "color": "#666666"}
+            }
+          ]
+        },
+        {
+          "type": "input",
+          "id": "booking-listing-id",
+          "name": "listingId",
+          "inputType": "hidden",
+          "fieldBinding": "id",
+          "required": true
+        },
+        {
+          "type": "datetime",
+          "id": "booking-time",
+          "name": "preferredTime",
+          "mode": "datetime",
+          "label": "Preferred time",
+          "required": true,
+          "minOffsetHours": 1,
+          "hours": {"from": 9, "to": 18}
+        },
+        {
+          "type": "input",
+          "id": "booking-name",
+          "name": "name",
+          "inputType": "text",
+          "label": "Your name",
+          "placeholder": "Jane Doe",
+          "required": true
+        },
+        {
+          "type": "input",
+          "id": "booking-phone",
+          "name": "phone",
+          "inputType": "tel",
+          "label": "Phone",
+          "placeholder": "+15550123456",
+          "required": true
+        },
+        {
+          "type": "submit",
+          "id": "booking-submit",
+          "label": "Book showing",
+          "loadingLabel": "Booking…",
+          "action": {"kind": "operation_invoke", "operation": "book_showing"}
+        }
+      ]
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import (
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/ports"
+	"keepstar_v5/internal/prompts"
 )
 
 // PipelineExecuteRequest is the per-call input the HTTP handler hands to the
@@ -31,6 +32,13 @@ type PipelineExecuteRequest struct {
 	// must be fast, anything slow delays Agent2. nil = exactly the current
 	// (non-streaming) behavior.
 	OnStage func(StageEvent)
+
+	// OnBlock, when non-nil, receives every TurnBlock the turn's
+	// compose_turn call emits, AS PRODUCED (R9 as overridden by final owner
+	// decision 3: real per-block SSE streaming, no batching). Invoked
+	// synchronously on the request goroutine — keep it fast. nil callers
+	// still get the full ordered list on Response.Blocks.
+	OnBlock func(domain.TurnBlock)
 }
 
 // StageEvent describes one completed pipeline stage for OnStage consumers.
@@ -69,6 +77,13 @@ type PipelineExecuteResponse struct {
 	// set (deterministic — computed from the products zone, no LLM). Empty
 	// when there are no usable filters.
 	Facets []Facet
+
+	// Blocks is the ordered TurnBlock list of a composed turn (§4.7): the
+	// same blocks the streaming transport already emitted as `event: block`
+	// frames, aggregated for the terminal `result` frame / POST /pipeline
+	// JSON body. Nil on legacy single-document turns (visual_assembly-only)
+	// — the wire omits the field and old bundles are unaffected.
+	Blocks []domain.TurnBlock
 }
 
 // PipelineExecute is the two-agent orchestrator. Agent1 fetches/filters data
@@ -136,6 +151,9 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 	}
 
 	microcontext := composeMicrocontext(a1.Results)
+	if req.Mode == domain.ModeOnboarding {
+		microcontext = uc.onboardingMicrocontext(ctx, req.SessionID, a1.Results, microcontext)
+	}
 
 	if req.OnStage != nil {
 		// Empty comes from the structured outcome, not ProductsFound: on
@@ -154,7 +172,14 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 	}
 
 	// ── Agent2 ──
-	a2, err := uc.agent2.Execute(ctx, Agent2ExecuteRequest{
+	// The turn-block collector rides the ctx through the registry choke
+	// point into compose_turn (§4.7): each block it produces is forwarded
+	// to OnBlock AS PRODUCED (the SSE `event: block` frames) and retained
+	// for Response.Blocks. Installed on BOTH transports — plain POST
+	// /pipeline (OnBlock nil) still aggregates, and compose_turn's
+	// one-call-per-turn guard reads the same collector.
+	blockSink := domain.NewTurnBlockCollector(req.OnBlock)
+	a2, err := uc.agent2.Execute(domain.WithTurnBlockCollector(ctx, blockSink), Agent2ExecuteRequest{
 		SessionID:    req.SessionID,
 		TenantSlug:   req.TenantSlug,
 		UserQuery:    req.UserQuery,
@@ -204,6 +229,7 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		LatencyMs: time.Since(start).Milliseconds(),
 		Agent1Ms:  a1.LatencyMs,
 		Agent2Ms:  a2.LatencyMs,
+		Blocks:    blockSink.Blocks(),
 	}
 
 	// Data-derived filter facets + 1-level navigation prefetch — both read
@@ -235,6 +261,27 @@ func readPresetInUse(doc map[string]interface{}) string {
 	}
 	v, _ := doc[domain.TemplatePresetInUseKey].(string)
 	return v
+}
+
+// onboardingMicrocontext folds the session's staged manifest into the
+// Agent2 signal on the onboarding form (§4.3): "turn: … | staged: … |
+// applied: n/m | waiting: …". The manifest is read through the
+// OnboardingStatePort side of the state adapter; when the port or the
+// manifest is unavailable the generic microcontext passes through (fallback,
+// logged — never a silent empty signal).
+func (uc *PipelineExecute) onboardingMicrocontext(ctx context.Context, sessionID string, results []*domain.OperationResult, fallback string) string {
+	ob, ok := uc.state.(ports.OnboardingStatePort)
+	if !ok {
+		return fallback
+	}
+	m, err := ob.GetOnboarding(ctx, sessionID)
+	if err != nil {
+		if uc.log != nil {
+			uc.log.Warn("pipeline: onboarding manifest read failed — generic microcontext", "session", sessionID, "err", err)
+		}
+		return fallback
+	}
+	return prompts.ComposeOnboardingMicrocontext(m, opNames(results))
 }
 
 // composeMicrocontext maps Agent1's structured operation results into a

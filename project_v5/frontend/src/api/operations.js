@@ -43,16 +43,18 @@ export async function invokeOperation({
 // protocol-relative endpoint smuggled into a document is refused before
 // any network activity.
 //
-// Body shape: {formId, values:{<fieldName>: <value>}}. credentials are
-// included so the ks_onboard cookie (R5) rides along in dev setups where
-// the API origin differs from the page origin.
-export async function submitFormEndpoint({ baseUrl, endpoint, values, formId }) {
+// Body shape: {sessionId, formId, blockId?, values:{<fieldName>: <value>}}
+// — the step-submit handler (handler_onboard_step.go) promotes the nested
+// values and needs sessionId to find the session's manifest. credentials
+// are included so the ks_onboard cookie (R5) rides along in dev setups
+// where the API origin differs from the page origin.
+export async function submitFormEndpoint({ baseUrl, endpoint, values, formId, sessionId, blockId }) {
   const url = resolveEndpoint(baseUrl, endpoint)
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ formId, values }),
+    body: JSON.stringify({ sessionId, formId, blockId, values }),
   })
   return parseApplyResponse(res, 'form submit')
 }

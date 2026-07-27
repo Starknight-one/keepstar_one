@@ -42,6 +42,15 @@ func WithTenant(catalog ports.CatalogPort, defaultSlug string) func(http.Handler
 				next.ServeHTTP(w, r)
 				return
 			}
+			// Static page hosts (§5.1) serve plain HTML — no tenant resolution
+			// here (a missing default slug or a DB hiccup must not 400/503 the
+			// page itself). The page mounts parse the slug client-side and every
+			// API call they make carries X-Tenant-Slug through this middleware.
+			if r.URL.Path == "/onboard" || strings.HasPrefix(r.URL.Path, "/s/") ||
+				strings.HasPrefix(r.URL.Path, "/crm/") {
+				next.ServeHTTP(w, r)
+				return
+			}
 			slug := r.Header.Get("X-Tenant-Slug")
 			if slug == "" {
 				slug = defaultSlug

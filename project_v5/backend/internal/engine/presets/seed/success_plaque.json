@@ -1,0 +1,62 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "plaque",
+      "maxWidth": 480,
+      "layout": {"direction": "column", "gap": "sm", "align": "center", "padding": [24, 24, 24, 24]},
+      "fill": "#FFFFFF",
+      "cornerRadius": 16,
+      "stroke": {"thickness": 1, "fill": "#ECECEC"},
+      "effect": [
+        {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "plaque-icon-wrap",
+          "fill": "#EAF3FA",
+          "cornerRadius": "full",
+          "layout": {"direction": "row", "padding": [10, 10]},
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "plaque-icon",
+              "iconFontName": "badge-check",
+              "width": 28,
+              "height": 28,
+              "fill": "#5BA4D9"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "plaque-title",
+          "content": "Request received",
+          "textStyle": {"fontSize": "xl", "fontWeight": "semibold", "color": "#1a1a1a"}
+        },
+        {
+          "type": "text",
+          "id": "plaque-sub",
+          "content": "We've logged your request — the team will confirm shortly.",
+          "textStyle": {"fontSize": "sm", "color": "#666666"}
+        },
+        {
+          "type": "frame",
+          "id": "plaque-summary-wrap",
+          "hideWhenEmpty": true,
+          "layout": {"direction": "row"},
+          "children": [
+            {
+              "type": "text",
+              "id": "plaque-summary",
+              "fieldBinding": "summary",
+              "textStyle": {"fontSize": "xs", "color": "#999999"}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

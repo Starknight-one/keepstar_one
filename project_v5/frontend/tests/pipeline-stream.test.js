@@ -93,6 +93,77 @@ describe('pipelineStreamRequest', () => {
   })
 })
 
+// Per-block streaming (R9 + final owner decision 3): composed turns
+// stream each TurnBlock as its own `event: block` frame, in real
+// production order; the terminal result frame carries the full blocks[].
+describe('pipelineStreamRequest block frames', () => {
+  const B1 = { blockId: 'b1', kind: 'text', text: 'Here is your uploader:' }
+  const B2 = { blockId: 'b2', kind: 'document', document: { version: '2.10', children: [] }, display: 'inline' }
+  const B3 = { blockId: 'b3', kind: 'text', text: 'And the design system:' }
+
+  function blockWire(terminalBlocks) {
+    return (
+      'event: stage\ndata: {"phase":"data_start"}\n\n' +
+      `event: block\ndata: ${JSON.stringify(B1)}\n\n` +
+      `event: block\ndata: ${JSON.stringify(B2)}\n\n` +
+      `event: block\ndata: ${JSON.stringify(B3)}\n\n` +
+      `event: result\ndata: ${JSON.stringify(
+        terminalBlocks ? { ...RESULT, blocks: terminalBlocks } : RESULT,
+      )}\n\n`
+    )
+  }
+
+  it('emits interleaved text/document blocks through onBlock in arrival order', async () => {
+    fetch.mockResolvedValue(streamResponse([blockWire([B1, B2, B3])]))
+    const onBlock = vi.fn()
+    const resp = await pipelineStreamRequest({ ...OPTS, onBlock })
+    expect(onBlock.mock.calls.map((c) => c[0])).toEqual([B1, B2, B3])
+    expect(resp.blocks).toEqual([B1, B2, B3])
+  })
+
+  it('attaches streamed blocks when the terminal frame carries none', async () => {
+    fetch.mockResolvedValue(streamResponse([blockWire(null)]))
+    const resp = await pipelineStreamRequest(OPTS)
+    expect(resp.blocks).toEqual([B1, B2, B3])
+  })
+
+  it('legacy single-document turn stays block-free (back-compat)', async () => {
+    fetch.mockResolvedValue(
+      streamResponse([
+        'event: stage\ndata: {"phase":"data_start"}\n\n' +
+          `event: result\ndata: ${JSON.stringify(RESULT)}\n\n`,
+      ]),
+    )
+    const resp = await pipelineStreamRequest(OPTS)
+    expect(resp.blocks).toBeUndefined()
+    expect(resp).toEqual(RESULT)
+  })
+
+  it('a buggy onBlock callback does not abort the turn', async () => {
+    fetch.mockResolvedValue(streamResponse([blockWire([B1, B2, B3])]))
+    const onBlock = vi.fn(() => {
+      throw new Error('render exploded')
+    })
+    const resp = await pipelineStreamRequest({ ...OPTS, onBlock })
+    expect(resp.blocks).toEqual([B1, B2, B3])
+  })
+
+  it('drops malformed block frames instead of rendering junk', async () => {
+    fetch.mockResolvedValue(
+      streamResponse([
+        'event: stage\ndata: {"phase":"data_start"}\n\n' +
+          'event: block\ndata: {"unexpected":"shape"}\n\n' +
+          `event: block\ndata: ${JSON.stringify(B1)}\n\n` +
+          `event: result\ndata: ${JSON.stringify(RESULT)}\n\n`,
+      ]),
+    )
+    const onBlock = vi.fn()
+    const resp = await pipelineStreamRequest({ ...OPTS, onBlock })
+    expect(onBlock.mock.calls.map((c) => c[0])).toEqual([B1])
+    expect(resp.blocks).toEqual([B1])
+  })
+})
+
 describe('pipelineSmartRequest', () => {
   it('falls back to POST /pipeline when the route is missing (older backend)', async () => {
     fetch

@@ -50,6 +50,14 @@ type PromptCache struct {
 	store      sync.Map // cacheKey → *promptCacheEntry
 	entityType domain.EntityType
 	ttl        time.Duration // §6.1 TTL safety net; entries older = miss
+
+	// formPrompts maps a form's storage key (mode) to its base Agent2
+	// system prompt (R24: onboarding = base + compose_turn + choreography,
+	// crm = base + compose_turn). Registered at boot via SetFormPrompt,
+	// before serving — not guarded for concurrent mutation. Unregistered
+	// forms fall back to the storefront base prompt, byte-identical to the
+	// pre-form path (duty C3).
+	formPrompts map[domain.PipelineMode]string
 }
 
 type promptCacheEntry struct {
@@ -61,15 +69,43 @@ type promptCacheEntry struct {
 // used to read the tenant's price/stock visibility flags so the cached
 // <fields> block omits hidden fields (and the cache key reflects them).
 func NewPromptCache(fdPort ports.FieldDefinitionPort, presetPort ports.PresetPort, catalog ports.CatalogPort, entityType domain.EntityType) *PromptCache {
-	return &PromptCache{fdPort: fdPort, presetPort: presetPort, catalog: catalog, entityType: entityType, ttl: cacheTTLFromEnv()}
+	return &PromptCache{fdPort: fdPort, presetPort: presetPort, catalog: catalog, entityType: entityType, ttl: cacheTTLFromEnv(), formPrompts: make(map[domain.PipelineMode]string)}
 }
 
-// GetOrBuild returns the assembled prompt for tenantSlugOrID, building it
-// (and caching) on first miss. Build errors propagate — callers that
-// can't proceed without a prompt should treat them as fatal for the turn.
+// SetFormPrompt registers the base Agent2 system prompt for a form (R17
+// seam, R24 additions — mirrors Agent1PromptCache.SetFormPrompt). Boot-time
+// only: call before the server starts serving turns.
+func (c *PromptCache) SetFormPrompt(mode domain.PipelineMode, prompt string) {
+	c.formPrompts[mode] = prompt
+}
+
+// basePrompt returns the registered base prompt for mode, falling back to
+// the storefront prompt for unregistered forms.
+func (c *PromptCache) basePrompt(mode domain.PipelineMode) string {
+	if p, ok := c.formPrompts[mode]; ok && p != "" {
+		return p
+	}
+	return prompts.Agent2SystemPrompt
+}
+
+// GetOrBuild returns the assembled storefront-form prompt for
+// tenantSlugOrID — the legacy single-form entry point, kept so pre-mode
+// call sites behave byte-identically. New callers pass the session's mode
+// via GetOrBuildForm.
+func (c *PromptCache) GetOrBuild(ctx context.Context, tenantSlugOrID string, sampleLimit int) (string, error) {
+	return c.GetOrBuildForm(ctx, tenantSlugOrID, sampleLimit, domain.ModeStorefront)
+}
+
+// GetOrBuildForm returns the assembled prompt for (mode, tenantSlugOrID),
+// building it (and caching) on first miss. Build errors propagate — callers
+// that can't proceed without a prompt should treat them as fatal for the
+// turn.
 //
 // `sampleLimit` is forwarded to FormatFieldsBlock; pass 3 to match V4.
-func (c *PromptCache) GetOrBuild(ctx context.Context, tenantSlugOrID string, sampleLimit int) (string, error) {
+func (c *PromptCache) GetOrBuildForm(ctx context.Context, tenantSlugOrID string, sampleLimit int, mode domain.PipelineMode) (string, error) {
+	if mode == "" {
+		mode = domain.ModeStorefront
+	}
 	// Read the tenant's hide-only price/stock visibility flags. These both
 	// gate which fields the <fields> block advertises AND form part of the
 	// cache key, so a visibility toggle rebuilds the prompt instead of serving
@@ -83,7 +119,10 @@ func (c *PromptCache) GetOrBuild(ctx context.Context, tenantSlugOrID string, sam
 		}
 	}
 
-	key := cacheKey(tenantSlugOrID, priceVisible, stockVisible)
+	// The mode participates in the key (a form is data — more than three
+	// will exist). It is SUFFIXED so the tenant stays the key prefix and
+	// Invalidate(tenant)'s prefix scan keeps dropping every form variant.
+	key := cacheKey(tenantSlugOrID, priceVisible, stockVisible) + "|m=" + string(mode)
 	if v, ok := c.store.Load(key); ok {
 		e := v.(*promptCacheEntry)
 		if c.ttl <= 0 || time.Since(e.builtAt) <= c.ttl {
@@ -102,7 +141,7 @@ func (c *PromptCache) GetOrBuild(ctx context.Context, tenantSlugOrID string, sam
 	if err != nil {
 		return "", err
 	}
-	assembled := prompts.AssembleSystemPrompt(prompts.Agent2SystemPrompt, designContext, fields)
+	assembled := prompts.AssembleSystemPrompt(c.basePrompt(mode), designContext, fields)
 	c.store.Store(key, &promptCacheEntry{prompt: assembled, builtAt: time.Now()})
 	return assembled, nil
 }

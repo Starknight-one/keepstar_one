@@ -1,0 +1,66 @@
+{
+  "version": "2.10",
+  "children": [
+    {
+      "type": "frame",
+      "id": "registration-form",
+      "formId": "registration_form",
+      "maxWidth": 480,
+      "layout": {"direction": "column", "gap": "md", "padding": [20, 24, 24, 24]},
+      "fill": "#FFFFFF",
+      "cornerRadius": 16,
+      "stroke": {"thickness": 1, "fill": "#ECECEC"},
+      "effect": [
+        {"type": "shadow", "offset": {"x": 0, "y": 2}, "blur": 12, "color": "#00000010"}
+      ],
+      "children": [
+        {
+          "type": "text",
+          "id": "reg-title",
+          "content": "Create your owner account",
+          "textStyle": {"fontSize": "lg", "fontWeight": "semibold", "color": "#1a1a1a"}
+        },
+        {
+          "type": "text",
+          "id": "reg-sub",
+          "content": "You'll use this to sign in to your workspace's admin console.",
+          "textStyle": {"fontSize": "sm", "color": "#666666"}
+        },
+        {
+          "type": "input",
+          "id": "reg-name",
+          "name": "name",
+          "inputType": "text",
+          "label": "Full name",
+          "placeholder": "Jane Doe",
+          "required": true
+        },
+        {
+          "type": "input",
+          "id": "reg-email",
+          "name": "email",
+          "inputType": "email",
+          "label": "Email",
+          "placeholder": "you@company.com",
+          "required": true
+        },
+        {
+          "type": "input",
+          "id": "reg-password",
+          "name": "password",
+          "inputType": "password",
+          "label": "Password",
+          "required": true,
+          "validation": {"minLength": 8}
+        },
+        {
+          "type": "submit",
+          "id": "reg-submit",
+          "label": "Create account",
+          "loadingLabel": "Creating…",
+          "action": {"kind": "form_submit", "endpoint": "/api/v1/onboard/step/register_user/submit"}
+        }
+      ]
+    }
+  ]
+}
