@@ -26,6 +26,11 @@ export const defaultRenderContext = {
   tenantSlug: null,
   sessionId: null,
   prefetch: { adjacentTemplate: {}, entities: {} },
+  // Canonical user-action state ({likedIds, cartItems}) + its setter.
+  // Buttons read it to render active (liked / in-cart) controls;
+  // actionDispatch writes it from every /actions response.
+  actionState: { likedIds: [], cartItems: [] },
+  onActionState: () => {},
   onUpdateDocument: () => {},
   onSearch: () => {},
 }

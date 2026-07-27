@@ -33,6 +33,9 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl, shadowRoot }) {
   // so the filter panel clears its selections when the result set changes.
   const [facets, setFacets] = useState([])
   const [searchEpoch, setSearchEpoch] = useState(0)
+  // Canonical user-action state (likes / cart) — updated from every
+  // /actions response so the controls render their active state.
+  const [actionState, setActionState] = useState({ likedIds: [], cartItems: [] })
   // Skeleton-card count while a streamed turn is between "data found"
   // and "view rendered" (null = show doc / empty state as usual).
   const [pendingCards, setPendingCards] = useState(null)
@@ -175,6 +178,8 @@ export default function WidgetApp({ tenantSlug, apiBaseUrl, shadowRoot }) {
     tenantSlug,
     sessionId,
     prefetch: prefetchRef.current,
+    actionState,
+    onActionState: setActionState,
     onUpdateDocument: (next) => {
       onUpdateDocument(next)
       // Heuristic: any frontend-driven document change came from a

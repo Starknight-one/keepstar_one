@@ -50,29 +50,80 @@ export async function dispatchAction(action, ctx) {
 }
 
 async function dispatchBackendAction(action, ctx) {
-  const { apiBaseUrl, tenantSlug, sessionId } = ctx || {}
+  const { apiBaseUrl, tenantSlug, sessionId, actionState, onActionState } = ctx || {}
   if (!sessionId) {
     // eslint-disable-next-line no-console
     console.warn('[v5-action] no sessionId; skipping', action)
     return null
+  }
+  // The engine injects fixed-kind buttons (always like / cart_add), so
+  // the toggle lives here: a like on an already-liked entity becomes
+  // unlike, an add on an in-cart entity becomes remove.
+  let kind = action.kind
+  const entityId = action.entity?.id
+  if (entityId && actionState) {
+    if (kind === KIND_LIKE && isLiked(actionState, entityId)) kind = KIND_UNLIKE
+    else if (kind === KIND_CART_ADD && isInCart(actionState, entityId)) kind = KIND_CART_REMOVE
+  }
+  // Optimistic flip so the control answers the click instantly; the
+  // canonical state from the response (or a rollback on error) follows.
+  const prevState = actionState
+  if (typeof onActionState === 'function' && entityId) {
+    onActionState(optimisticActionState(actionState, kind, action.entity))
   }
   try {
     const resp = await postAction({
       baseUrl: apiBaseUrl,
       tenantSlug,
       sessionId,
-      kind: action.kind,
+      kind,
       entity: action.entity,
       params: action.params,
     })
-    // eslint-disable-next-line no-console
-    console.debug('[v5-action] backend ok', { kind: action.kind, entity: action.entity, actions: resp?.actions })
+    if (typeof onActionState === 'function' && resp?.actions) {
+      onActionState(resp.actions)
+    }
     return resp
   } catch (err) {
+    if (typeof onActionState === 'function' && prevState) {
+      onActionState(prevState)
+    }
     // eslint-disable-next-line no-console
-    console.error('[v5-action] backend failed', { kind: action.kind, err: err.message })
+    console.error('[v5-action] backend failed', { kind, err: err.message })
     throw err
   }
+}
+
+export function isLiked(actionState, entityId) {
+  return Boolean(actionState?.likedIds?.includes(entityId))
+}
+
+export function isInCart(actionState, entityId) {
+  return Boolean(actionState?.cartItems?.some((it) => it?.entityId === entityId))
+}
+
+// optimisticActionState projects the expected post-action state locally.
+function optimisticActionState(state, kind, entity) {
+  const likedIds = [...(state?.likedIds || [])]
+  const cartItems = [...(state?.cartItems || [])]
+  const id = entity?.id
+  switch (kind) {
+    case KIND_LIKE:
+      if (!likedIds.includes(id)) likedIds.push(id)
+      break
+    case KIND_UNLIKE:
+      return { likedIds: likedIds.filter((e) => e !== id), cartItems }
+    case KIND_CART_ADD:
+      if (!cartItems.some((it) => it?.entityId === id)) {
+        cartItems.push({ entityType: entity?.type || 'product', entityId: id, quantity: 1 })
+      }
+      break
+    case KIND_CART_REMOVE:
+      return { likedIds, cartItems: cartItems.filter((it) => it?.entityId !== id) }
+    default:
+      break
+  }
+  return { likedIds, cartItems }
 }
 
 // dispatchDrill handles drill_detail. Optimistic path: if prefetch

@@ -14,11 +14,22 @@
 
 import { createElement } from 'react'
 import { useRenderContext } from './RenderContext'
-import { dispatchAction } from './actionDispatch'
+import { dispatchAction, isLiked, isInCart } from './actionDispatch'
 
 export function wrapText(content, wrapper, node) {
   if (!wrapper || wrapper === 'none') return content
   return createElement(WrappedContent, { content, wrapper, node })
+}
+
+// activeFor reports whether an action button is in its "on" state
+// (entity already liked / already in cart) for active styling + a11y.
+function activeFor(node, actionState) {
+  const kind = node?.action?.kind
+  const id = node?.action?.entity?.id
+  if (!kind || !id) return false
+  if (kind === 'like') return isLiked(actionState, id)
+  if (kind === 'cart_add') return isInCart(actionState, id)
+  return false
 }
 
 function WrappedContent({ content, wrapper, node }) {
@@ -26,12 +37,14 @@ function WrappedContent({ content, wrapper, node }) {
   const className = `kw-${wrapper}`
 
   switch (wrapper) {
-    case 'button':
+    case 'button': {
+      const active = activeFor(node, ctx.actionState)
       return createElement(
         'button',
         {
-          className,
+          className: active ? `${className} kw-active` : className,
           type: 'button',
+          'aria-pressed': node?.action?.kind === 'like' || node?.action?.kind === 'cart_add' ? active : undefined,
           // actionKind (stamped by InjectDefaultActions) drives per-kind
           // styling via [data-action-kind] — black round add, translucent
           // round like. Absent → the neutral default .kw-button.
@@ -51,6 +64,7 @@ function WrappedContent({ content, wrapper, node }) {
         },
         content,
       )
+    }
     case 'link':
       return createElement(
         'a',

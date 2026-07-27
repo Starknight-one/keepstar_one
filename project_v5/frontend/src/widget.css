@@ -411,6 +411,20 @@
   color: var(--kw-text-muted);
   font-size: var(--kw-fs-sm);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  transition: color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+}
+
+/* Active (liked) heart — accent-filled on white. */
+.kw-button[data-action-kind='like'].kw-active {
+  color: var(--kw-orange);
+  background: #ffffff;
+  transform: scale(1.06);
+}
+
+/* Active (in cart) add — accent circle, "+" reads as "added". */
+.kw-button[data-action-kind='cart_add'].kw-active {
+  background: var(--kw-orange);
+  color: #ffffff;
 }
 
 .kw-link {
