@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/ports"
 )
 
@@ -127,6 +128,11 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 		return result, nil
 	}
 
+	// The pre-rebuild typed cosmetics columns (product_form, skin_type,
+	// concern, key_ingredients) and catalog.categories are GONE from the
+	// schema — vertical attributes now live in master_products.tier2
+	// JSONB. Sampling reads tier2 + extra generically so ANY vertical's
+	// fields surface in the <fields> block.
 	query := `
 		SELECT
 		    COALESCE(p.name, '') AS name,
@@ -137,15 +143,10 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 		    COALESCE(p.images, '[]') AS images,
 		    COALESCE(p.tags, '[]') AS tags,
 		    COALESCE(mp.brand, '') AS brand,
-		    COALESCE(c.name, '') AS category,
-		    COALESCE(mp.product_form, '') AS product_form,
-		    COALESCE(mp.skin_type, '{}') AS skin_type,
-		    COALESCE(mp.concern, '{}') AS concern,
-		    COALESCE(mp.key_ingredients, '{}') AS key_ingredients,
+		    COALESCE(mp.tier2, '{}'::jsonb) AS tier2,
 		    COALESCE(p.extra, '{}'::jsonb) AS extra
 		FROM catalog.products p
 		LEFT JOIN catalog.master_products mp ON p.master_product_id = mp.id
-		LEFT JOIN catalog.categories c ON mp.category_id = c.id
 		JOIN catalog.tenants t ON t.id = p.tenant_id
 		WHERE (p.tenant_id::text = $1 OR t.slug = $1)
 		LIMIT $2
@@ -195,30 +196,27 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 
 	for rows.Next() {
 		var (
-			name, description, brand, category, productForm string
-			price, stockQuantity                             int
-			rating                                           float64
-			imagesRaw, tagsRaw, extraRaw                     []byte
-			skinType, concern, keyIngredients                []string
+			name, description, brand    string
+			price, stockQuantity        int
+			rating                      float64
+			imagesRaw, tagsRaw          []byte
+			tier2Raw, extraRaw          []byte
 		)
 		if err := rows.Scan(
 			&name, &description, &price, &rating, &stockQuantity,
 			&imagesRaw, &tagsRaw,
-			&brand, &category, &productForm,
-			&skinType, &concern, &keyIngredients,
-			&extraRaw,
+			&brand,
+			&tier2Raw, &extraRaw,
 		); err != nil {
 			return nil, fmt.Errorf("scan sample row: %w", err)
 		}
 
 		appendSample("name", name)
 		appendSample("description", description)
-		appendSample("price", price)
+		appendSample("price", float64(price)/100) // cents -> dollars: the LLM's price vocabulary is USD major units
 		appendSample("rating", rating)
 		appendSample("stockQuantity", stockQuantity)
 		appendSample("brand", brand)
-		appendSample("category", category)
-		appendSample("productForm", productForm)
 
 		var images []interface{}
 		if len(imagesRaw) > 0 {
@@ -236,31 +234,27 @@ func (a *FieldDefinitionAdapter) SampleFieldValues(ctx context.Context, tenantID
 			appendSample("tags", tags)
 		}
 
-		if len(skinType) > 0 {
-			appendSample("skinType", toInterfaceSlice(skinType))
+		// tier2 wins over extra on key collision — same precedence as
+		// engine.ProductToMap. Keys are camelCase-normalised so the
+		// <fields> vocabulary matches what binding/facets expose.
+		var tier2 map[string]interface{}
+		if len(tier2Raw) > 0 {
+			_ = json.Unmarshal(tier2Raw, &tier2)
 		}
-		if len(concern) > 0 {
-			appendSample("concern", toInterfaceSlice(concern))
+		for k, v := range tier2 {
+			appendSample(engine.SnakeToCamel(k), v)
 		}
-		if len(keyIngredients) > 0 {
-			appendSample("keyIngredients", toInterfaceSlice(keyIngredients))
-		}
-
 		var extra map[string]interface{}
 		if len(extraRaw) > 0 {
 			_ = json.Unmarshal(extraRaw, &extra)
 		}
 		for k, v := range extra {
-			appendSample(k, v)
+			ck := engine.SnakeToCamel(k)
+			if _, seen := tier2[k]; seen {
+				continue
+			}
+			appendSample(ck, v)
 		}
 	}
 	return result, rows.Err()
-}
-
-func toInterfaceSlice(s []string) []interface{} {
-	out := make([]interface{}, len(s))
-	for i, v := range s {
-		out[i] = v
-	}
-	return out
 }

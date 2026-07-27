@@ -126,7 +126,7 @@ func ProductToMap(p domain.Product) map[string]any {
 	// discovery and binding both consume this map and would otherwise show
 	// the same attribute twice.
 	for k, v := range p.Tier2 {
-		ck := snakeToCamel(k)
+		ck := SnakeToCamel(k)
 		if _, exists := m[ck]; !exists {
 			m[ck] = v
 		}
@@ -134,7 +134,7 @@ func ProductToMap(p domain.Product) map[string]any {
 
 	// 3. Extra — raw vendor JSONB. Loses to typed and Tier2.
 	for k, v := range p.Extra {
-		ck := snakeToCamel(k)
+		ck := SnakeToCamel(k)
 		if _, exists := m[ck]; !exists {
 			m[ck] = v
 		}
@@ -143,9 +143,11 @@ func ProductToMap(p domain.Product) map[string]any {
 	return m
 }
 
-// snakeToCamel converts snake_case to camelCase; keys already in camelCase
+// SnakeToCamel converts snake_case to camelCase; keys already in camelCase
 // pass through unchanged. Only ASCII underscores are treated as separators.
-func snakeToCamel(k string) string {
+// Exported: the postgres field-sampling adapter normalises tier2 keys with
+// the same rule so the <fields> vocabulary matches binding/facets.
+func SnakeToCamel(k string) string {
 	if !strings.Contains(k, "_") {
 		return k
 	}
