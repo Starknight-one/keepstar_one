@@ -51,10 +51,15 @@ func TestProductToMapElectronicsExtra(t *testing.T) {
 	}
 	m := ProductToMap(p)
 
-	for _, key := range []string{"cpu", "ram", "battery_life", "manufacturer", "cover_image"} {
+	// snake_case Extra keys are normalised to camelCase so they collide
+	// with (and lose to) typed fields instead of duplicating them.
+	for _, key := range []string{"cpu", "ram", "batteryLife", "manufacturer", "coverImage"} {
 		if _, ok := m[key]; !ok {
 			t.Errorf("Extra key %q lost in map", key)
 		}
+	}
+	if _, ok := m["battery_life"]; ok {
+		t.Errorf("snake_case twin battery_life must not survive normalisation")
 	}
 	if m["cpu"] != "Apple M3 Pro" {
 		t.Errorf("cpu: %v", m["cpu"])
@@ -77,6 +82,27 @@ func TestProductToMapTier2WinsOverExtra(t *testing.T) {
 	m := ProductToMap(p)
 	if m["manufacturer"] != "Apple Inc." {
 		t.Errorf("Tier2 should win over Extra; got %v, want \"Apple Inc.\"", m["manufacturer"])
+	}
+}
+
+// TestProductToMapSnakeCaseTwinCollapses is the regression test for the
+// duplicate-facet bug: a snake_case tier2 twin of a typed field must be
+// normalised into the SAME key and lose to the typed value, not survive
+// as a second attribute (which produced duplicate filter groups).
+func TestProductToMapSnakeCaseTwinCollapses(t *testing.T) {
+	p := domain.Product{
+		ID:       "p1",
+		SkinType: []string{"oily"},
+		Tier2: map[string]any{
+			"skin_type": []string{"dry"}, // snake_case twin from raw import
+		},
+	}
+	m := ProductToMap(p)
+	if !reflect.DeepEqual(m["skinType"], []string{"oily"}) {
+		t.Errorf("typed skinType must win: %v", m["skinType"])
+	}
+	if _, ok := m["skin_type"]; ok {
+		t.Errorf("snake_case twin skin_type must not survive as a duplicate key")
 	}
 }
 

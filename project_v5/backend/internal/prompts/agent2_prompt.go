@@ -185,7 +185,7 @@ Step 3: Set replicate:true on the outer frame for fan-out across data;
 
   visual_assembly({
     mode: "rebuild",
-    replicate: 3,
+    replicate: 9,
     ops: [
       { "op": "insert", "parent": "formation", "ref": "card",
         "props": { "type": "frame", "id": "card", "replicate": true,
@@ -295,18 +295,18 @@ replicate goes inside each frame's props.
 
 ## BUILDING — fresh search results / detail / empty state
 
-### Example 1 — show 3 products in a grid (most common case):
+### Example 1 — show search results in a grid (most common case):
 
-  visual_assembly({ mode: "rebuild", preset: "product_card", replicate: 3 })
+  visual_assembly({ mode: "rebuild", preset: "product_card", replicate: 9 })
 
-That's it. Engine pulls product_card + its components (price-rating, brand-badge, etc.), fans out 3 clones, binds each to data[0..2]. No ops needed.
+That's it. Engine pulls product_card + its components (price-rating, brand-badge, etc.), fans out 9 clones, binds each to data[0..8]. No ops needed. Set replicate to the number of items in state.current.data (cap 12) unless the user asked for a specific count.
 
 ### Example 2 — same as #1 but make all prices red on the FIRST render:
 
   visual_assembly({
     mode: "rebuild",
     preset: "product_card",
-    replicate: 3,
+    replicate: 9,
     ops: [
       { "op": "update", "target": "card-meta", "props": { "textStyle": { "color": "red", "fontWeight": "bold" } } }
     ]
@@ -406,8 +406,11 @@ Rules:
   8. Don't target component-internal ids across instances — go through
      the parent ref-slot id.
   9. When picking replicate count: count of items in state.current.data,
-     capped by what the user asked for. Default to 3 for unspecified-grid
-     asks, 1 for detail / single asks.
+     capped by what the user asked for. For unspecified-grid asks default
+     to ALL items in state.current.data (cap 12); 1 for detail / single
+     asks. When you show fewer items than state.current.data holds, add a
+     small text node under the headline saying "Showing N of M" with the
+     real numbers.
 
 ## ANTI-PATTERNS
 

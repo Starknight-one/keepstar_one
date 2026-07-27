@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"strings"
+
 	"keepstar_v5/internal/domain"
 )
 
@@ -118,21 +120,49 @@ func ProductToMap(p domain.Product) map[string]any {
 		m["benefits"] = p.Benefits
 	}
 
-	// 2. Tier2 — master-curated. Wins over Extra.
+	// 2. Tier2 — master-curated. Wins over Extra. Keys are normalised to
+	// camelCase so a snake_case tier2 twin (skin_type) collides with its
+	// typed field (skinType) instead of surviving as a duplicate — facet
+	// discovery and binding both consume this map and would otherwise show
+	// the same attribute twice.
 	for k, v := range p.Tier2 {
-		if _, exists := m[k]; !exists {
-			m[k] = v
+		ck := snakeToCamel(k)
+		if _, exists := m[ck]; !exists {
+			m[ck] = v
 		}
 	}
 
 	// 3. Extra — raw vendor JSONB. Loses to typed and Tier2.
 	for k, v := range p.Extra {
-		if _, exists := m[k]; !exists {
-			m[k] = v
+		ck := snakeToCamel(k)
+		if _, exists := m[ck]; !exists {
+			m[ck] = v
 		}
 	}
 
 	return m
+}
+
+// snakeToCamel converts snake_case to camelCase; keys already in camelCase
+// pass through unchanged. Only ASCII underscores are treated as separators.
+func snakeToCamel(k string) string {
+	if !strings.Contains(k, "_") {
+		return k
+	}
+	parts := strings.Split(k, "_")
+	var b strings.Builder
+	for i, p := range parts {
+		if p == "" {
+			continue
+		}
+		if i == 0 || b.Len() == 0 {
+			b.WriteString(p)
+			continue
+		}
+		b.WriteString(strings.ToUpper(p[:1]))
+		b.WriteString(p[1:])
+	}
+	return b.String()
 }
 
 // ServiceToMap flattens a Service the same way. Services have fewer typed
