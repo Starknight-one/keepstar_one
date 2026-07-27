@@ -8,17 +8,25 @@
 
 ## What this is
 
-AI-powered SaaS B2B2C chat widget for e-commerce. The user types in
-chat — the bot answers with interactive widgets (product cards,
-galleries, comparisons, detail views) composed dynamically by a
-two-agent LLM pipeline. The merchant embeds a single `<script>` tag
-and gets an AI assistant with visual answers, no in-house dev work.
+V5 is the generation engine of the **Keepstar interface runtime** —
+data + operations + interface: anything can be visualized to resolve
+a user's question the moment they ask. An LLM decides what to show
+and which operation to run; a deterministic engine binds real tenant
+data and executes — nothing is hallucinated. Chat (the embeddable
+widget) is one door into the runtime; the headless API for AI agents
+is the other. Commerce is one vertical, not the identity. The missing
+piece today is the **operations layer** — a catalog of validated
+operations with strict inputs/outputs — and that is the main
+architecture front (canon: `../MANIFESTO.md`, course 2026-07-27).
 
-V5 is the production chat engine (`project_v5/`, live at
-`v5-engine-production.up.railway.app`). **This monorepo is now the V5
-engine core** — Admin, Curator, and the Landing were extracted to their
-own repos (`keepstar-admin`, `keepstar-curator`, `keepstar-landing`);
-PIM / Connector / Price-Stock are also separate repos.
+**Current state (July 2026):** all services were taken off Railway in
+July 2026 — the old prod URL `v5-engine-production.up.railway.app` is
+dead. The Neon Postgres (flat-moon) is alive with data (3172 products,
+35 tenants). Run locally via `scripts/start_all.sh`. **This monorepo
+is the V5 engine core** (`project_v5/`) — Admin, Curator, and the
+Landing were extracted to their own repos (`keepstar-admin`,
+`keepstar-curator`, `keepstar-landing`); PIM / Connector / Price-Stock
+are also separate repos.
 
 ## Routing — ask the expert first
 
@@ -48,7 +56,7 @@ refs and routes to a related expert when the answer crosses domains.
 
 | Service | Path | Local port | Prod |
 |---|---|---|---|
-| V5 chat backend (production) | `project_v5/backend/` | 8084 | `v5-engine-production.up.railway.app` |
+| V5 chat backend | `project_v5/backend/` | 8084 | — (taken off Railway July 2026) |
 | V5 widget | `project_v5/frontend/` | 5173 | served by V5 backend |
 
 - Run everything: `scripts/start_all.sh` (stop: `stop_all.sh`).
@@ -145,12 +153,12 @@ recommending it.
 
 - `.claude/commands/experts/README.md` — expert system architecture
 - `docs/Updates/` — session logs (chronological, append-only truth log)
-- **`../MANIFESTO.md`** — product vision / north-star (2026-05-29)
-- **`../CANVAS_MASTER_PLAN.md`** — current plan (canvas/engine wave plan + live status; updated 2026-06-11)
-- `../V5_VS_C1_PARITY.md` — V5 vs Thesys C1 parity track (updated 2026-06-11)
+- **`../MANIFESTO.md`** — **CANON**: Keepstar = interface runtime (course 2026-07-27; supersedes all earlier positioning)
+- `../archive/CANVAS_MASTER_PLAN.md` — ⚠️ HISTORICAL canvas/engine wave plan (2026-06-11; moved to archive)
+- `../archive/V5_VS_C1_PARITY.md` — ⚠️ HISTORICAL V5 vs Thesys C1 parity track (2026-06-11; moved to archive)
 - `../LLM_VS_DETERMINISM.md` — scoring model: who decides, LLM vs engine (2026-06-11)
-- `../FINAL_PHASE_PLAN.md` — ⚠️ HISTORICAL plan (2026-05-30; superseded by CANVAS_MASTER_PLAN.md)
-- `../SESSION_HANDOFF_2026-05-30.md` — ⚠️ HISTORICAL resume snapshot (2026-05-30; superseded)
+- `../archive/FINAL_PHASE_PLAN.md` — ⚠️ HISTORICAL plan (2026-05-30; superseded)
+- `../archive/SESSION_HANDOFF_2026-05-30.md` — ⚠️ HISTORICAL resume snapshot (2026-05-30; superseded)
 - `docs/PRE_LAUNCH_TASKS.md` — current pre-launch tracker
 - `docs/v5-known-gaps.md` — V5 A-series gap registry (live)
 - `docs/CATALOG_GAPS.md` + `docs/CATALOG_GROUP_D_SPEC.md` — current catalog status + spec
