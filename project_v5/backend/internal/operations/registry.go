@@ -463,8 +463,11 @@ func (r *Registry) gateOK(tmpl domain.OperationTemplate, mode domain.PipelineMod
 
 // audit appends the v5_operation_runs row — always, including denied and
 // invalid outcomes; best-effort (an audit failure never fails the
-// operation). x-sensitive keys are redacted from BOTH input and output
-// before the row leaves this function (R6).
+// operation). Two redaction layers run before the row leaves this function
+// (R6): name-based credential scrub (RedactCredentialKeys — covers the
+// denied/invalid paths where input is the RAW pre-validation map and a
+// model-smuggled password key is invisible to schemas) + schema-driven
+// x-sensitive redaction, on BOTH input and output.
 func (r *Registry) audit(ctx context.Context, octx domain.OperationContext, inputSchema, outputSchema, input map[string]any, result *domain.OperationResult, errStr string, start time.Time) {
 	if r.runs == nil {
 		return
@@ -478,8 +481,8 @@ func (r *Registry) audit(ctx context.Context, octx domain.OperationContext, inpu
 		Mode:      octx.Mode,
 		ActorRole: octx.Role,
 		ActorID:   octx.ActorID,
-		Input:     RedactSensitive(inputSchema, input),
-		Output:    RedactSensitive(outputSchema, result.Output),
+		Input:     RedactSensitive(inputSchema, RedactCredentialKeys(input)),
+		Output:    RedactSensitive(outputSchema, RedactCredentialKeys(result.Output)),
 		Outcome:   result.Outcome,
 		Error:     errStr,
 		LatencyMS: int(time.Since(start).Milliseconds()),

@@ -2,8 +2,10 @@ package operations
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -478,4 +480,108 @@ func TestSeedTemplatesRequiresStore(t *testing.T) {
 	if err := reg.SeedTemplates(context.Background(), nil); err == nil {
 		t.Error("seeding without a store must fail loud")
 	}
+}
+
+// ─── Execute: R6 credential scrub at the audit boundary ──────────────────
+
+// THE R6 audit-boundary test (m3 security review, 2026-07-28): a
+// model-smuggled password key must NEVER reach v5_operation_runs — on ANY
+// audit path. The dangerous paths are denied and invalid, which persist the
+// RAW pre-validation input: register_user's schema declares only `role`, so
+// schema-driven x-sensitive redaction cannot see a smuggled `password` key.
+// The name-based credential scrub (RedactCredentialKeys) must cover top-level
+// keys, nested objects and objects inside arrays.
+func TestAuditScrubsSmuggledCredentials(t *testing.T) {
+	const password = "smuggled-secret-PW#9"
+
+	smuggled := func() map[string]any {
+		return map[string]any{
+			"role":     "admin", // enum violation → OutcomeInvalid
+			"password": password,
+			"values":   map[string]any{"password": password, "note": "keep"},
+			"accounts": []any{map[string]any{"secret": password}},
+		}
+	}
+
+	assertScrubbed := func(t *testing.T, run domain.OperationRun) {
+		t.Helper()
+		raw, err := json.Marshal(run.Input)
+		if err != nil {
+			t.Fatalf("marshal run input: %v", err)
+		}
+		if strings.Contains(string(raw), password) {
+			t.Fatalf("password VALUE reached the v5_operation_runs row (R6 violation): %s", raw)
+		}
+		if !strings.Contains(string(raw), `"password":"[REDACTED]"`) {
+			t.Errorf("credential key should survive with a redacted value: %s", raw)
+		}
+	}
+
+	tmpl := stubTemplate("register_user", domain.KindMeta, domain.AgentData, domain.RoleVisitor, domain.ModeOnboarding)
+	tmpl.InputSchema = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"role": map[string]any{"type": "string", "enum": []string{"owner"}},
+		},
+		"required": []string{"role"},
+	}
+
+	t.Run("invalid path persists scrubbed raw input", func(t *testing.T) {
+		runs := &fakeRuns{}
+		reg := NewRegistry(RegistryConfig{Tenants: &fakeTenants{}, Runs: runs, Log: testLogger()})
+		reg.RegisterExecutor(domain.KindMeta, &stubExecutor{tmpl: tmpl})
+
+		res, err := reg.Execute(context.Background(),
+			domain.OperationContext{TenantSlug: "acme", Mode: domain.ModeOnboarding, Role: domain.RoleVisitor},
+			domain.ToolCall{Name: "register_user", Input: smuggled()})
+		if err != nil {
+			t.Fatalf("unexpected Go error: %v", err)
+		}
+		if res.Outcome != domain.OutcomeInvalid {
+			t.Fatalf("Outcome = %q, want invalid (enum violation)", res.Outcome)
+		}
+		if len(runs.rows) != 1 {
+			t.Fatalf("audit rows = %d, want 1", len(runs.rows))
+		}
+		assertScrubbed(t, runs.rows[0])
+	})
+
+	t.Run("denied (mode gate) path persists scrubbed raw input", func(t *testing.T) {
+		runs := &fakeRuns{}
+		reg := NewRegistry(RegistryConfig{Tenants: &fakeTenants{}, Runs: runs, Log: testLogger()})
+		reg.RegisterExecutor(domain.KindMeta, &stubExecutor{tmpl: tmpl})
+
+		res, err := reg.Execute(context.Background(),
+			domain.OperationContext{TenantSlug: "acme", Mode: domain.ModeStorefront, Role: domain.RoleVisitor},
+			domain.ToolCall{Name: "register_user", Input: smuggled()})
+		if err != nil {
+			t.Fatalf("unexpected Go error: %v", err)
+		}
+		if res.Outcome != domain.OutcomeDenied {
+			t.Fatalf("Outcome = %q, want denied", res.Outcome)
+		}
+		if len(runs.rows) != 1 {
+			t.Fatalf("audit rows = %d, want 1", len(runs.rows))
+		}
+		assertScrubbed(t, runs.rows[0])
+	})
+
+	t.Run("unknown-operation path persists scrubbed raw input", func(t *testing.T) {
+		runs := &fakeRuns{}
+		reg := NewRegistry(RegistryConfig{Tenants: &fakeTenants{}, Runs: runs, Log: testLogger()})
+
+		res, err := reg.Execute(context.Background(),
+			domain.OperationContext{TenantSlug: "acme", Mode: domain.ModeOnboarding, Role: domain.RoleVisitor},
+			domain.ToolCall{Name: "no_such_op", Input: smuggled()})
+		if err != nil {
+			t.Fatalf("unexpected Go error: %v", err)
+		}
+		if res.Outcome != domain.OutcomeDenied {
+			t.Fatalf("Outcome = %q, want denied", res.Outcome)
+		}
+		if len(runs.rows) != 1 {
+			t.Fatalf("audit rows = %d, want 1", len(runs.rows))
+		}
+		assertScrubbed(t, runs.rows[0])
+	})
 }

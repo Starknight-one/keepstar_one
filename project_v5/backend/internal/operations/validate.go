@@ -227,6 +227,82 @@ func ValidateOutput(schema, output map[string]any) []string {
 // never WHAT it was.
 const redactedPlaceholder = "[REDACTED]"
 
+// credentialKeyPattern matches password-class key names wherever they appear
+// in a persisted payload. R6 belt-and-braces at the audit boundary: no
+// operation schema declares a credential property (register_user carries only
+// role), so a credential key inside a tool input is always model-smuggled —
+// e.g. the visitor typed credentials into chat and the LLM echoed them into a
+// staging call. The denied and invalid audit paths persist the RAW
+// (pre-validation) input, where schema-driven redaction cannot see such keys;
+// this name-based scrub guarantees their values never reach v5_operation_runs
+// on ANY path. "token" is deliberately absent — server-minted door tokens are
+// not user credentials and stay observable for ops debugging.
+var credentialKeyPattern = regexp.MustCompile(`(?i)^(password|passwd|pwd|secret|secrets|credential|credentials|api[_-]?key)$`)
+
+// RedactCredentialKeys returns m with the value of every credential-class key
+// (credentialKeyPattern) replaced by the redaction placeholder, recursing into
+// nested objects and arrays. Returns m unchanged (no copy) when nothing
+// matched. Called by the registry audit boundary on BOTH input and output
+// before every v5_operation_runs append (R6).
+func RedactCredentialKeys(m map[string]any) map[string]any {
+	out, _ := redactCredentialMap(m)
+	return out
+}
+
+// redactCredentialMap is the copy-on-write worker behind RedactCredentialKeys.
+func redactCredentialMap(m map[string]any) (map[string]any, bool) {
+	if m == nil {
+		return nil, false
+	}
+	var out map[string]any
+	for k, v := range m {
+		var nv any
+		var changed bool
+		if credentialKeyPattern.MatchString(k) {
+			nv, changed = redactedPlaceholder, true
+		} else {
+			nv, changed = redactCredentialValue(v)
+		}
+		if changed {
+			if out == nil {
+				out = make(map[string]any, len(m))
+				for ck, cv := range m {
+					out[ck] = cv
+				}
+			}
+			out[k] = nv
+		}
+	}
+	if out == nil {
+		return m, false
+	}
+	return out, true
+}
+
+func redactCredentialValue(v any) (any, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		return redactCredentialMap(t)
+	case []any:
+		var out []any
+		for i, item := range t {
+			nv, changed := redactCredentialValue(item)
+			if changed {
+				if out == nil {
+					out = append([]any(nil), t...)
+				}
+				out[i] = nv
+			}
+		}
+		if out == nil {
+			return t, false
+		}
+		return out, true
+	default:
+		return v, false
+	}
+}
+
 // RedactSensitive returns a copy of m with every "x-sensitive"-flagged key
 // of schema replaced by the redaction placeholder. Paths are "key" or
 // "parent.child" (one nesting level, per domain.SensitiveKeys). Returns m

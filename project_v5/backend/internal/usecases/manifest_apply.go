@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"keepstar_v5/internal/domain"
@@ -88,9 +89,29 @@ type ManifestApplierConfig struct {
 
 // ManifestApplier applies staged onboarding manifests. Construct with
 // NewManifestApplier.
+//
+// Concurrency (m3 security review, 2026-07-28): every public entry point is
+// serialized PER SESSION via sessionLocks. All of them run a load→mutate→
+// persist cycle over the manifest zone, and the owner-decided auto-apply
+// means a double-clicked registration submit or a concurrent upload+submit
+// would BOTH see the manifest proposed and BOTH run Apply — two
+// CreateTenant calls, two tenants (admin suffixes slugs), a split-brain
+// manifest. An in-process lock is the correct scope: dev services are
+// pinned to replicas=1 (§6.1). The map grows one mutex per onboarding
+// session — bounded by session count, trivial at any realistic scale.
 type ManifestApplier struct {
 	cfg ManifestApplierConfig
 	log *slog.Logger
+
+	sessionLocks sync.Map // sessionID → *sync.Mutex
+}
+
+// lockSession serializes manifest work for one session; returns the unlock.
+func (ap *ManifestApplier) lockSession(sessionID string) func() {
+	v, _ := ap.sessionLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // NewManifestApplier constructs the applier.
@@ -110,6 +131,12 @@ func NewManifestApplier(cfg ManifestApplierConfig) *ManifestApplier {
 // error means infrastructure failure (manifest could not be loaded or
 // persisted).
 func (ap *ManifestApplier) Apply(ctx context.Context, sessionID, upTo string) (*domain.OnboardingManifest, error) {
+	defer ap.lockSession(sessionID)()
+	return ap.applyLocked(ctx, sessionID, upTo)
+}
+
+// applyLocked is Apply's worker — caller MUST hold the session lock.
+func (ap *ManifestApplier) applyLocked(ctx context.Context, sessionID, upTo string) (*domain.OnboardingManifest, error) {
 	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -198,6 +225,7 @@ func (ap *ManifestApplier) Apply(ctx context.Context, sessionID, upTo string) (*
 // bouncing with "apply the manifest first". The business user's action must
 // never depend on the model having called apply_manifest.
 func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID string, payload map[string]any) (*domain.ManifestStep, error) {
+	defer ap.lockSession(sessionID)()
 	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -220,7 +248,7 @@ func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID st
 	if st.Status == domain.ManifestStepProposed {
 		// Auto-apply (see doc comment): run the staged manifest now, then
 		// carry on with the registration against the fresh manifest.
-		applied, err := ap.Apply(ctx, sessionID, "")
+		applied, err := ap.applyLocked(ctx, sessionID, "")
 		if err != nil {
 			return nil, err
 		}
@@ -336,6 +364,7 @@ func (ap *ManifestApplier) RecordIngestFailure(ctx context.Context, sessionID st
 // stamped back onto the step so the next poll/turn sees it. Never bounces
 // on "apply the manifest first".
 func (ap *ManifestApplier) ResolveIngestToken(ctx context.Context, sessionID string) (*ports.IngestToken, error) {
+	defer ap.lockSession(sessionID)()
 	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -355,7 +384,7 @@ func (ap *ManifestApplier) ResolveIngestToken(ctx context.Context, sessionID str
 	// Door never ran (manifest still proposed) → the upload is the approval:
 	// apply now, which mints the door token.
 	if m.Steps[idx].Status == domain.ManifestStepProposed {
-		if m, err = ap.Apply(ctx, sessionID, ""); err != nil {
+		if m, err = ap.applyLocked(ctx, sessionID, ""); err != nil {
 			return nil, err
 		}
 		idx = findStepIndexByOp(m, opIssueIngestDoor)
@@ -420,7 +449,10 @@ func (ap *ManifestApplier) liveIngestToken(ctx context.Context, st *domain.Manif
 
 // mutateIngestStep loads the manifest, applies fn to the issue_ingest_door
 // step and persists. skipIfApplied short-circuits idempotent completions.
+// Serialized per session (it is only ever called from the public
+// RecordUploadJob / CompleteIngestStep / RecordIngestFailure entry points).
 func (ap *ManifestApplier) mutateIngestStep(ctx context.Context, sessionID string, fn func(*domain.ManifestStep), skipIfApplied bool) error {
+	defer ap.lockSession(sessionID)()
 	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
 	if err != nil {
 		return err

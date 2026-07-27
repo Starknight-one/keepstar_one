@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,7 +20,9 @@ import (
 
 // applierStatePort records every persisted manifest snapshot AND every delta
 // so tests can assert the FULL persistence surface (the R6 test greps it).
+// Mutex-guarded so the concurrency regression test can hammer it under -race.
 type applierStatePort struct {
+	mu        sync.Mutex
 	manifest  *domain.OnboardingManifest
 	snapshots [][]byte // marshaled manifest at each UpdateOnboarding
 	deltas    []domain.DeltaInfo
@@ -27,6 +30,8 @@ type applierStatePort struct {
 }
 
 func (s *applierStatePort) GetOnboarding(_ context.Context, _ string) (*domain.OnboardingManifest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.manifest == nil {
 		return nil, nil
 	}
@@ -43,6 +48,8 @@ func (s *applierStatePort) GetOnboarding(_ context.Context, _ string) (*domain.O
 }
 
 func (s *applierStatePort) UpdateOnboarding(_ context.Context, _ string, m *domain.OnboardingManifest, info domain.DeltaInfo) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.failWrite {
 		return 0, errors.New("state write refused")
 	}
@@ -64,6 +71,8 @@ func (s *applierStatePort) UpdateOnboarding(_ context.Context, _ string, m *doma
 // deltas — the surface the R6 password assertion scans.
 func (s *applierStatePort) persistedJSON(t *testing.T) string {
 	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var b strings.Builder
 	for _, snap := range s.snapshots {
 		b.Write(snap)
@@ -114,6 +123,7 @@ func (f *applierTokens) MintSurfaceToken(context.Context, string) (string, error
 }
 
 type applierGateway struct {
+	mu             sync.Mutex
 	createCalls    int
 	provisionCalls int
 	adoptCalls     int
@@ -125,6 +135,8 @@ type applierGateway struct {
 }
 
 func (g *applierGateway) CreateTenant(_ context.Context, name, _ string) (*ports.AdminTenant, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.createCalls++
 	if g.createErr != nil {
 		return nil, g.createErr
@@ -132,6 +144,8 @@ func (g *applierGateway) CreateTenant(_ context.Context, name, _ string) (*ports
 	return &ports.AdminTenant{TenantID: "11111111-2222-3333-4444-555555555555", Slug: "acme-realty"}, nil
 }
 func (g *applierGateway) ProvisionUser(_ context.Context, _, _, password, _ string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.provisionCalls++
 	if g.provisionErr != nil {
 		return "", g.provisionErr
@@ -822,5 +836,82 @@ func TestIngestDoorLifecycle(t *testing.T) {
 	}
 	if len(f.tokens.usedTokens) != 1 || f.tokens.usedTokens[0] != tok {
 		t.Fatalf("ingest token not consumed exactly once: %v", f.tokens.usedTokens)
+	}
+}
+
+// --- concurrency (m3 security review, 2026-07-28) ---
+
+// A double-clicked registration submit races two ExecuteStep calls, BOTH of
+// which would auto-apply a still-proposed manifest — without per-session
+// serialization that is two CreateTenant calls (admin suffixes slugs → two
+// tenants, split-brain manifest). The session lock must reduce the race to
+// one apply + one provision; the loser sees the applied step and replays
+// idempotently.
+func TestExecuteStepConcurrentDoubleSubmitAppliesOnce(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	steps := make([]*domain.ManifestStep, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			steps[i], errs[i] = f.ap.ExecuteStep(ctx, "sess-1", "s-reg", map[string]any{
+				"email": "owner@acme.test", "password": "pw-concurrent",
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < 2; i++ {
+		if errs[i] != nil {
+			t.Fatalf("submit %d failed: %v", i, errs[i])
+		}
+		if steps[i].Status != domain.ManifestStepApplied {
+			t.Fatalf("submit %d step = %q, want applied", i, steps[i].Status)
+		}
+	}
+	if f.gateway.createCalls != 1 {
+		t.Fatalf("create tenant calls = %d, want 1 (concurrent auto-apply must serialize)", f.gateway.createCalls)
+	}
+	if f.gateway.provisionCalls != 1 {
+		t.Fatalf("provision calls = %d, want 1 (loser must replay idempotently)", f.gateway.provisionCalls)
+	}
+}
+
+// Concurrent upload + registration submit (both owner-decided auto-apply
+// triggers) must also converge on ONE apply run: one tenant, one door mint.
+func TestConcurrentUploadAndSubmitApplyOnce(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	var submitErr, uploadErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, submitErr = f.ap.ExecuteStep(ctx, "sess-1", "s-reg", map[string]any{
+			"email": "owner@acme.test", "password": "pw-race",
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		_, uploadErr = f.ap.ResolveIngestToken(ctx, "sess-1")
+	}()
+	wg.Wait()
+
+	if submitErr != nil {
+		t.Fatalf("submit failed: %v", submitErr)
+	}
+	if uploadErr != nil {
+		t.Fatalf("upload door resolution failed: %v", uploadErr)
+	}
+	if f.gateway.createCalls != 1 {
+		t.Fatalf("create tenant calls = %d, want 1", f.gateway.createCalls)
+	}
+	if f.tokens.ingestMints != 1 {
+		t.Fatalf("ingest mints = %d, want 1 (the single apply mints the door once)", f.tokens.ingestMints)
 	}
 }
