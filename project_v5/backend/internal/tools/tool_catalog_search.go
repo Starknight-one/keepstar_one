@@ -65,11 +65,11 @@ func (t *CatalogSearchTool) Definition() domain.ToolDefinition {
 						},
 						"min_price": map[string]interface{}{
 							"type":        "number",
-							"description": "Minimum price in RUBLES",
+							"description": "Minimum price in USD (dollars, major units)",
 						},
 						"max_price": map[string]interface{}{
 							"type":        "number",
-							"description": "Maximum price in RUBLES",
+							"description": "Maximum price in USD (dollars, major units)",
 						},
 						"product_form": map[string]interface{}{
 							"type":        "string",
@@ -146,17 +146,17 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 	}
 
 	var brand, category string
-	var minPriceRubles, maxPriceRubles int
+	var minPriceMajor, maxPriceMajor int
 	var productForm, skinType, concern, keyIngredient, routineStep, texture, targetArea string
 
 	if filters, ok := input["filters"].(map[string]interface{}); ok {
 		brand, _ = filters["brand"].(string)
 		category, _ = filters["category"].(string)
 		if v, ok := filters["min_price"].(float64); ok {
-			minPriceRubles = int(v)
+			minPriceMajor = int(v)
 		}
 		if v, ok := filters["max_price"].(float64); ok {
-			maxPriceRubles = int(v)
+			maxPriceMajor = int(v)
 		}
 		productForm, _ = filters["product_form"].(string)
 		skinType, _ = filters["skin_type"].(string)
@@ -167,11 +167,11 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 		targetArea, _ = filters["target_area"].(string)
 	}
 
-	// LLM speaks rubles; postgres stores integer kopecks.
-	minPriceKopecks := minPriceRubles * 100
-	maxPriceKopecks := maxPriceRubles * 100
-	if minPriceRubles > 0 || maxPriceRubles > 0 {
-		meta["price_conversion"] = fmt.Sprintf("%d/%d руб → %d/%d коп", minPriceRubles, maxPriceRubles, minPriceKopecks, maxPriceKopecks)
+	// LLM speaks dollars (major units); postgres stores integer cents.
+	minPriceCents := minPriceMajor * 100
+	maxPriceCents := maxPriceMajor * 100
+	if minPriceMajor > 0 || maxPriceMajor > 0 {
+		meta["price_conversion"] = fmt.Sprintf("%d/%d руб → %d/%d коп", minPriceMajor, maxPriceMajor, minPriceCents, maxPriceCents)
 	}
 
 	state, err := t.state.GetState(ctx, toolCtx.SessionID)
@@ -199,8 +199,8 @@ func (t *CatalogSearchTool) Execute(ctx context.Context, toolCtx domain.ToolCont
 		Search:        vectorQuery,
 		Brand:         brand,
 		CategoryName:  category,
-		MinPrice:      minPriceKopecks,
-		MaxPrice:      maxPriceKopecks,
+		MinPrice:      minPriceCents,
+		MaxPrice:      maxPriceCents,
 		SortField:     sortBy,
 		SortOrder:     sortOrder,
 		// Over-fetch each branch by 2× so RRF has a richer pool to merge

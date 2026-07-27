@@ -476,28 +476,24 @@ func tier2Strings(m map[string]any, key string) []string {
 	return out
 }
 
-// formatPrice converts price-in-kopecks to a display string with thousand
-// separators and a currency symbol.
-func formatPrice(kopecks int, currency string) string {
-	rubles := kopecks / 100
-	str := fmt.Sprintf("%d", rubles)
+// formatPrice converts price-in-cents to a display string with thousand
+// separators and a currency symbol. USD-only product decision (owner,
+// 2026-07-27): anything not explicitly EUR renders as dollars — including
+// legacy rows still stamped RUB.
+func formatPrice(cents int, currency string) string {
+	major := cents / 100
+	str := fmt.Sprintf("%d", major)
 	var result strings.Builder
 	for i, c := range str {
 		if i > 0 && (len(str)-i)%3 == 0 {
-			result.WriteString(" ")
+			result.WriteString(",")
 		}
 		result.WriteRune(c)
 	}
-	var symbol string
-	switch currency {
-	case "USD":
-		symbol = "$"
-	case "EUR":
-		symbol = "€"
-	default:
-		symbol = "₽"
+	if currency == "EUR" {
+		return "€" + result.String()
 	}
-	return result.String() + " " + symbol
+	return "$" + result.String()
 }
 
 // BuildCatalogDigest assembles the per-tenant compact catalog digest used by

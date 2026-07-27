@@ -44,11 +44,11 @@ func (t *StateFilterTool) Definition() domain.ToolDefinition {
 				},
 				"min_price": map[string]interface{}{
 					"type":        "number",
-					"description": "Minimum price in RUBLES.",
+					"description": "Minimum price in USD (dollars, major units).",
 				},
 				"max_price": map[string]interface{}{
 					"type":        "number",
-					"description": "Maximum price in RUBLES.",
+					"description": "Maximum price in USD (dollars, major units).",
 				},
 				"min_rating": map[string]interface{}{
 					"type":        "number",
@@ -74,12 +74,12 @@ func (t *StateFilterTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 	brand, _ := input["brand"].(string)
 	category, _ := input["category"].(string)
 	textMatch, _ := input["text_match"].(string)
-	var minPriceKopecks, maxPriceKopecks int
+	var minPriceCents, maxPriceCents int
 	if v, ok := input["min_price"].(float64); ok {
-		minPriceKopecks = int(v) * 100
+		minPriceCents = int(v) * 100
 	}
 	if v, ok := input["max_price"].(float64); ok {
-		maxPriceKopecks = int(v) * 100
+		maxPriceCents = int(v) * 100
 	}
 	var minRating float64
 	if v, ok := input["min_rating"].(float64); ok {
@@ -90,7 +90,7 @@ func (t *StateFilterTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 
 	var filtered []domain.Product
 	for _, p := range original {
-		if !matchProduct(p, brand, category, textMatch, minPriceKopecks, maxPriceKopecks, minRating) {
+		if !matchProduct(p, brand, category, textMatch, minPriceCents, maxPriceCents, minRating) {
 			continue
 		}
 		filtered = append(filtered, p)
@@ -148,18 +148,18 @@ func (t *StateFilterTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 
 // matchProduct returns true when the product passes every populated filter.
 // Empty filters are ignored. minPrice / maxPrice are kopecks (caller has
-// converted from rubles).
-func matchProduct(p domain.Product, brand, category, textMatch string, minPriceKopecks, maxPriceKopecks int, minRating float64) bool {
+// converted from dollars).
+func matchProduct(p domain.Product, brand, category, textMatch string, minPriceCents, maxPriceCents int, minRating float64) bool {
 	if brand != "" && !containsCI(p.Brand, brand) {
 		return false
 	}
 	if category != "" && !containsCI(p.Category, category) {
 		return false
 	}
-	if minPriceKopecks > 0 && p.Price < minPriceKopecks {
+	if minPriceCents > 0 && p.Price < minPriceCents {
 		return false
 	}
-	if maxPriceKopecks > 0 && p.Price > maxPriceKopecks {
+	if maxPriceCents > 0 && p.Price > maxPriceCents {
 		return false
 	}
 	if minRating > 0 && p.Rating < minRating {

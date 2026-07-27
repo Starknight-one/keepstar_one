@@ -41,7 +41,7 @@ Examples:
    - filters: exact match filters. Use enum values from <catalog> block.
    - vector_query: semantic search in user's ORIGINAL language. Do NOT translate.
 3. Match user intent to exact filter values from <catalog> → filters.{key}. Everything else → vector_query.
-4. Prices are in RUBLES. "дешевле 10000" → filters.max_price: 10000
+4. Prices are in USD (dollars). "under $100" → filters.max_price: 100. Prices you see in <state> are also dollars.
 5. If user asks to CHANGE DISPLAY STYLE → DO NOT call any tool. Just stop.
 6. Do NOT explain. Do NOT ask questions. Make best guess.
 7. After getting "ok"/"empty", stop. Do not call more tools.
@@ -63,10 +63,14 @@ Examples:
 // at marshal time via omitempty so an unrated product doesn't waste tokens
 // on `"rating":0`.
 type RenderedItem struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name,omitempty"`
-	Brand          string   `json:"brand,omitempty"`
-	Price          int      `json:"price,omitempty"`
+	ID    string `json:"id"`
+	Name  string `json:"name,omitempty"`
+	Brand string `json:"brand,omitempty"`
+	// Price is in MAJOR units (dollars) — the storage layer keeps cents,
+	// but the LLM's whole price vocabulary (tool filters, user queries)
+	// is dollars, so <state> must speak dollars too or the model carries
+	// a silent 100× mismatch.
+	Price          float64  `json:"price,omitempty"`
 	Rating         float64  `json:"rating,omitempty"`
 	Images         []string `json:"images,omitempty"`
 	MarketingClaim string   `json:"marketing_claim,omitempty"`
@@ -125,7 +129,7 @@ func BuildRenderedSubset(products []domain.Product, indices []int) []RenderedIte
 			ID:             p.ID,
 			Name:           p.Name,
 			Brand:          p.Brand,
-			Price:          p.Price,
+			Price:          float64(p.Price) / 100, // cents → dollars for the LLM
 			Rating:         p.Rating,
 			Images:         p.Images,
 			MarketingClaim: p.MarketingClaim,
