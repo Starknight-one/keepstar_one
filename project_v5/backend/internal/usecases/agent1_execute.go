@@ -304,6 +304,11 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 			out.Results = append(out.Results, result)
 			out.ToolExecuteMs += toolMs
 
+			// R28: chat-path entity MUTATIONS stamp their session delta here
+			// (the invoke handler owns the widget path; queries emit
+			// ENTITY_QUERY from the query executor's own zone write).
+			uc.appendRecordDelta(ctx, req, result)
+
 			// History bridges the structured result to the legacy tool_result
 			// shape WITHOUT metadata — exactly the bytes the pre-registry
 			// path persisted, so conversation-prefix caches stay warm.
@@ -332,6 +337,49 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	uc.appendConversation(ctx, req.SessionID, state.ConversationHistory, historyTail)
 	out.LatencyMs = time.Since(start).Milliseconds()
 	return out, nil
+}
+
+// appendRecordDelta writes the R28 session delta for chat-path entity
+// MUTATIONS (Path "records"): RECORD_CREATE for create_record +
+// schedule_slot, RECORD_UPDATE, RECORD_TRANSITION — the same vocabulary the
+// invoke handler stamps on the widget path, so curator sees both doors
+// identically. Best-effort: the mutation already committed, a delta failure
+// logs and never fails the turn. Raw LLM tool input is deliberately NOT
+// persisted (R6 discipline — the redacted audit copy lives in
+// v5_operation_runs).
+func (uc *Agent1Execute) appendRecordDelta(ctx context.Context, req Agent1ExecuteRequest, result *domain.OperationResult) {
+	if result == nil || result.Outcome != domain.OutcomeOK {
+		return
+	}
+	actionType, deltaType, ok := domain.RecordDeltaShape(result.Kind)
+	if !ok {
+		return
+	}
+	params := map[string]interface{}{"operation": result.Operation}
+	if result.EntityKind != "" {
+		params["entityKind"] = result.EntityKind
+	}
+	if result.RecordID != "" {
+		params["recordId"] = result.RecordID
+	}
+	actorID := req.ActorID
+	if actorID == "" {
+		actorID = "visitor:" + req.SessionID
+	}
+	delta := domain.DeltaInfo{
+		TurnID:    req.TurnID,
+		Trigger:   domain.TriggerUserQuery,
+		Source:    domain.SourceLLM,
+		ActorID:   actorID,
+		DeltaType: deltaType,
+		Path:      "records",
+		Action:    domain.Action{Type: actionType, Tool: result.Operation, Params: params},
+		Result:    domain.ResultMeta{Count: result.Count},
+	}.ToDelta()
+	if _, err := uc.state.AddDelta(ctx, req.SessionID, delta); err != nil {
+		uc.log.Warn("agent1: record delta append failed",
+			"session", req.SessionID, "operation", result.Operation, "err", err)
+	}
 }
 
 // stampStateCounts writes the reloaded state count onto the legacy

@@ -1,7 +1,11 @@
 // dispatchAction — single entry point for every click on a button /
-// frame carrying a domain.UserAction. Switches on action.kind and
-// routes to either the backend (/actions, /navigation/*) or a
-// frontend-only handler (external_link, search).
+// frame carrying a domain.UserAction. Routes through the HANDLERS
+// table (RUNTIME_SPEC §4.8): the legacy like/cart kinds keep the
+// /actions path unchanged (back-compat), client built-ins run locally,
+// and everything else reaches the operation registry through
+// POST /operations/invoke — the operation NAME + params live in the
+// node's action props, so adding an operation is library content +
+// a server-declared apply[], zero client code.
 //
 // ctx must be the value of RenderContext.Provider — see
 // src/renderer/RenderContext.js for the shape.
@@ -11,41 +15,140 @@
 // forget is fine for clicks.
 
 import { postAction, expandView, goBack } from '../api/actions'
+import { invokeOperation, submitFormEndpoint } from '../api/operations'
 import { fillTemplate } from './fillTemplate'
 
 const KIND_LIKE = 'like'
 const KIND_UNLIKE = 'unlike'
 const KIND_CART_ADD = 'cart_add'
 const KIND_CART_REMOVE = 'cart_remove'
-const KIND_DRILL = 'drill_detail'
-const KIND_BACK = 'back'
-const KIND_OPEN_CATEGORY = 'open_category'
-const KIND_EXTERNAL_LINK = 'external_link'
-const KIND_SEARCH = 'search'
+
+// The dispatch table (RUNTIME_SPEC §4.8). Every handler takes
+// (action, ctx). Kinds outside the table are unknown — warn + null,
+// stale documents degrade visibly, never into a network call.
+const HANDLERS = {
+  // Legacy backend kinds — /actions path, unchanged.
+  [KIND_LIKE]: dispatchBackendAction,
+  [KIND_UNLIKE]: dispatchBackendAction,
+  [KIND_CART_ADD]: dispatchBackendAction,
+  [KIND_CART_REMOVE]: dispatchBackendAction,
+  // Client built-ins.
+  drill_detail: dispatchDrill,
+  back: dispatchBack,
+  open_category: dispatchOpenCategory,
+  external_link: dispatchExternalLink,
+  search: dispatchSearch,
+  // Registry-driven operations (R1) + document-specified form posts (R6).
+  operation_invoke: dispatchOperation,
+  form_submit: dispatchFormSubmit,
+}
 
 export async function dispatchAction(action, ctx) {
-  if (!action || typeof action !== 'object') return
-  const { kind } = action
-  switch (kind) {
-    case KIND_LIKE:
-    case KIND_UNLIKE:
-    case KIND_CART_ADD:
-    case KIND_CART_REMOVE:
-      return dispatchBackendAction(action, ctx)
-    case KIND_DRILL:
-      return dispatchDrill(action, ctx)
-    case KIND_BACK:
-      return dispatchBack(ctx)
-    case KIND_EXTERNAL_LINK:
-      return dispatchExternalLink(action)
-    case KIND_SEARCH:
-      return dispatchSearch(action, ctx)
-    case KIND_OPEN_CATEGORY:
-      return dispatchOpenCategory(action, ctx)
-    default:
+  if (!action || typeof action !== 'object') return null
+  const handler = HANDLERS[action.kind]
+  if (!handler) {
+    // eslint-disable-next-line no-console
+    console.warn('[v5-action] unknown kind', action.kind, action)
+    return null
+  }
+  return handler(action, ctx)
+}
+
+// applyServerResult — ONE applier for every server-declared result
+// shape, mapped onto ctx handlers. Generalizes the original like/cart
+// state path (resp.actions → onActionState) to the R1 apply[] contract:
+//   resp.actions                          → ctx.onActionState (legacy /actions echo)
+//   {target:"block", blockId, document}   → ctx.onReplaceBlock (block-hosting
+//       shells), else ctx.onUpdateDocument — the storefront whole-view
+//       swap (e.g. success_plaque).
+//   {target:"form", ...}                  → owned by FormContext
+//       (FormProvider.submit applies it); reaching a formless dispatch
+//       means the server answered a standalone button with a form
+//       target — surface the message in the console, nothing to bind.
+export function applyServerResult(resp, ctx) {
+  if (!resp || typeof resp !== 'object') return resp
+  if (resp.actions && typeof ctx?.onActionState === 'function') {
+    ctx.onActionState(resp.actions)
+  }
+  const applies = Array.isArray(resp.apply) ? resp.apply : []
+  for (const a of applies) {
+    if (!a || typeof a !== 'object') continue
+    if (a.target === 'block' && a.document) {
+      if (typeof ctx?.onReplaceBlock === 'function') {
+        ctx.onReplaceBlock(a.blockId, a.document)
+      } else if (typeof ctx?.onUpdateDocument === 'function') {
+        ctx.onUpdateDocument(a.document)
+      }
+    } else if (a.target === 'form') {
       // eslint-disable-next-line no-console
-      console.warn('[v5-action] unknown kind', kind, action)
-      return null
+      console.warn('[v5-action] form apply target outside a form', a.status, a.message)
+    } else {
+      // eslint-disable-next-line no-console
+      console.warn('[v5-action] unknown apply target', a.target)
+    }
+  }
+  return resp
+}
+
+// dispatchOperation — standalone operation_invoke button (e.g. the
+// advance_lead atoms on lead_detail). Runs the registry operation named
+// in the node props via POST /operations/invoke (R1) and maps the
+// response's apply[] onto ctx. Form-hosted submissions do NOT come
+// through here — FormProvider.submit collects field values and calls
+// the same API client with a formId.
+async function dispatchOperation(action, ctx) {
+  const { apiBaseUrl, tenantSlug, sessionId, blockId } = ctx || {}
+  if (typeof action.operation !== 'string' || action.operation === '') {
+    // eslint-disable-next-line no-console
+    console.warn('[v5-action] operation_invoke missing operation', action)
+    return null
+  }
+  if (!sessionId) {
+    // eslint-disable-next-line no-console
+    console.warn('[v5-action] no sessionId; skipping', action)
+    return null
+  }
+  try {
+    const resp = await invokeOperation({
+      baseUrl: apiBaseUrl,
+      tenantSlug,
+      sessionId,
+      operation: action.operation,
+      params: action.params,
+      entity: action.entity,
+      blockId: blockId || undefined,
+    })
+    return applyServerResult(resp, ctx)
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[v5-action] operation failed', { operation: action.operation, err: err.message })
+    throw err
+  }
+}
+
+// dispatchFormSubmit — standalone form_submit button (no formId frame
+// above it). POSTs action.params to the document-specified same-origin
+// endpoint (R6 — the endpoint validation lives in the API client).
+// Inside a form, Submit.jsx routes through FormProvider.submit instead,
+// carrying the collected field values.
+async function dispatchFormSubmit(action, ctx) {
+  if (typeof action.endpoint !== 'string' || action.endpoint === '') {
+    // eslint-disable-next-line no-console
+    console.warn('[v5-action] form_submit missing endpoint', action)
+    return null
+  }
+  try {
+    const resp = await submitFormEndpoint({
+      baseUrl: ctx?.apiBaseUrl,
+      endpoint: action.endpoint,
+      values: action.params || {},
+      formId: action.formId,
+    })
+    return applyServerResult(resp, ctx)
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[v5-action] form submit failed', { endpoint: action.endpoint, err: err.message })
+    throw err
   }
 }
 
@@ -80,10 +183,7 @@ async function dispatchBackendAction(action, ctx) {
       entity: action.entity,
       params: action.params,
     })
-    if (typeof onActionState === 'function' && resp?.actions) {
-      onActionState(resp.actions)
-    }
-    return resp
+    return applyServerResult(resp, ctx)
   } catch (err) {
     if (typeof onActionState === 'function' && prevState) {
       onActionState(prevState)
@@ -172,7 +272,7 @@ async function dispatchDrill(action, ctx) {
   }
 }
 
-async function dispatchBack(ctx) {
+async function dispatchBack(action, ctx) {
   const { apiBaseUrl, tenantSlug, sessionId, onUpdateDocument } = ctx || {}
   try {
     const resp = await goBack({ baseUrl: apiBaseUrl, tenantSlug, sessionId })

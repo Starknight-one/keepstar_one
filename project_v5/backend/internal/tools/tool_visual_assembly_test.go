@@ -659,3 +659,151 @@ func findContentString(node interface{}, needle string) bool {
 	}
 	return false
 }
+
+// entityLeadState builds a minStatePort whose data zone carries the generic
+// Entities zone (RUNTIME_SPEC.md §4.5) — one lead set, no products.
+func entityLeadState() *minStatePort {
+	return &minStatePort{
+		state: &domain.SessionState{
+			SessionID: "sess-1",
+			Current: domain.StateCurrent{Data: domain.StateData{
+				Entities: []domain.EntitySet{{
+					Slug: "lead",
+					Name: "Lead",
+					Fields: []domain.FieldDef{
+						{Key: "name", Label: "Name", Type: domain.FieldText},
+						{Key: "status", Label: "Status", Type: domain.FieldEnum, ValueSetRef: "lead_pipeline"},
+					},
+					Labels: map[string]map[string]string{
+						"lead_pipeline": {"new": "New"},
+					},
+					Records: []domain.EntityRecord{
+						{ID: "l1", EntitySlug: "lead", Status: "new",
+							Data: map[string]any{"name": "Ana Souza", "status": "new"}},
+						{ID: "l2", EntitySlug: "lead", Status: "new",
+							Data: map[string]any{"name": "Bruno Lima", "status": "new"}},
+					},
+				}},
+			}},
+		},
+	}
+}
+
+// leadPreset binds name + statusLabel — the EntityToMap-derived vocabulary
+// a lead_table-style preset is authored against.
+func leadPreset(name string) *domain.Preset {
+	body := []byte(`{
+	  "version": "2.10",
+	  "children": [
+	    {
+	      "type": "frame", "id": "row", "replicate": true,
+	      "children": [
+	        {"type": "text", "id": "title", "fieldBinding": "name"},
+	        {"type": "text", "id": "badge", "fieldBinding": "statusLabel"}
+	      ]
+	    }
+	  ]
+	}`)
+	return &domain.Preset{
+		ID:           "p-lead",
+		TenantID:     "t-1",
+		Name:         name,
+		EntityType:   "lead",
+		Status:       domain.PresetStatusPublished,
+		DocumentJSON: body,
+	}
+}
+
+// TestVisualAssemblyBindsEntityZone — when the data zone carries entity
+// sets (crm form), visual_assembly binds their records through the exact
+// same BindData path as products: replicate fans out per record and
+// EntityToMap-derived keys (statusLabel) resolve. Zero engine changes —
+// this is the dataToBindData seam (§4.5).
+func TestVisualAssemblyBindsEntityZone(t *testing.T) {
+	state := entityLeadState()
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{"lead_table": leadPreset("lead_table")}},
+		&minComponentPort{},
+	)
+
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{"mode": "rebuild", "preset": "lead_table", "replicate": 2},
+	)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("ToolResult IsError: %s", res.Content)
+	}
+	if state.saved == nil {
+		t.Fatalf("UpdateTemplate was not called")
+	}
+
+	rawChildren, _ := state.saved["children"].([]interface{})
+	if len(rawChildren) != 2 {
+		t.Fatalf("expected 2 cloned rows (one per lead record), got %d", len(rawChildren))
+	}
+	// Clone ids are minted fresh per clone — locate nodes by fieldBinding.
+	if got := findBoundContent(rawChildren[0], "name"); got != "Ana Souza" {
+		t.Errorf("row[0] name = %q, want Ana Souza", got)
+	}
+	if got := findBoundContent(rawChildren[0], "statusLabel"); got != "New" {
+		t.Errorf("row[0] statusLabel = %q, want value-set label New", got)
+	}
+	if got := findBoundContent(rawChildren[1], "name"); got != "Bruno Lima" {
+		t.Errorf("row[1] name = %q, want Bruno Lima", got)
+	}
+}
+
+// findBoundContent walks a node tree and returns the content of the first
+// node carrying the given fieldBinding (clone ids are minted fresh, so
+// binding key — not id — is the stable lookup).
+func findBoundContent(node interface{}, fieldBinding string) string {
+	m, ok := node.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	if fb, _ := m["fieldBinding"].(string); fb == fieldBinding {
+		c, _ := m["content"].(string)
+		return c
+	}
+	if children, ok := m["children"].([]interface{}); ok {
+		for _, c := range children {
+			if got := findBoundContent(c, fieldBinding); got != "" {
+				return got
+			}
+		}
+	}
+	return ""
+}
+
+// TestVisualAssemblyProductsLeadEntities — deterministic ordering contract
+// of dataToBindData: when both products and entity sets exist, products
+// bind first (legacy product turns stay byte-identical).
+func TestVisualAssemblyProductsLeadEntities(t *testing.T) {
+	state := entityLeadState()
+	state.state.Current.Data.Products = []domain.Product{{ID: "p1", Name: "Glow Serum"}}
+	tool := NewVisualAssemblyTool(state,
+		&minPresetPort{byName: map[string]*domain.Preset{"product_card": minimalPreset("product_card")}},
+		&minComponentPort{},
+	)
+
+	res, err := tool.Execute(context.Background(),
+		domain.ToolContext{SessionID: "sess-1", TenantSlug: "tenant-x"},
+		map[string]interface{}{"mode": "rebuild", "preset": "product_card", "replicate": 1},
+	)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("ToolResult IsError: %s", res.Content)
+	}
+	rawChildren, _ := state.saved["children"].([]interface{})
+	if len(rawChildren) != 1 {
+		t.Fatalf("expected 1 clone, got %d", len(rawChildren))
+	}
+	if got := findTitleContent(t, rawChildren[0]); got != "Glow Serum" {
+		t.Errorf("clone[0] title = %q — product must bind before entity records", got)
+	}
+}

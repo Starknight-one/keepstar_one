@@ -43,7 +43,35 @@ const (
 	ActionCartAdd    ActionType = "CART_ADD"
 	ActionCartRemove ActionType = "CART_REMOVE"
 	ActionCartUpdate ActionType = "CART_UPDATE"
+
+	// Entity-plane delta vocabulary (R28): entity mutations through the
+	// operation plane use these — delta Path is "records" for mutations,
+	// "data" for queries. There is NO generic OPERATION ActionType; notify
+	// is audited via v5_operation_runs + v5_events only.
+	ActionRecordCreate     ActionType = "RECORD_CREATE"
+	ActionRecordUpdate     ActionType = "RECORD_UPDATE"
+	ActionRecordTransition ActionType = "RECORD_TRANSITION"
+	ActionEntityQuery      ActionType = "ENTITY_QUERY"
 )
+
+// RecordDeltaShape maps an entity-mutation operation kind to its R28 delta
+// vocabulary (Path "records"): RECORD_CREATE for create_record +
+// schedule_slot (R11: create semantics), RECORD_UPDATE, RECORD_TRANSITION.
+// ok=false for every other kind — queries emit ENTITY_QUERY from the query
+// executor's own zone write (Path "data"), notify has no delta. Shared by
+// the invoke handler and the Agent1 chat path so both mutation doors stamp
+// identical vocabulary.
+func RecordDeltaShape(kind OperationKind) (ActionType, DeltaType, bool) {
+	switch kind {
+	case KindCreateRecord, KindScheduleSlot:
+		return ActionRecordCreate, DeltaTypeAdd, true
+	case KindUpdateRecord:
+		return ActionRecordUpdate, DeltaTypeUpdate, true
+	case KindTransitionStatus:
+		return ActionRecordTransition, DeltaTypeUpdate, true
+	}
+	return "", "", false
+}
 
 type Action struct {
 	Type   ActionType             `json:"type"`

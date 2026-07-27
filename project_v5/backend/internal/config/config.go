@@ -41,6 +41,11 @@ type Config struct {
 	// midnight. <= 0 disables the cap. Process-local (correct for the
 	// current single-instance deploy; revisit if V5 scales horizontally).
 	PipelineDailyUSDCap float64
+	// CheapRatePerMin caps the §6.3 "cheap" routes (no LLM spend) per client
+	// IP per minute: /session/init, /actions, /navigation/*,
+	// /operations/invoke and the onboarding submit routes share ONE bucket.
+	// <= 0 disables the limit.
+	CheapRatePerMin int
 }
 
 // Load reads env vars, applies defaults, and validates required fields.
@@ -58,6 +63,7 @@ func Load() (*Config, error) {
 
 		PipelineRatePerMin:  envInt("PIPELINE_RATE_PER_MIN", 30),
 		PipelineDailyUSDCap: envFloat("PIPELINE_DAILY_USD_CAP", 10.0),
+		CheapRatePerMin:     envInt("CHEAP_RATE_PER_MIN", 120),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")

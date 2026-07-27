@@ -30,6 +30,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //	POST /api/v1/pipeline                    — run Agent2 turn
 //	POST /api/v1/pipeline/stream             — same turn with SSE progress frames
 //	POST /api/v1/actions                     — like / unlike / cart_add / cart_remove
+//	POST /api/v1/operations/invoke           — public operation endpoint (R1; widget operation_invoke)
 //	POST /api/v1/navigation/expand           — drill into detail preset
 //	POST /api/v1/navigation/back             — pop view stack, restore prior template
 //	POST /api/v1/navigation/filter           — deterministic brand re-filter of the current grid
@@ -67,11 +68,27 @@ func RegisterRoutes(
 	theme *ThemeHandler,
 	onboard *OnboardHandler,
 	cache *CacheHandler,
+	operations *OperationsHandler,
+	cheapGuard *PipelineGuard,
 ) http.Handler {
+	// §6.3 cheap bucket: the SAME guard instance fronts every no-LLM-spend
+	// route. /operations/invoke checks it inside the handler (it owns its
+	// own 429 there) so it is mounted bare; the rest are wrapped here. A
+	// nil guard allows everything (PipelineGuard.Allow nil-receiver).
+	withCheap := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if ok, _ := cheapGuard.Allow(clientIP(r)); !ok {
+				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+			next(w, r)
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", HealthHandler)
 	mux.HandleFunc("GET /readyz", ReadyzHandler(pool))
-	mux.HandleFunc("POST /api/v1/session/init", session.Init)
+	mux.HandleFunc("POST /api/v1/session/init", withCheap(session.Init))
 	mux.HandleFunc("GET /api/v1/session/", session.Get)
 	// Onboarding (R5/R17) — ks_onboard cookie gated inside the handler,
 	// exempt from WithTenant (system tenant resolved server-side).
@@ -92,10 +109,13 @@ func RegisterRoutes(
 	mux.HandleFunc("PUT /api/v1/internal/theme", theme.Theme)
 	mux.HandleFunc("POST /api/v1/pipeline", pipeline.Pipeline)
 	mux.HandleFunc("POST /api/v1/pipeline/stream", pipeline.PipelineStream)
-	mux.HandleFunc("POST /api/v1/actions", action.Action)
-	mux.HandleFunc("POST /api/v1/navigation/expand", navigation.Expand)
-	mux.HandleFunc("POST /api/v1/navigation/back", navigation.Back)
-	mux.HandleFunc("POST /api/v1/navigation/filter", navigation.Filter)
+	mux.HandleFunc("POST /api/v1/actions", withCheap(action.Action))
+	// Public operation endpoint (R1) — inside the WithTenant chain, NOT
+	// under /api/v1/internal/. The handler applies the cheap bucket itself.
+	mux.HandleFunc("POST /api/v1/operations/invoke", operations.Invoke)
+	mux.HandleFunc("POST /api/v1/navigation/expand", withCheap(navigation.Expand))
+	mux.HandleFunc("POST /api/v1/navigation/back", withCheap(navigation.Back))
+	mux.HandleFunc("POST /api/v1/navigation/filter", withCheap(navigation.Filter))
 
 	// Static fileserver (V4 pattern, project_v4/backend/cmd/server/main.go:347-357).
 	// Serves the V5 widget IIFE bundle (widget.js + widget.html) from same

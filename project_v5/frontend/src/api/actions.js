@@ -1,7 +1,13 @@
-// Action + navigation API client. Talks to:
-//   POST  {base}/actions                       — like / cart actions
+// Legacy action + navigation API client. Talks to:
+//   POST  {base}/actions                       — like / cart actions ONLY
 //   POST  {base}/navigation/expand             — drill into detail preset
 //   POST  {base}/navigation/back               — pop view stack
+//
+// /actions is the closed legacy kind set (like / unlike / cart_add /
+// cart_remove) and stays for back-compat; the backend rejects the
+// registry kinds here. Everything else goes through the operation
+// registry — src/api/operations.js → POST {base}/operations/invoke
+// (RUNTIME_SPEC §4.8).
 //
 // Fire-and-forget pattern (sync=true) is supported on /actions so the
 // frontend can update its local state without waiting for the response

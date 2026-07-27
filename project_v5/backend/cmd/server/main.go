@@ -147,6 +147,27 @@ func main() {
 	registry.RegisterExecutor(domain.KindInternal, operations.WrapStateFilter(tools.NewStateFilterTool(statePort)))
 	registry.RegisterExecutor(domain.KindInternal, operations.WrapHistoryLookup(tools.NewHistoryLookupTool(statePort)))
 
+	// Entity plane (M2, §4.2/§4.4): the six native executors over the
+	// EntityWrite path (validate → tx record+outbox → post-commit inline
+	// automation dispatch, R10/R12). Registered BEFORE SeedTemplates so
+	// their template rows ride the same seed pass. The registry keys
+	// executors by template name — the `query` executor coexists with the
+	// auto-enabled legacy `catalog_search` wrap.
+	entityPort := postgres.NewEntityAdapter(pgClient)
+	entityWrite := usecases.NewEntityWrite(entityPort, catalogPort, log)
+	operations.RegisterEntityExecutors(registry, operations.EntityExecutorDeps{
+		State:         statePort,
+		Catalog:       catalogPort,
+		Entities:      entityPort,
+		Embedding:     embeddingPort,
+		Writer:        entityWrite,
+		Notifications: postgres.NewNotificationAdapter(pgClient),
+	})
+	// The automation runner closes the EntityWrite→registry cycle, so it is
+	// set only after the registry exists. Until set, events would commit
+	// unprocessed with a warn — never leave this out of boot wiring.
+	entityWrite.SetAutomationRunner(usecases.NewOperationRunner(registry, log))
+
 	// Boot seed (§3.1): wrap rows from the registered executors + the 18
 	// spec templates (6 executors, compose_turn, 11 onboarding meta-ops),
 	// idempotent upsert on name, descriptions embedded when the embedder is
@@ -176,7 +197,13 @@ func main() {
 	themeH := handlers.NewThemeHandler(themePort, log)
 	onboardH := handlers.NewOnboardHandler(statePort, catalogPort, pgClient.Pool(), log)
 	cacheH := handlers.NewCacheHandler(agent1Cache, promptCache, registry, log)
-	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH, themeH, onboardH, cacheH)
+	// §6.3 cheap bucket: ONE shared per-IP guard over the no-LLM-spend
+	// routes. The operations handler checks it internally; routes.go fronts
+	// /session/init, /actions and /navigation/* with the same instance.
+	cheapGuard := handlers.NewCheapGuard(cfg.CheapRatePerMin, log)
+	log.Info("cheap_guard_configured", "rate_per_min", cfg.CheapRatePerMin)
+	operationsH := handlers.NewOperationsHandler(registry, statePort, presetPort, componentPort, themePort, pgClient.Pool(), cheapGuard, log)
+	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH, themeH, onboardH, cacheH, operationsH, cheapGuard)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

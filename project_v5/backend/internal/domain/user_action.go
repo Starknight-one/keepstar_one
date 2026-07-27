@@ -22,6 +22,14 @@ const (
 	UserActionOpenCategory UserActionKind = "open_category"
 	UserActionExternalLink UserActionKind = "external_link"
 	UserActionSearch       UserActionKind = "search"
+
+	// Runtime v1 operation-plane kinds (RUNTIME_SPEC.md §4.8). Both are
+	// dispatched by the widget to their own endpoints — operation_invoke to
+	// POST /api/v1/operations/invoke (R1), form_submit to the
+	// document-specified endpoint (R6) — NEVER to /api/v1/actions, which
+	// rejects them (IsBackendHandled is false).
+	UserActionOperationInvoke UserActionKind = "operation_invoke"
+	UserActionFormSubmit      UserActionKind = "form_submit"
 )
 
 // UserAction is the runtime payload attached to button atoms in a
@@ -56,14 +64,15 @@ func (k UserActionKind) IsBackendHandled() bool {
 	return false
 }
 
-// IsKnown reports whether s is one of the nine recognised kinds.
+// IsKnown reports whether s is one of the eleven recognised kinds.
 // Used by handlers to reject unknown kinds with 400 instead of
 // silently no-op'ing.
 func (k UserActionKind) IsKnown() bool {
 	switch k {
 	case UserActionLike, UserActionUnlike, UserActionCartAdd, UserActionCartRemove,
 		UserActionDrillDetail, UserActionBack, UserActionOpenCategory,
-		UserActionExternalLink, UserActionSearch:
+		UserActionExternalLink, UserActionSearch,
+		UserActionOperationInvoke, UserActionFormSubmit:
 		return true
 	}
 	return false

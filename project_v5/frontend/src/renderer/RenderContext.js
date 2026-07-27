@@ -33,6 +33,14 @@ export const defaultRenderContext = {
   onActionState: () => {},
   onUpdateDocument: () => {},
   onSearch: () => {},
+  // Form/operation apply plumbing (RUNTIME_SPEC §4.8). blockId is set by
+  // block-hosting shells (the onboarding blocks renderer) so
+  // /operations/invoke requests can reference the originating block.
+  // onReplaceBlock(blockId, document) swaps ONE block in place; null
+  // (not a no-op) so callers can detect its absence and fall back to
+  // onUpdateDocument — the storefront's whole-view swap.
+  blockId: null,
+  onReplaceBlock: null,
 }
 
 const RenderContext = createContext(defaultRenderContext)

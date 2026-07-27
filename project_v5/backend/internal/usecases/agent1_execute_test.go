@@ -2,9 +2,11 @@ package usecases
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"keepstar_v5/internal/domain"
@@ -329,5 +331,119 @@ func TestAgent1ToolRetryWithEmptyInput(t *testing.T) {
 	}
 	if resp.ToolResult == nil || resp.ToolResult.Content != "ok-after-retry" {
 		t.Errorf("expected retry result, got %+v", resp.ToolResult)
+	}
+}
+
+// fakeMutationExecutor is a minimal native transition_status executor for
+// the chat-path delta test: auto-enabled, returns a fixed OK mutation
+// result regardless of input.
+type fakeMutationExecutor struct{ tmpl domain.OperationTemplate }
+
+func newFakeMutationExecutor() *fakeMutationExecutor {
+	return &fakeMutationExecutor{tmpl: domain.OperationTemplate{
+		Name:        "advance_lead",
+		Kind:        domain.KindTransitionStatus,
+		Title:       "Advance lead",
+		Description: "stub mutation",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+			"id":        map[string]any{"type": "string"},
+			"to_status": map[string]any{"type": "string"},
+		}},
+		Modes:       []domain.PipelineMode{domain.ModeStorefront, domain.ModeCRM},
+		Agent:       domain.AgentData,
+		MinRole:     domain.RoleVisitor,
+		AutoEnabled: true,
+	}}
+}
+
+func (f *fakeMutationExecutor) Template() domain.OperationSpec        { return f.tmpl.Spec() }
+func (f *fakeMutationExecutor) TemplateRow() domain.OperationTemplate { return f.tmpl }
+func (f *fakeMutationExecutor) SpecForTenant(_ context.Context, _ domain.Tenant, _ map[string]any) (domain.OperationSpec, error) {
+	return f.tmpl.Spec(), nil
+}
+func (f *fakeMutationExecutor) Execute(_ context.Context, _ domain.OperationContext, _ map[string]any) (*domain.OperationResult, error) {
+	return &domain.OperationResult{
+		Operation:  "advance_lead",
+		Kind:       domain.KindTransitionStatus,
+		Outcome:    domain.OutcomeOK,
+		Count:      1,
+		EntityKind: "lead",
+		RecordID:   "rec-1",
+		Summary:    "ok: lead rec-1 moved",
+	}, nil
+}
+
+// TestAgent1ChatPathMutationStampsRecordDelta locks the R28 contract for
+// the CHAT door: an LLM-driven entity mutation (CRM "mark it contacted" →
+// advance_lead) appends a RECORD_TRANSITION delta with Path "records" —
+// the same vocabulary the invoke handler stamps on the widget door — and
+// the raw LLM tool input never lands in the delta (R6).
+func TestAgent1ChatPathMutationStampsRecordDelta(t *testing.T) {
+	state := newMockStatePort()
+	if _, err := state.CreateState(context.Background(), "sess-1"); err != nil {
+		t.Fatalf("CreateState: %v", err)
+	}
+	state.states["sess-1"].Current.Meta.Aliases = map[string]string{"tenant_slug": "acme"}
+
+	llm := &fakeLLM{resp: &domain.LLMResponse{
+		StopReason: "tool_use",
+		ToolCalls: []domain.ToolCall{
+			{ID: "tool-1", Name: "advance_lead", Input: map[string]interface{}{
+				"id": "rec-1", "to_status": "contacted-by-phone",
+			}},
+		},
+	}}
+	cat := &fakeCatalog{tenant: &domain.Tenant{ID: "tnt-1", Slug: "acme"}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	registry := operations.NewRegistry(operations.RegistryConfig{Tenants: cat, Log: log})
+	registry.RegisterExecutor(domain.KindTransitionStatus, newFakeMutationExecutor())
+
+	uc := NewAgent1Execute(llm, state, cat, registry, NewAgent1PromptCache(cat), log)
+	if _, err := uc.Execute(context.Background(), Agent1ExecuteRequest{
+		SessionID:  "sess-1",
+		TenantSlug: "acme",
+		UserQuery:  "mark it contacted",
+		TurnID:     "turn-9",
+		Mode:       domain.ModeCRM,
+		Role:       domain.RoleStaff,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var recordDeltas []domain.Delta
+	for _, d := range state.deltas["sess-1"] {
+		if d.Path == "records" {
+			recordDeltas = append(recordDeltas, d)
+		}
+	}
+	if len(recordDeltas) != 1 {
+		t.Fatalf("expected exactly 1 records delta, got %d (all: %+v)", len(recordDeltas), state.deltas["sess-1"])
+	}
+	d := recordDeltas[0]
+	if d.Action.Type != domain.ActionRecordTransition {
+		t.Errorf("action type = %s, want RECORD_TRANSITION", d.Action.Type)
+	}
+	if d.DeltaType != domain.DeltaTypeUpdate {
+		t.Errorf("delta type = %s, want update", d.DeltaType)
+	}
+	if d.TurnID != "turn-9" {
+		t.Errorf("turn id = %q, want turn-9", d.TurnID)
+	}
+	if d.Source != domain.SourceLLM || d.Trigger != domain.TriggerUserQuery {
+		t.Errorf("source/trigger = %s/%s, want llm/USER_QUERY", d.Source, d.Trigger)
+	}
+	if got := d.Action.Params["recordId"]; got != "rec-1" {
+		t.Errorf("recordId param = %v, want rec-1", got)
+	}
+	if got := d.Action.Params["entityKind"]; got != "lead" {
+		t.Errorf("entityKind param = %v, want lead", got)
+	}
+	// R6: raw tool-input values must never persist into deltas.
+	raw, err := json.Marshal(state.deltas["sess-1"])
+	if err != nil {
+		t.Fatalf("marshal deltas: %v", err)
+	}
+	if strings.Contains(string(raw), "contacted-by-phone") {
+		t.Errorf("raw tool input leaked into deltas: %s", raw)
 	}
 }

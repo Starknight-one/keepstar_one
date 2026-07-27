@@ -30,13 +30,35 @@ type StateMeta struct {
 	ServiceCount int               `json:"serviceCount,omitempty"`
 	Fields       []string          `json:"fields"`
 	Aliases      map[string]string `json:"aliases,omitempty"`
+	// EntityCounts maps entity slug → record count for the Entities zone
+	// (RUNTIME_SPEC.md §4.5). Empty for catalog-only turns.
+	EntityCounts map[string]int `json:"entityCounts,omitempty"`
 }
 
-// StateData is the materialized data zone — products and services
-// loaded by Agent1.
+// EntitySet is one loaded entity result set in the generic Entities zone
+// (RUNTIME_SPEC.md §4.5). Fields is the definition snapshot at load time;
+// Labels carries value-set display labels (valueSetRef → value → label) so
+// binding can derive `<key>Label` without a second lookup. Synthetic sets
+// (R23: in-memory sets like opCard / manifestStep built from library or
+// manifest data) bind through the exact same path but are never persisted
+// to v5_entity_records.
+type EntitySet struct {
+	Slug      string                       `json:"slug"`
+	Name      string                       `json:"name"`
+	Fields    []FieldDef                   `json:"fields,omitempty"`
+	Labels    map[string]map[string]string `json:"labels,omitempty"`
+	Records   []EntityRecord               `json:"records"`
+	Synthetic bool                         `json:"synthetic,omitempty"`
+}
+
+// StateData is the materialized data zone — products and services loaded
+// by Agent1, plus the generic Entities zone (entity-plane query results,
+// §4.5). Old sessions deserialize with nil slices — no DDL, the zone
+// columns are JSONB.
 type StateData struct {
-	Products []Product `json:"products,omitempty"`
-	Services []Service `json:"services,omitempty"`
+	Products []Product   `json:"products,omitempty"`
+	Services []Service   `json:"services,omitempty"`
+	Entities []EntitySet `json:"entities,omitempty"`
 }
 
 // StateCurrent is the currently materialized state. Template stores a

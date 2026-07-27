@@ -625,3 +625,137 @@
 .kw-range-sep {
   color: var(--kw-text-muted);
 }
+
+/* Form primitives (RUNTIME_SPEC §5.2) ---------------------------------- */
+
+/* The FormProvider's native <form> — display:contents keeps the wrapped
+   frame a direct participant of the parent flex layout. */
+.kw-form {
+  display: contents;
+}
+
+.kw-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap-xs);
+  width: 100%;
+  min-width: 0;
+}
+
+.kw-field-label {
+  font-size: var(--kw-fs-sm);
+  font-weight: var(--kw-fw-medium);
+  color: var(--kw-text);
+}
+
+.kw-field-required {
+  color: var(--kw-orange);
+}
+
+.kw-input,
+.kw-select,
+.kw-textarea {
+  width: 100%;
+  min-width: 0;
+  padding: var(--kw-gap-sm) var(--kw-gap-md);
+  background: var(--kw-bg);
+  color: var(--kw-text);
+  border: 1px solid var(--kw-border);
+  border-radius: var(--kw-radius);
+  font-size: var(--kw-fs-base);
+  font-family: inherit;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.kw-input:focus,
+.kw-select:focus,
+.kw-textarea:focus {
+  border-color: var(--kw-blue);
+  box-shadow: 0 0 0 3px rgba(91, 164, 217, 0.2);
+}
+
+.kw-input:disabled,
+.kw-select:disabled,
+.kw-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.kw-input[data-invalid='true'],
+.kw-select[data-invalid='true'],
+.kw-textarea[data-invalid='true'] {
+  border-color: #dc2626;
+}
+
+.kw-input[data-invalid='true']:focus,
+.kw-select[data-invalid='true']:focus,
+.kw-textarea[data-invalid='true']:focus {
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15);
+}
+
+.kw-textarea {
+  resize: vertical;
+}
+
+.kw-field-error {
+  font-size: var(--kw-fs-xs);
+  color: #b91c1c;
+}
+
+.kw-submit-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap-sm);
+  width: 100%;
+}
+
+.kw-submit {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  background: var(--kw-blue);
+  color: white;
+  border: none;
+  border-radius: 999px;
+  font-size: var(--kw-fs-sm);
+  font-weight: var(--kw-fw-semibold);
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: filter 120ms ease, opacity 120ms ease;
+}
+
+.kw-submit:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.kw-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Form-level status line — success/error renders INSIDE the form block,
+   next to the submit control (§4.8 apply target:"form"). */
+.kw-form-message {
+  margin: 0;
+  padding: var(--kw-gap-sm) var(--kw-gap-md);
+  border-radius: var(--kw-radius);
+  font-size: var(--kw-fs-sm);
+  line-height: 1.4;
+}
+
+.kw-form-message[data-status='error'] {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.kw-form-message[data-status='success'] {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}

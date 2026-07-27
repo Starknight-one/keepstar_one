@@ -81,3 +81,51 @@ func TestStateActionsZeroValueIsUsable(t *testing.T) {
 		t.Fatalf("marshal zero value: %v", err)
 	}
 }
+
+// TestStateDataLegacyRowsDeserialize — the Entities zone is additive (§3.3,
+// RUNTIME_SPEC.md): a pre-change current_data JSONB (no "entities" key)
+// must unmarshal with a nil Entities slice, and a state without entity sets
+// must marshal WITHOUT an "entities" key so legacy readers see identical
+// bytes.
+func TestStateDataLegacyRowsDeserialize(t *testing.T) {
+	legacy := []byte(`{"products":[{"id":"p1","name":"Cream"}]}`)
+	var d StateData
+	if err := json.Unmarshal(legacy, &d); err != nil {
+		t.Fatalf("legacy row unmarshal failed: %v", err)
+	}
+	if d.Entities != nil {
+		t.Errorf("Entities = %v, want nil for a legacy row", d.Entities)
+	}
+	if len(d.Products) != 1 {
+		t.Fatalf("Products = %d, want 1", len(d.Products))
+	}
+
+	out, err := json.Marshal(StateData{Products: d.Products})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal(out, &m)
+	if _, exists := m["entities"]; exists {
+		t.Errorf("empty Entities zone serialized: %s", out)
+	}
+
+	// And the populated zone round-trips.
+	full := StateData{Entities: []EntitySet{{
+		Slug:    "lead",
+		Fields:  []FieldDef{{Key: "name", Label: "Name", Type: FieldText}},
+		Labels:  map[string]map[string]string{"lead_pipeline": {"new": "New"}},
+		Records: []EntityRecord{{ID: "r1", EntitySlug: "lead", Data: map[string]any{"name": "Ana"}}},
+	}}}
+	raw, err := json.Marshal(full)
+	if err != nil {
+		t.Fatalf("marshal full: %v", err)
+	}
+	var back StateData
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal full: %v", err)
+	}
+	if !reflect.DeepEqual(full, back) {
+		t.Errorf("Entities zone round-trip mismatch:\n got %+v\nwant %+v", back, full)
+	}
+}

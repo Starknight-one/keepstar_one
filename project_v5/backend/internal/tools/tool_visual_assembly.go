@@ -157,7 +157,7 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
 	}
-	data := productsToBindData(state.Current.Data.Products)
+	data := dataToBindData(state.Current.Data)
 
 	switch {
 	case mode == "rebuild" && presetName != "":
@@ -249,10 +249,13 @@ func (t *VisualAssemblyTool) Execute(ctx context.Context, toolCtx domain.ToolCon
 	bindRes := engine.BindData(merged, data)
 
 	// 4.6 Inject default user-actions (like + cart_add) into any empty
-	// "actions" frame inside an entity-bound subtree. Skipped when the
-	// data slice is empty (no entities to bind to). LLM-populated
-	// actions frames pass through untouched (idempotent guard inside).
-	injected := engine.InjectDefaultActions(merged, domain.EntityTypeProduct, data)
+	// "actions" frame inside an entity-bound subtree. Deliberately fed the
+	// PRODUCT maps only — like/cart are catalog actions and must never be
+	// injected into entity-plane records (leads etc.); when the turn bound
+	// entity sets and no products, the empty slice skips injection exactly
+	// like a product-less turn always has. LLM-populated actions frames
+	// pass through untouched (idempotent guard inside).
+	injected := engine.InjectDefaultActions(merged, domain.EntityTypeProduct, productsToBindData(state.Current.Data.Products))
 
 	// 5. Marshal the Document and write it to state.current.template.
 	templateMap, err := docToMap(merged)
@@ -362,8 +365,41 @@ func readReplicate(input map[string]interface{}) int {
 	return 0
 }
 
+// dataToBindData flattens the state data zone into the []map[string]any
+// shape engine.BindData expects (RUNTIME_SPEC.md §4.5). Products first —
+// byte-identical to the legacy products-only path — then entity-set records
+// through engine.EntityToMap, so entity presets (lead_table, lead_detail,
+// synthetic opCard/manifestStep sets) bind through the exact same
+// engine.BindData path with zero engine changes. In practice a turn carries
+// either products (catalog query) or entity sets (entity query); when both
+// exist products lead, deterministically.
+func dataToBindData(d domain.StateData) []map[string]any {
+	out := make([]map[string]any, 0, len(d.Products)+entityRecordCount(d.Entities))
+	for _, p := range d.Products {
+		out = append(out, engine.ProductToMap(p))
+	}
+	for i := range d.Entities {
+		set := &d.Entities[i]
+		for _, rec := range set.Records {
+			out = append(out, engine.EntityToMap(rec, set))
+		}
+	}
+	return out
+}
+
+// entityRecordCount sums records across entity sets (capacity hint only).
+func entityRecordCount(sets []domain.EntitySet) int {
+	n := 0
+	for i := range sets {
+		n += len(sets[i].Records)
+	}
+	return n
+}
+
 // productsToBindData flattens the products zone of state.current.data into
-// the []map[string]any shape engine.BindData expects.
+// the []map[string]any shape engine.BindData expects. Still used directly
+// by the InjectDefaultActions call, which must only ever see catalog
+// products (like/cart are catalog actions).
 func productsToBindData(products []domain.Product) []map[string]any {
 	out := make([]map[string]any, len(products))
 	for i, p := range products {

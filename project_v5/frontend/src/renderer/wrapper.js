@@ -8,13 +8,23 @@
 // console.log path so freestyle LLM-emitted buttons are still visible
 // during diagnostics.
 //
+// operation_invoke / form_submit buttons (RUNTIME_SPEC §4.8) hit the
+// server registry and can mutate records — while the dispatch is in
+// flight the button is disabled (aria-busy) so a double click cannot
+// double-fire the operation. The legacy like/cart kinds keep their
+// optimistic fire-and-forget path unchanged.
+//
 // stopPropagation on the button click prevents the parent Frame's
 // card-body click (drill_detail, see Frame.jsx) from firing too —
 // inner buttons own their click.
 
-import { createElement } from 'react'
+import { createElement, useState } from 'react'
 import { useRenderContext } from './RenderContext'
 import { dispatchAction, isLiked, isInCart } from './actionDispatch'
+
+// Action kinds that reach the operation registry / a form endpoint —
+// server mutations, guarded against double-fire.
+const INVOKE_KINDS = new Set(['operation_invoke', 'form_submit'])
 
 export function wrapText(content, wrapper, node) {
   if (!wrapper || wrapper === 'none') return content
@@ -34,17 +44,22 @@ function activeFor(node, actionState) {
 
 function WrappedContent({ content, wrapper, node }) {
   const ctx = useRenderContext()
+  const [busy, setBusy] = useState(false)
   const className = `kw-${wrapper}`
 
   switch (wrapper) {
     case 'button': {
       const active = activeFor(node, ctx.actionState)
+      const kind = node?.action?.kind
+      const invokes = INVOKE_KINDS.has(kind)
       return createElement(
         'button',
         {
           className: active ? `${className} kw-active` : className,
           type: 'button',
-          'aria-pressed': node?.action?.kind === 'like' || node?.action?.kind === 'cart_add' ? active : undefined,
+          'aria-pressed': kind === 'like' || kind === 'cart_add' ? active : undefined,
+          'aria-busy': invokes && busy ? true : undefined,
+          disabled: invokes && busy ? true : undefined,
           // actionKind (stamped by InjectDefaultActions) drives per-kind
           // styling via [data-action-kind] — black round add, translucent
           // round like. Absent → the neutral default .kw-button.
@@ -52,6 +67,14 @@ function WrappedContent({ content, wrapper, node }) {
           onClick: (e) => {
             e.stopPropagation()
             if (node?.action) {
+              if (invokes) {
+                if (busy) return
+                setBusy(true)
+                Promise.resolve(dispatchAction(node.action, ctx))
+                  .catch(() => {}) // already logged by the dispatcher
+                  .finally(() => setBusy(false))
+                return
+              }
               dispatchAction(node.action, ctx)
               return
             }

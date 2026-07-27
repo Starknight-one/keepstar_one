@@ -104,7 +104,8 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	themeH := handlers.NewThemeHandler(themePort, log)
 	onboardH := handlers.NewOnboardHandler(statePort, catalog, pg.Pool(), log)
 	cacheH := handlers.NewCacheHandler(agent1Cache, promptCache, registry, log)
-	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH, presetH, themeH, onboardH, cacheH)
+	operationsH := handlers.NewOperationsHandler(registry, statePort, presetPort, componentPort, themePort, pg.Pool(), nil, log)
+	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH, presetH, themeH, onboardH, cacheH, operationsH, nil)
 
 	srv := httptest.NewServer(router)
 	defer srv.Close()
@@ -531,9 +532,9 @@ func TestHTTPLiveSmoke(t *testing.T) {
 // pipelineTurnResult is a thin wrapper around the pipeline response JSON
 // that the chunk-9 turns share. Helpers attached for readable assertions.
 type pipelineTurnResult struct {
-	t        *testing.T
-	rawBody  []byte
-	parsed   pipelineHTTPResponse
+	t       *testing.T
+	rawBody []byte
+	parsed  pipelineHTTPResponse
 }
 
 type pipelineHTTPResponse struct {
