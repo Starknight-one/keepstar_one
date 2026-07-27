@@ -108,8 +108,9 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 
 	writeFrame("stage", map[string]string{"phase": "data_start"})
 
-	// R17: mode + role from the session row (mirrors Pipeline()).
-	mode, role := h.sessionFormRole(r.Context(), req.SessionID)
+	// R17: mode + role from the session row (mirrors Pipeline()) —
+	// tenant-scoped: a session from another tenant lends nothing.
+	mode, role := h.sessionFormRole(r.Context(), req.SessionID, tenant.ID)
 
 	resp, err := h.pipeline.Execute(r.Context(), usecases.PipelineExecuteRequest{
 		SessionID:  req.SessionID,

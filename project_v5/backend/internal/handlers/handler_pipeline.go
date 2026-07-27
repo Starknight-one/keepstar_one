@@ -59,20 +59,31 @@ func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePo
 // ids) so the downstream Execute path produces exactly the error it always
 // did for bad sessions.
 //
+// tenantID scopes the grant (§6.3): a session row belonging to a DIFFERENT
+// tenant than the request's X-Tenant-Slug never lends its mode or role —
+// otherwise a staff (CRM-token) session on tenant B would escalate turns
+// run against tenant A. Mismatches degrade to storefront/visitor, the same
+// floor every stranger gets.
+//
 // TODO(runtime-v1 M3): when session mode is onboarding, the pipeline
 // handler must also require the ks_onboard cookie (checkOnboardCookie) and
 // enforce the 60-turn session cap (§6.3) — M3 owns both.
-func (h *PipelineHandler) sessionFormRole(ctx context.Context, sessionID string) (domain.PipelineMode, domain.Role) {
+func (h *PipelineHandler) sessionFormRole(ctx context.Context, sessionID, tenantID string) (domain.PipelineMode, domain.Role) {
 	mode, role := domain.ModeStorefront, domain.RoleVisitor
 	if h.pool == nil {
 		return mode, role
 	}
-	var m, ro string
+	var rowTenant, m, ro string
 	err := h.pool.QueryRow(ctx,
-		`SELECT mode, role FROM v5_chat_sessions WHERE id = $1::uuid`,
+		`SELECT tenant_id::text, mode, role FROM v5_chat_sessions WHERE id = $1::uuid`,
 		sessionID,
-	).Scan(&m, &ro)
+	).Scan(&rowTenant, &m, &ro)
 	if err != nil {
+		return mode, role
+	}
+	if rowTenant != tenantID {
+		h.log.Warn("pipeline: session tenant mismatch — visitor floor applied",
+			"session_id", sessionID, "session_tenant", rowTenant, "request_tenant", tenantID)
 		return mode, role
 	}
 	if m != "" {
@@ -153,7 +164,8 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 
 	// R17: mode + role come from the session row, not the request body —
 	// the client cannot claim a form or role it wasn't granted at init.
-	mode, role := h.sessionFormRole(r.Context(), req.SessionID)
+	// Tenant-scoped: a session from another tenant lends nothing.
+	mode, role := h.sessionFormRole(r.Context(), req.SessionID, tenant.ID)
 
 	resp, err := h.pipeline.Execute(r.Context(), usecases.PipelineExecuteRequest{
 		SessionID:  req.SessionID,

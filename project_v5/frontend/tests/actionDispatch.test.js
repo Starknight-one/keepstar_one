@@ -271,6 +271,20 @@ describe('dispatchAction — form_submit (standalone button, R6)', () => {
     errSpy.mockRestore()
   })
 
+  it('refuses backslash and control-char URL-parsing bypasses', async () => {
+    // WHATWG URL treats "\" as "/" and strips tabs/newlines — each of
+    // these would resolve protocol-relative to an EXTERNAL host if the
+    // startsWith('//') check were the only gate.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    for (const endpoint of ['/\\evil.example/steal', '/\t/evil.example/steal', '/\n/evil.example/steal']) {
+      await expect(
+        dispatchAction({ kind: 'form_submit', endpoint, params: {} }, mkCtx()),
+      ).rejects.toThrow(/same-origin/)
+    }
+    expect(fetch).not.toHaveBeenCalled()
+    errSpy.mockRestore()
+  })
+
   it('missing endpoint warns and returns null', async () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const result = await dispatchAction({ kind: 'form_submit' }, mkCtx())

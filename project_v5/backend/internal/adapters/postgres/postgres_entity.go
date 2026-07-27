@@ -793,14 +793,18 @@ func entityFilterConditions(f domain.RecordFilter, args []interface{}, argNum in
 // entitySortClause maps a RecordFilter sort onto a safe ORDER BY: known
 // columns by name, any other identifier-gated key sorts on data->>'key'
 // (text order). id is the deterministic tiebreak. Unknown/unsafe input
-// falls back to the created_at DESC index order.
+// falls back to the created_at DESC index order. The field normalizes
+// through SnakeToCamel first so the query schema's snake_case sort enum
+// ("created_at" — entityQuerySchema sortFields) and camelCase data keys
+// address the same columns.
 func entitySortClause(field, order string) string {
 	dir := "DESC"
 	if strings.EqualFold(order, "asc") {
 		dir = "ASC"
 	}
 	col := "created_at"
-	switch field {
+	key := engine.SnakeToCamel(field)
+	switch key {
 	case "", "createdAt":
 		// default
 	case "updatedAt":
@@ -808,7 +812,6 @@ func entitySortClause(field, order string) string {
 	case "status":
 		col = "status"
 	default:
-		key := engine.SnakeToCamel(field)
 		if safeTier2Key(key) {
 			col = fmt.Sprintf("data->>'%s'", key)
 		}

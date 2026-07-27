@@ -61,12 +61,22 @@ export async function submitFormEndpoint({ baseUrl, endpoint, values, formId }) 
 // to the API origin. Rules:
 //   - must be a non-empty string starting with a single "/" ("//host"
 //     protocol-relative URLs are rejected);
+//   - backslashes and control/whitespace characters are rejected outright:
+//     WHATWG URL parsing treats "\" as "/" and strips tabs/newlines, so
+//     "/\evil.com" or "/\t/evil.com" would otherwise resolve
+//     protocol-relative to an EXTERNAL host — with form values (R6:
+//     possibly credentials) in the body;
 //   - when baseUrl is absolute (cross-origin dev embed), the endpoint is
 //     resolved against the baseUrl ORIGIN (endpoints are server-root
 //     paths like /api/v1/onboard/step/x/submit, not baseUrl-relative);
 //   - otherwise the path is used as-is (same-origin deploy, §5.1).
 export function resolveEndpoint(baseUrl, endpoint) {
-  if (typeof endpoint !== 'string' || !endpoint.startsWith('/') || endpoint.startsWith('//')) {
+  if (
+    typeof endpoint !== 'string' ||
+    !endpoint.startsWith('/') ||
+    endpoint.startsWith('//') ||
+    /[\\\u0000-\u0020]/.test(endpoint)
+  ) {
     throw new Error(`form_submit endpoint must be a same-origin path, got: ${String(endpoint)}`)
   }
   if (typeof baseUrl === 'string' && /^https?:\/\//i.test(baseUrl)) {

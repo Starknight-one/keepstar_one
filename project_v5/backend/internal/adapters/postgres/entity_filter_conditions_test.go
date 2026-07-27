@@ -57,6 +57,11 @@ func TestEntitySortClause(t *testing.T) {
 	cases := []struct{ field, order, want string }{
 		{"", "", "created_at DESC, id"},
 		{"createdAt", "asc", "created_at ASC, id"},
+		// snake_case spellings from the query schema's sort enum
+		// (entityQuerySchema sortFields lists "created_at") must hit the
+		// real columns, not a nonexistent data->>'createdAt' key.
+		{"created_at", "asc", "created_at ASC, id"},
+		{"updated_at", "desc", "updated_at DESC, id"},
 		{"updatedAt", "desc", "updated_at DESC, id"},
 		{"status", "ASC", "status ASC, id"},
 		{"preferred_time", "asc", "data->>'preferredTime' ASC, id"},
