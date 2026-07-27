@@ -10,18 +10,22 @@ import (
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/ports"
-	"keepstar_v5/internal/tools"
 )
 
 // Agent2ExecuteRequest is the contract callers (HTTP handler in chunk 6c
 // or the smoke test in 6b) hand to Agent2Execute. SessionID must already
 // exist (created upstream by /session/init in 6c, or directly by the
 // smoke test). State.Current.Data must be populated by Agent1 before this
-// call (chunk 7) or by the test/fixture wiring.
+// call (chunk 7) or by the test/fixture wiring. Mode/Role arrive from the
+// session row via the pipeline handler (R17); empty values default to the
+// storefront form / visitor role.
 type Agent2ExecuteRequest struct {
 	SessionID  string
 	TenantSlug string
 	UserQuery  string
+	Mode       domain.PipelineMode
+	Role       domain.Role
+	ActorID    string
 	// Microcontext is a one-line signal from the pipeline orchestrator
 	// (chunk 7) describing what Agent1 just did — e.g.
 	// "new_search: 12 items found", "filtered: 3 items", "no_data_change".
@@ -49,31 +53,31 @@ type Agent2ExecuteResponse struct {
 //   3. Trim Agent2 history to the last 4 messages (= 2 prior turns of
 //      assistant:tool_use + user:tool_result).
 //   4. Append the new user message.
-//   5. ChatWithToolsCached(tools=[visual_assembly], CacheConfig:
-//      tools+system+(conv if ≥ 2 msgs), ToolChoice="any").
-//   6. For each tool call returned, run it; on Go-error, retry once with
-//      empty input (V4 graceful degradation).
+//   5. ChatWithToolsCached(tools=DefinitionsFor(tenant, form, visual, role),
+//      CacheConfig: tools+system+(conv if ≥ 2 msgs), ToolChoice="any").
+//   6. For each tool call returned, run it through the operation registry;
+//      on Go-error, retry once with empty input (V4 graceful degradation).
 //   7. Append assistant:tool_use + user:tool_result messages to state.
 //   8. Reload state, return Document.
 type Agent2Execute struct {
-	llm          ports.LLMPort
-	state        ports.StatePort
-	toolRegistry *tools.Registry
-	promptCache  *PromptCache
+	llm         ports.LLMPort
+	state       ports.StatePort
+	registry    ports.OperationRegistry
+	promptCache *PromptCache
 }
 
 // NewAgent2Execute wires the use case. All deps required.
 func NewAgent2Execute(
 	llm ports.LLMPort,
 	state ports.StatePort,
-	toolRegistry *tools.Registry,
+	registry ports.OperationRegistry,
 	promptCache *PromptCache,
 ) *Agent2Execute {
 	return &Agent2Execute{
-		llm:          llm,
-		state:        state,
-		toolRegistry: toolRegistry,
-		promptCache:  promptCache,
+		llm:         llm,
+		state:       state,
+		registry:    registry,
+		promptCache: promptCache,
 	}
 }
 
@@ -85,12 +89,21 @@ const historyLimit = 4
 
 // Execute runs one Agent2 turn end-to-end. Returns the assembled response
 // or a Go error for transport-layer failures (state retrieval / write
-// failed, LLM call failed). Tool-side errors land in ToolResult.IsError
-// and are surfaced to the LLM next turn.
+// failed, LLM call failed). Operation-side errors land in the tool_result
+// with IsError and are surfaced to the LLM next turn.
 func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) (*Agent2ExecuteResponse, error) {
 	start := time.Now()
 	ctx, topSpan := withSpan(ctx, "agent2.execute")
 	defer topSpan.End()
+
+	mode := req.Mode
+	if mode == "" {
+		mode = domain.ModeStorefront
+	}
+	role := req.Role
+	if role == "" {
+		role = domain.RoleVisitor
+	}
 
 	state, err := uc.state.GetState(ctx, req.SessionID)
 	if err != nil {
@@ -144,19 +157,11 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	}
 	messages = append(messages, domain.LLMMessage{Role: "user", Content: userContent})
 
-	// Filter the shared registry to Agent2's only tool. Without this,
-	// Agent2 can see catalog_search / state_filter / history_lookup
-	// (registered for Agent1) and occasionally picks one — leaving
-	// the rendering step a no-op. V4 keeps a separate Agent2-only
-	// registry; V5 uses one shared registry + per-agent filter (same
-	// model as Agent1Execute).
-	allDefs := uc.toolRegistry.GetDefinitions()
-	tools := make([]domain.ToolDefinition, 0, 1)
-	for _, d := range allDefs {
-		if d.Name == "visual_assembly" {
-			tools = append(tools, d)
-		}
-	}
+	// Registry-scoped visibility (R8): the visual-plane operations for this
+	// tenant + form + role. On the storefront form that is exactly
+	// [visual_assembly] — byte-identical to the old name filter, so the
+	// cached tools block (CacheTools=true) does not drift.
+	toolDefs := uc.registry.DefinitionsFor(ctx, req.TenantSlug, mode, domain.AgentVisual, role)
 	cfg := ports.CacheConfig{
 		CacheTools:        true,
 		CacheSystem:       true,
@@ -165,7 +170,7 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	}
 
 	_, llmSpan := withSpan(ctx, "agent2.llm")
-	resp, err := uc.llm.ChatWithToolsCached(ctx, systemPrompt, messages, tools, cfg)
+	resp, err := uc.llm.ChatWithToolsCached(ctx, systemPrompt, messages, toolDefs, cfg)
 	if err != nil {
 		llmSpan.SetError(err)
 		llmSpan.End()
@@ -184,42 +189,49 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	})
 	llmSpan.End()
 
-	// Run each tool call; collect history messages.
-	toolCtx := domain.ToolContext{
+	// Run each tool call through the registry choke point; collect history.
+	octx := domain.OperationContext{
 		SessionID:  req.SessionID,
 		TenantSlug: req.TenantSlug,
+		Mode:       mode,
+		Role:       role,
+		ActorID:    req.ActorID,
 	}
 	historyAppend := []domain.LLMMessage{}
 	for _, tc := range resp.ToolCalls {
 		_, toolSpan := withSpan(ctx, "agent2.tool."+tc.Name)
 		toolSpan.SetAttr("tool_name", tc.Name)
-		result, runErr := uc.runToolWithRetry(ctx, toolCtx, tc)
+		result, runErr := uc.runOpWithRetry(ctx, octx, tc)
 		if runErr != nil {
 			toolSpan.SetError(runErr)
-		} else if result != nil && result.IsError {
+		} else if result != nil && result.Outcome != domain.OutcomeOK && result.Outcome != domain.OutcomeEmpty {
 			toolSpan.SetAttr("is_error", true)
 			// Surface the error content so we can diagnose tool-side
-			// failures from logs without re-running the LLM call. Tool
+			// failures from logs without re-running the LLM call. Summary
 			// content is short (one-line summary or error string).
-			slog.Warn("agent2: tool returned IsError",
+			slog.Warn("agent2: operation returned error outcome",
 				"tool", tc.Name,
-				"content", result.Content,
+				"outcome", result.Outcome,
+				"content", result.Summary,
 				"input", tc.Input,
 			)
 		}
 		toolSpan.End()
 		if runErr != nil {
-			// Transport-level failure (registry doesn't know the tool, or
-			// Go panic recovered as an error). Surface to caller.
+			// Transport-level failure (Go panic recovered as an error).
+			// Surface to caller.
 			topSpan.SetError(runErr)
 			return nil, fmt.Errorf("tool %s: %w", tc.Name, runErr)
 		}
+		// Bridge to the legacy tool_result shape WITHOUT metadata — exactly
+		// the bytes the pre-registry path persisted (prompt-cache duty C3).
+		bridged := result.ToToolResult(tc.ID)
 		historyAppend = append(historyAppend,
 			domain.LLMMessage{Role: "assistant", ToolCalls: []domain.ToolCall{tc}},
 			domain.LLMMessage{Role: "user", ToolResult: &domain.ToolResult{
-				ToolUseID: tc.ID,
-				Content:   result.Content,
-				IsError:   result.IsError,
+				ToolUseID: bridged.ToolUseID,
+				Content:   bridged.Content,
+				IsError:   bridged.IsError,
 			}},
 		)
 	}
@@ -317,16 +329,17 @@ func startSpan(ctx context.Context, name string) func() {
 	}
 }
 
-// runToolWithRetry invokes a tool once. On Go-error (transport failure),
-// retries once with empty input — V4's graceful-degradation pattern that
-// recovers from arg-parsing crashes. Tool-side IsError responses are NOT
-// retried; they're informational for the LLM's next turn.
-func (uc *Agent2Execute) runToolWithRetry(ctx context.Context, toolCtx domain.ToolContext, tc domain.ToolCall) (*domain.ToolResult, error) {
-	res, err := uc.toolRegistry.Execute(ctx, toolCtx, tc)
+// runOpWithRetry invokes an operation once. On Go-error (transport
+// failure), retries once with empty input — V4's graceful-degradation
+// pattern that recovers from arg-parsing crashes. Structured
+// invalid/denied results are NOT retried; they're informational for the
+// LLM's next turn.
+func (uc *Agent2Execute) runOpWithRetry(ctx context.Context, octx domain.OperationContext, tc domain.ToolCall) (*domain.OperationResult, error) {
+	res, err := uc.registry.Execute(ctx, octx, tc)
 	if err == nil {
 		return res, nil
 	}
 	slog.Warn("agent2: tool errored, retrying with empty input", "tool", tc.Name, "err", err)
 	emptyCall := domain.ToolCall{ID: tc.ID, Name: tc.Name, Input: map[string]interface{}{}}
-	return uc.toolRegistry.Execute(ctx, toolCtx, emptyCall)
+	return uc.registry.Execute(ctx, octx, emptyCall)
 }

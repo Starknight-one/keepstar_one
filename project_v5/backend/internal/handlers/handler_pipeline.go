@@ -11,6 +11,8 @@ import (
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/usecases"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PipelineHandler owns POST /api/v1/pipeline.
@@ -28,6 +30,7 @@ type PipelineHandler struct {
 	tracer   ports.TracePort // optional; nil disables persistence
 	guard    *PipelineGuard  // optional; nil disables rate/spend limits
 	themes   ports.ThemePort // optional; nil → default theme attached
+	pool     *pgxpool.Pool   // optional; nil → storefront/visitor defaults (tests). Session mode/role read (R17).
 	log      *slog.Logger
 }
 
@@ -41,10 +44,44 @@ type pipelineRunner interface {
 // nil disables trace persistence (used by tests that don't need it).
 // guard is optional — nil disables rate limiting and the daily spend cap.
 // themes is optional — nil attaches the canonical default theme to the
-// rendered document (zero visual change). log is required so the async
-// persist goroutine can log failures.
-func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePort, guard *PipelineGuard, themes ports.ThemePort, log *slog.Logger) *PipelineHandler {
-	return &PipelineHandler{pipeline: pipeline, tracer: tracer, guard: guard, themes: themes, log: log}
+// rendered document (zero visual change). pool is optional — nil skips the
+// per-turn session mode/role read and defaults to the storefront form /
+// visitor role (tests). log is required so the async persist goroutine can
+// log failures.
+func NewPipelineHandler(pipeline *usecases.PipelineExecute, tracer ports.TracePort, guard *PipelineGuard, themes ports.ThemePort, pool *pgxpool.Pool, log *slog.Logger) *PipelineHandler {
+	return &PipelineHandler{pipeline: pipeline, tracer: tracer, guard: guard, themes: themes, pool: pool, log: log}
+}
+
+// sessionFormRole reads mode + role from the session row — the per-turn
+// truth (R17: the handler reads v5_chat_sessions.mode; R13: role is
+// inherited from the session row every turn). Fail-open to
+// storefront/visitor on any error (including unknown or malformed session
+// ids) so the downstream Execute path produces exactly the error it always
+// did for bad sessions.
+//
+// TODO(runtime-v1 M3): when session mode is onboarding, the pipeline
+// handler must also require the ks_onboard cookie (checkOnboardCookie) and
+// enforce the 60-turn session cap (§6.3) — M3 owns both.
+func (h *PipelineHandler) sessionFormRole(ctx context.Context, sessionID string) (domain.PipelineMode, domain.Role) {
+	mode, role := domain.ModeStorefront, domain.RoleVisitor
+	if h.pool == nil {
+		return mode, role
+	}
+	var m, ro string
+	err := h.pool.QueryRow(ctx,
+		`SELECT mode, role FROM v5_chat_sessions WHERE id = $1::uuid`,
+		sessionID,
+	).Scan(&m, &ro)
+	if err != nil {
+		return mode, role
+	}
+	if m != "" {
+		mode = domain.PipelineMode(m)
+	}
+	if ro != "" {
+		role = domain.Role(ro)
+	}
+	return mode, role
 }
 
 type pipelineRequest struct {
@@ -114,10 +151,16 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// R17: mode + role come from the session row, not the request body —
+	// the client cannot claim a form or role it wasn't granted at init.
+	mode, role := h.sessionFormRole(r.Context(), req.SessionID)
+
 	resp, err := h.pipeline.Execute(r.Context(), usecases.PipelineExecuteRequest{
 		SessionID:  req.SessionID,
 		TenantSlug: tenant.Slug,
 		UserQuery:  req.Query,
+		Mode:       mode,
+		Role:       role,
 	})
 	if err != nil {
 		// Killed session: a curator kill stamped killed_at and GetState now
@@ -129,7 +172,7 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		}
 		// Persist the failed turn too — operators need to see error
 		// traces in Curator (the dominant debugging signal).
-		h.persistTrace(r.Context(), req, tenant, nil, err)
+		h.persistTrace(r.Context(), req, tenant, mode, nil, err)
 		// Log the real error server-side; return a generic message so we
 		// don't leak internals (DB errors, prompt detail) to the client.
 		h.log.Error("pipeline_execute_failed", "err", err, "session_id", req.SessionID, "tenant", tenant.Slug)
@@ -160,7 +203,7 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 	// the user never waits on this. Caller's request context may be
 	// cancelled after writeJSON returns, so the goroutine carries its
 	// own derived ctx with a generous timeout.
-	h.persistTrace(r.Context(), req, tenant, resp, nil)
+	h.persistTrace(r.Context(), req, tenant, mode, resp, nil)
 }
 
 // persistTrace assembles a TraceRow from the in-memory span collector
@@ -171,6 +214,7 @@ func (h *PipelineHandler) persistTrace(
 	ctx context.Context,
 	req pipelineRequest,
 	tenant *domain.Tenant,
+	mode domain.PipelineMode,
 	resp *usecases.PipelineExecuteResponse,
 	pipelineErr error,
 ) {
@@ -192,6 +236,7 @@ func (h *PipelineHandler) persistTrace(
 		RequestID: rid,
 		TenantID:  tenant.ID,
 		UserQuery: req.Query,
+		Mode:      string(mode), // R17: v5_traces mode stamp (curator filter)
 		Spans:     spans,
 		SpanCount: len(spans),
 		Status:    "ok",

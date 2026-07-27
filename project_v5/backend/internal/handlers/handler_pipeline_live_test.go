@@ -30,6 +30,7 @@ import (
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/handlers"
+	"keepstar_v5/internal/operations"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/tools"
 	"keepstar_v5/internal/usecases"
@@ -67,6 +68,10 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	if err := pg.RunTraceMigrations(ctx); err != nil {
 		t.Fatalf("RunTraceMigrations: %v", err)
 	}
+	// Ordered after state: ALTERs v5_chat_sessions (mode column, R17).
+	if err := pg.RunOperationMigrations(ctx); err != nil {
+		t.Fatalf("RunOperationMigrations: %v", err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	catalog := postgres.NewCatalogAdapter(pg)
@@ -76,11 +81,11 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	fdPort := postgres.NewFieldDefinitionAdapter(pg)
 	llm := anthropicAdapter.NewClient(apiKey, "claude-haiku-4-5")
 
-	registry := tools.NewRegistry()
-	registry.Register(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort))
-	registry.Register(tools.NewCatalogSearchTool(statePort, catalog))
-	registry.Register(tools.NewStateFilterTool(statePort))
-	registry.Register(tools.NewHistoryLookupTool(statePort))
+	registry := operations.NewRegistry(operations.RegistryConfig{Tenants: catalog, Log: log})
+	registry.RegisterExecutor(domain.KindVisual, operations.WrapVisualAssembly(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort)))
+	registry.RegisterExecutor(domain.KindQuery, operations.WrapCatalogSearch(tools.NewCatalogSearchTool(statePort, catalog, nil), catalog))
+	registry.RegisterExecutor(domain.KindInternal, operations.WrapStateFilter(tools.NewStateFilterTool(statePort)))
+	registry.RegisterExecutor(domain.KindInternal, operations.WrapHistoryLookup(tools.NewHistoryLookupTool(statePort)))
 
 	promptCache := usecases.NewPromptCache(fdPort, presetPort, catalog, "product")
 	agent1Cache := usecases.NewAgent1PromptCache(catalog)
@@ -92,12 +97,14 @@ func TestHTTPLiveSmoke(t *testing.T) {
 	tracePort := postgres.NewTraceAdapter(pg)
 	themePort := postgres.NewThemeStore(pg)
 	sessionH := handlers.NewSessionHandler(statePort, pg.Pool())
-	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, nil, themePort, log)
+	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, nil, themePort, pg.Pool(), log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, themePort, log)
-	presetH := handlers.NewPresetHandler(promptCache, catalog, presetPort, componentPort, themePort, log)
+	presetH := handlers.NewPresetHandler(catalog, presetPort, componentPort, themePort, log)
 	themeH := handlers.NewThemeHandler(themePort, log)
-	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH, presetH, themeH)
+	onboardH := handlers.NewOnboardHandler(statePort, catalog, pg.Pool(), log)
+	cacheH := handlers.NewCacheHandler(agent1Cache, promptCache, registry, log)
+	router := handlers.RegisterRoutes(log, catalog, pg.Pool(), "", "hey-babes-cosmetics", sessionH, pipelineH, actionH, navigationH, presetH, themeH, onboardH, cacheH)
 
 	srv := httptest.NewServer(router)
 	defer srv.Close()

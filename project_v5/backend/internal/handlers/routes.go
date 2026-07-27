@@ -24,15 +24,17 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 //
 //	GET  /healthz                            — liveness probe (process alive)
 //	GET  /readyz                             — readiness probe (DB ping)
-//	POST /api/v1/session/init                — create session
+//	POST /api/v1/session/init                — create session (optional {mode, k} body, R17)
 //	GET  /api/v1/session/{id}                — read session state (debug)
+//	POST /api/v1/onboard/session             — create mode=onboarding session (ks_onboard cookie, R5/R17)
 //	POST /api/v1/pipeline                    — run Agent2 turn
 //	POST /api/v1/pipeline/stream             — same turn with SSE progress frames
 //	POST /api/v1/actions                     — like / unlike / cart_add / cart_remove
 //	POST /api/v1/navigation/expand           — drill into detail preset
 //	POST /api/v1/navigation/back             — pop view stack, restore prior template
 //	POST /api/v1/navigation/filter           — deterministic brand re-filter of the current grid
-//	POST /api/v1/internal/presets/cache-invalidate — drop cached Agent2 prompt for ?tenant= (X-Internal-Key)
+//	POST /api/v1/internal/cache/invalidate   — scoped cache invalidation for ?tenant=&scope=agent1|agent2|all (X-Internal-Key, R15)
+//	POST /api/v1/internal/presets/cache-invalidate — legacy alias ≡ scope=agent2 (X-Internal-Key)
 //	POST /api/v1/internal/presets/preview    — zero-LLM preset/draft render for ?tenant= (X-Internal-Key)
 //	GET  /api/v1/internal/presets/system     — system preset library listing (X-Internal-Key)
 //	GET  /api/v1/internal/presets/system/doc — compiled doc_json for one system preset by ?name= (X-Internal-Key)
@@ -63,17 +65,24 @@ func RegisterRoutes(
 	navigation *NavigationHandler,
 	preset *PresetHandler,
 	theme *ThemeHandler,
+	onboard *OnboardHandler,
+	cache *CacheHandler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", HealthHandler)
 	mux.HandleFunc("GET /readyz", ReadyzHandler(pool))
 	mux.HandleFunc("POST /api/v1/session/init", session.Init)
 	mux.HandleFunc("GET /api/v1/session/", session.Get)
+	// Onboarding (R5/R17) — ks_onboard cookie gated inside the handler,
+	// exempt from WithTenant (system tenant resolved server-side).
+	mux.HandleFunc("POST /api/v1/onboard/session", onboard.CreateSession)
 	// Internal control (curator cockpit kill switch) — gated by X-Internal-Key
 	// inside the handlers and exempt from WithTenant (middleware_tenant.go).
 	mux.HandleFunc("POST /api/v1/internal/session/{id}/kill", session.Kill)
 	mux.HandleFunc("POST /api/v1/internal/sessions/kill-all", session.KillAll)
-	mux.HandleFunc("POST /api/v1/internal/presets/cache-invalidate", preset.CacheInvalidate)
+	// Scoped cache invalidation (R15) + the legacy agent2-only alias.
+	mux.HandleFunc("POST /api/v1/internal/cache/invalidate", cache.Invalidate)
+	mux.HandleFunc("POST /api/v1/internal/presets/cache-invalidate", cache.InvalidateLegacy)
 	mux.HandleFunc("POST /api/v1/internal/presets/preview", preset.Preview)
 	mux.HandleFunc("GET /api/v1/internal/presets/system", preset.ListSystem)
 	mux.HandleFunc("GET /api/v1/internal/presets/system/doc", preset.SystemDoc)

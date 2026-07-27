@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/operations"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/tools"
 )
@@ -90,17 +91,25 @@ func setupAgent1(t *testing.T, products []domain.Product, llmResp *domain.LLMRes
 		products: products,
 		digest:   &domain.CatalogDigest{TotalProducts: 100},
 	}
-	registry := tools.NewRegistry()
-	registry.Register(tools.NewCatalogSearchTool(state, cat, nil))
-	registry.Register(tools.NewStateFilterTool(state))
-	registry.Register(tools.NewHistoryLookupTool(state))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	registry := newLegacyOpsRegistry(state, cat, log)
 
 	llm := &fakeLLM{resp: llmResp}
 	cache := NewAgent1PromptCache(cat)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	uc := NewAgent1Execute(llm, state, cat, registry, cache, log)
 	return uc, llm, state, cat
+}
+
+// newLegacyOpsRegistry builds an operation registry over the three legacy
+// Agent1 tool wraps — the M1 production wiring minus store/runs (unit
+// tests need neither instances nor audit persistence).
+func newLegacyOpsRegistry(state ports.StatePort, cat *fakeCatalog, log *slog.Logger) *operations.Registry {
+	reg := operations.NewRegistry(operations.RegistryConfig{Tenants: cat, Log: log})
+	reg.RegisterExecutor(domain.KindQuery, operations.WrapCatalogSearch(tools.NewCatalogSearchTool(state, cat, nil), cat))
+	reg.RegisterExecutor(domain.KindInternal, operations.WrapStateFilter(tools.NewStateFilterTool(state)))
+	reg.RegisterExecutor(domain.KindInternal, operations.WrapHistoryLookup(tools.NewHistoryLookupTool(state)))
+	return reg
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
@@ -180,8 +189,7 @@ func TestAgent1LLMCallsCatalogSearch(t *testing.T) {
 	}
 	uc, llm, _, _ := setupAgent1(t, nil, llmResp)
 	// Seed the catalog so catalog_search will return something.
-	uc.toolRegistry = func() *tools.Registry {
-		r := tools.NewRegistry()
+	uc.registry = func() ports.OperationRegistry {
 		state := newMockStatePort()
 		if _, err := state.CreateState(context.Background(), "sess-1"); err != nil {
 			t.Fatalf("CreateState: %v", err)
@@ -193,8 +201,8 @@ func TestAgent1LLMCallsCatalogSearch(t *testing.T) {
 			tenant:   &domain.Tenant{ID: "tnt-1", Slug: "acme"},
 			products: []domain.Product{{ID: "p1", Name: "Hyaluronic Serum"}},
 		}
-		r.Register(tools.NewCatalogSearchTool(state, cat, nil))
-		return r
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		return newLegacyOpsRegistry(state, cat, log)
 	}()
 
 	resp, err := uc.Execute(context.Background(), Agent1ExecuteRequest{
@@ -291,11 +299,21 @@ func TestAgent1ToolRetryWithEmptyInput(t *testing.T) {
 		},
 		errFirst: true,
 	}
-	registry := tools.NewRegistry()
-	registry.Register(failing)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	registry := operations.NewRegistry(operations.RegistryConfig{Tenants: cat, Log: log})
+	registry.RegisterExecutor(domain.KindQuery, operations.WrapLegacyTool(failing, domain.OperationTemplate{
+		Name:        "catalog_search",
+		Kind:        domain.KindQuery,
+		Title:       "stub",
+		Description: "stub",
+		InputSchema: failing.def.InputSchema,
+		Modes:       []domain.PipelineMode{domain.ModeStorefront, domain.ModeCRM},
+		Agent:       domain.AgentData,
+		MinRole:     domain.RoleVisitor,
+		AutoEnabled: true,
+	}))
 
 	cache := NewAgent1PromptCache(cat)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	uc := NewAgent1Execute(llm, state, cat, registry, cache, log)
 
 	resp, err := uc.Execute(context.Background(), Agent1ExecuteRequest{

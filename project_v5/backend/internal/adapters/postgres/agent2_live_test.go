@@ -30,6 +30,7 @@ import (
 	anthropicAdapter "keepstar_v5/internal/adapters/anthropic"
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine/presets"
+	"keepstar_v5/internal/operations"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/tools"
 	"keepstar_v5/internal/usecases"
@@ -87,9 +88,11 @@ func TestAgent2LiveSmoke(t *testing.T) {
 	seedPresetWithExactName(t, c, tenantSlug, "product_card", presets.ProductCardJSON)
 	t.Logf("seeded preset %q for tenant %q", "product_card", tenantSlug)
 
-	// 3. Build registry with visual_assembly wired to live ports.
-	registry := tools.NewRegistry()
-	registry.Register(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort))
+	// 3. Build the operation registry (R8) with visual_assembly wired to
+	// live ports via the legacy wrap — the same shape main.go boots with.
+	registry := operations.NewRegistry(operations.RegistryConfig{Tenants: cat})
+	registry.RegisterExecutor(domain.KindVisual,
+		operations.WrapVisualAssembly(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort)))
 
 	// Build Agent2 use case.
 	promptCache := usecases.NewPromptCache(fdPort, presetPort, cat, "product")

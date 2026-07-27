@@ -99,7 +99,7 @@ func previewTestHandler() *PresetHandler {
 		"product_card_demo": json.RawMessage(previewCardDoc),
 	}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewPresetHandler(nil, catalog, presetPort, &fakeComponentPort{}, nil, log)
+	return NewPresetHandler(catalog, presetPort, &fakeComponentPort{}, nil, log)
 }
 
 func doPreview(t *testing.T, h *PresetHandler, url, key, body string) *httptest.ResponseRecorder {

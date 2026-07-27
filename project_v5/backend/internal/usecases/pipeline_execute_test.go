@@ -13,7 +13,6 @@ import (
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/ports"
-	"keepstar_v5/internal/tools"
 )
 
 // --- fakes -----------------------------------------------------------------
@@ -64,12 +63,8 @@ func setupPipeline(t *testing.T, stateProducts, catalogProducts []domain.Product
 		products: catalogProducts,
 		digest:   &domain.CatalogDigest{TotalProducts: 100},
 	}
-	registry := tools.NewRegistry()
-	registry.Register(tools.NewCatalogSearchTool(state, cat, nil))
-	registry.Register(tools.NewStateFilterTool(state))
-	registry.Register(tools.NewHistoryLookupTool(state))
-
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	registry := newLegacyOpsRegistry(state, cat, log)
 
 	llm1 := &fakeLLM{resp: &domain.LLMResponse{
 		StopReason: "tool_use",

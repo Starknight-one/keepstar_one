@@ -53,6 +53,11 @@ CREATE INDEX IF NOT EXISTS idx_v5_traces_session_created
 
 CREATE INDEX IF NOT EXISTS idx_v5_traces_status_created
     ON v5_chat_session_traces(status, created_at DESC) WHERE status = 'error';
+
+-- Runtime v1 (RUNTIME_SPEC.md §3.3, R17): the form (mode) the turn ran in —
+-- onboarding|storefront|crm, stamped by the pipeline handler from the session
+-- row. NULL = legacy rows from before the column existed.
+ALTER TABLE v5_chat_session_traces ADD COLUMN IF NOT EXISTS mode TEXT;
 `
 
 // RunTraceMigrations applies the V5 chunk-13 trace schema. Idempotent.

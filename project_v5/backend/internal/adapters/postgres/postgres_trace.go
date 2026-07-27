@@ -42,13 +42,13 @@ func (a *TraceAdapter) SaveTrace(ctx context.Context, row domain.TraceRow) error
             session_id, request_id, tenant_id, user_query, spans, span_count,
             latency_ms, agent1_ms, agent2_ms,
             tokens_input, tokens_output, tokens_cache_read, tokens_cache_creation,
-            cost_usd, status, error_message
+            cost_usd, status, error_message, mode
         )
         VALUES (
             $1::uuid, $2, $3, $4, $5::jsonb, $6,
             $7, $8, $9,
             $10, $11, $12, $13,
-            $14, $15, $16
+            $14, $15, $16, $17
         )
         ON CONFLICT (session_id, request_id) DO NOTHING
     `
@@ -59,6 +59,7 @@ func (a *TraceAdapter) SaveTrace(ctx context.Context, row domain.TraceRow) error
 		nullableInt64(row.TokensInput), nullableInt64(row.TokensOutput),
 		nullableInt64(row.TokensCacheRead), nullableInt64(row.TokensCacheCreation),
 		nullableFloat(row.CostUSD), row.Status, nullableStr(row.ErrorMessage),
+		nullableStr(row.Mode),
 	)
 	if err != nil {
 		return fmt.Errorf("insert trace: %w", err)

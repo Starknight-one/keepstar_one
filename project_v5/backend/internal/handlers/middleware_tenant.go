@@ -35,6 +35,13 @@ func WithTenant(catalog ports.CatalogPort, defaultSlug string) func(http.Handler
 				next.ServeHTTP(w, r)
 				return
 			}
+			// Onboarding routes (R5) are cookie-gated and tenant-agnostic to the
+			// caller: sessions live under the keepstar-onboarding system tenant,
+			// resolved server-side (handler_onboard.go) — never from X-Tenant-Slug.
+			if strings.HasPrefix(r.URL.Path, "/api/v1/onboard/") {
+				next.ServeHTTP(w, r)
+				return
+			}
 			slug := r.Header.Get("X-Tenant-Slug")
 			if slug == "" {
 				slug = defaultSlug

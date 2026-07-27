@@ -3,6 +3,8 @@ package usecases
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -10,6 +12,18 @@ import (
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/prompts"
 )
+
+// cacheTTLFromEnv returns the §6.1 TTL safety net duration: CACHE_TTL_SECONDS
+// env, default 600s. Both v5 prompt caches treat entries older than this as a
+// miss, so a missed best-effort invalidation heals within one TTL.
+func cacheTTLFromEnv() time.Duration {
+	if s := os.Getenv("CACHE_TTL_SECONDS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 600 * time.Second
+}
 
 // PromptCache memoises the assembled Agent2 system prompt per tenant slug.
 // The prompt body is mostly static (`prompts.Agent2SystemPrompt` is a Go
@@ -24,15 +38,18 @@ import (
 // Value: the fully-assembled prompt + a built-at timestamp for observability.
 //
 // Invalidation: Invalidate(tenant) drops every cached entry for a tenant (all
-// flag variants). The curator cockpit calls POST
-// /api/v1/internal/presets/cache-invalidate after a tenant publishes a preset
-// so the next turn rebuilds the <tenant_design_context> block.
+// flag variants). Admin/curator call POST /api/v1/internal/cache/invalidate
+// with scope=agent2 (or the legacy presets/cache-invalidate alias, R15) after
+// a tenant publishes a preset so the next turn rebuilds the
+// <tenant_design_context> block. Entries also expire after CACHE_TTL_SECONDS
+// (§6.1 TTL safety net) so a missed best-effort invalidation self-heals.
 type PromptCache struct {
 	fdPort     ports.FieldDefinitionPort
 	presetPort ports.PresetPort
 	catalog    ports.CatalogPort
 	store      sync.Map // cacheKey → *promptCacheEntry
 	entityType domain.EntityType
+	ttl        time.Duration // §6.1 TTL safety net; entries older = miss
 }
 
 type promptCacheEntry struct {
@@ -44,7 +61,7 @@ type promptCacheEntry struct {
 // used to read the tenant's price/stock visibility flags so the cached
 // <fields> block omits hidden fields (and the cache key reflects them).
 func NewPromptCache(fdPort ports.FieldDefinitionPort, presetPort ports.PresetPort, catalog ports.CatalogPort, entityType domain.EntityType) *PromptCache {
-	return &PromptCache{fdPort: fdPort, presetPort: presetPort, catalog: catalog, entityType: entityType}
+	return &PromptCache{fdPort: fdPort, presetPort: presetPort, catalog: catalog, entityType: entityType, ttl: cacheTTLFromEnv()}
 }
 
 // GetOrBuild returns the assembled prompt for tenantSlugOrID, building it
@@ -68,7 +85,12 @@ func (c *PromptCache) GetOrBuild(ctx context.Context, tenantSlugOrID string, sam
 
 	key := cacheKey(tenantSlugOrID, priceVisible, stockVisible)
 	if v, ok := c.store.Load(key); ok {
-		return v.(*promptCacheEntry).prompt, nil
+		e := v.(*promptCacheEntry)
+		if c.ttl <= 0 || time.Since(e.builtAt) <= c.ttl {
+			return e.prompt, nil
+		}
+		// TTL safety net (§6.1): stale entry = miss — rebuild below.
+		c.store.Delete(key)
 	}
 	fields, err := prompts.FormatFieldsBlock(ctx, c.fdPort, tenantSlugOrID, c.entityType, sampleLimit, priceVisible, stockVisible)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -18,12 +19,26 @@ import (
 	"keepstar_v5/internal/adapters/openai"
 	"keepstar_v5/internal/adapters/postgres"
 	"keepstar_v5/internal/config"
+	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/handlers"
+	"keepstar_v5/internal/operations"
+	"keepstar_v5/internal/operations/seed"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/tools"
 	"keepstar_v5/internal/usecases"
 )
+
+// cacheTTLFromEnv reads the §6.1 TTL safety net (CACHE_TTL_SECONDS, default
+// 600s) — the same env the prompt caches read at construction.
+func cacheTTLFromEnv() time.Duration {
+	if s := os.Getenv("CACHE_TTL_SECONDS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 600 * time.Second
+}
 
 func main() {
 	cfg := config.MustLoad()
@@ -55,6 +70,10 @@ func main() {
 		{"component", pgClient.RunComponentMigrations},
 		{"trace", pgClient.RunTraceMigrations},
 		{"theme", pgClient.RunThemeMigrations},
+		// Runtime v1 (RUNTIME_SPEC.md §3): operation ALTERs v5_chat_sessions
+		// (mode column, R17) so it must stay ordered after state.
+		{"operation", pgClient.RunOperationMigrations},
+		{"entity", pgClient.RunEntityMigrations},
 	} {
 		if err := mig.run(bootCtx); err != nil {
 			log.Error("migration failed", "name", mig.name, "err", err)
@@ -107,14 +126,37 @@ func main() {
 		log.Warn("OPENAI_API_KEY not set — catalog_search will run keyword-only")
 	}
 
-	// Tools + use cases. The registry is shared across both agents — Agent1
-	// filters by name prefix ("catalog_" / "_internal_") at call time so it
-	// never sees Agent2's visual_assembly, and vice versa.
-	registry := tools.NewRegistry()
-	registry.Register(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort))
-	registry.Register(tools.NewCatalogSearchTool(statePort, catalogPort, embeddingPort))
-	registry.Register(tools.NewStateFilterTool(statePort))
-	registry.Register(tools.NewHistoryLookupTool(statePort))
+	// Operation registry (RUNTIME_SPEC.md R8) — THE single execution choke
+	// point, shared by both agents. The four legacy tools run as
+	// passthrough wraps: wire behavior byte-identical to the pre-registry
+	// path. Per-agent visibility comes from DefinitionsFor(tenant, form,
+	// plane, role) — the name-prefix filter is gone. The postgres adapter
+	// turns on tenant instances + the v5_operation_runs audit; SpecTTL is
+	// the §6.1 TTL net (CACHE_TTL_SECONDS, same env the prompt caches read).
+	operationStore := postgres.NewOperationAdapter(pgClient)
+	registry := operations.NewRegistry(operations.RegistryConfig{
+		Store:    operationStore,
+		Runs:     operationStore,
+		Tenants:  catalogPort,
+		Embedder: embeddingPort,
+		SpecTTL:  cacheTTLFromEnv(),
+		Log:      log,
+	})
+	registry.RegisterExecutor(domain.KindVisual, operations.WrapVisualAssembly(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort)))
+	registry.RegisterExecutor(domain.KindQuery, operations.WrapCatalogSearch(tools.NewCatalogSearchTool(statePort, catalogPort, embeddingPort), catalogPort))
+	registry.RegisterExecutor(domain.KindInternal, operations.WrapStateFilter(tools.NewStateFilterTool(statePort)))
+	registry.RegisterExecutor(domain.KindInternal, operations.WrapHistoryLookup(tools.NewHistoryLookupTool(statePort)))
+
+	// Boot seed (§3.1): wrap rows from the registered executors + the 18
+	// spec templates (6 executors, compose_turn, 11 onboarding meta-ops),
+	// idempotent upsert on name, descriptions embedded when the embedder is
+	// configured (nil → embedding NULL → SearchLibrary degrades to FTS).
+	// Fail loud: a seed failure is a DB problem, same class as migrations.
+	if err := registry.SeedTemplates(bootCtx, seed.Templates()); err != nil {
+		log.Error("operation template seed failed", "err", err)
+		os.Exit(1)
+	}
+	log.Info("operation templates seeded", "extra_rows", len(seed.Templates()))
 
 	promptCache := usecases.NewPromptCache(fdPort, presetPort, catalogPort, "product")
 	agent1Cache := usecases.NewAgent1PromptCache(catalogPort)
@@ -127,12 +169,14 @@ func main() {
 	sessionH := handlers.NewSessionHandler(statePort, pgClient.Pool())
 	pipelineGuard := handlers.NewPipelineGuard(cfg.PipelineRatePerMin, cfg.PipelineDailyUSDCap, log)
 	log.Info("pipeline_guard_configured", "rate_per_min", cfg.PipelineRatePerMin, "daily_usd_cap", cfg.PipelineDailyUSDCap)
-	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, pipelineGuard, themePort, log)
+	pipelineH := handlers.NewPipelineHandler(pipeline, tracePort, pipelineGuard, themePort, pgClient.Pool(), log)
 	actionH := handlers.NewActionHandler(statePort)
 	navigationH := handlers.NewNavigationHandler(statePort, presetPort, componentPort, themePort, log)
-	presetH := handlers.NewPresetHandler(promptCache, catalogPort, presetPort, componentPort, themePort, log)
+	presetH := handlers.NewPresetHandler(catalogPort, presetPort, componentPort, themePort, log)
 	themeH := handlers.NewThemeHandler(themePort, log)
-	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH, themeH)
+	onboardH := handlers.NewOnboardHandler(statePort, catalogPort, pgClient.Pool(), log)
+	cacheH := handlers.NewCacheHandler(agent1Cache, promptCache, registry, log)
+	router := handlers.RegisterRoutes(log, catalogPort, pgClient.Pool(), cfg.StaticDir, cfg.TenantSlug, sessionH, pipelineH, actionH, navigationH, presetH, themeH, onboardH, cacheH)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

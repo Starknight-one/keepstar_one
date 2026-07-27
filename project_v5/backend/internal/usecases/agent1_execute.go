@@ -13,7 +13,6 @@ import (
 	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/prompts"
-	"keepstar_v5/internal/tools"
 )
 
 // filterTriggers matches user queries that imply filtering existing data
@@ -24,21 +23,34 @@ var filterTriggers = regexp.MustCompile(`(?i)(только|лишь|оставь
 // is a STYLE request that should NOT trigger the deterministic guard.
 var styleFieldNames = regexp.MustCompile(`(?i)(описани|рейтинг|бренд|цен[уыа]|фото|картинк|назван|изображ|тег|катего|рейт|rating|brand|price|image|name|description|tag)`)
 
-// Agent1ExecuteRequest is the per-turn input handed to Agent1.
+// maxOnboardingOps caps the onboarding form's multi-op turn (R4): the
+// onboarding agent executes ALL emitted tool calls sequentially, at most 8,
+// with ONE LLM call per turn — no continuation call. Storefront/CRM keep
+// the single-call fast path.
+const maxOnboardingOps = 8
+
+// Agent1ExecuteRequest is the per-turn input handed to Agent1. Mode, Role
+// and ActorID arrive from the session row via the pipeline handler (R17);
+// empty values default to the storefront form / visitor role.
 type Agent1ExecuteRequest struct {
 	SessionID  string
 	TenantSlug string
 	UserQuery  string
 	TurnID     string
+	Mode       domain.PipelineMode
+	Role       domain.Role
+	ActorID    string
 }
 
 // Agent1ExecuteResponse carries everything the pipeline orchestrator needs
 // to compose a microcontext signal for Agent2 plus surface diagnostics.
 type Agent1ExecuteResponse struct {
-	ToolName      string                 // empty when no tool call (style request)
-	ToolInput     map[string]interface{} // raw input as the LLM emitted it
-	ToolResult    *domain.ToolResult     // pointer because no-tool runs leave it nil
-	ProductsFound int                    // for the microcontext signal
+	ToolName      string                    // first executed operation (empty when none — style request)
+	ToolInput     map[string]interface{}    // first call's raw input as the LLM emitted it
+	ToolCalls     []domain.ToolCall         // every executed call, in emission order
+	Results       []*domain.OperationResult // structured results, aligned with ToolCalls
+	ToolResult    *domain.ToolResult        // first result bridged to the legacy shape (nil when no op ran)
+	ProductsFound int                       // for the microcontext signal
 	Usage         domain.LLMUsage
 	LatencyMs     int64
 	LLMCallMs     int64
@@ -48,23 +60,25 @@ type Agent1ExecuteResponse struct {
 	Bypassed      bool   // true when deterministic guard fired
 }
 
-// Agent1Execute runs one Agent1 turn — single-turn tool loop with a
+// Agent1Execute runs one Agent1 turn — single LLM call with a
 // deterministic state-filter guard for obvious filter queries.
 //
 //  1. GetState
 //  2. If data is loaded AND query matches filterTriggers AND NOT styleFieldNames →
-//     bypass LLM, run _internal_state_filter directly
+//     bypass LLM, run _internal_state_filter through the registry directly
 //  3. Otherwise build system prompt (cached) + enriched user query, call LLM
-//  4. Run the first tool call returned (V4 single-turn pattern), retry once
-//     with empty input on Go-error
+//     with registry.DefinitionsFor(tenant, form, data-plane, role)
+//  4. Execute the returned tool calls through registry.Execute — the first
+//     call only on storefront/crm (V4 fast path), ALL calls (cap 8) on the
+//     onboarding form (R4); retry once with empty input on Go-error
 //  5. Append user / assistant:tool_use / user:tool_result to ConversationHistory
 type Agent1Execute struct {
-	llm          ports.LLMPort
-	state        ports.StatePort
-	catalog      ports.CatalogPort
-	toolRegistry *tools.Registry
-	promptCache  *Agent1PromptCache
-	log          *slog.Logger
+	llm         ports.LLMPort
+	state       ports.StatePort
+	catalog     ports.CatalogPort
+	registry    ports.OperationRegistry
+	promptCache *Agent1PromptCache
+	log         *slog.Logger
 }
 
 // NewAgent1Execute wires the use case. All deps required.
@@ -72,17 +86,17 @@ func NewAgent1Execute(
 	llm ports.LLMPort,
 	state ports.StatePort,
 	catalog ports.CatalogPort,
-	toolRegistry *tools.Registry,
+	registry ports.OperationRegistry,
 	promptCache *Agent1PromptCache,
 	log *slog.Logger,
 ) *Agent1Execute {
 	return &Agent1Execute{
-		llm:          llm,
-		state:        state,
-		catalog:      catalog,
-		toolRegistry: toolRegistry,
-		promptCache:  promptCache,
-		log:          log,
+		llm:         llm,
+		state:       state,
+		catalog:     catalog,
+		registry:    registry,
+		promptCache: promptCache,
+		log:         log,
 	}
 }
 
@@ -91,6 +105,15 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	start := time.Now()
 	ctx, topSpan := withSpan(ctx, "agent1.execute")
 	defer topSpan.End()
+
+	mode := req.Mode
+	if mode == "" {
+		mode = domain.ModeStorefront
+	}
+	role := req.Role
+	if role == "" {
+		role = domain.RoleVisitor
+	}
 
 	state, err := uc.state.GetState(ctx, req.SessionID)
 	if err != nil {
@@ -110,10 +133,13 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	state.Current.Meta.ProductCount = len(state.Current.Data.Products)
 	state.Current.Meta.ServiceCount = len(state.Current.Data.Services)
 
-	toolCtx := domain.ToolContext{
+	octx := domain.OperationContext{
 		SessionID:  req.SessionID,
 		TenantSlug: req.TenantSlug,
 		TurnID:     req.TurnID,
+		Mode:       mode,
+		Role:       role,
+		ActorID:    req.ActorID,
 	}
 
 	// ── Deterministic guard ──
@@ -125,15 +151,16 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 			"tool_name": "_internal_state_filter",
 			"bypassed":  true,
 		})
+		guardInput := map[string]interface{}{"text_match": req.UserQuery}
 		toolStart := time.Now()
-		result, runErr := uc.toolRegistry.Execute(ctx, toolCtx, domain.ToolCall{
+		result, runErr := uc.registry.Execute(ctx, octx, domain.ToolCall{
 			Name:  "_internal_state_filter",
-			Input: map[string]interface{}{"text_match": req.UserQuery},
+			Input: guardInput,
 		})
 		toolMs := time.Since(toolStart).Milliseconds()
 		if runErr != nil {
 			guardSpan.SetError(runErr)
-		} else if result != nil && result.IsError {
+		} else if result != nil && result.Outcome != domain.OutcomeOK && result.Outcome != domain.OutcomeEmpty {
 			guardSpan.SetAttr("is_error", true)
 		}
 		guardSpan.End()
@@ -152,11 +179,15 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 			if reloaded, err := uc.state.GetState(ctx, req.SessionID); err == nil {
 				state = reloaded
 			}
+			productsFound := len(state.Current.Data.Products)
+			stampStateCounts([]*domain.OperationResult{result}, productsFound)
 			return &Agent1ExecuteResponse{
 				ToolName:      "_internal_state_filter",
-				ToolInput:     map[string]interface{}{"text_match": req.UserQuery},
-				ToolResult:    result,
-				ProductsFound: len(state.Current.Data.Products),
+				ToolInput:     guardInput,
+				ToolCalls:     []domain.ToolCall{{Name: "_internal_state_filter", Input: guardInput}},
+				Results:       []*domain.OperationResult{result},
+				ToolResult:    result.ToToolResult(""),
+				ProductsFound: productsFound,
 				LatencyMs:     time.Since(start).Milliseconds(),
 				ToolExecuteMs: toolMs,
 				StopReason:    "deterministic_guard",
@@ -167,7 +198,9 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 
 	// ── LLM path ──
 	_, promptSpan := withSpan(ctx, "agent1.prompt")
-	systemPrompt := uc.promptCache.GetOrBuild(ctx, req.TenantSlug)
+	// Form-keyed prompt selection (R17): unregistered forms fall back to
+	// the storefront base, so pre-mode sessions stay byte-identical.
+	systemPrompt := uc.promptCache.GetOrBuildForm(ctx, req.TenantSlug, req.Mode)
 	rendered := buildRenderedSubsetFromState(state)
 	promptSpan.SetAttrs(map[string]any{
 		"rendered_count":  len(rendered),
@@ -183,27 +216,13 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	messages = append(messages, state.ConversationHistory...)
 	messages = append(messages, domain.LLMMessage{Role: "user", Content: enrichedQuery})
 
-	// Filter the shared registry to Agent1's tools. Name prefixes:
-	//   - catalog_*    → user-facing catalog actions (catalog_search)
-	//   - _internal_*  → housekeeping (_internal_state_filter, _internal_history_lookup)
-	allDefs := uc.toolRegistry.GetDefinitions()
-	toolDefs := make([]domain.ToolDefinition, 0, len(allDefs))
-	for _, d := range allDefs {
-		if hasAnyPrefix(d.Name, "catalog_", "_internal_") {
-			toolDefs = append(toolDefs, d)
-		}
-	}
-	// Per-tenant search contract: swap catalog_search's static (legacy
-	// cosmetics) filter schema for one generated from this tenant's
-	// digest. CacheTools is off for Agent1, so a per-tenant schema does
-	// not fragment the Anthropic prompt cache.
-	if schema := uc.promptCache.SearchSchema(ctx, req.TenantSlug); schema != nil {
-		for i := range toolDefs {
-			if toolDefs[i].Name == "catalog_search" {
-				toolDefs[i].InputSchema = schema
-			}
-		}
-	}
+	// Registry-scoped visibility (R8): the operations visible to Agent1 for
+	// this tenant + form + role, per-tenant schemas already materialized
+	// (catalog_search's digest-derived filter schema arrives from the
+	// executor's SpecForTenant). Sort is byte-stable. CacheTools is off for
+	// Agent1, so a per-tenant schema does not fragment the Anthropic prompt
+	// cache.
+	toolDefs := uc.registry.DefinitionsFor(ctx, req.TenantSlug, mode, domain.AgentData, role)
 
 	cfg := ports.CacheConfig{
 		// CacheTools deliberately OFF — V5 Agent1 tool defs sum below
@@ -253,42 +272,61 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	historyTail := []domain.LLMMessage{{Role: "user", Content: req.UserQuery}}
 
 	if len(resp.ToolCalls) > 0 {
-		tc := resp.ToolCalls[0] // V4 single-turn — first call only
-		out.ToolName = tc.Name
-		out.ToolInput = tc.Input
-
-		_, toolSpan := withSpan(ctx, "agent1.tool."+tc.Name)
-		toolSpan.SetAttr("tool_name", tc.Name)
-		toolStart := time.Now()
-		result, runErr := uc.runToolWithRetry(ctx, toolCtx, tc)
-		toolMs := time.Since(toolStart).Milliseconds()
-		if runErr != nil {
-			toolSpan.SetError(runErr)
-		} else if result != nil && result.IsError {
-			toolSpan.SetAttr("is_error", true)
+		// Multi-op turn (R4): ONLY the onboarding form executes every
+		// emitted call, sequentially, cap 8. Storefront/CRM keep the V4
+		// single-call fast path.
+		calls := resp.ToolCalls
+		if mode != domain.ModeOnboarding {
+			calls = calls[:1]
+		} else if len(calls) > maxOnboardingOps {
+			uc.log.Warn("agent1: onboarding turn exceeded op cap — truncating", "emitted", len(calls), "cap", maxOnboardingOps)
+			calls = calls[:maxOnboardingOps]
 		}
-		toolSpan.End()
 
-		if runErr != nil {
-			topSpan.SetError(runErr)
-			return nil, fmt.Errorf("agent1 tool %s: %w", tc.Name, runErr)
+		for _, tc := range calls {
+			_, toolSpan := withSpan(ctx, "agent1.tool."+tc.Name)
+			toolSpan.SetAttr("tool_name", tc.Name)
+			toolStart := time.Now()
+			result, runErr := uc.runOpWithRetry(ctx, octx, tc)
+			toolMs := time.Since(toolStart).Milliseconds()
+			if runErr != nil {
+				toolSpan.SetError(runErr)
+			} else if result != nil && result.Outcome != domain.OutcomeOK && result.Outcome != domain.OutcomeEmpty {
+				toolSpan.SetAttr("is_error", true)
+			}
+			toolSpan.End()
+
+			if runErr != nil {
+				topSpan.SetError(runErr)
+				return nil, fmt.Errorf("agent1 tool %s: %w", tc.Name, runErr)
+			}
+			out.ToolCalls = append(out.ToolCalls, tc)
+			out.Results = append(out.Results, result)
+			out.ToolExecuteMs += toolMs
+
+			// History bridges the structured result to the legacy tool_result
+			// shape WITHOUT metadata — exactly the bytes the pre-registry
+			// path persisted, so conversation-prefix caches stay warm.
+			bridged := result.ToToolResult(tc.ID)
+			historyTail = append(historyTail,
+				domain.LLMMessage{Role: "assistant", ToolCalls: []domain.ToolCall{tc}},
+				domain.LLMMessage{Role: "user", ToolResult: &domain.ToolResult{
+					ToolUseID: bridged.ToolUseID,
+					Content:   bridged.Content,
+					IsError:   bridged.IsError,
+				}},
+			)
 		}
-		out.ToolResult = result
-		out.ToolExecuteMs = toolMs
 
-		historyTail = append(historyTail,
-			domain.LLMMessage{Role: "assistant", ToolCalls: []domain.ToolCall{tc}},
-			domain.LLMMessage{Role: "user", ToolResult: &domain.ToolResult{
-				ToolUseID: tc.ID,
-				Content:   result.Content,
-				IsError:   result.IsError,
-			}},
-		)
+		out.ToolName = out.ToolCalls[0].Name
+		out.ToolInput = out.ToolCalls[0].Input
+		out.ToolResult = out.Results[0].ToToolResult(out.ToolCalls[0].ID)
 
 		// Reload state for products-found count.
 		if reloaded, err := uc.state.GetState(ctx, req.SessionID); err == nil {
 			out.ProductsFound = len(reloaded.Current.Data.Products) + len(reloaded.Current.Data.Services)
 		}
+		stampStateCounts(out.Results, out.ProductsFound)
 	}
 
 	uc.appendConversation(ctx, req.SessionID, state.ConversationHistory, historyTail)
@@ -296,18 +334,35 @@ func (uc *Agent1Execute) Execute(ctx context.Context, req Agent1ExecuteRequest) 
 	return out, nil
 }
 
-// runToolWithRetry runs the tool once. On Go-error (transport failure),
+// stampStateCounts writes the reloaded state count onto the legacy
+// state-zone results. The pre-registry microcontext derived its counts from
+// ProductsFound (stale data preserved on an empty search — V4 semantics);
+// the legacy wraps don't know the state count, so the stamp keeps
+// composeMicrocontext byte-compatible. Native executors (entity queries)
+// set their own Count and are left untouched.
+func stampStateCounts(results []*domain.OperationResult, productsFound int) {
+	for _, r := range results {
+		if r == nil {
+			continue
+		}
+		if (r.Kind == domain.KindQuery && r.EntityKind == "") || r.Operation == "_internal_state_filter" {
+			r.Count = productsFound
+		}
+	}
+}
+
+// runOpWithRetry runs the operation once. On Go-error (transport failure),
 // retries once with empty input — the V4 graceful-degradation pattern that
-// recovers from arg-parsing crashes. Tool-side IsError responses are not
-// retried; they're informational for the LLM's next turn.
-func (uc *Agent1Execute) runToolWithRetry(ctx context.Context, toolCtx domain.ToolContext, tc domain.ToolCall) (*domain.ToolResult, error) {
-	res, err := uc.toolRegistry.Execute(ctx, toolCtx, tc)
+// recovers from arg-parsing crashes. Structured invalid/denied results are
+// not retried; they're informational for the LLM's next turn.
+func (uc *Agent1Execute) runOpWithRetry(ctx context.Context, octx domain.OperationContext, tc domain.ToolCall) (*domain.OperationResult, error) {
+	res, err := uc.registry.Execute(ctx, octx, tc)
 	if err == nil {
 		return res, nil
 	}
 	uc.log.Warn("agent1: tool errored, retrying with empty input", "tool", tc.Name, "err", err)
 	emptyCall := domain.ToolCall{ID: tc.ID, Name: tc.Name, Input: map[string]interface{}{}}
-	return uc.toolRegistry.Execute(ctx, toolCtx, emptyCall)
+	return uc.registry.Execute(ctx, octx, emptyCall)
 }
 
 // appendConversation merges the existing history with the new tail and writes
@@ -320,15 +375,6 @@ func (uc *Agent1Execute) appendConversation(ctx context.Context, sessionID strin
 	if err := uc.state.AppendConversation(ctx, sessionID, full); err != nil {
 		uc.log.Warn("agent1: AppendConversation failed", "session", sessionID, "err", err)
 	}
-}
-
-func hasAnyPrefix(s string, prefixes ...string) bool {
-	for _, p := range prefixes {
-		if len(s) >= len(p) && s[:len(p)] == p {
-			return true
-		}
-	}
-	return false
 }
 
 // buildRenderedSubsetFromState extracts the products currently visible to

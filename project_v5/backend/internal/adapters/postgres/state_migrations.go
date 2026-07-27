@@ -68,6 +68,25 @@ CREATE INDEX IF NOT EXISTS idx_v5_chat_session_deltas_source
 -- GetState refuses it (ErrSessionKilled) so the engine stops serving it.
 ALTER TABLE v5_chat_sessions ADD COLUMN IF NOT EXISTS killed_at TIMESTAMPTZ;
 ALTER TABLE v5_chat_sessions ADD COLUMN IF NOT EXISTS killed_reason TEXT;
+
+-- Runtime v1 (RUNTIME_SPEC.md R13/R17): per-session role, stamped at session
+-- init (staff via a valid CRM surface token, visitor otherwise) and inherited
+-- by every pipeline turn from the session row. The sibling mode column rides
+-- operation_migrations.go (ordered after state in cmd/server/main.go).
+ALTER TABLE v5_chat_sessions ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'visitor';
+
+-- CRM surface tokens (RUNTIME_SPEC.md §3.3, R13): storefront is public, the
+-- token gates CRM only. Validated at session init (mode=crm requires a live
+-- token → role staff). Minting (issue_surface_urls) lands in M3; the table
+-- exists now so init-time validation has one honest code path.
+CREATE TABLE IF NOT EXISTS v5_surface_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  surface TEXT NOT NULL CHECK (surface IN ('crm')),
+  token TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ
+);
 `
 
 // RunStateMigrations applies the V5 state schema. Idempotent (CREATE IF NOT EXISTS).

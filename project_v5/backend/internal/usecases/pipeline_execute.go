@@ -13,11 +13,17 @@ import (
 
 // PipelineExecuteRequest is the per-call input the HTTP handler hands to the
 // orchestrator: a session, a tenant, and the user's natural-language query.
+// Mode/Role/ActorID come from the session row (R17): the handler reads
+// v5_chat_sessions.mode and the session role and passes them through; empty
+// values default to the storefront form / visitor role downstream.
 type PipelineExecuteRequest struct {
 	SessionID  string
 	TenantSlug string
 	UserQuery  string
 	TurnID     string
+	Mode       domain.PipelineMode
+	Role       domain.Role
+	ActorID    string
 
 	// OnStage, when non-nil, receives a progress signal between pipeline
 	// stages (currently once, after Agent1) so callers can stream progress
@@ -34,6 +40,7 @@ type StageEvent struct {
 	Phase    string
 	Signal   string
 	ToolName string
+	Ops      []string // every executed Agent1 operation, in order (multi-op turns, R4)
 	Count    int
 	Empty    bool
 	Bypassed bool
@@ -119,25 +126,28 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		TenantSlug: req.TenantSlug,
 		UserQuery:  req.UserQuery,
 		TurnID:     req.TurnID,
+		Mode:       req.Mode,
+		Role:       req.Role,
+		ActorID:    req.ActorID,
 	})
 	if err != nil {
 		topSpan.SetError(err)
 		return nil, fmt.Errorf("agent1: %w", err)
 	}
 
-	microcontext := composeMicrocontext(a1)
+	microcontext := composeMicrocontext(a1.Results)
 
 	if req.OnStage != nil {
-		// Empty checks the tool result, not ProductsFound: on "0 hits,
-		// previous data preserved" the count still shows the stale data.
-		// Both catalog_search and _internal_state_filter emit the
-		// "empty:" prefix in that case.
+		// Empty comes from the structured outcome, not ProductsFound: on
+		// "0 hits, previous data preserved" the count still shows the
+		// stale data while the operation reports OutcomeEmpty.
 		req.OnStage(StageEvent{
 			Phase:    "data_done",
 			Signal:   microcontext,
 			ToolName: a1.ToolName,
+			Ops:      opNames(a1.Results),
 			Count:    a1.ProductsFound,
-			Empty:    a1.ToolResult != nil && strings.HasPrefix(a1.ToolResult.Content, "empty:"),
+			Empty:    anyEmpty(a1.Results),
 			Bypassed: a1.Bypassed,
 			Agent1Ms: a1.LatencyMs,
 		})
@@ -148,6 +158,9 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		SessionID:    req.SessionID,
 		TenantSlug:   req.TenantSlug,
 		UserQuery:    req.UserQuery,
+		Mode:         req.Mode,
+		Role:         req.Role,
+		ActorID:      req.ActorID,
 		Microcontext: microcontext,
 	})
 	if err != nil {
@@ -161,12 +174,14 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		"microcontext": microcontext,
 	})
 
-	// Aggregate ToolCalls (Agent1's first if it ran a tool, Agent2's all).
-	toolCalls := make([]domain.ToolCall, 0, 1+len(a2.ToolCalls))
-	if a1.ToolName != "" {
+	// Aggregate ToolCalls (Agent1's executed calls — one on storefront/crm,
+	// up to 8 on the onboarding form (R4) — then Agent2's all). IDs are
+	// stripped from Agent1's calls, matching the pre-registry wire shape.
+	toolCalls := make([]domain.ToolCall, 0, len(a1.ToolCalls)+len(a2.ToolCalls))
+	for _, tc := range a1.ToolCalls {
 		toolCalls = append(toolCalls, domain.ToolCall{
-			Name:  a1.ToolName,
-			Input: a1.ToolInput,
+			Name:  tc.Name,
+			Input: tc.Input,
 		})
 	}
 	toolCalls = append(toolCalls, a2.ToolCalls...)
@@ -222,18 +237,57 @@ func readPresetInUse(doc map[string]interface{}) string {
 	return v
 }
 
-// composeMicrocontext maps Agent1's tool result into a one-line signal
-// Agent2 can use to decide whether to re-render. V4 generates the same
-// shape (pipeline_execute.go in V4 — "new_search: N items found" etc.).
-func composeMicrocontext(a1 *Agent1ExecuteResponse) string {
-	switch a1.ToolName {
-	case "catalog_search":
-		return fmt.Sprintf("new_search: %d items found", a1.ProductsFound)
-	case "_internal_state_filter":
-		return fmt.Sprintf("filtered: %d items", a1.ProductsFound)
-	case "_internal_history_lookup":
-		return "history: deltas inspected"
-	default:
+// composeMicrocontext maps Agent1's structured operation results into a
+// one-line signal Agent2 can use to decide whether to re-render. The
+// per-kind phrase table preserves V4's strings byte-compatible
+// ("new_search: N items found", "filtered: N items") and adds the entity
+// phrases ("lead_search: N leads found"). Catalog/state counts arrive
+// pre-stamped from the reloaded state (stampStateCounts) so the stale-data
+// semantics of an empty search survive the registry swap.
+func composeMicrocontext(results []*domain.OperationResult) string {
+	var phrases []string
+	for _, r := range results {
+		if r == nil {
+			continue
+		}
+		switch {
+		case r.Kind == domain.KindQuery && r.EntityKind != "":
+			phrases = append(phrases, fmt.Sprintf("%s: %d %ss found", r.Operation, r.Count, r.EntityKind))
+		case r.Kind == domain.KindQuery:
+			phrases = append(phrases, fmt.Sprintf("new_search: %d items found", r.Count))
+		case r.Operation == "_internal_state_filter":
+			phrases = append(phrases, fmt.Sprintf("filtered: %d items", r.Count))
+		case r.Operation == "_internal_history_lookup":
+			phrases = append(phrases, "history: deltas inspected")
+		}
+	}
+	if len(phrases) == 0 {
 		return "no_data_change"
 	}
+	return strings.Join(phrases, "; ")
+}
+
+// opNames lists the executed operations in order for StageEvent.Ops.
+func opNames(results []*domain.OperationResult) []string {
+	if len(results) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(results))
+	for _, r := range results {
+		if r != nil {
+			names = append(names, r.Operation)
+		}
+	}
+	return names
+}
+
+// anyEmpty reports whether any executed operation came back OutcomeEmpty —
+// the structured replacement for the old "empty:" prefix sniffing.
+func anyEmpty(results []*domain.OperationResult) bool {
+	for _, r := range results {
+		if r != nil && r.Outcome == domain.OutcomeEmpty {
+			return true
+		}
+	}
+	return false
 }

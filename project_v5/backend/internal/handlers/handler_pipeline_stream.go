@@ -108,10 +108,15 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 
 	writeFrame("stage", map[string]string{"phase": "data_start"})
 
+	// R17: mode + role from the session row (mirrors Pipeline()).
+	mode, role := h.sessionFormRole(r.Context(), req.SessionID)
+
 	resp, err := h.pipeline.Execute(r.Context(), usecases.PipelineExecuteRequest{
 		SessionID:  req.SessionID,
 		TenantSlug: tenant.Slug,
 		UserQuery:  req.Query,
+		Mode:       mode,
+		Role:       role,
 		OnStage: func(ev usecases.StageEvent) {
 			writeFrame("stage", stageDataDoneFrame{
 				Phase:    ev.Phase,
@@ -131,7 +136,7 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 			writeFrame("error", streamErrorFrame{Status: http.StatusConflict, Message: "session closed"})
 			return
 		}
-		h.persistTrace(r.Context(), req, tenant, nil, err)
+		h.persistTrace(r.Context(), req, tenant, mode, nil, err)
 		h.log.Error("pipeline_execute_failed", "err", err, "session_id", req.SessionID, "tenant", tenant.Slug)
 		writeFrame("error", streamErrorFrame{Status: http.StatusInternalServerError, Message: "pipeline failed"})
 		return
@@ -154,5 +159,5 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 	writeFrame("result", out)
 
 	h.guard.RecordCost(resp.Usage.CostUSD)
-	h.persistTrace(r.Context(), req, tenant, resp, nil)
+	h.persistTrace(r.Context(), req, tenant, mode, resp, nil)
 }

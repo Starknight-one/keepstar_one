@@ -11,33 +11,29 @@ import (
 	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/ports"
-	"keepstar_v5/internal/usecases"
 )
 
 // PresetHandler owns the internal preset-control endpoints:
 //
-//   - cache-invalidate: when a tenant publishes a preset (via the v9-canvas
-//     write side / curator cockpit), the caller pokes this endpoint so V5
-//     rebuilds the <tenant_design_context> block on the next Agent2 turn
-//     instead of serving a stale cached system prompt.
 //   - preview: deterministic zero-LLM render of a preset (published by name,
 //     or a raw doc_json draft) against real tenant products, so the admin
 //     can show exactly what the engine will produce before publishing.
+//   - system list/doc: the embedded system preset library.
+//
+// Cache invalidation (incl. the legacy presets/cache-invalidate alias)
+// moved to CacheHandler (handler_cache.go, R15).
 type PresetHandler struct {
-	promptCache *usecases.PromptCache
-	catalog     ports.CatalogPort
-	presets     ports.PresetPort
-	components  ports.ComponentPort
-	themes      ports.ThemePort // optional; nil → default theme attached to preview
-	log         *slog.Logger
+	catalog    ports.CatalogPort
+	presets    ports.PresetPort
+	components ports.ComponentPort
+	themes     ports.ThemePort // optional; nil → default theme attached to preview
+	log        *slog.Logger
 }
 
-// NewPresetHandler constructs the handler over the shared Agent2 prompt
-// cache (the one whose GetOrBuild assembles <tenant_design_context>) plus
-// the read ports the preview render needs (catalog for tenant + products,
-// preset/component for the published-preset path).
+// NewPresetHandler constructs the handler over the read ports the preview
+// render needs (catalog for tenant + products, preset/component for the
+// published-preset path).
 func NewPresetHandler(
-	promptCache *usecases.PromptCache,
 	catalog ports.CatalogPort,
 	presetPort ports.PresetPort,
 	componentPort ports.ComponentPort,
@@ -45,33 +41,12 @@ func NewPresetHandler(
 	log *slog.Logger,
 ) *PresetHandler {
 	return &PresetHandler{
-		promptCache: promptCache,
-		catalog:     catalog,
-		presets:     presetPort,
-		components:  componentPort,
-		themes:      themePort,
-		log:         log,
+		catalog:    catalog,
+		presets:    presetPort,
+		components: componentPort,
+		themes:     themePort,
+		log:        log,
 	}
-}
-
-// CacheInvalidate handles POST /api/v1/internal/presets/cache-invalidate?tenant=<slug>.
-// Drops the cached Agent2 system prompt for the tenant so the next turn
-// re-reads the tenant's published presets. Gated by X-Internal-Key (same
-// guard as the kill switch); exempt from WithTenant (middleware_tenant.go).
-func (h *PresetHandler) CacheInvalidate(w http.ResponseWriter, r *http.Request) {
-	if !checkInternalKey(w, r) {
-		return
-	}
-	tenant := r.URL.Query().Get("tenant")
-	if tenant == "" {
-		http.Error(w, "tenant query param missing", http.StatusBadRequest)
-		return
-	}
-	h.promptCache.Invalidate(tenant)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"tenant":      tenant,
-		"invalidated": true,
-	})
 }
 
 // presetPreviewRequest is the body of POST /api/v1/internal/presets/preview.
