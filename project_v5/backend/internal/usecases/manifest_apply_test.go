@@ -80,17 +80,29 @@ type applierTokens struct {
 	ingestMints  int
 	surfaceMints int
 	usedTokens   []string
+	// minted records every ingest token by value so GetIngestToken behaves
+	// like the store; tests may pre-seed or mutate entries (expire, consume).
+	minted map[string]*ports.IngestToken
 }
 
 func (f *applierTokens) MintIngestToken(_ context.Context, sessionID, tenantID string, formats []string, _ time.Duration) (*ports.IngestToken, error) {
 	f.ingestMints++
-	return &ports.IngestToken{
+	t := &ports.IngestToken{
 		Token: fmt.Sprintf("ingest-token-%d", f.ingestMints), SessionID: sessionID,
 		TenantID: tenantID, Formats: formats, ExpiresAt: time.Now().Add(24 * time.Hour),
-	}, nil
+	}
+	if f.minted == nil {
+		f.minted = map[string]*ports.IngestToken{}
+	}
+	f.minted[t.Token] = t
+	return t, nil
 }
-func (f *applierTokens) GetIngestToken(context.Context, string) (*ports.IngestToken, error) {
-	return nil, errors.New("not implemented")
+func (f *applierTokens) GetIngestToken(_ context.Context, token string) (*ports.IngestToken, error) {
+	t, ok := f.minted[token]
+	if !ok {
+		return nil, errors.New("token not found")
+	}
+	return t, nil
 }
 func (f *applierTokens) MarkIngestTokenUsed(_ context.Context, token string) error {
 	f.usedTokens = append(f.usedTokens, token)
@@ -109,10 +121,14 @@ type applierGateway struct {
 	// the password is allowed to reach (R6).
 	seenPassword string
 	provisionErr error
+	createErr    error
 }
 
 func (g *applierGateway) CreateTenant(_ context.Context, name, _ string) (*ports.AdminTenant, error) {
 	g.createCalls++
+	if g.createErr != nil {
+		return nil, g.createErr
+	}
 	return &ports.AdminTenant{TenantID: "11111111-2222-3333-4444-555555555555", Slug: "acme-realty"}, nil
 }
 func (g *applierGateway) ProvisionUser(_ context.Context, _, _, password, _ string) (string, error) {
@@ -487,15 +503,13 @@ func TestExecuteStepRegisterUser_FailureStaysAccepted(t *testing.T) {
 	}
 }
 
-// ExecuteStep error contract for the handler mapping.
+// ExecuteStep error contract for the handler mapping. (A fully-proposed
+// manifest is NOT an error anymore — the auto-apply tests below own that
+// path, owner decision 2026-07-28.)
 func TestExecuteStepErrors(t *testing.T) {
 	f := newApplierFixture(realtorManifest())
 	ctx := context.Background()
 
-	// Manifest still fully proposed → the register step is not ready.
-	if _, err := f.ap.ExecuteStep(ctx, "sess-1", "s-reg", map[string]any{"email": "a@b.c", "password": "x"}); !errors.Is(err, ErrStepNotReady) {
-		t.Errorf("proposed step: err = %v, want ErrStepNotReady", err)
-	}
 	if _, err := f.ap.ExecuteStep(ctx, "sess-1", "nope", nil); !errors.Is(err, ErrStepNotFound) {
 		t.Errorf("unknown step: err = %v, want ErrStepNotFound", err)
 	}
@@ -516,6 +530,217 @@ func TestExecuteStepErrors(t *testing.T) {
 	f2.ap = NewManifestApplier(ManifestApplierConfig{State: empty, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if _, err := f2.ap.ExecuteStep(ctx, "sess-x", "s-reg", nil); !errors.Is(err, ErrNoManifest) {
 		t.Errorf("no manifest: err = %v, want ErrNoManifest", err)
+	}
+}
+
+// Owner decision 2026-07-28 (the live-bug class): submitting the
+// registration form against a fully-PROPOSED manifest IS the approval —
+// ExecuteStep auto-applies the staged manifest, then registers. The 409
+// "step not ready: apply the manifest first" after the model merely SAID
+// "applying now" (without calling apply_manifest) must never recur.
+// Addressed by the seeded form's op-alias, like the real widget does.
+func TestExecuteStepAutoAppliesProposedManifest(t *testing.T) {
+	const password = "auto-apply-secret-1"
+	f := newApplierFixture(realtorManifest())
+	ctx := context.Background()
+
+	st, err := f.ap.ExecuteStep(ctx, "sess-1", "register_user", map[string]any{
+		"email": "owner@acme.test", "password": password,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStep on a fully-proposed manifest: %v (this is the live 409 bug)", err)
+	}
+	if st.Status != domain.ManifestStepApplied {
+		t.Fatalf("register step = %q, want applied", st.Status)
+	}
+	if f.gateway.createCalls != 1 || f.gateway.provisionCalls != 1 {
+		t.Fatalf("create=%d provision=%d, want 1/1 (one auto-apply, then the registration)",
+			f.gateway.createCalls, f.gateway.provisionCalls)
+	}
+
+	// The whole plan ran — not just the register step.
+	m, _ := f.state.GetOnboarding(ctx, "sess-1")
+	for _, id := range []string{"s-tenant", "s-entity", "s-vset", "s-ops"} {
+		if got := stepByID(t, m, id).Status; got != domain.ManifestStepApplied {
+			t.Errorf("step %s = %q, want applied (auto-apply must run the full plan)", id, got)
+		}
+	}
+	if tok, _ := stepByID(t, m, "s-door").Result["token"].(string); tok == "" {
+		t.Errorf("ingest door not armed by the auto-apply: %v", stepByID(t, m, "s-door").Result)
+	}
+
+	// R6 discipline survives the auto-apply path.
+	if strings.Contains(f.state.persistedJSON(t), password) {
+		t.Fatalf("PASSWORD LEAKED on the auto-apply path (R6 violation)")
+	}
+}
+
+// A halted auto-apply (create_tenant fails → no tenant) still refuses the
+// registration with a 409-class sentinel that CARRIES the failed step's
+// reason — never a bare "apply the manifest first" (owner 2026-07-28).
+func TestExecuteStepAutoApplyHaltSurfacesReason(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	f.gateway.createErr = errors.New("admin unreachable")
+
+	_, err := f.ap.ExecuteStep(context.Background(), "sess-1", "s-reg", map[string]any{
+		"email": "owner@acme.test", "password": "pw",
+	})
+	if !errors.Is(err, ErrTenantNotProvisioned) {
+		t.Fatalf("err = %v, want ErrTenantNotProvisioned (handler maps it to 409)", err)
+	}
+	if !strings.Contains(err.Error(), "create_tenant failed: admin unreachable") {
+		t.Fatalf("409 reason does not name the failed step: %v", err)
+	}
+
+	// The step is still re-submittable once the failure is fixed.
+	m, _ := f.state.GetOnboarding(context.Background(), "sess-1")
+	if got := stepByID(t, m, "s-reg").Status; got != domain.ManifestStepAccepted {
+		t.Fatalf("register step after halted auto-apply = %q, want accepted", got)
+	}
+}
+
+// A MID-chain failure (tenant fine, an unrelated step broke) must not block
+// the user's registration — their action proceeds; the failed step stays
+// retryable on the manifest.
+func TestExecuteStepAutoApplyMidChainFailureStillRegisters(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	f.entities.valueSetErr = errors.New("db exploded")
+
+	st, err := f.ap.ExecuteStep(context.Background(), "sess-1", "s-reg", map[string]any{
+		"email": "owner@acme.test", "password": "pw",
+	})
+	if err != nil {
+		t.Fatalf("registration blocked by an unrelated failed step: %v", err)
+	}
+	if st.Status != domain.ManifestStepApplied {
+		t.Fatalf("register step = %q, want applied", st.Status)
+	}
+	m, _ := f.state.GetOnboarding(context.Background(), "sess-1")
+	if got := stepByID(t, m, "s-vset").Status; got != domain.ManifestStepFailed {
+		t.Fatalf("value-set step = %q, want failed (recorded for retry)", got)
+	}
+}
+
+// The user's upload IS the approval (owner 2026-07-28): a fully-proposed
+// manifest resolves to a live ingest token by auto-applying (which mints
+// the door); a second call returns the SAME token without re-minting.
+func TestResolveIngestTokenAutoApplies(t *testing.T) {
+	f := newApplierFixture(realtorManifest())
+	ctx := context.Background()
+
+	tok, err := f.ap.ResolveIngestToken(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("ResolveIngestToken on a fully-proposed manifest: %v", err)
+	}
+	if f.tokens.ingestMints != 1 {
+		t.Fatalf("ingest mints = %d, want 1 (minted by the auto-apply)", f.tokens.ingestMints)
+	}
+	if tok.TenantSlug != "acme-realty" {
+		t.Fatalf("token tenant slug = %q, want acme-realty (admin route address)", tok.TenantSlug)
+	}
+	m, _ := f.state.GetOnboarding(ctx, "sess-1")
+	door := stepByID(t, m, "s-door")
+	if got, _ := door.Result["token"].(string); got != tok.Token {
+		t.Fatalf("step token %q != resolved token %q", got, tok.Token)
+	}
+
+	tok2, err := f.ap.ResolveIngestToken(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("second ResolveIngestToken: %v", err)
+	}
+	if tok2.Token != tok.Token || f.tokens.ingestMints != 1 {
+		t.Fatalf("second resolve re-minted: token %q vs %q, mints %d", tok2.Token, tok.Token, f.tokens.ingestMints)
+	}
+}
+
+// A stale recorded token re-mints server-side and stamps the fresh token
+// back onto the step (persisted — poll endpoint and re-renders agree).
+func TestResolveIngestTokenReMintsStale(t *testing.T) {
+	m := realtorManifest()
+	m.Tenant = domain.ManifestTenant{ID: "11111111-2222-3333-4444-555555555555", Slug: "acme-realty", Name: "Acme Realty"}
+	for i := range m.Steps {
+		m.Steps[i].Status = domain.ManifestStepApplied
+	}
+	door := stepByID(t, m, "s-door")
+	door.Status = domain.ManifestStepAccepted
+	door.Result = map[string]any{"token": "stale-1"}
+
+	f := newApplierFixture(m)
+	f.tokens.minted = map[string]*ports.IngestToken{
+		"stale-1": {Token: "stale-1", SessionID: "sess-1", ExpiresAt: time.Now().Add(-time.Minute)},
+	}
+
+	tok, err := f.ap.ResolveIngestToken(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("ResolveIngestToken with a stale recorded token: %v", err)
+	}
+	if tok.Token == "stale-1" {
+		t.Fatalf("stale token returned as live")
+	}
+	if f.tokens.ingestMints != 1 {
+		t.Fatalf("ingest mints = %d, want 1 (fresh mint)", f.tokens.ingestMints)
+	}
+	mm, _ := f.state.GetOnboarding(context.Background(), "sess-1")
+	if got, _ := stepByID(t, mm, "s-door").Result["token"].(string); got != tok.Token {
+		t.Fatalf("fresh token not stamped on the step: %q vs %q", got, tok.Token)
+	}
+}
+
+// ResolveIngestToken failure surface: a halted apply names the failed step;
+// a manifest without an uploader step is a distinct, mappable error.
+func TestResolveIngestTokenErrors(t *testing.T) {
+	ctx := context.Background()
+
+	f := newApplierFixture(realtorManifest())
+	f.gateway.createErr = errors.New("admin down")
+	_, err := f.ap.ResolveIngestToken(ctx, "sess-1")
+	if !errors.Is(err, ErrTenantNotProvisioned) {
+		t.Fatalf("halted apply: err = %v, want ErrTenantNotProvisioned", err)
+	}
+	if !strings.Contains(err.Error(), "create_tenant failed: admin down") {
+		t.Fatalf("halted apply reason missing: %v", err)
+	}
+
+	noDoor := realtorManifest()
+	steps := noDoor.Steps[:0]
+	for _, s := range noDoor.Steps {
+		if s.Op != "issue_ingest_door" {
+			steps = append(steps, s)
+		}
+	}
+	noDoor.Steps = steps
+	f2 := newApplierFixture(noDoor)
+	if _, err := f2.ap.ResolveIngestToken(ctx, "sess-1"); !errors.Is(err, ErrStepNotFound) {
+		t.Fatalf("no door staged: err = %v, want ErrStepNotFound", err)
+	}
+}
+
+// ManifestStatusOf digests the manifest into the contextual-CTA summary
+// (owner 2026-07-28): staged>0 ⇒ the shell may show Accept; failed>0 ⇒
+// retry + the FIRST failure's op and reason; nil manifest ⇒ nil (wire
+// omits the field).
+func TestManifestStatusOf(t *testing.T) {
+	if s := ManifestStatusOf(nil); s != nil {
+		t.Fatalf("nil manifest: summary = %+v, want nil", s)
+	}
+	if s := ManifestStatusOf(&domain.OnboardingManifest{}); s != nil {
+		t.Fatalf("empty manifest: summary = %+v, want nil", s)
+	}
+
+	m := &domain.OnboardingManifest{Steps: []domain.ManifestStep{
+		{ID: "1", Op: "create_tenant", Status: domain.ManifestStepApplied},
+		{ID: "2", Op: "define_entity", Status: domain.ManifestStepFailed, Error: "boom"},
+		{ID: "3", Op: "define_value_set", Status: domain.ManifestStepFailed, Error: "later"},
+		{ID: "4", Op: "issue_ingest_door", Status: domain.ManifestStepAccepted},
+		{ID: "5", Op: "enable_operations", Status: domain.ManifestStepProposed},
+		{ID: "6", Op: "adopt_presets", Status: domain.ManifestStepProposed},
+	}}
+	s := ManifestStatusOf(m)
+	if s.Staged != 2 || s.Applied != 1 || s.Failed != 2 || s.Total != 6 {
+		t.Fatalf("summary = %+v, want staged 2 / applied 1 / failed 2 / total 6", s)
+	}
+	if s.FailedStep != "define_entity" || s.FailedReason != "boom" {
+		t.Fatalf("first failure = %s/%s, want define_entity/boom", s.FailedStep, s.FailedReason)
 	}
 }
 

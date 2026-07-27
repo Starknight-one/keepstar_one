@@ -1,6 +1,7 @@
 // Package seed holds the boot-seed operation templates for
 // public.v5_operations (RUNTIME_SPEC.md §3.1): the 6 executor templates,
-// compose_turn, and the 11 onboarding meta-operation templates. Definitions
+// compose_turn, and the 12 onboarding meta-operation templates (the §4.3
+// eleven plus about_keepstar, owner ruling 2026-07-28). Definitions
 // only — executors implement ports.Executor separately and plug in via
 // RegisterExecutor (R8). The operations boot-seeder upserts these rows on
 // name and embeds Description via ports.EmbeddingPort (nil embedder →
@@ -27,7 +28,7 @@ package seed
 import "keepstar_v5/internal/domain"
 
 // Templates returns the boot-seed rows in deterministic order:
-// 6 executor templates, compose_turn, 11 meta templates.
+// 6 executor templates, compose_turn, 12 meta templates.
 func Templates() []domain.OperationTemplate {
 	return []domain.OperationTemplate{
 		queryTemplate(),
@@ -37,6 +38,7 @@ func Templates() []domain.OperationTemplate {
 		scheduleSlotTemplate(),
 		notifyTemplate(),
 		composeTurnTemplate(),
+		aboutKeepstarTemplate(),
 		searchLibraryTemplate(),
 		createTenantTemplate(),
 		defineEntityTemplate(),
@@ -489,10 +491,11 @@ func composeTurnTemplate() domain.OperationTemplate {
 }
 
 // ---------------------------------------------------------------------------
-// The 11 onboarding meta-operation templates (§4.3: kind meta, modes
-// {onboarding}, min_role visitor — the onboarding cookie + form gate does
-// the work, R14). search_library is immediate; apply_manifest is control;
-// the rest stage ManifestSteps — nothing mutates the world at stage time.
+// The 12 onboarding meta-operation templates (§4.3 + about_keepstar: kind
+// meta, modes {onboarding}, min_role visitor — the onboarding cookie + form
+// gate does the work, R14). about_keepstar and search_library are immediate;
+// apply_manifest is control; the rest stage ManifestSteps — nothing mutates
+// the world at stage time.
 // ---------------------------------------------------------------------------
 
 func metaTemplate(t domain.OperationTemplate) domain.OperationTemplate {
@@ -505,6 +508,40 @@ func metaTemplate(t domain.OperationTemplate) domain.OperationTemplate {
 		t.ConfigSchema = map[string]any{"type": "object", "properties": map[string]any{}}
 	}
 	return t
+}
+
+func aboutKeepstarTemplate() domain.OperationTemplate {
+	return metaTemplate(domain.OperationTemplate{
+		Name:  "about_keepstar",
+		Title: "Explain what Keepstar is",
+		Description: "Load the canonical explanation of the Keepstar interface " +
+			"runtime — what it is (data + operations + interface), what a business " +
+			"gets (a storefront and a CRM assembled by conversation), how assembly " +
+			"and approval work, and what it is honest about. Immediate: the doc " +
+			"content returns in the result so the agent can answer the visitor's " +
+			"question in its own words and in the visitor's language. Use it " +
+			"whenever the visitor is exploring or asking what this is, and again " +
+			"for follow-up questions. Stages nothing.",
+		Card: map[string]any{
+			"input_summary":  "Optionally the visitor's question or topic of interest",
+			"does":           "Returns the canonical Keepstar explanation for the agent to answer from",
+			"output_summary": "The about-doc content, ready to be retold in the agent's own words",
+			"why":            "Visitors who are just curious get a real, honest explanation — not a sales script or a guess",
+		},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"topic": map[string]any{"type": "string", "description": "Optional: what the visitor asked about, in plain language."},
+			},
+		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"content": map[string]any{"type": "string", "description": "The about-doc content."},
+			},
+		},
+		Effects: domain.OperationEffects{Reads: []string{}, Writes: []string{}, Emits: []domain.EmitDecl{}},
+	})
 }
 
 func searchLibraryTemplate() domain.OperationTemplate {

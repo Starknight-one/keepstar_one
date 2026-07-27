@@ -1,31 +1,44 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"path"
 	"strings"
 	"time"
+
+	"keepstar_v5/internal/ports"
+	"keepstar_v5/internal/usecases"
 )
 
 // Onboarding upload flow (RUNTIME_SPEC.md §5.4, R25) — browser → v5 → admin,
 // no CORS, no key exposure:
 //
-//	POST /api/v1/onboard/upload            multipart {token, file} → 202 {jobId}
+//	POST /api/v1/onboard/upload            multipart {token?, sessionId?, file} → 202 {jobId}
 //	GET  /api/v1/onboard/upload/{jobId}?sessionId=  → honest admin job status
 //
 // The token is a v5_ingest_tokens row minted by the issue_ingest_door
 // applier step: session-bound, format-scoped, expiring, consumed on the
 // first COMPLETED import (a failed import leaves it usable — R25 re-upload).
+//
+// The token is OPTIONAL (owner decision 2026-07-28): with the valid
+// onboarding cookie + a sessionId field, a missing or stale token resolves
+// server-side — ManifestApplier.ResolveIngestToken auto-applies the staged
+// manifest when needed (minting the ingest door) and returns the session's
+// live token. The user's upload IS the approval; it is never bounced with
+// "apply the manifest first". The explicit-token fast path is kept.
 
 // onboardUploadMaxBytes caps one upload at 20MB (§5.4; matches admin's
 // MaxBytesReader on the service import route).
 const onboardUploadMaxBytes = 20 << 20
 
 // Upload handles POST /api/v1/onboard/upload. The multipart body MUST carry
-// the "token" field BEFORE the file part — the file is streamed to admin
-// without buffering, so the token has to be validated first (the widget's
-// FormData appends token first; field order is preserved on the wire).
+// the "token" and/or "sessionId" fields BEFORE the file part — the file is
+// streamed to admin without buffering, so the door has to be resolved first
+// (the widget's FormData appends them first; field order is preserved on
+// the wire).
 func (h *OnboardHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	if !checkOnboardCookie(w, r) {
 		return
@@ -45,7 +58,7 @@ func (h *OnboardHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tokenValue string
+	var tokenValue, sessionID string
 	for {
 		part, perr := mr.NextPart()
 		if perr != nil {
@@ -55,31 +68,22 @@ func (h *OnboardHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if part.FileName() == "" {
-			if part.FormName() == "token" {
+			switch part.FormName() {
+			case "token":
 				tokenValue = readSmallPart(part, 128)
+			case "sessionId":
+				sessionID = readSmallPart(part, 128)
 			}
 			part.Close()
 			continue
 		}
 
-		// File part reached — the token must already be on hand.
+		// File part reached — the door must be resolvable from what is on
+		// hand: explicit token fast path, session fallback otherwise.
 		defer part.Close()
-		if tokenValue == "" {
-			http.Error(w, "token field must precede the file part", http.StatusBadRequest)
-			return
-		}
-		tok, err := h.tokens.GetIngestToken(r.Context(), tokenValue)
-		if err != nil {
-			http.Error(w, "invalid upload token", http.StatusForbidden)
-			return
-		}
-		now := time.Now()
-		if tok.UsedAt != nil {
-			http.Error(w, "upload token already used", http.StatusConflict)
-			return
-		}
-		if !tok.Valid(now) {
-			http.Error(w, "upload token expired", http.StatusForbidden)
+		tok, status, msg := h.resolveUploadDoor(r.Context(), tokenValue, sessionID)
+		if tok == nil {
+			http.Error(w, msg, status)
 			return
 		}
 
@@ -126,6 +130,52 @@ func (h *OnboardHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+}
+
+// resolveUploadDoor turns whatever the multipart body carried (explicit
+// token, sessionId, or both) into a live ingest token. Non-nil token means
+// go; otherwise status+msg are the HTTP answer. Precedence:
+//
+//  1. a VALID explicit token wins (today's fast path, byte-identical);
+//  2. a missing/stale/consumed token with a sessionId at hand resolves
+//     server-side (ResolveIngestToken: auto-apply if needed, re-mint stale);
+//  3. a bad token WITHOUT a sessionId keeps today's exact statuses;
+//  4. neither field → 400.
+func (h *OnboardHandler) resolveUploadDoor(ctx context.Context, tokenValue, sessionID string) (*ports.IngestToken, int, string) {
+	if tokenValue != "" {
+		tok, err := h.tokens.GetIngestToken(ctx, tokenValue)
+		switch {
+		case err == nil && tok.Valid(time.Now()):
+			return tok, 0, ""
+		case sessionID != "":
+			// Stale/unknown token but the session is known — fall through to
+			// the server-side resolution (owner 2026-07-28: the upload is
+			// never bounced on a token the client couldn't refresh).
+		case err != nil:
+			return nil, http.StatusForbidden, "invalid upload token"
+		case tok.UsedAt != nil:
+			return nil, http.StatusConflict, "upload token already used"
+		default:
+			return nil, http.StatusForbidden, "upload token expired"
+		}
+	}
+	if sessionID == "" {
+		return nil, http.StatusBadRequest, "token or sessionId field must precede the file part"
+	}
+	tok, err := h.applier.ResolveIngestToken(ctx, sessionID)
+	if err != nil {
+		switch {
+		case errors.Is(err, usecases.ErrNoManifest), errors.Is(err, usecases.ErrStepNotFound):
+			return nil, http.StatusConflict, "no uploader staged for this session yet — ask the assistant to add a data upload to the plan"
+		case errors.Is(err, usecases.ErrTenantNotProvisioned), errors.Is(err, usecases.ErrStepNotReady):
+			// Carries the failed step's reason (owner 2026-07-28: say WHY).
+			return nil, http.StatusConflict, err.Error()
+		default:
+			h.log.Error("onboard upload: session door resolution failed", "session", sessionID, "err", err)
+			return nil, http.StatusInternalServerError, "upload door resolution failed"
+		}
+	}
+	return tok, 0, ""
 }
 
 // UploadStatus handles GET /api/v1/onboard/upload/{jobId}?sessionId= —

@@ -55,7 +55,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function renderShell() {
+function renderShell(extraProps = {}) {
   return render(
     <ChatShell
       apiBaseUrl="http://api/v1"
@@ -63,6 +63,7 @@ function renderShell() {
       sessionId="s-1"
       variant="onboarding"
       placeholder="Describe your business…"
+      {...extraProps}
     />,
   )
 }
@@ -131,5 +132,82 @@ describe('ChatShell blocks turn', () => {
 
     await screen.findByText('pipeline 500: pipeline failed')
     expect(screen.getByPlaceholderText('Describe your business…').disabled).toBe(false)
+  })
+})
+
+// Contextual chips (owner feedback 2026-07-28): chips render only when
+// relevant — nothing on a fresh page, "Accept the plan" only while the
+// manifest field on the pipeline response (or session resume) shows
+// staged steps not yet applied.
+describe('ChatShell contextual chips', () => {
+  const CHIPS = [
+    { label: 'Accept the plan', send: 'apply it', when: 'plan-unapplied' },
+    { label: 'Show the plan', send: 'show it', when: 'after-first-turn' },
+  ]
+
+  it('renders no chips on a fresh page (seeded greeting only)', () => {
+    renderShell({
+      quickActions: CHIPS,
+      initialMessages: [{ role: 'bot', text: 'Tell me about your business.' }],
+    })
+    expect(screen.queryByRole('button', { name: 'Accept the plan' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show the plan' })).toBeNull()
+  })
+
+  it('shows Accept after a turn whose response manifest has staged > applied; hides it once applied', async () => {
+    const blocks = [TEXT_BLOCK]
+    fetch.mockResolvedValueOnce(
+      sseResponse(turnWire(blocks, { blocks, manifest: { staged: 3, applied: 0 }, latencyMs: 5 })),
+    )
+
+    renderShell({ quickActions: CHIPS })
+    await send('I run a realtor agency')
+
+    await screen.findByRole('button', { name: 'Accept the plan' })
+    expect(screen.getByRole('button', { name: 'Show the plan' })).toBeTruthy()
+
+    // The apply turn settles the manifest: staged === applied → the
+    // Accept chip must leave the screen, Show-the-plan stays.
+    const doneBlocks = [{ blockId: 'b9', kind: 'text', text: 'Applied — everything is assembled.' }]
+    fetch.mockResolvedValueOnce(
+      sseResponse(
+        turnWire(doneBlocks, { blocks: doneBlocks, manifest: { staged: 3, applied: 3 }, latencyMs: 5 }),
+      ),
+    )
+    await send('apply it')
+    await screen.findByText('Applied — everything is assembled.')
+
+    expect(screen.queryByRole('button', { name: 'Accept the plan' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show the plan' })).toBeTruthy()
+  })
+
+  it('keeps the staged plan visible across a turn whose response carries no manifest field', async () => {
+    const blocks = [TEXT_BLOCK]
+    fetch.mockResolvedValueOnce(
+      sseResponse(turnWire(blocks, { blocks, manifest: { staged: 2, applied: 0 }, latencyMs: 5 })),
+    )
+    renderShell({ quickActions: CHIPS })
+    await send('I run a realtor agency')
+    await screen.findByRole('button', { name: 'Accept the plan' })
+
+    const chatBlocks = [{ blockId: 'b8', kind: 'text', text: 'It works for any business.' }]
+    fetch.mockResolvedValueOnce(sseResponse(turnWire(chatBlocks, { blocks: chatBlocks, latencyMs: 5 })))
+    await send('what is this runtime?')
+    await screen.findByText('It works for any business.')
+
+    expect(screen.getByRole('button', { name: 'Accept the plan' })).toBeTruthy()
+  })
+
+  it('seeds chip visibility from the resumed manifest (full steps shape) before any turn', () => {
+    renderShell({
+      quickActions: CHIPS,
+      initialMessages: [
+        { role: 'user', text: 'I run a realtor agency' },
+        { role: 'bot', text: 'Here is the plan so far.' },
+      ],
+      initialManifest: { steps: [{ id: '1', op: 'create_tenant', status: 'proposed' }] },
+    })
+    expect(screen.getByRole('button', { name: 'Accept the plan' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show the plan' })).toBeTruthy()
   })
 })

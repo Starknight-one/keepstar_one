@@ -10,6 +10,7 @@ import (
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/ports"
+	"keepstar_v5/internal/streaming"
 )
 
 // Agent2ExecuteRequest is the contract callers (HTTP handler in chunk 6c
@@ -103,6 +104,26 @@ func (uc *Agent2Execute) Execute(ctx context.Context, req Agent2ExecuteRequest) 
 	role := req.Role
 	if role == "" {
 		role = domain.RoleVisitor
+	}
+
+	// Real incremental streaming (final owner decision 3): on every
+	// turn-composing form (anything but the storefront fast path, which
+	// keeps its proven non-streaming call byte-identical) with a block
+	// collector present, attach the tool-input hook: the LLM adapter
+	// streams the call and feeds compose_turn's partial input JSON to the
+	// EarlyEmitter AS GENERATED, so the leading text blocks fly as
+	// `event: block` SSE frames mid-LLM-call. The emitter rides the same
+	// ctx into compose_turn's Execute (via the registry) for the
+	// count/claim dedupe handshake — nothing is ever emitted twice.
+	// Adapters/fakes that ignore the hook degrade to today's batch
+	// emission; correctness never depends on the hook firing.
+	if collector := domain.TurnBlockCollectorFromContext(ctx); collector != nil && mode != domain.ModeStorefront {
+		early := streaming.NewEarlyEmitter(collector.Emit)
+		ctx = streaming.WithEarlyEmitter(ctx, early)
+		ctx = streaming.WithToolInputHook(ctx, &streaming.ToolInputHook{
+			Tool:       "compose_turn",
+			OnFragment: early.Feed,
+		})
 	}
 
 	state, err := uc.state.GetState(ctx, req.SessionID)

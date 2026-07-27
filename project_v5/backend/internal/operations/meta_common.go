@@ -11,14 +11,16 @@ import (
 
 // Onboarding meta-operations (RUNTIME_SPEC.md §4.3, rulings R4/R6/R8/R22) —
 // the operations of the onboarding SYSTEM FORM, whose job is to assemble
-// other forms. All 11 implement ports.Executor and plug in via
+// other forms. All 12 implement ports.Executor and plug in via
 // RegisterExecutor(KindMeta, …); their seed rows are the §3.1 meta templates
 // (seed/templates.go), modes={onboarding}, min_role=visitor — the onboarding
 // cookie + form gate does the work (R14).
 //
 // Three shapes:
-//   - search_library (meta_search_library.go) — IMMEDIATE: results land in
-//     the same turn (manifest libraryContext + synthetic opCard EntitySet).
+//   - IMMEDIATE ops — results usable in the same turn: search_library
+//     (meta_search_library.go; manifest libraryContext + synthetic opCard
+//     EntitySet) and about_keepstar (meta_about.go; the canonical about-doc
+//     content returned in the result — owner ruling 2026-07-28).
 //   - 9 staged ops (meta_staged.go) — Execute appends a
 //     ManifestStep{status: proposed} to the onboarding zone and returns
 //     "staged: <op> <summary>". NOTHING mutates the world at stage time;
@@ -39,7 +41,7 @@ type ManifestApplier interface {
 	Apply(ctx context.Context, sessionID, upTo string) (*domain.OnboardingManifest, error)
 }
 
-// MetaExecutorDeps wires the 11 meta executors. Embedder may be nil
+// MetaExecutorDeps wires the 12 meta executors. Embedder may be nil
 // (search_library degrades to FTS, mirroring catalog_search); Applier may be
 // nil ONLY in partial wirings — apply_manifest then fails loud with an
 // error outcome, never silently.
@@ -59,11 +61,12 @@ func (d MetaExecutorDeps) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// RegisterMetaExecutors plugs the 11 onboarding meta executors into the
+// RegisterMetaExecutors plugs the 12 onboarding meta executors into the
 // registry under their §3.1 template wire names (boot wiring, main.go —
 // same pattern as RegisterEntityExecutors). Their seed rows ride the same
 // SeedTemplates pass as everything else.
 func RegisterMetaExecutors(reg ports.OperationRegistry, d MetaExecutorDeps) {
+	reg.RegisterExecutor(domain.KindMeta, NewAboutKeepstarExecutor())
 	reg.RegisterExecutor(domain.KindMeta, NewSearchLibraryExecutor(d))
 	for _, ex := range NewStagedMetaExecutors(d) {
 		reg.RegisterExecutor(domain.KindMeta, ex)

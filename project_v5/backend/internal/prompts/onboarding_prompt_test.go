@@ -24,10 +24,11 @@ func TestOnboardingAgent1PromptIsVerticalFree(t *testing.T) {
 	}
 }
 
-// The prompt must teach the full meta-op vocabulary (all 11 wire names) and
+// The prompt must teach the full meta-op vocabulary (all 12 wire names) and
 // the R4 turn cap — the sequencing depends on both.
 func TestOnboardingAgent1PromptCoversMetaOps(t *testing.T) {
 	for _, op := range []string{
+		"about_keepstar",
 		"search_library", "create_tenant", "define_entity", "define_value_set",
 		"define_automation", "enable_operations", "adopt_presets",
 		"issue_ingest_door", "register_user", "issue_surface_urls", "apply_manifest",
@@ -42,6 +43,62 @@ func TestOnboardingAgent1PromptCoversMetaOps(t *testing.T) {
 	// R6: the credential rule must be stated.
 	if !strings.Contains(OnboardingAgent1SystemPrompt, "password") {
 		t.Error("Agent1 onboarding prompt misses the credential rule (R6)")
+	}
+}
+
+// Owner flow ruling 2026-07-28: the user's own action (registration submit,
+// file upload) IS the approval — the server auto-applies the staged
+// manifest. A live bug proved the failure mode: a form submit 409'd with
+// "step not ready" after the model SAID "applying now" without calling the
+// tool. Both prompts must encode the rule, or the flow regresses to
+// model-gated forms.
+func TestOnboardingPromptsEncodeUserActionApproval(t *testing.T) {
+	for _, want := range []string{"IS approval", "NEVER locked behind apply_manifest"} {
+		if !strings.Contains(OnboardingAgent1SystemPrompt, want) {
+			t.Errorf("Agent1 onboarding prompt misses the auto-approve rule %q", want)
+		}
+	}
+	// Agent1 must never assume an apply happened without the tool call —
+	// the "applying now" bug class.
+	if !strings.Contains(OnboardingAgent1SystemPrompt, "CALL the tool") {
+		t.Error("Agent1 onboarding prompt misses the call-don't-assume apply rule")
+	}
+	// Agent2 must never narrate actions as happening.
+	if !strings.Contains(ComposeTurnAgent2Addition, "Never claim an action is happening") {
+		t.Error("Agent2 compose_turn addition misses the never-claim-actions rule")
+	}
+}
+
+// Owner flow ruling 2026-07-28, case 1: the visitor who is only exploring
+// gets about_keepstar — content into context, answered in the agent's own
+// words — and NOTHING staged.
+func TestOnboardingPromptsEncodeAboutCase(t *testing.T) {
+	if !strings.Contains(OnboardingAgent1SystemPrompt, "Stage NOTHING while the visitor is only exploring") {
+		t.Error("Agent1 onboarding prompt misses the explore-don't-stage rule")
+	}
+	// Agent2 keys case 1 off the <about_keepstar> microcontext envelope
+	// (ComposeOnboardingMicrocontextFromResults).
+	if !strings.Contains(OnboardingAgent2Addition, "<about_keepstar>") {
+		t.Error("Agent2 onboarding addition never names the <about_keepstar> envelope")
+	}
+	if !strings.Contains(OnboardingAgent2Addition, "OWN WORDS") {
+		t.Error("Agent2 onboarding addition misses the own-words rule")
+	}
+}
+
+// Owner flow ruling 2026-07-28, case 2: operations are presented as
+// business-language bullets; the Input/Does/Output spec cards render ONLY
+// on an explicit ask. And all user-facing text mirrors the user's language.
+func TestOnboardingAgent2CaseTwoShape(t *testing.T) {
+	if !strings.Contains(OnboardingAgent2Addition, "BUSINESS") {
+		t.Error("Agent2 addition misses the business-bullets rule")
+	}
+	if !strings.Contains(OnboardingAgent2Addition, "Do NOT render operation_card here") {
+		t.Error("Agent2 addition misses the spec-cards-only-on-request rule")
+	}
+	if !strings.Contains(ComposeTurnAgent2Addition, "language\n    the user writes in") &&
+		!strings.Contains(ComposeTurnAgent2Addition, "language the user writes in") {
+		t.Error("compose_turn addition misses the mirror-the-user's-language rule")
 	}
 }
 
@@ -116,6 +173,20 @@ func TestComposeOnboardingMicrocontext(t *testing.T) {
 			}},
 			want: "staged: create_tenant, define_automation(notify_on_order)",
 		},
+		{
+			// enable_operations carries its instance names so Agent2 can
+			// write the case-2 business bullets from real names (owner flow
+			// ruling 2026-07-28). []any mirrors the JSONB round-trip shape.
+			name: "enable_operations instance names",
+			m: &domain.OnboardingManifest{Steps: []domain.ManifestStep{
+				{Op: "enable_operations", Status: domain.ManifestStepProposed,
+					Params: map[string]any{"operations": []any{
+						map[string]any{"template": "query", "instance": "find_orders"},
+						map[string]any{"template": "notify", "instance": "notify_staff"},
+					}}},
+			}},
+			want: "staged: enable_operations(find_orders, notify_staff)",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,6 +194,40 @@ func TestComposeOnboardingMicrocontext(t *testing.T) {
 				t.Errorf("got  %q\nwant %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// ComposeOnboardingMicrocontextFromResults is the drop-in results-aware
+// composer: turn ops derive from the structured results, and an OK
+// about_keepstar result appends its content in the <about_keepstar>
+// envelope — the owner-approved exception to state-mediation that lets
+// Agent2 answer "what is this?" in its own words.
+func TestComposeOnboardingMicrocontextFromResults(t *testing.T) {
+	about := &domain.OperationResult{
+		Operation: "about_keepstar",
+		Outcome:   domain.OutcomeOK,
+		Summary:   "Keepstar is an interface runtime.",
+		Output:    map[string]any{"content": "Keepstar is an interface runtime."},
+	}
+
+	got := ComposeOnboardingMicrocontextFromResults(nil, []*domain.OperationResult{about})
+	want := "turn: about_keepstar | manifest: empty\n<about_keepstar>\nKeepstar is an interface runtime.\n</about_keepstar>"
+	if got != want {
+		t.Errorf("about turn:\ngot  %q\nwant %q", got, want)
+	}
+
+	// Without an about result the output is byte-identical to the
+	// name-based composer — no envelope, no drift.
+	search := &domain.OperationResult{Operation: "search_library", Outcome: domain.OutcomeOK}
+	got = ComposeOnboardingMicrocontextFromResults(nil, []*domain.OperationResult{search, nil})
+	if want := ComposeOnboardingMicrocontext(nil, []string{"search_library"}); got != want {
+		t.Errorf("plain turn:\ngot  %q\nwant %q", got, want)
+	}
+
+	// A failed about load must not inject an envelope.
+	bad := &domain.OperationResult{Operation: "about_keepstar", Outcome: domain.OutcomeError, Summary: "error: boom"}
+	if got := ComposeOnboardingMicrocontextFromResults(nil, []*domain.OperationResult{bad}); strings.Contains(got, "<about_keepstar>") {
+		t.Errorf("error outcome leaked an envelope: %q", got)
 	}
 }
 

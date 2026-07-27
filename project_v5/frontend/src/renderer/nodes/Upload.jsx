@@ -2,15 +2,21 @@
 //   {type:"upload", name, accept:[".csv",".json"], maxSizeMb?, disarmed?,
 //    token?, note?}
 //
-// Beat 2 renders the node DISARMED (disarmed:true — file picking is off,
-// the note explains it activates after the plan is confirmed). The beat-3
-// re-render arms it: disarmed:false + the minted ingest token bound via
-// render-time ops. Armed flow:
+// The control is ALWAYS usable (owner decision 2026-07-28): the user's
+// action IS the approval — the uploader must never be locked behind the
+// model having called apply_manifest. The legacy `disarmed` flag and a
+// missing token no longer disable anything; the request carries the
+// sessionId and the server resolves the session's ingest door (auto-
+// applying the staged manifest when needed). A bound token still rides
+// along when the document has one. Flow:
 //   pick file → validate extension/size client-side →
-//   POST {base}/onboard/upload (multipart, token BEFORE file) → {jobId} →
+//   POST {base}/onboard/upload (multipart: sessionId [+ token] BEFORE
+//   the file) → {jobId} →
 //   poll GET {base}/onboard/upload/{jobId}?sessionId= →
 //   completed {processed, projectionRows, invalidated} → summary line;
-//   failed {errors[]} → error line + the picker re-enables (re-upload, R25).
+//   failed {errors[]} → error line + the picker re-enables (re-upload,
+//   R25). Server rejections surface their reason inline, not a generic
+//   "try again".
 //
 // The upload endpoints are cookie-gated (R5) — credentials:'include' so
 // ks_onboard rides along in cross-origin dev; prod is same-origin (§5.1).
@@ -40,18 +46,8 @@ export default function Upload({ node }) {
 
   const accept = Array.isArray(node.accept) && node.accept.length > 0 ? node.accept : DEFAULT_ACCEPT
   const maxMb = typeof node.maxSizeMb === 'number' && node.maxSizeMb > 0 ? node.maxSizeMb : DEFAULT_MAX_MB
-  const hasToken = typeof node.token === 'string' && node.token !== ''
-  const armed = !node.disarmed && hasToken
+  const token = typeof node.token === 'string' && node.token !== '' ? node.token : undefined
   const busy = phase === 'uploading' || phase === 'processing'
-
-  // Disarmed presentation: the explicit disarmed flag keeps the seeded
-  // note; an armed-without-token render is a document bug — say so loudly
-  // instead of a dead button.
-  const note = node.disarmed
-    ? node.note || 'The uploader activates once you confirm the plan.'
-    : !hasToken
-      ? 'Upload door is not armed yet — no upload token on this widget.'
-      : node.note || ''
 
   async function handleFile(file) {
     if (!file) return
@@ -70,7 +66,12 @@ export default function Upload({ node }) {
     setPhase('uploading')
     setMessage('Uploading…')
     try {
-      const job = await uploadOnboardFile({ baseUrl: ctx?.apiBaseUrl, token: node.token, file })
+      const job = await uploadOnboardFile({
+        baseUrl: ctx?.apiBaseUrl,
+        token,
+        sessionId: ctx?.sessionId || undefined,
+        file,
+      })
       if (!aliveRef.current) return
       setPhase('processing')
       setMessage('Processing…')
@@ -101,19 +102,19 @@ export default function Upload({ node }) {
       // eslint-disable-next-line no-console
       console.error('[v5-upload] upload failed', err.message)
       setPhase('failed')
-      setMessage('Upload failed — please try again.')
+      setMessage(serverReason(err) || 'Upload failed — please try again.')
     }
   }
 
   return (
-    <div className="kw-upload" data-id={node.id || ''} data-armed={armed ? 'true' : 'false'} data-phase={phase}>
+    <div className="kw-upload" data-id={node.id || ''} data-phase={phase}>
       <input
         ref={inputRef}
         className="kw-upload-input"
         type="file"
         name={node.name || 'file'}
         accept={accept.join(',')}
-        disabled={!armed || busy || undefined}
+        disabled={busy || undefined}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => {
           const file = e.target.files && e.target.files[0]
@@ -125,7 +126,7 @@ export default function Upload({ node }) {
       <button
         type="button"
         className="kw-upload-button"
-        disabled={!armed || busy || undefined}
+        disabled={busy || undefined}
         aria-busy={busy || undefined}
         onClick={(e) => {
           e.stopPropagation()
@@ -135,7 +136,7 @@ export default function Upload({ node }) {
       >
         {busy ? 'Uploading…' : `Choose a file (${accept.join(', ')})`}
       </button>
-      {note ? <p className="kw-upload-note">{note}</p> : null}
+      {node.note ? <p className="kw-upload-note">{node.note}</p> : null}
       {message ? (
         <p
           className="kw-upload-status"
@@ -163,6 +164,15 @@ function failedMessage(status) {
   const errs = Array.isArray(status.errors) ? status.errors.filter(Boolean) : []
   if (errs.length === 0) return 'Import failed — please check the file and re-upload.'
   return `Import failed: ${errs.slice(0, 3).join('; ')} — please fix the file and re-upload.`
+}
+
+// serverReason — the server's own words when it rejected the upload
+// (onboard.js attaches the response body as err.body). Long or empty
+// bodies fall back to the generic line.
+function serverReason(err) {
+  const body = typeof err?.body === 'string' ? err.body.trim() : ''
+  if (!body || body.length > 200) return ''
+  return body
 }
 
 function sleep(ms) {

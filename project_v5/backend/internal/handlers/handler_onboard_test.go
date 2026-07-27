@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -169,6 +170,30 @@ func TestOnboardingTurnCap(t *testing.T) {
 	history = append(history, domain.LLMMessage{Role: "user", Content: "one more"})
 	if !OnboardingTurnCapReached(history) {
 		t.Fatalf("cap not reached at %d user turns", OnboardingTurnCap)
+	}
+}
+
+// Resume conflicts answer with a machine-readable JSON body (owner
+// 2026-07-28): a stable "error" code the shell switches on, a human
+// "reason", plus code-specific extras — never an opaque text 409.
+func TestWriteSessionConflict(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeSessionConflict(rec, "turn_cap_reached", "limit reached — start a new session",
+		map[string]any{"turnsUsed": 60, "turnCap": 60})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+	var body struct {
+		Error     string `json:"error"`
+		Reason    string `json:"reason"`
+		TurnsUsed int    `json:"turnsUsed"`
+		TurnCap   int    `json:"turnCap"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("conflict body is not JSON: %v (%q)", err, rec.Body.String())
+	}
+	if body.Error != "turn_cap_reached" || body.Reason == "" || body.TurnsUsed != 60 || body.TurnCap != 60 {
+		t.Fatalf("conflict body = %+v", body)
 	}
 }
 

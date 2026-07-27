@@ -10,10 +10,10 @@
 //    apply:[ {target:"block", blockId, document}
 //          | {target:"form",  formId, status, message} ]}
 //
-// Non-2xx responses that still carry a JSON body (validation errors,
-// denied operations) are returned as that payload — the form renders
-// the server's message instead of a generic network error. Only
-// bodyless / non-JSON failures throw.
+// Non-2xx responses that carry a body are returned as an error payload
+// (JSON bodies as-is; plain-text bodies as {status:"error", message}) —
+// the form renders the server's reason instead of a generic network
+// error. Only bodyless failures throw.
 
 export async function invokeOperation({
   baseUrl,
@@ -92,6 +92,10 @@ export function resolveEndpoint(baseUrl, endpoint) {
 }
 
 // parseApplyResponse normalizes every outcome onto the R1 payload shape.
+// A non-2xx with a plain-text body (http.Error server-side, e.g. a 409
+// "step not ready") becomes {status:"error", message:<reason>} so forms
+// show the server's reason inline instead of a generic failure (owner
+// feedback 2026-07-28). Only bodyless non-2xx responses still throw.
 async function parseApplyResponse(res, label) {
   const text = await res.text()
   let payload = null
@@ -109,6 +113,10 @@ async function parseApplyResponse(res, label) {
     return payload
   }
   if (!res.ok) {
+    const reason = typeof text === 'string' ? text.trim() : ''
+    if (reason) {
+      return { status: 'error', message: reason }
+    }
     throw new Error(`${label} ${res.status}: ${text}`)
   }
   return { status: 'ok' }

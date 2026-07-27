@@ -84,6 +84,12 @@ type PipelineExecuteResponse struct {
 	// JSON body. Nil on legacy single-document turns (visual_assembly-only)
 	// — the wire omits the field and old bundles are unaffected.
 	Blocks []domain.TurnBlock
+
+	// Manifest is the onboarding manifest status summary {staged, applied,
+	// failed, …} (owner 2026-07-28) so the shell can show contextual CTAs
+	// (Accept only while a plan is staged and unapplied). Nil outside the
+	// onboarding form and on sessions without a manifest — additive field.
+	Manifest *ManifestStatusSummary
 }
 
 // PipelineExecute is the two-agent orchestrator. Agent1 fetches/filters data
@@ -151,8 +157,12 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 	}
 
 	microcontext := composeMicrocontext(a1.Results)
+	var manifestStatus *ManifestStatusSummary
 	if req.Mode == domain.ModeOnboarding {
-		microcontext = uc.onboardingMicrocontext(ctx, req.SessionID, a1.Results, microcontext)
+		// The manifest is final for the turn after Agent1 (meta-ops stage /
+		// apply there; Agent2 is visual-only) — one read feeds both the
+		// Agent2 signal and the response's status summary.
+		microcontext, manifestStatus = uc.onboardingSignal(ctx, req.SessionID, a1.Results, microcontext)
 	}
 
 	if req.OnStage != nil {
@@ -249,6 +259,7 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		Agent1Ms:  a1.LatencyMs,
 		Agent2Ms:  a2.LatencyMs,
 		Blocks:    blockSink.Blocks(),
+		Manifest:  manifestStatus,
 	}
 
 	// Data-derived filter facets + 1-level navigation prefetch — both read
@@ -282,25 +293,25 @@ func readPresetInUse(doc map[string]interface{}) string {
 	return v
 }
 
-// onboardingMicrocontext folds the session's staged manifest into the
-// Agent2 signal on the onboarding form (§4.3): "turn: … | staged: … |
-// applied: n/m | waiting: …". The manifest is read through the
-// OnboardingStatePort side of the state adapter; when the port or the
-// manifest is unavailable the generic microcontext passes through (fallback,
-// logged — never a silent empty signal).
-func (uc *PipelineExecute) onboardingMicrocontext(ctx context.Context, sessionID string, results []*domain.OperationResult, fallback string) string {
+// onboardingSignal folds the session's staged manifest into the Agent2
+// signal on the onboarding form (§4.3): "turn: … | staged: … | applied: n/m
+// | waiting: …" — and digests the same read into the response's
+// ManifestStatusSummary (contextual CTAs, owner 2026-07-28). When the port
+// or the manifest is unavailable the generic microcontext passes through
+// with a nil summary (fallback, logged — never a silent empty signal).
+func (uc *PipelineExecute) onboardingSignal(ctx context.Context, sessionID string, results []*domain.OperationResult, fallback string) (string, *ManifestStatusSummary) {
 	ob, ok := uc.state.(ports.OnboardingStatePort)
 	if !ok {
-		return fallback
+		return fallback, nil
 	}
 	m, err := ob.GetOnboarding(ctx, sessionID)
 	if err != nil {
 		if uc.log != nil {
 			uc.log.Warn("pipeline: onboarding manifest read failed — generic microcontext", "session", sessionID, "err", err)
 		}
-		return fallback
+		return fallback, nil
 	}
-	return prompts.ComposeOnboardingMicrocontext(m, opNames(results))
+	return prompts.ComposeOnboardingMicrocontextFromResults(m, results), ManifestStatusOf(m)
 }
 
 // composeMicrocontext maps Agent1's structured operation results into a

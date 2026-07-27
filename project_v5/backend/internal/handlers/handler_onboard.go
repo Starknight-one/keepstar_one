@@ -258,9 +258,13 @@ func (h *OnboardHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSession handles GET /api/v1/onboard/session?sessionId= — resume
-// (refresh-safe, all truth in DB, §5.1): the staged manifest, the last
-// rendered template and the chat transcript. Cookie-gated; the session must
-// be a live mode=onboarding session (anything else → 404, no leak).
+// (refresh-safe, all truth in DB, §5.1): the staged manifest (+ its status
+// summary for contextual CTAs), the last rendered template and the chat
+// transcript. Cookie-gated; the session must be a live mode=onboarding
+// session (anything else → 404, no leak). A dead session answers 409 with a
+// machine-readable JSON body saying WHY (killed vs turn cap — owner
+// 2026-07-28) so the client can offer the right next step instead of a
+// blank error.
 func (h *OnboardHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	if !checkOnboardCookie(w, r) {
 		return
@@ -283,7 +287,8 @@ func (h *OnboardHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if killedAt != nil {
-		http.Error(w, "session killed", http.StatusConflict)
+		writeSessionConflict(w, "session_killed",
+			"this onboarding session was closed by an operator — start a new session to continue", nil)
 		return
 	}
 	if mode != string(domain.ModeOnboarding) {
@@ -294,10 +299,19 @@ func (h *OnboardHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	state, err := h.state.GetState(r.Context(), sessionID)
 	if err != nil {
 		if errors.Is(err, domain.ErrSessionKilled) {
-			http.Error(w, "session killed", http.StatusConflict)
+			writeSessionConflict(w, "session_killed",
+				"this onboarding session was closed by an operator — start a new session to continue", nil)
 			return
 		}
 		http.Error(w, "session state unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	turnsUsed := OnboardingTurnsUsed(state.ConversationHistory)
+	if turnsUsed >= OnboardingTurnCap {
+		writeSessionConflict(w, "turn_cap_reached",
+			"this onboarding session reached its turn limit — start a new session; everything already applied is saved",
+			map[string]any{"turnsUsed": turnsUsed, "turnCap": OnboardingTurnCap})
 		return
 	}
 
@@ -311,14 +325,29 @@ func (h *OnboardHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"sessionId":    sessionID,
-		"mode":         string(domain.ModeOnboarding),
-		"manifest":     manifest,
-		"lastTemplate": state.Current.Template,
-		"transcript":   transcriptOf(state.ConversationHistory),
-		"turnsUsed":    OnboardingTurnsUsed(state.ConversationHistory),
-		"turnCap":      OnboardingTurnCap,
+		"sessionId": sessionID,
+		"mode":      string(domain.ModeOnboarding),
+		"manifest":  manifest,
+		// manifestStatus digests the manifest for contextual CTAs (owner
+		// 2026-07-28): Accept only while staged > 0. Null without a manifest.
+		"manifestStatus": usecases.ManifestStatusOf(manifest),
+		"lastTemplate":   state.Current.Template,
+		"transcript":     transcriptOf(state.ConversationHistory),
+		"turnsUsed":      turnsUsed,
+		"turnCap":        OnboardingTurnCap,
 	})
+}
+
+// writeSessionConflict answers 409 with a machine-readable reason (owner
+// 2026-07-28: the client must know WHY — "error" is the stable code the
+// shell switches on, "reason" the human-readable text, extra carries
+// code-specific detail like the turn budget).
+func writeSessionConflict(w http.ResponseWriter, code, reason string, extra map[string]any) {
+	body := map[string]any{"error": code, "reason": reason}
+	for k, v := range extra {
+		body[k] = v
+	}
+	writeJSON(w, http.StatusConflict, body)
 }
 
 // transcriptOf projects the LLM conversation history onto the resume

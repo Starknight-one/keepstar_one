@@ -11,10 +11,22 @@ import (
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/ports"
+	"keepstar_v5/internal/streaming"
 )
 
 // ChatWithToolsCached calls Messages.New with cache_control hints placed
 // per cfg. See ports.CacheConfig for the placement rules.
+//
+// Optional per-call hook (real incremental streaming, final owner
+// decision 3): when the ctx carries a streaming.ToolInputHook, the call
+// switches to the streaming Messages API and forwards raw
+// input_json_delta fragments of the named tool (compose_turn) to the hook
+// AS THEY ARRIVE, mid-generation. The returned LLMResponse is built from
+// the SDK's accumulated message — same parsed shape, same usage counters,
+// same cache_control params — so callers see no behavioral difference
+// beyond the fragments having been forwarded. No hook → the exact
+// pre-existing non-streaming request, byte-identical (storefront's stable
+// path is untouched).
 func (c *Client) ChatWithToolsCached(
 	ctx context.Context,
 	systemPrompt string,
@@ -24,11 +36,76 @@ func (c *Client) ChatWithToolsCached(
 ) (*domain.LLMResponse, error) {
 	params := buildMessageNewParams(c.model, c.maxTokens, systemPrompt, messages, tools, cfg)
 
+	if hook := streaming.ToolInputHookFromContext(ctx); hook != nil && hook.Tool != "" && hook.OnFragment != nil {
+		return c.chatStreamingWithHook(ctx, params, hook)
+	}
+
 	resp, err := c.sdk.Messages.New(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic.Messages.New: %w", err)
 	}
 	return convertResponse(resp, c.model), nil
+}
+
+// chatStreamingWithHook runs the same Messages call over the streaming
+// API, accumulating the full message (SDK accumulator) while forwarding
+// the named tool's partial input JSON to the hook. Errors mirror the
+// non-streaming path's shape.
+func (c *Client) chatStreamingWithHook(
+	ctx context.Context,
+	params sdk.MessageNewParams,
+	hook *streaming.ToolInputHook,
+) (*domain.LLMResponse, error) {
+	stream := c.sdk.Messages.NewStreaming(ctx, params)
+	defer stream.Close()
+
+	tracker := &hookTracker{tool: hook.Tool, onFragment: hook.OnFragment}
+	acc := sdk.Message{}
+	for stream.Next() {
+		ev := stream.Current()
+		if err := acc.Accumulate(ev); err != nil {
+			return nil, fmt.Errorf("anthropic stream accumulate: %w", err)
+		}
+		tracker.observe(ev)
+	}
+	if err := stream.Err(); err != nil {
+		return nil, fmt.Errorf("anthropic.Messages.NewStreaming: %w", err)
+	}
+	return convertResponse(&acc, c.model), nil
+}
+
+// hookTracker forwards input_json_delta fragments of the FIRST content
+// block whose tool name matches. One match per call: a second tool_use
+// block with the same name never re-arms the tracker (its fragments are
+// not forwarded — compose_turn's one-call-per-turn guard refuses that
+// call at execute time anyway). Fragments are forwarded synchronously on
+// the stream-reading goroutine, in arrival order.
+type hookTracker struct {
+	tool       string
+	onFragment func(string)
+	matched    bool  // a matching tool_use block was seen
+	closed     bool  // that block finished (content_block_stop)
+	index      int64 // its content-block index
+}
+
+// observe inspects one stream event and forwards matching fragments.
+func (t *hookTracker) observe(ev sdk.MessageStreamEventUnion) {
+	switch ev.Type {
+	case "content_block_start":
+		if !t.matched && ev.ContentBlock.Type == "tool_use" && ev.ContentBlock.Name == t.tool {
+			t.matched = true
+			t.index = ev.Index
+		}
+	case "content_block_delta":
+		if t.matched && !t.closed && ev.Index == t.index &&
+			ev.Delta.Type == "input_json_delta" && ev.Delta.PartialJSON != "" {
+			t.onFragment(ev.Delta.PartialJSON)
+		}
+	case "content_block_stop":
+		if t.matched && ev.Index == t.index {
+			t.closed = true
+		}
+	}
 }
 
 // CountInputTokens calls Messages.CountTokens with the same input shape

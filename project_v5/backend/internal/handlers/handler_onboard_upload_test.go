@@ -177,6 +177,97 @@ func TestOnboardUploadGuards(t *testing.T) {
 	}
 }
 
+// uploadSessionRequest builds a multipart POST carrying sessionId (and
+// optionally a token) BEFORE the file part — the owner-2026-07-28 wire
+// shape where the token is optional.
+func uploadSessionRequest(t *testing.T, token, sessionID, fileName, content string) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if token != "" {
+		if err := mw.WriteField("token", token); err != nil {
+			t.Fatalf("write token: %v", err)
+		}
+	}
+	if sessionID != "" {
+		if err := mw.WriteField("sessionId", sessionID); err != nil {
+			t.Fatalf("write sessionId: %v", err)
+		}
+	}
+	fw, err := mw.CreateFormFile("file", fileName)
+	if err != nil {
+		t.Fatalf("create file part: %v", err)
+	}
+	fw.Write([]byte(content))
+	mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboard/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: onboardCookieName, Value: expectedOnboardCookie("pw")})
+	return req
+}
+
+// The user's upload IS the approval (owner 2026-07-28): NO token, only a
+// sessionId, against a fully-PROPOSED manifest — the server auto-applies
+// (provisioning the tenant, minting the door) and streams the file to
+// admin. Never a 409 "apply the manifest first".
+func TestOnboardUploadSessionFallbackAutoApplies(t *testing.T) {
+	t.Setenv("ONBOARDING_PASSWORD", "pw")
+	state := &onboardStateFake{manifest: proposedManifest()}
+	gw := &onboardGatewayFake{}
+	h := newOnboardTestHandler(state, gw, &onboardTokensFake{})
+
+	rec := httptest.NewRecorder()
+	h.Upload(rec, uploadSessionRequest(t, "", "sess-1", "listings.csv", "name,price\nCasa,100\n"))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body %q — the tokenless upload must auto-apply, not bounce", rec.Code, rec.Body.String())
+	}
+	if gw.importSlug != "acme-realty" || gw.importedFile != "listings.csv" {
+		t.Fatalf("gateway got slug=%q file=%q", gw.importSlug, gw.importedFile)
+	}
+	if gw.importedBody != "name,price\nCasa,100\n" {
+		t.Fatalf("streamed content = %q", gw.importedBody)
+	}
+
+	m, _ := state.GetOnboarding(context.Background(), "sess-1")
+	if m.Tenant.Slug != "acme-realty" {
+		t.Fatalf("tenant not provisioned by the auto-apply: %+v", m.Tenant)
+	}
+	door := m.Steps[1]
+	if tok, _ := door.Result["token"].(string); tok == "" {
+		t.Fatalf("door not armed: %+v", door)
+	}
+	if door.Result["jobId"] != "job-1" {
+		t.Fatalf("job not recorded on the door step: %v", door.Result)
+	}
+}
+
+// A STALE explicit token accompanied by a sessionId is rescued server-side:
+// the door re-mints and the upload proceeds (without a sessionId the same
+// stale token keeps today's 403 — covered by TestOnboardUploadGuards).
+func TestOnboardUploadStaleTokenWithSessionRescues(t *testing.T) {
+	t.Setenv("ONBOARDING_PASSWORD", "pw")
+	expired := liveDoorToken()
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	state := &onboardStateFake{manifest: registeredManifest()}
+	gw := &onboardGatewayFake{}
+	h := newOnboardTestHandler(state, gw, &onboardTokensFake{token: expired})
+
+	rec := httptest.NewRecorder()
+	h.Upload(rec, uploadSessionRequest(t, "door-token-1", "sess-1", "listings.csv", "name\nCasa\n"))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body %q — stale token + sessionId must resolve server-side", rec.Code, rec.Body.String())
+	}
+	if gw.importedFile != "listings.csv" {
+		t.Fatalf("file did not reach the gateway: %q", gw.importedFile)
+	}
+	// The fresh token is stamped back onto the door step.
+	m, _ := state.GetOnboarding(context.Background(), "sess-1")
+	if tok, _ := m.Steps[1].Result["token"].(string); tok == "" || tok == "door-token-1" {
+		t.Fatalf("door step still carries the stale token: %v", m.Steps[1].Result)
+	}
+}
+
 func uploadStatusRequest(t *testing.T, jobID, sessionID string) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/onboard/upload/"+jobID+"?sessionId="+sessionID, nil)

@@ -181,6 +181,7 @@ func (h *PipelineHandler) PipelineStream(w http.ResponseWriter, r *http.Request)
 		Prefetch:  resp.Prefetch,
 		Facets:    resp.Facets,
 		Blocks:    resp.Blocks,
+		Manifest:  resp.Manifest,
 	}
 	attachThemeToDocument(r.Context(), out.Document, h.themes, tenant, h.log)
 	if sc := domain.SpanFromContext(r.Context()); sc != nil {

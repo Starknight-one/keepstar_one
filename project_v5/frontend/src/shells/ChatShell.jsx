@@ -4,6 +4,7 @@ import SplitMessageView from '../chat/SplitMessageView'
 import RenderContext from '../renderer/RenderContext'
 import { pipelineSmartRequest } from '../api/client'
 import { appendStreamBlock, finalizeTurn, replaceBlockInMessages } from '../chat/turnBlocks'
+import { visibleQuickActions } from '../chat/quickActions'
 import { applyTheme, tokensFromDoc } from '../theme-style'
 
 // ChatShell — the shared chat-first surface (RUNTIME_SPEC §5.1): one
@@ -29,11 +30,16 @@ export default function ChatShell({
   placeholder,
   credentials, // 'include' for onboarding (ks_onboard cookie in dev cross-origin setups)
   layout, // 'split' → canvas left / chat right (the original widget shape)
-  quickActions, // [{label, send}] — one-tap turns shown above the input
+  quickActions, // [{label, send, when?}] — one-tap turns; `when` gates visibility (quickActions.js)
+  initialManifest, // manifest from session resume — seeds chip visibility before the first turn
 }) {
   const [messages, setMessages] = useState(() => initialMessages || [])
   const [isLoading, setIsLoading] = useState(false)
   const [draft, setDraft] = useState('')
+  // Latest known manifest state — seeded from resume, refreshed from the
+  // pipeline response's manifest field each turn (kept when a response
+  // carries none, so a staged plan survives plain chat turns).
+  const [manifest, setManifest] = useState(() => initialManifest || null)
 
   // Monotonic turn counter — ties streamed block frames to the bot
   // message they belong to (a ref: the callbacks close over one turn).
@@ -85,6 +91,7 @@ export default function ChatShell({
         })
         prefetchRef.current = resp.prefetch || { adjacentTemplate: {}, entities: {} }
         setMessages((m) => finalizeTurn(m, turnId, resp))
+        if (resp && resp.manifest !== undefined && resp.manifest !== null) setManifest(resp.manifest)
         applyThemeFromTurn(resp, Array.isArray(resp.blocks) ? resp.blocks : [])
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -128,11 +135,16 @@ export default function ChatShell({
     </div>
   ) : null
 
+  // Contextual chips (owner feedback 2026-07-28): only the chips whose
+  // `when` condition holds right now render — nothing on a fresh page,
+  // "Accept the plan" only while a staged plan awaits an apply.
+  const chips = visibleQuickActions(quickActions, { manifest, messages })
+
   const inputForm = (
     <div className="kw-chatpage-inputwrap">
-      {!isLoading && Array.isArray(quickActions) && quickActions.length > 0 ? (
+      {!isLoading && chips.length > 0 ? (
         <div className="kw-quick-actions">
-          {quickActions.map((qa) => (
+          {chips.map((qa) => (
             <button key={qa.label} type="button" className="kw-quick-chip" onClick={() => handleSend(qa.send)}>
               {qa.label}
             </button>

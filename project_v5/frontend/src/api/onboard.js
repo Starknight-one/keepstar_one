@@ -53,13 +53,19 @@ export async function resumeOnboardSession({ baseUrl, sessionId }) {
 }
 
 // uploadOnboardFile — phase 1 of the R25 two-phase uploader: POST the
-// multipart body to {base}/onboard/upload. The token field is appended
-// BEFORE the file — the server streams the file through to admin and must
-// validate the token first (field order is preserved on the wire).
+// multipart body to {base}/onboard/upload. Metadata fields (sessionId,
+// and token when the document bound one) are appended BEFORE the file —
+// the server streams the file through to admin and must resolve the
+// session/token first (field order is preserved on the wire). The token
+// is OPTIONAL (owner decision 2026-07-28): the upload works token-less —
+// the server resolves the session's ingest door from sessionId, auto-
+// applying the staged manifest when needed; the user's upload IS the
+// approval.
 // → 202 {jobId, status, totalItems, sessionId}
-export async function uploadOnboardFile({ baseUrl, token, file }) {
+export async function uploadOnboardFile({ baseUrl, token, sessionId, file }) {
   const form = new FormData()
-  form.append('token', token)
+  if (token) form.append('token', token)
+  if (sessionId) form.append('sessionId', sessionId)
   form.append('file', file, file.name)
   const res = await fetch(`${baseUrl}/onboard/upload`, {
     method: 'POST',
@@ -89,6 +95,9 @@ async function statusError(res, label) {
   const body = await res.text().catch(() => '')
   const err = new Error(`${label} ${res.status}: ${body}`)
   err.status = res.status
+  // The raw response body — callers surface the server's reason inline
+  // (e.g. the upload node) instead of a generic "try again".
+  err.body = body.trim()
   return err
 }
 

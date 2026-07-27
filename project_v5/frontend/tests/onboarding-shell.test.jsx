@@ -115,4 +115,55 @@ describe('OnboardingShell', () => {
     await screen.findByPlaceholderText('Describe your business…')
     expect(window.localStorage.getItem(STORE_KEY)).toBe('onb-1')
   })
+
+  it('drops a killed stored session (409) and starts fresh silently — no error page', async () => {
+    window.localStorage.setItem(STORE_KEY, 'onb-killed')
+    globalThis.fetch = routeFetch({
+      'GET /onboard/session?sessionId=onb-killed': () => resp(409, undefined),
+      'POST /onboard/session': () => resp(200, SESSION),
+    })
+
+    render(<OnboardingShell apiBaseUrl={BASE} />)
+    // Straight to a fresh chat: the killed session never surfaces.
+    await screen.findByPlaceholderText('Describe your business…')
+    expect(window.localStorage.getItem(STORE_KEY)).toBe('onb-1')
+    expect(screen.queryByText(/Could not reach/)).toBeNull()
+  })
+
+  it('resume carries the manifest into chip visibility: a staged plan shows Accept immediately', async () => {
+    window.localStorage.setItem(STORE_KEY, 'onb-7')
+    globalThis.fetch = routeFetch({
+      'GET /onboard/session?sessionId=onb-7': () =>
+        resp(200, {
+          sessionId: 'onb-7',
+          mode: 'onboarding',
+          manifest: {
+            steps: [
+              { id: '1', op: 'create_tenant', status: 'proposed' },
+              { id: '2', op: 'define_entity', status: 'proposed' },
+            ],
+          },
+          transcript: [
+            { role: 'user', text: 'I run a realtor agency' },
+            { role: 'assistant', text: 'Here is the plan so far.' },
+          ],
+        }),
+    })
+
+    render(<OnboardingShell apiBaseUrl={BASE} />)
+    await screen.findByPlaceholderText('Describe your business…')
+    expect(await screen.findByRole('button', { name: 'Accept the plan' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show the plan' })).toBeTruthy()
+  })
+
+  it('fresh session renders no chips (nothing staged, no turns yet)', async () => {
+    globalThis.fetch = routeFetch({
+      'POST /onboard/session': () => resp(200, SESSION),
+    })
+
+    render(<OnboardingShell apiBaseUrl={BASE} />)
+    await screen.findByPlaceholderText('Describe your business…')
+    expect(screen.queryByRole('button', { name: 'Accept the plan' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show the plan' })).toBeNull()
+  })
 })

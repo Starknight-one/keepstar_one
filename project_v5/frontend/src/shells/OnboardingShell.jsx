@@ -59,6 +59,7 @@ export default function OnboardingShell({ apiBaseUrl, shadowRoot }) {
         sessionId: r.sessionId,
         tenantSlug: r.tenant?.slug || ONBOARDING_TENANT_SLUG,
         messages: [],
+        manifest: null,
       })
       setPhase('chat')
     } catch (err) {
@@ -88,6 +89,7 @@ export default function OnboardingShell({ apiBaseUrl, shadowRoot }) {
             sessionId: r.sessionId,
             tenantSlug: r.tenant?.slug || ONBOARDING_TENANT_SLUG,
             messages: transcriptToMessages(r.transcript),
+            manifest: r.manifest || null,
           })
           setPhase('chat')
           return
@@ -168,9 +170,21 @@ export default function OnboardingShell({ apiBaseUrl, shadowRoot }) {
         placeholder="Describe your business…"
         credentials="include"
         layout="split"
+        initialManifest={session.manifest}
         quickActions={[
-          { label: 'Accept the plan', send: 'The plan looks good — apply it and let us proceed.' },
-          { label: 'Show the plan', send: 'Show me the full proposed plan for my business.' },
+          // Contextual (owner 2026-07-28): chips appear only when relevant —
+          // Accept while a staged plan awaits an apply, Show after the first
+          // real bot turn; a fresh page renders no chips.
+          {
+            label: 'Accept the plan',
+            send: 'The plan looks good — apply it and let us proceed.',
+            when: 'plan-unapplied',
+          },
+          {
+            label: 'Show the plan',
+            send: 'Show me the full proposed plan for my business.',
+            when: 'after-first-turn',
+          },
         ]}
       />
     )

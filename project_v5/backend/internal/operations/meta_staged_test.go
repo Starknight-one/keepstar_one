@@ -214,7 +214,7 @@ func TestEnableOperationsKeysOnInstanceSet(t *testing.T) {
 	}
 }
 
-// RegisterMetaExecutors exposes all 11 meta-ops to the onboarding form's
+// RegisterMetaExecutors exposes all 12 meta-ops to the onboarding form's
 // data agent — and to nothing else (mode gate lives on the seed rows).
 func TestRegisterMetaExecutorsVisibility(t *testing.T) {
 	reg := NewRegistry(RegistryConfig{Tenants: &fakeTenants{}, Log: testLogger()})
@@ -223,6 +223,7 @@ func TestRegisterMetaExecutorsVisibility(t *testing.T) {
 	defs := reg.DefinitionsFor(context.Background(), "keepstar-onboarding",
 		domain.ModeOnboarding, domain.AgentData, domain.RoleVisitor)
 	want := []string{
+		"about_keepstar",
 		"adopt_presets", "apply_manifest", "create_tenant", "define_automation",
 		"define_entity", "define_value_set", "enable_operations",
 		"issue_ingest_door", "issue_surface_urls", "register_user", "search_library",

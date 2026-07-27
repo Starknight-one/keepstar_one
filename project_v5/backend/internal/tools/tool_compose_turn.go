@@ -13,6 +13,7 @@ import (
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine"
 	"keepstar_v5/internal/ports"
+	"keepstar_v5/internal/streaming"
 )
 
 // ComposeTurnTool is the compose_turn visual executor (RUNTIME_SPEC.md
@@ -113,13 +114,39 @@ type composeBlock struct {
 
 // Execute runs one compose_turn call: validate everything up front (no
 // partial emission on bad input), then produce and emit blocks in order.
+//
+// Streaming dedupe handshake (lane D): when agent2_execute installed a
+// streaming.EarlyEmitter on the ctx, the leading run of this call's TEXT
+// blocks may ALREADY be on the wire — parsed out of the model's partial
+// tool input and emitted mid-generation. Execute then skips re-emitting
+// exactly that prefix (specs[0..early.Count()-1]; both sides parsed the
+// same JSON, so index identity holds) and emits the rest as today.
+// Document blocks are never early-emitted — they need this assembly
+// chain — so they always emit here, on assembly (the chosen simplest
+// correct path: no placeholders, no replace frames, no reordering).
+// The one-call-per-turn guard moves to the emitter's Claim flag: claimed
+// when validation passes OR when this call's early prefix already
+// reached the wire; a call refused before anything was emitted keeps the
+// retry path open, exactly like the legacy collector-count guard that
+// still covers hook-less turns.
 func (t *ComposeTurnTool) Execute(ctx context.Context, toolCtx domain.ToolContext, input map[string]interface{}) (*domain.ToolResult, error) {
 	collector := domain.TurnBlockCollectorFromContext(ctx)
-	if collector != nil && collector.Count() > 0 {
+	early := streaming.EarlyEmitterFromContext(ctx)
+	if early != nil {
+		if early.Claimed() {
+			return errorResult("compose_turn: one call per turn — this turn already composed its blocks"), nil
+		}
+	} else if collector != nil && collector.Count() > 0 {
 		return errorResult("compose_turn: one call per turn — this turn already composed its blocks"), nil
 	}
 
 	specs, problem := parseComposeBlocks(input)
+	if early != nil && (problem == "" || early.Count() > 0) {
+		// Consume the turn: validation passed, or this call's early text
+		// prefix is already on the wire — either way a sibling
+		// compose_turn call must not compose again on top of it.
+		early.Claim()
+	}
 	if problem != "" {
 		return errorResult("compose_turn: " + problem), nil
 	}
@@ -152,7 +179,30 @@ func (t *ComposeTurnTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 		emitted++
 	}
 
+	// Blocks already streamed mid-generation by the EarlyEmitter (the
+	// leading text run — see the handshake note on Execute). They are in
+	// the collector and on the wire; count them, never re-emit.
+	skip := 0
+	if early != nil {
+		skip = early.Count()
+		if skip > len(specs) {
+			skip = len(specs) // defensive; both sides parsed the same JSON
+		}
+	}
+
 	for i, spec := range specs {
+		if i < skip {
+			if spec.kind == "text" {
+				textCount++
+			} else {
+				// Impossible unless the incremental parser drifted from
+				// parseComposeBlocks — refuse to double-emit, say so loudly.
+				slog.Warn("compose_turn: early-emitted block is not text — parser drift, block not re-emitted",
+					"index", i, "kind", spec.kind, "session_id", toolCtx.SessionID)
+			}
+			emitted++
+			continue
+		}
 		switch spec.kind {
 		case "text":
 			emit(domain.TurnBlock{

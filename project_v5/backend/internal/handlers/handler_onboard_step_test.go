@@ -71,6 +71,7 @@ func (s *onboardStateFake) persistedJSON(t *testing.T) string {
 type onboardGatewayFake struct {
 	seenPassword string
 	provisionErr error
+	createErr    error
 	importedBody string
 	importedFile string
 	importSlug   string
@@ -78,6 +79,9 @@ type onboardGatewayFake struct {
 }
 
 func (g *onboardGatewayFake) CreateTenant(context.Context, string, string) (*ports.AdminTenant, error) {
+	if g.createErr != nil {
+		return nil, g.createErr
+	}
 	return &ports.AdminTenant{TenantID: "t-1", Slug: "acme-realty"}, nil
 }
 func (g *onboardGatewayFake) ProvisionUser(_ context.Context, _, _, password, _ string) (string, error) {
@@ -128,6 +132,15 @@ func (f *onboardTokensFake) MintSurfaceToken(context.Context, string) (string, e
 	return "surf-1", nil
 }
 
+// onboardThemesFake implements ports.ThemePort — the applier's create_tenant
+// step writes the brand-default theme in-process (R22).
+type onboardThemesFake struct{}
+
+func (onboardThemesFake) GetTheme(context.Context, string) (domain.Theme, error) {
+	return domain.DefaultTheme(), nil
+}
+func (onboardThemesFake) UpsertTheme(context.Context, string, domain.ThemeTokens) error { return nil }
+
 // registeredManifest is a manifest mid-beat-3: tenant provisioned, the
 // register step accepted (rendered form), the ingest door armed.
 func registeredManifest() *domain.OnboardingManifest {
@@ -144,6 +157,24 @@ func registeredManifest() *domain.OnboardingManifest {
 	}
 }
 
+// proposedManifest is a manifest as the model staged it mid-beat-2: nothing
+// applied, nothing accepted. The USER's next action (registration submit or
+// file upload) is the approval and must auto-apply it (owner 2026-07-28) —
+// never a 409 "apply the manifest first".
+func proposedManifest() *domain.OnboardingManifest {
+	return &domain.OnboardingManifest{
+		Version: 1,
+		Steps: []domain.ManifestStep{
+			{ID: "s-tenant", Op: "create_tenant", Status: domain.ManifestStepProposed,
+				Params: map[string]any{"name": "Acme Realty", "vertical": "real estate agency"}},
+			{ID: "s-door", Op: "issue_ingest_door", Status: domain.ManifestStepProposed,
+				Params: map[string]any{"formats": []any{"csv", "json"}}},
+			{ID: "s-reg", Op: "register_user", Status: domain.ManifestStepProposed,
+				Params: map[string]any{"role": "owner"}},
+		},
+	}
+}
+
 // newOnboardTestHandler builds an OnboardHandler with a REAL ManifestApplier
 // over the fakes — the step-submit and upload paths run end to end minus
 // the DB and admin HTTP.
@@ -153,6 +184,7 @@ func newOnboardTestHandler(state *onboardStateFake, gw *onboardGatewayFake, toke
 		State:          state,
 		Tokens:         tokens,
 		Gateway:        gw,
+		Themes:         onboardThemesFake{},
 		SurfaceBaseURL: "https://v5.example.test",
 		Log:            onboardTestLog(),
 	})
@@ -289,5 +321,74 @@ func TestStepSubmitErrors(t *testing.T) {
 	}
 	if strings.Contains(state.persistedJSON(t), password) {
 		t.Fatalf("PASSWORD LEAKED on the failure path (R6 violation)")
+	}
+}
+
+// The live 2026-07-28 bug, transport level: the model SAID "applying now"
+// but never called apply_manifest, so the manifest was still fully
+// proposed — the form submit then 409'd "step not ready: apply the
+// manifest first". The submit is the approval: the server auto-applies and
+// registers, 200. Addressed by op alias, exactly as the seeded
+// registration_form posts it.
+func TestStepSubmit_AutoAppliesProposedManifest(t *testing.T) {
+	const password = "auto-apply-transport-pw"
+	t.Setenv("ONBOARDING_PASSWORD", "pw")
+	state := &onboardStateFake{manifest: proposedManifest()}
+	gw := &onboardGatewayFake{}
+	h := newOnboardTestHandler(state, gw, &onboardTokensFake{})
+
+	rec := httptest.NewRecorder()
+	h.StepSubmit(rec, stepSubmitRequest(t, "register_user",
+		`{"sessionId":"sess-1","email":"o@acme.test","password":"`+password+`","formId":"f1"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body %q — the auto-apply must prevent this 409", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Status string `json:"status"`
+		Step   struct {
+			Status string `json:"status"`
+		} `json:"step"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "ok" || resp.Step.Status != domain.ManifestStepApplied {
+		t.Fatalf("response = %+v, want ok/applied", resp)
+	}
+	if gw.seenPassword != password {
+		t.Fatalf("gateway did not receive the password")
+	}
+
+	// The plan actually ran: tenant provisioned, door armed.
+	m, _ := state.GetOnboarding(context.Background(), "sess-1")
+	if m.Tenant.Slug != "acme-realty" {
+		t.Fatalf("tenant not provisioned by the auto-apply: %+v", m.Tenant)
+	}
+	if tok, _ := m.Steps[1].Result["token"].(string); tok == "" {
+		t.Fatalf("ingest door not armed by the auto-apply: %+v", m.Steps[1])
+	}
+	// R6 discipline holds on this path too.
+	if strings.Contains(state.persistedJSON(t), password) {
+		t.Fatalf("PASSWORD LEAKED on the auto-apply path (R6 violation)")
+	}
+}
+
+// A halted auto-apply still 409s — but the body must name the FAILED step
+// and its reason (owner 2026-07-28), never a bare "apply the manifest
+// first".
+func TestStepSubmit_HaltedAutoApply409CarriesReason(t *testing.T) {
+	t.Setenv("ONBOARDING_PASSWORD", "pw")
+	state := &onboardStateFake{manifest: proposedManifest()}
+	gw := &onboardGatewayFake{createErr: errors.New("admin unreachable")}
+	h := newOnboardTestHandler(state, gw, &onboardTokensFake{})
+
+	rec := httptest.NewRecorder()
+	h.StepSubmit(rec, stepSubmitRequest(t, "register_user",
+		`{"sessionId":"sess-1","email":"o@acme.test","password":"pw1"}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "create_tenant failed: admin unreachable") {
+		t.Fatalf("409 body does not carry the failed step's reason: %q", rec.Body.String())
 	}
 }

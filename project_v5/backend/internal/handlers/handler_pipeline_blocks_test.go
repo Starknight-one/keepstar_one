@@ -52,8 +52,10 @@ func cannedBlocks() []domain.TurnBlock {
 }
 
 func TestPipelineStreamEmitsBlockFrames(t *testing.T) {
+	resp := cannedResponse()
+	resp.Manifest = &usecases.ManifestStatusSummary{Staged: 2, Applied: 1, Total: 3}
 	h := &PipelineHandler{
-		pipeline: &fakeBlocksRunner{stage: cannedStage, blocks: cannedBlocks(), resp: cannedResponse()},
+		pipeline: &fakeBlocksRunner{stage: cannedStage, blocks: cannedBlocks(), resp: resp},
 		log:      discardLog(),
 	}
 
@@ -91,10 +93,13 @@ func TestPipelineStreamEmitsBlockFrames(t *testing.T) {
 		t.Errorf("block[1] = %+v, want inline document frame", b2)
 	}
 
-	// Terminal result: full blocks array + back-compat document.
+	// Terminal result: full blocks array + back-compat document + the
+	// manifest status summary (must match POST /pipeline — the widget's
+	// contextual chips read it off the stream's result frame too).
 	var result struct {
-		Document map[string]interface{} `json:"document"`
-		Blocks   []domain.TurnBlock     `json:"blocks"`
+		Document map[string]interface{}          `json:"document"`
+		Blocks   []domain.TurnBlock              `json:"blocks"`
+		Manifest *usecases.ManifestStatusSummary `json:"manifest"`
 	}
 	if err := json.Unmarshal([]byte(frames[5].data), &result); err != nil {
 		t.Fatalf("result data not JSON: %v", err)
@@ -107,6 +112,9 @@ func TestPipelineStreamEmitsBlockFrames(t *testing.T) {
 	}
 	if v, _ := result.Document["version"].(string); v != "2.10" {
 		t.Errorf("back-compat document.version = %q, want 2.10", v)
+	}
+	if result.Manifest == nil || result.Manifest.Staged != 2 || result.Manifest.Applied != 1 {
+		t.Errorf("result.manifest = %+v, want {staged:2 applied:1 total:3}", result.Manifest)
 	}
 }
 

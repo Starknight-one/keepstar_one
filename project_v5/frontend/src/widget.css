@@ -772,10 +772,6 @@
   background: color-mix(in srgb, var(--kw-blue) 4%, var(--kw-bg));
 }
 
-.kw-upload[data-armed='false'] {
-  opacity: 0.7;
-}
-
 /* The native file input stays for a11y/tests; the styled button drives it. */
 .kw-upload-input {
   position: absolute;

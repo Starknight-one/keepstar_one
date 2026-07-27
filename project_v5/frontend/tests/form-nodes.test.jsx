@@ -375,6 +375,28 @@ describe('form_submit flow (R6 — registration path)', () => {
     })
   })
 
+  it('shows the plain-text 409 reason inline, not "Something went wrong" (live-bug regression, owner 2026-07-28)', async () => {
+    // http.Error server-side answers text/plain with a trailing newline —
+    // the exact shape of the live "step not ready" bug.
+    fetch.mockResolvedValue({
+      ok: false,
+      status: 409,
+      text: async () => 'step not ready: apply the manifest first\n',
+    })
+    const { container } = renderDoc([registrationForm])
+    const inputs = container.querySelectorAll('input.kw-input')
+    fireEvent.change(inputs[0], { target: { value: 'Vlad' } })
+    fireEvent.change(inputs[1], { target: { value: 'v@k.one' } })
+    fireEvent.change(inputs[2], { target: { value: 'hunter22' } })
+    fireEvent.click(container.querySelector('button.kw-submit'))
+    await waitFor(() => {
+      expect(container.querySelector('.kw-form-message[data-status="error"]')).toHaveTextContent(
+        'step not ready: apply the manifest first',
+      )
+    })
+    expect(container.querySelector('.kw-form-message').textContent).not.toContain('Something went wrong')
+  })
+
   it('refuses absolute/external form_submit endpoints before any network activity', async () => {
     const doc = {
       ...registrationForm,

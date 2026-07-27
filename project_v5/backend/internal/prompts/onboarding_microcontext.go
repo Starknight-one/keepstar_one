@@ -7,6 +7,36 @@ import (
 	"keepstar_v5/internal/domain"
 )
 
+// ComposeOnboardingMicrocontextFromResults is the results-aware composer
+// the pipeline mode dispatch should call (drop-in for
+// ComposeOnboardingMicrocontext(m, opNames(results))): it derives the turn
+// ops from the structured results AND — the owner-approved exception to
+// state-mediation (2026-07-28) — appends the about_keepstar content in an
+// <about_keepstar> envelope when the turn loaded it, so Agent2 answers the
+// visitor's "what is this?" in its own words, in the visitor's language.
+func ComposeOnboardingMicrocontextFromResults(m *domain.OnboardingManifest, results []*domain.OperationResult) string {
+	ops := make([]string, 0, len(results))
+	about := ""
+	for _, r := range results {
+		if r == nil {
+			continue
+		}
+		ops = append(ops, r.Operation)
+		if r.Operation == "about_keepstar" && r.Outcome == domain.OutcomeOK {
+			if s, ok := r.Output["content"].(string); ok && s != "" {
+				about = s
+			} else if r.Summary != "" {
+				about = r.Summary
+			}
+		}
+	}
+	line := ComposeOnboardingMicrocontext(m, ops)
+	if about == "" {
+		return line
+	}
+	return line + "\n<about_keepstar>\n" + about + "\n</about_keepstar>"
+}
+
 // ComposeOnboardingMicrocontext folds the onboarding manifest into the
 // one-line signal Agent2 keys its choreography off (RUNTIME_SPEC.md §4.3):
 //
@@ -67,7 +97,10 @@ func ComposeOnboardingMicrocontext(m *domain.OnboardingManifest, lastTurnOps []s
 
 // stepLabel renders one staged step: the op, plus its natural key when the
 // params carry an obvious one (entity slug / value-set slug / automation
-// name) — "define_entity(lead)" reads better than a bare op ×3.
+// name / operation instance names) — "define_entity(lead)" reads better
+// than a bare op ×3, and "enable_operations(book_a_visit, find_requests)"
+// gives Agent2 the instance names its business-bullet list needs (owner
+// flow ruling 2026-07-28, case 2).
 func stepLabel(st *domain.ManifestStep) string {
 	key := ""
 	switch st.Op {
@@ -79,9 +112,36 @@ func stepLabel(st *domain.ManifestStep) string {
 		key, _ = st.Params["slug"].(string)
 	case "define_automation":
 		key, _ = st.Params["name"].(string)
+	case "enable_operations":
+		key = strings.Join(operationInstances(st.Params), ", ")
 	}
 	if key != "" {
 		return st.Op + "(" + key + ")"
 	}
 	return st.Op
+}
+
+// operationInstances lists the instance wire names of an enable_operations
+// step, tolerating both JSONB-decoded ([]any) and Go-built
+// ([]map[string]any) params.
+func operationInstances(params map[string]any) []string {
+	var items []any
+	switch v := params["operations"].(type) {
+	case []any:
+		items = v
+	case []map[string]any:
+		items = make([]any, len(v))
+		for i := range v {
+			items[i] = v[i]
+		}
+	}
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		if op, ok := item.(map[string]any); ok {
+			if name, _ := op["instance"].(string); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
 }

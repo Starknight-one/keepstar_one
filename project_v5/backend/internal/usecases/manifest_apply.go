@@ -192,6 +192,11 @@ func (ap *ManifestApplier) Apply(ctx context.Context, sessionID, upTo string) (*
 // form values; the password inside it flows ONLY into
 // AdminGatewayPort.ProvisionUser and is NEVER written to the manifest,
 // deltas or logs. Returns a copy of the completed step.
+//
+// Owner decision 2026-07-28: the user submitting the registration form IS
+// the approval — a still-proposed manifest is auto-applied here instead of
+// bouncing with "apply the manifest first". The business user's action must
+// never depend on the model having called apply_manifest.
 func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID string, payload map[string]any) (*domain.ManifestStep, error) {
 	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
 	if err != nil {
@@ -200,15 +205,7 @@ func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID st
 	if m == nil || len(m.Steps) == 0 {
 		return nil, ErrNoManifest
 	}
-	idx := findStepIndex(m, stepID)
-	if idx < 0 {
-		// Seeded documents address the step by its OP wire name (the
-		// registration_form seed posts to /onboard/step/register_user/submit)
-		// while staged step IDs carry an ordinal suffix (register_user-7).
-		// Restage-replace keeps ops unique per manifest, so the op name is an
-		// unambiguous alias.
-		idx = findStepIndexByOp(m, stepID)
-	}
+	idx := locateStep(m, stepID)
 	if idx < 0 {
 		return nil, ErrStepNotFound
 	}
@@ -221,10 +218,28 @@ func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID st
 		return &cp, nil
 	}
 	if st.Status == domain.ManifestStepProposed {
-		return nil, ErrStepNotReady
+		// Auto-apply (see doc comment): run the staged manifest now, then
+		// carry on with the registration against the fresh manifest.
+		applied, err := ap.Apply(ctx, sessionID, "")
+		if err != nil {
+			return nil, err
+		}
+		m = applied
+		idx = locateStep(m, stepID)
+		if idx < 0 {
+			return nil, ErrStepNotFound
+		}
+		st = &m.Steps[idx]
+		if st.Status == domain.ManifestStepProposed {
+			// Defensive: Apply flips every targeted step off proposed; if the
+			// step still is, surface the halting step's reason, not a shrug.
+			return nil, stepNotReadyErr(m)
+		}
 	}
 	if m.Tenant.Slug == "" {
-		return nil, ErrTenantNotProvisioned
+		// The auto-apply halted before create_tenant could provision — the
+		// 409 must say WHY (the failed step's reason), owner 2026-07-28.
+		return nil, tenantNotProvisionedErr(m)
 	}
 
 	email := strings.TrimSpace(stringField(payload, "email"))
@@ -311,6 +326,96 @@ func (ap *ManifestApplier) RecordIngestFailure(ctx context.Context, sessionID st
 		}
 		st.Result["lastError"] = strings.Join(errs, "; ")
 	}, false)
+}
+
+// ResolveIngestToken returns a usable ingest token for the session's
+// issue_ingest_door step — the server-side door for uploads that arrive
+// WITHOUT a (valid) token. Owner decision 2026-07-28: the user uploading a
+// file IS the approval — a still-proposed manifest is auto-applied here
+// (which mints the door); a stale/consumed recorded token is re-minted and
+// stamped back onto the step so the next poll/turn sees it. Never bounces
+// on "apply the manifest first".
+func (ap *ManifestApplier) ResolveIngestToken(ctx context.Context, sessionID string) (*ports.IngestToken, error) {
+	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil || len(m.Steps) == 0 {
+		return nil, ErrNoManifest
+	}
+	idx := findStepIndexByOp(m, opIssueIngestDoor)
+	if idx < 0 {
+		// The plan has no uploader — nothing to arm; the agent must stage one.
+		return nil, fmt.Errorf("%w: no issue_ingest_door step staged", ErrStepNotFound)
+	}
+	if tok := ap.liveIngestToken(ctx, &m.Steps[idx], m.Tenant.Slug); tok != nil {
+		return tok, nil
+	}
+
+	// Door never ran (manifest still proposed) → the upload is the approval:
+	// apply now, which mints the door token.
+	if m.Steps[idx].Status == domain.ManifestStepProposed {
+		if m, err = ap.Apply(ctx, sessionID, ""); err != nil {
+			return nil, err
+		}
+		idx = findStepIndexByOp(m, opIssueIngestDoor)
+		if idx < 0 {
+			return nil, fmt.Errorf("%w: no issue_ingest_door step staged", ErrStepNotFound)
+		}
+		if tok := ap.liveIngestToken(ctx, &m.Steps[idx], m.Tenant.Slug); tok != nil {
+			return tok, nil
+		}
+	}
+
+	// Minting needs the tenant; a halted apply surfaces the failed step's
+	// reason (owner 2026-07-28: say WHY).
+	if m.Tenant.ID == "" || m.Tenant.Slug == "" {
+		return nil, tenantNotProvisionedErr(m)
+	}
+
+	// Recorded token is stale/consumed (or unreadable) — mint a fresh one and
+	// stamp it on the step (persisted, so the armed uploader re-render and the
+	// poll endpoint agree on the same token).
+	st := &m.Steps[idx]
+	formats := ingestFormats(st.Params)
+	if len(formats) == 0 {
+		formats = []string{"csv", "json"} // v5_ingest_tokens table default (§3.3)
+	}
+	t, err := ap.cfg.Tokens.MintIngestToken(ctx, sessionID, m.Tenant.ID, formats, 0)
+	if err != nil {
+		return nil, err
+	}
+	if t.TenantSlug == "" {
+		t.TenantSlug = m.Tenant.Slug // mint returns the row; slug is manifest truth
+	}
+	if st.Result == nil {
+		st.Result = map[string]any{}
+	}
+	st.Result["token"] = t.Token
+	st.Result["formats"] = t.Formats
+	st.Result["expiresAt"] = t.ExpiresAt.Format(time.RFC3339)
+	if err := ap.persist(ctx, sessionID, m, st.Op, st.ID); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// liveIngestToken resolves the step's recorded token when it is still usable
+// (known, unexpired, unconsumed); nil otherwise. tenantSlug backfills the
+// admin-route address when the store did not resolve it.
+func (ap *ManifestApplier) liveIngestToken(ctx context.Context, st *domain.ManifestStep, tenantSlug string) *ports.IngestToken {
+	tokStr, _ := st.Result["token"].(string)
+	if tokStr == "" || ap.cfg.Tokens == nil {
+		return nil
+	}
+	tok, err := ap.cfg.Tokens.GetIngestToken(ctx, tokStr)
+	if err != nil || !tok.Valid(time.Now()) {
+		return nil
+	}
+	if tok.TenantSlug == "" {
+		tok.TenantSlug = tenantSlug
+	}
+	return tok
 }
 
 // mutateIngestStep loads the manifest, applies fn to the issue_ingest_door
@@ -553,15 +658,7 @@ func (ap *ManifestApplier) applyIssueIngestDoor(ctx context.Context, sessionID s
 	if tok, _ := st.Result["token"].(string); tok != "" {
 		return st.Result, domain.ManifestStepAccepted, nil
 	}
-	var formats []string
-	if raw, ok := st.Params["formats"].([]any); ok {
-		for _, f := range raw {
-			if s, ok := f.(string); ok {
-				formats = append(formats, s)
-			}
-		}
-	}
-	t, err := ap.cfg.Tokens.MintIngestToken(ctx, sessionID, m.Tenant.ID, formats, 0)
+	t, err := ap.cfg.Tokens.MintIngestToken(ctx, sessionID, m.Tenant.ID, ingestFormats(st.Params), 0)
 	if err != nil {
 		return nil, "", err
 	}
@@ -683,6 +780,102 @@ func findStepIndexByOp(m *domain.OnboardingManifest, op string) int {
 		}
 	}
 	return -1
+}
+
+// locateStep resolves a step by ID first, then by its op wire name. Seeded
+// documents address steps by OP (the registration_form seed posts to
+// /onboard/step/register_user/submit) while staged step IDs carry an
+// ordinal suffix (register_user-7); restage-replace keeps ops unique per
+// manifest, so the op name is an unambiguous alias.
+func locateStep(m *domain.OnboardingManifest, stepID string) int {
+	if idx := findStepIndex(m, stepID); idx >= 0 {
+		return idx
+	}
+	return findStepIndexByOp(m, stepID)
+}
+
+// firstFailedStep returns the first failed step in stage order, nil when the
+// manifest has none.
+func firstFailedStep(m *domain.OnboardingManifest) *domain.ManifestStep {
+	for i := range m.Steps {
+		if m.Steps[i].Status == domain.ManifestStepFailed {
+			return &m.Steps[i]
+		}
+	}
+	return nil
+}
+
+// stepNotReadyErr / tenantNotProvisionedErr wrap their sentinels with the
+// halting step's reason (owner 2026-07-28: a 409 must answer WHY the flow is
+// blocked, never just "apply the manifest first"). errors.Is still matches
+// the sentinel, so handler status mapping is unchanged.
+func stepNotReadyErr(m *domain.OnboardingManifest) error {
+	if f := firstFailedStep(m); f != nil {
+		return fmt.Errorf("%w (%s failed: %s)", ErrStepNotReady, f.Op, f.Error)
+	}
+	return ErrStepNotReady
+}
+
+func tenantNotProvisionedErr(m *domain.OnboardingManifest) error {
+	if f := firstFailedStep(m); f != nil {
+		return fmt.Errorf("%w (%s failed: %s)", ErrTenantNotProvisioned, f.Op, f.Error)
+	}
+	return ErrTenantNotProvisioned
+}
+
+// ingestFormats extracts the issue_ingest_door formats param ([]any of
+// strings on the wire).
+func ingestFormats(params map[string]any) []string {
+	var formats []string
+	if raw, ok := params["formats"].([]any); ok {
+		for _, f := range raw {
+			if s, ok := f.(string); ok {
+				formats = append(formats, s)
+			}
+		}
+	}
+	return formats
+}
+
+// ManifestStatusSummary is the client-facing manifest digest (owner
+// 2026-07-28): counts for contextual CTAs — the shell shows an Accept
+// control only while staged > 0, a retry affordance + reason when failed >
+// 0, nothing when the plan is fully applied. Rides additively on the
+// pipeline response (PipelineExecuteResponse.Manifest) and the onboarding
+// session resume payload.
+type ManifestStatusSummary struct {
+	Staged  int `json:"staged"`  // proposed steps awaiting apply
+	Applied int `json:"applied"` // applied (or skipped) steps
+	Failed  int `json:"failed"`  // failed steps (halted the run)
+	Total   int `json:"total"`
+	// FailedStep/FailedReason describe the FIRST failed step in stage order;
+	// empty when Failed == 0.
+	FailedStep   string `json:"failedStep,omitempty"`
+	FailedReason string `json:"failedReason,omitempty"`
+}
+
+// ManifestStatusOf digests a manifest into its status summary; nil when
+// there is no manifest (or no steps) — the wire omits the field.
+func ManifestStatusOf(m *domain.OnboardingManifest) *ManifestStatusSummary {
+	if m == nil || len(m.Steps) == 0 {
+		return nil
+	}
+	s := &ManifestStatusSummary{Total: len(m.Steps)}
+	for i := range m.Steps {
+		switch m.Steps[i].Status {
+		case domain.ManifestStepProposed:
+			s.Staged++
+		case domain.ManifestStepApplied, domain.ManifestStepSkipped:
+			s.Applied++
+		case domain.ManifestStepFailed:
+			s.Failed++
+			if s.FailedStep == "" {
+				s.FailedStep = m.Steps[i].Op
+				s.FailedReason = m.Steps[i].Error
+			}
+		}
+	}
+	return s
 }
 
 func requireTenant(m *domain.OnboardingManifest) error {

@@ -167,6 +167,11 @@ type pipelineResponse struct {
 	// screen-class doc for back-compat). Omitted on legacy single-document
 	// turns — old bundles drop unknown keys and are unaffected.
 	Blocks []domain.TurnBlock `json:"blocks,omitempty"`
+	// Manifest is the onboarding manifest status summary {staged, applied,
+	// failed, …} (owner 2026-07-28) so the shell shows contextual CTAs —
+	// Accept only while a plan is staged and unapplied. Omitted outside the
+	// onboarding form. Additive field.
+	Manifest *usecases.ManifestStatusSummary `json:"manifest,omitempty"`
 }
 
 // Pipeline handles POST /api/v1/pipeline.
@@ -258,6 +263,7 @@ func (h *PipelineHandler) Pipeline(w http.ResponseWriter, r *http.Request) {
 		Prefetch:  resp.Prefetch,
 		Facets:    resp.Facets,
 		Blocks:    resp.Blocks,
+		Manifest:  resp.Manifest,
 	}
 	attachThemeToDocument(r.Context(), out.Document, h.themes, tenant, h.log)
 	if sc := domain.SpanFromContext(r.Context()); sc != nil {
