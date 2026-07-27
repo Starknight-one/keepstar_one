@@ -55,3 +55,42 @@ forward to the July canon instead of reverting.
 - Operations-layer architecture track (catalog format, two CRUD
   contours, onboarding flow) — open questions listed in
   `../MANIFESTO.md`.
+
+---
+
+## Addendum (same day): stack redeployed to Railway + live-verified
+
+Local bring-up failed from the owner's network (Neon us-east TLS handshakes
+blew the 30s boot budget), so the stack went back to Railway
+(`selfless-tranquility`, env **dev**), next to the DB:
+
+| Service | URL | Status |
+|---|---|---|
+| v5-engine | https://v5-engine-dev.up.railway.app | SUCCESS; `/readyz` = `{"status":"ready"}` |
+| admin | https://admin-dev-85d4.up.railway.app | SUCCESS; console serves |
+| curator | https://curator-dev.up.railway.app | SUCCESS (redeployed after vars) |
+
+Config notes: services rebuilt from GitHub `main`; v5 uses
+`RAILWAY_DOCKERFILE_PATH=project_v5/Dockerfile`; **fresh** `JWT_SECRET`,
+`ADMIN_ENCRYPTION_KEY` (old encrypted `tenant_integrations` rows are
+unreadable — dev-acceptable), fresh shared `V5_INTERNAL_KEY` (admin+curator).
+`catalog.field_definitions` is still absent — v5 fail-opens as designed
+(warns, derives `<fields>` from data).
+
+**Live verification (real green, not delivered=ok):**
+POST `/api/v1/session/init` (X-Tenant-Slug: hey-babes-cosmetics) →
+POST `/api/v1/pipeline` `{"query":"show me your best lipsticks"}` →
+HTTP 200 in ~10s, preset `product_card`, 2 tool calls
+(`catalog_search` → `visual_assembly`), and GET `/api/v1/session/{id}`
+state (108KB) contains real bound catalog products ("Generic Lip Balm",
+"The Saem Concealer Cover Perfection Tip"). The earlier
+"lipsticks under $30" query correctly returned `empty_not_found` —
+catalog prices are stored in raw units (200..599000), so the LLM's
+dollar-denominated `max_price` filter can't match: known quality gap,
+goes to the ops/architecture track.
+
+**Owner-network caveat:** the ISP blocks some Railway edge IPs
+(69.46.46.118 unreachable, 69.46.46.41 fine). Workaround for local
+testing: `/etc/hosts` → `69.46.46.41 v5-engine-dev.up.railway.app
+curator-dev.up.railway.app`. Outside that network all URLs are reachable
+(verified via external fetch).
