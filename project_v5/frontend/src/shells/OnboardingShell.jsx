@@ -167,6 +167,11 @@ export default function OnboardingShell({ apiBaseUrl, shadowRoot }) {
         }
         placeholder="Describe your business…"
         credentials="include"
+        layout="split"
+        quickActions={[
+          { label: 'Accept the plan', send: 'The plan looks good — apply it and let us proceed.' },
+          { label: 'Show the plan', send: 'Show me the full proposed plan for my business.' },
+        ]}
       />
     )
   }

@@ -199,6 +199,25 @@ func (uc *PipelineExecute) Execute(ctx context.Context, req PipelineExecuteReque
 		"microcontext": microcontext,
 	})
 
+	// Onboarding first-impression guard: Agent2 occasionally returns
+	// without composing anything (small-model dice). A silent empty turn
+	// is a dead end for the business user, so the engine — not the LLM —
+	// keeps the conversation moving with a deterministic text block. The
+	// wording depends on whether Agent1 actually did work this turn.
+	if req.Mode == domain.ModeOnboarding && blockSink.Count() == 0 && a2.Document == nil {
+		fallback := "Tell me about your business — what you sell and what you need: a storefront, a CRM, or both. I'll assemble the plan from the Keepstar library."
+		if len(a1.ToolCalls) > 0 {
+			fallback = "Got it — I've updated your plan. Say \"show the plan\" to review it, or \"apply it\" to make your workspace live."
+		}
+		blockSink.Emit(domain.TurnBlock{
+			BlockID: "fallback-1",
+			Kind:    domain.BlockKindText,
+			Text:    fallback,
+			Display: domain.DisplayInline,
+		})
+		topSpan.SetAttr("onboarding_fallback", true)
+	}
+
 	// Aggregate ToolCalls (Agent1's executed calls — one on storefront/crm,
 	// up to 8 on the onboarding form (R4) — then Agent2's all). IDs are
 	// stripped from Agent1's calls, matching the pre-registry wire shape.

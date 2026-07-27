@@ -1049,3 +1049,85 @@
   color: var(--kw-text-muted);
   line-height: 1.5;
 }
+
+/* ── Split layout: canvas left / chat right (the original widget shape) ── */
+.kw-chatpage--split {
+  padding: 0;
+  align-items: stretch;
+}
+.kw-split {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+}
+.kw-split-canvas {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: var(--kw-bg, #fafafa);
+}
+.kw-split-canvas .kw-empty-state {
+  margin: auto;
+  color: var(--kw-text-muted);
+  font-size: var(--kw-fs-base);
+}
+.kw-split-chat {
+  width: 400px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  background: #ffffff;
+}
+.kw-split-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kw-chatpage-inputwrap {
+  padding: 0 16px 16px;
+}
+.kw-chatpage--split .kw-chatpage-header {
+  padding: 16px 16px 8px;
+}
+.kw-quick-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+}
+.kw-quick-chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--kw-blue);
+  background: #ffffff;
+  color: var(--kw-blue);
+  font-size: var(--kw-fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.kw-quick-chip:hover {
+  background: var(--kw-blue);
+  color: #ffffff;
+}
+@media (max-width: 900px) {
+  .kw-split {
+    flex-direction: column;
+  }
+  .kw-split-chat {
+    width: 100%;
+    height: 45%;
+    border-left: none;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+  }
+}

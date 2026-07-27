@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import BlocksMessageList from '../chat/BlocksMessageList'
+import SplitMessageView from '../chat/SplitMessageView'
 import RenderContext from '../renderer/RenderContext'
 import { pipelineSmartRequest } from '../api/client'
 import { appendStreamBlock, finalizeTurn, replaceBlockInMessages } from '../chat/turnBlocks'
@@ -27,6 +28,8 @@ export default function ChatShell({
   initialMessages,
   placeholder,
   credentials, // 'include' for onboarding (ks_onboard cookie in dev cross-origin setups)
+  layout, // 'split' → canvas left / chat right (the original widget shape)
+  quickActions, // [{label, send}] — one-tap turns shown above the input
 }) {
   const [messages, setMessages] = useState(() => initialMessages || [])
   const [isLoading, setIsLoading] = useState(false)
@@ -118,30 +121,59 @@ export default function ChatShell({
     onReplaceBlock: replaceBlock,
   }
 
+  const header = headerTitle ? (
+    <div className="kw-chatpage-header">
+      <span className="kw-chatpage-title">{headerTitle}</span>
+      {headerBadge ? <span className="kw-chatpage-badge">{headerBadge}</span> : null}
+    </div>
+  ) : null
+
+  const inputForm = (
+    <div className="kw-chatpage-inputwrap">
+      {!isLoading && Array.isArray(quickActions) && quickActions.length > 0 ? (
+        <div className="kw-quick-actions">
+          {quickActions.map((qa) => (
+            <button key={qa.label} type="button" className="kw-quick-chip" onClick={() => handleSend(qa.send)}>
+              {qa.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <form className="kw-chatpage-input" onSubmit={submit}>
+        <input
+          type="text"
+          placeholder={isLoading ? 'Loading…' : placeholder || 'Ask anything…'}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          disabled={isLoading}
+        />
+        <button type="submit" disabled={isLoading || !draft.trim()}>
+          Send
+        </button>
+      </form>
+    </div>
+  )
+
+  // Split layout (canvas left / chat right — the original widget shape)
+  // is the default for onboarding; single-column stays for CRM (R13).
+  if (layout === 'split') {
+    return (
+      <div className={'kw-chatpage kw-chatpage--split' + (variant ? ` kw-chatpage--${variant}` : '')}>
+        <RenderContext.Provider value={renderCtx}>
+          <SplitMessageView messages={messages} header={header} inputForm={inputForm} />
+        </RenderContext.Provider>
+      </div>
+    )
+  }
+
   return (
     <div className={'kw-chatpage' + (variant ? ` kw-chatpage--${variant}` : '')}>
       <div className="kw-chatpage-col">
-        {headerTitle ? (
-          <div className="kw-chatpage-header">
-            <span className="kw-chatpage-title">{headerTitle}</span>
-            {headerBadge ? <span className="kw-chatpage-badge">{headerBadge}</span> : null}
-          </div>
-        ) : null}
+        {header}
         <RenderContext.Provider value={renderCtx}>
           <BlocksMessageList messages={messages} />
         </RenderContext.Provider>
-        <form className="kw-chatpage-input" onSubmit={submit}>
-          <input
-            type="text"
-            placeholder={isLoading ? 'Loading…' : placeholder || 'Ask anything…'}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            disabled={isLoading}
-          />
-          <button type="submit" disabled={isLoading || !draft.trim()}>
-            Send
-          </button>
-        </form>
+        {inputForm}
       </div>
     </div>
   )
