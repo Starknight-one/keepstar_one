@@ -207,14 +207,14 @@
               "id": "ld-adv-contacted",
               "label": "Mark contacted",
               "loadingLabel": "Updating…",
-              "action": {"kind": "operation_invoke", "operation": "advance_lead", "params": {"to_status": "contacted"}}
+              "action": {"kind": "operation_invoke", "operation": "advance_lead", "operationKind": "transition_status", "params": {"to_status": "contacted"}}
             },
             {
               "type": "submit",
               "id": "ld-adv-booked",
               "label": "Showing booked",
               "loadingLabel": "Updating…",
-              "action": {"kind": "operation_invoke", "operation": "advance_lead", "params": {"to_status": "showing_booked"}}
+              "action": {"kind": "operation_invoke", "operation": "advance_lead", "operationKind": "transition_status", "params": {"to_status": "showing_booked"}}
             }
           ]
         }

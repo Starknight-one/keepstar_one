@@ -109,7 +109,14 @@ func main() {
 	systemComponentRegistry := presets.NewSystemComponentRegistry()
 	catalogPort := postgres.NewCatalogAdapter(pgClient)
 	statePort := postgres.NewStateAdapter(pgClient, log)
-	presetPort := postgres.NewPresetAdapterWithSystem(pgClient, systemPresetRegistry)
+	// Preset reads pass through the operation binder (§4.8): a preset's
+	// `operationKind` / `operationField` intent is bound to THIS tenant's
+	// instance name + config at read time, so a library form submits the
+	// operation the tenant actually enabled. Resolver is set after the
+	// registry exists (the registry consumes this port) — see below.
+	presetBinder := operations.NewPresetOperationBinder(
+		postgres.NewPresetAdapterWithSystem(pgClient, systemPresetRegistry), log)
+	var presetPort ports.PresetPort = presetBinder
 	componentPort := postgres.NewComponentAdapterWithSystem(pgClient, systemComponentRegistry)
 	fdPort := postgres.NewFieldDefinitionAdapter(pgClient)
 	tracePort := postgres.NewTraceAdapter(pgClient)
@@ -144,6 +151,9 @@ func main() {
 		SpecTTL:  cacheTTLFromEnv(),
 		Log:      log,
 	})
+	// Closes the preset-binder wiring cycle (binder → registry → preset
+	// port). Until set, presets render with their authored operation names.
+	presetBinder.SetResolver(registry)
 	registry.RegisterExecutor(domain.KindVisual, operations.WrapVisualAssembly(tools.NewVisualAssemblyTool(statePort, presetPort, componentPort)))
 	registry.RegisterExecutor(domain.KindQuery, operations.WrapCatalogSearch(tools.NewCatalogSearchTool(statePort, catalogPort, embeddingPort), catalogPort))
 	registry.RegisterExecutor(domain.KindInternal, operations.WrapStateFilter(tools.NewStateFilterTool(statePort)))

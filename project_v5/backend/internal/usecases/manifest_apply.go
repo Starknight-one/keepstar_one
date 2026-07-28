@@ -590,10 +590,24 @@ func (ap *ManifestApplier) applyDefineEntity(ctx context.Context, m *domain.Onbo
 		return nil, "", fmt.Errorf("define_entity: slug, name and fields are required")
 	}
 	def.TenantID = m.Tenant.ID
+	// The define_entity schema has no statusField (the model cannot set it),
+	// so every model-built tenant landed with status_field NULL and a dead
+	// transition_status — the engine infers it from the fields instead.
+	if def.StatusField == "" {
+		if inferred := inferStatusField(def.Fields); inferred != "" {
+			def.StatusField = inferred
+			ap.log.Info("define_entity: status field inferred",
+				"tenant", m.Tenant.Slug, "entity", def.Slug, "statusField", inferred)
+		}
+	}
 	if err := ap.cfg.Entities.UpsertEntityDefinition(ctx, &def); err != nil {
 		return nil, "", err
 	}
-	return map[string]any{"entity": def.Slug, "fields": len(def.Fields)}, domain.ManifestStepApplied, nil
+	out := map[string]any{"entity": def.Slug, "fields": len(def.Fields)}
+	if def.StatusField != "" {
+		out["statusField"] = def.StatusField
+	}
+	return out, domain.ManifestStepApplied, nil
 }
 
 func (ap *ManifestApplier) applyDefineValueSet(ctx context.Context, m *domain.OnboardingManifest, st *domain.ManifestStep) (map[string]any, string, error) {
@@ -667,6 +681,11 @@ func (ap *ManifestApplier) applyEnableOperations(ctx context.Context, m *domain.
 			return nil, "", fmt.Errorf("enable_operations: template and instance are required")
 		}
 		cfg, _ := item["config"].(map[string]any)
+		// The model writes config in the business's vocabulary and nothing
+		// guarantees the named fields exist on the entity (live run:
+		// datetime_field "viewingTime" on a lead that had no datetime field
+		// at all → every booking invalid). Reconcile deterministically.
+		cfg = ap.reconcileOperationEntity(ctx, m.Tenant.ID, instance, cfg)
 		// EnableOperation upserts on (tenant_id, name) — a retry re-run is
 		// safe and converges on the same config.
 		if _, err := ap.cfg.Ops.EnableOperation(ctx, m.Tenant.ID, template, instance, cfg); err != nil {

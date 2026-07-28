@@ -351,6 +351,11 @@ func TestLeadDetailBindsRecordAndAdvanceActions(t *testing.T) {
 		if action["kind"] != "operation_invoke" || action["operation"] != "advance_lead" {
 			t.Errorf("submit %q action = %v, want operation_invoke advance_lead", id, action)
 		}
+		// §4.8 intent — binds to whatever the tenant named its pipeline
+		// operation (see the booking_form test for why this matters).
+		if action["operationKind"] != "transition_status" {
+			t.Errorf("submit %q operationKind = %v, want transition_status", id, action["operationKind"])
+		}
 		params, _ := action["params"].(map[string]any)
 		if params == nil || params["to_status"] != wantStatus {
 			t.Errorf("submit %q params = %v, want to_status=%s", id, params, wantStatus)
@@ -388,6 +393,26 @@ func TestBookingFormBindsListing(t *testing.T) {
 	action, _ := submit["action"].(map[string]any)
 	if action == nil || action["kind"] != "operation_invoke" || action["operation"] != "book_showing" {
 		t.Errorf("booking submit action = %v, want operation_invoke book_showing", action)
+	}
+
+	// Operation INTENT (§4.8): instance names and config field names are the
+	// model's, not the library's — without these annotations the preset
+	// submits book_showing/preferredTime at a tenant that enabled
+	// book_viewing/viewingTime and the visitor's booking is denied, which is
+	// exactly what the 2026-07-28 live run hit. PresetOperationBinder reads
+	// them; dropping them here silently restores that bug.
+	if action["operationKind"] != "schedule_slot" {
+		t.Errorf("booking submit operationKind = %v, want schedule_slot", action["operationKind"])
+	}
+	wantRoles := map[string]string{
+		"booking-time":       "datetime_field",
+		"booking-listing-id": "link_field",
+	}
+	for id, role := range wantRoles {
+		n := engine.FindNodeByID(doc, id)
+		if n == nil || n["operationField"] != role {
+			t.Errorf("node %q operationField = %v, want %q", id, n["operationField"], role)
+		}
 	}
 
 	// Field names are the executor's input keys (§4.2 demo instance).

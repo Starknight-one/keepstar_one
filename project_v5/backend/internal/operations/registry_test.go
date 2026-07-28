@@ -585,3 +585,78 @@ func TestAuditScrubsSmuggledCredentials(t *testing.T) {
 		assertScrubbed(t, runs.rows[0])
 	})
 }
+
+// ─── ResolveForKind: preset late binding (§4.8) ──────────────────────────
+
+// newKindRegistry seeds one schedule_slot executor plus the given tenant
+// instances — the shape the preset binder resolves against.
+func newKindRegistry(t *testing.T, instances ...domain.TenantOperation) *Registry {
+	t.Helper()
+	store := &fakeStore{instances: instances}
+	reg := NewRegistry(RegistryConfig{Store: store, Tenants: &fakeTenants{}, Log: testLogger()})
+	tmpl := stubTemplate("schedule_slot", domain.KindScheduleSlot, domain.AgentData, domain.RoleVisitor, domain.ModeStorefront)
+	tmpl.AutoEnabled = false
+	reg.RegisterExecutor(domain.KindScheduleSlot, &stubExecutor{tmpl: tmpl})
+	if err := reg.SeedTemplates(context.Background(), nil); err != nil {
+		t.Fatalf("SeedTemplates: %v", err)
+	}
+	return reg
+}
+
+// The live failure: the preset says book_showing, the tenant enabled
+// book_viewing. Kind intent is what bridges them.
+func TestResolveForKindFindsTheTenantsInstanceOfThatKind(t *testing.T) {
+	reg := newKindRegistry(t, domain.TenantOperation{
+		ID: "inst-1", TenantID: "tnt-1", OperationID: "id-schedule_slot",
+		Name: "book_viewing", Enabled: true,
+		Config: map[string]any{"entity": "lead", "datetime_field": "viewingTime"},
+	})
+
+	got, ok := reg.ResolveForKind(context.Background(), "acme", "book_showing", domain.KindScheduleSlot)
+	if !ok {
+		t.Fatal("ResolveForKind returned !ok — the booking submit stays denied")
+	}
+	if got.Name != "book_viewing" {
+		t.Errorf("Name = %q, want book_viewing", got.Name)
+	}
+	if got.Config["datetime_field"] != "viewingTime" {
+		t.Errorf("Config = %+v, want the instance's datetime_field", got.Config)
+	}
+}
+
+// An exact name always wins over kind matching — never redirect an
+// operation the author named correctly.
+func TestResolveForKindPrefersTheExactName(t *testing.T) {
+	reg := newKindRegistry(t,
+		domain.TenantOperation{ID: "i1", TenantID: "tnt-1", OperationID: "id-schedule_slot",
+			Name: "book_showing", Enabled: true, Config: map[string]any{"entity": "lead"}},
+	)
+	got, ok := reg.ResolveForKind(context.Background(), "acme", "book_showing", domain.KindScheduleSlot)
+	if !ok || got.Name != "book_showing" {
+		t.Fatalf("ResolveForKind = %+v (ok=%v), want the authored name", got, ok)
+	}
+}
+
+// Two instances of one kind: the engine has no basis to choose, so it
+// must not — an honest denial beats invoking the wrong operation.
+func TestResolveForKindRefusesToGuessBetweenTwoInstances(t *testing.T) {
+	reg := newKindRegistry(t,
+		domain.TenantOperation{ID: "i1", TenantID: "tnt-1", OperationID: "id-schedule_slot",
+			Name: "book_viewing", Enabled: true},
+		domain.TenantOperation{ID: "i2", TenantID: "tnt-1", OperationID: "id-schedule_slot",
+			Name: "book_valuation", Enabled: true},
+	)
+	if got, ok := reg.ResolveForKind(context.Background(), "acme", "book_showing", domain.KindScheduleSlot); ok {
+		t.Errorf("ResolveForKind = %+v, want no guess when the kind is ambiguous", got)
+	}
+}
+
+// No kind declared → no fallback path at all (unannotated presets keep
+// their authored names).
+func TestResolveForKindWithoutKindIntent(t *testing.T) {
+	reg := newKindRegistry(t, domain.TenantOperation{
+		ID: "i1", TenantID: "tnt-1", OperationID: "id-schedule_slot", Name: "book_viewing", Enabled: true})
+	if _, ok := reg.ResolveForKind(context.Background(), "acme", "book_showing", ""); ok {
+		t.Error("ResolveForKind matched without kind intent")
+	}
+}

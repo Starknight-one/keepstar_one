@@ -284,6 +284,63 @@ func (r *Registry) Get(ctx context.Context, tenantSlug, name string) (*domain.Op
 	return &spec, nil
 }
 
+// ResolvedOperation is one tenant-side operation identity: the wire name
+// that actually resolves plus the instance config the executor will run
+// with (nil for auto-enabled templates).
+type ResolvedOperation struct {
+	Name   string
+	Config map[string]any
+}
+
+// ResolveForKind maps a preset-authored operation name onto THIS tenant's
+// operation surface. Presets are library data authored against the demo
+// vocabulary (booking_form submits "book_showing"), while instance names
+// are the model's — the live tenant called it "book_viewing" and the
+// submit denied. So: exact name wins; otherwise, when the caller declares
+// the operation KIND it needs, the tenant's single enabled instance of
+// that kind is the answer. Two instances of the same kind → no guess
+// (ok=false, the caller keeps the authored name and the denial is honest).
+func (r *Registry) ResolveForKind(ctx context.Context, tenantSlug, name string, kind domain.OperationKind) (ResolvedOperation, bool) {
+	if tenantSlug == "" || name == "" {
+		return ResolvedOperation{}, false
+	}
+	entry := r.entryFor(ctx, tenantSlug)
+	if res, ok := r.resolve(ctx, entry, name); ok {
+		out := ResolvedOperation{Name: name}
+		if res.inst != nil {
+			out.Config = res.inst.Config
+		}
+		return out, true
+	}
+	if kind == "" {
+		return ResolvedOperation{}, false
+	}
+	var match *domain.OperationInstance
+	for instName := range entry.instances {
+		inst := entry.instances[instName]
+		if !inst.Enabled {
+			continue
+		}
+		tmplName, ok := r.templateName(inst.OperationID)
+		if !ok {
+			continue
+		}
+		_, tmpl, ok := r.executorAndTemplate(tmplName)
+		if !ok || tmpl.Kind != kind {
+			continue
+		}
+		if match != nil {
+			return ResolvedOperation{}, false // ambiguous — never guess
+		}
+		captured := inst
+		match = &captured
+	}
+	if match == nil {
+		return ResolvedOperation{}, false
+	}
+	return ResolvedOperation{Name: match.Name, Config: match.Config}, true
+}
+
 // resolvedOp is one resolved wire name: executor + gate metadata (+ the
 // tenant instance when the name is an instance).
 type resolvedOp struct {
