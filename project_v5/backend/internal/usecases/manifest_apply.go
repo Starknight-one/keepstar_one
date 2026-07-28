@@ -239,13 +239,19 @@ func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID st
 		// but the model may not have staged a register_user step (dice).
 		// Owner's law: a user action must never depend on the model having
 		// called a tool. Stage the step deterministically and continue.
-		m.Steps = append(m.Steps, domain.ManifestStep{
+		staged := domain.ManifestStep{
 			ID:     fmt.Sprintf("%s-%d", opRegisterUser, len(m.Steps)+1),
 			Op:     opRegisterUser,
 			Status: domain.ManifestStepProposed,
 			Params: map[string]any{"role": defaultRegisterRole},
-		})
+		}
+		m.Steps = append(m.Steps, staged)
 		idx = len(m.Steps) - 1
+		// PERSIST before the auto-apply path below: Apply reloads the
+		// manifest from state, and an in-memory-only step would vanish.
+		if err := ap.persist(ctx, sessionID, m, opRegisterUser, staged.ID); err != nil {
+			return nil, err
+		}
 	}
 	if idx < 0 {
 		return nil, ErrStepNotFound
