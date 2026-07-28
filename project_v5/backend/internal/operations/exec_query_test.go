@@ -37,6 +37,7 @@ func TestQueryExecutorEntityBranchWritesEntitiesZone(t *testing.T) {
 	state.state.Current.Data.Products = []domain.Product{{ID: "p1", Name: "Sea View 2BR"}}
 
 	res, err := ex.Execute(context.Background(), domain.OperationContext{
+		Role:     domain.RoleStaff,
 		TenantID: "tnt-1", TenantSlug: "acme", SessionID: "sess-1", TurnID: "turn-1",
 		Config: leadQueryConfig(),
 	}, map[string]any{
@@ -110,6 +111,7 @@ func TestQueryExecutorEntityBranchEmpty(t *testing.T) {
 	ex, state, _ := newEntityQueryExecutor(nil)
 
 	res, err := ex.Execute(context.Background(), domain.OperationContext{
+		Role:     domain.RoleStaff,
 		TenantID: "tnt-1", TenantSlug: "acme", SessionID: "sess-1",
 		Config: leadQueryConfig(),
 	}, map[string]any{})
@@ -142,6 +144,7 @@ func TestQueryExecutorCatalogBranch(t *testing.T) {
 	ex := NewQueryExecutor(state, catalog, &opsEntityPort{}, nil)
 
 	res, err := ex.Execute(context.Background(), domain.OperationContext{
+		Role:     domain.RoleStaff,
 		TenantID: "tnt-1", TenantSlug: "acme", SessionID: "sess-1",
 		Config: map[string]any{"source": "catalog"},
 	}, map[string]any{
@@ -204,5 +207,25 @@ func TestQueryExecutorSpecForTenant(t *testing.T) {
 	minBudget, _ := fProps["min_budget"].(map[string]any)
 	if minBudget == nil || minBudget[domain.SchemaKeyUnit] != string(domain.UnitUSD) {
 		t.Errorf("money range must be usd-annotated for cents coercion: %v", fProps)
+	}
+}
+
+// TestQueryExecutorEntityBranchVisitorDenied pins the R14 gate the live
+// smoke caught open: a storefront visitor must never read business records
+// through an entity-source query instance.
+func TestQueryExecutorEntityBranchVisitorDenied(t *testing.T) {
+	ex, _, _ := newEntityQueryExecutor(nil)
+	res, err := ex.Execute(context.Background(), domain.OperationContext{
+		Role:       domain.RoleVisitor,
+		SessionID:  "s1",
+		TenantID:   "t1",
+		TenantSlug: "acme",
+		Config:     map[string]any{"source": "entity", "entity": "lead"},
+	}, map[string]any{})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if res.Outcome != domain.OutcomeDenied {
+		t.Fatalf("visitor entity query must be denied, got %q", res.Outcome)
 	}
 }
