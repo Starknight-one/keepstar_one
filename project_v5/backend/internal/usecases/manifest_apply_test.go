@@ -715,6 +715,9 @@ func TestResolveIngestTokenErrors(t *testing.T) {
 		t.Fatalf("halted apply reason missing: %v", err)
 	}
 
+	// Owner's law (2026-07-28): a file arriving at the uploader IS the
+	// intent — a manifest without an issue_ingest_door step gets one
+	// auto-staged (persisted) and the resolve succeeds instead of 404ing.
 	noDoor := realtorManifest()
 	steps := noDoor.Steps[:0]
 	for _, s := range noDoor.Steps {
@@ -724,8 +727,15 @@ func TestResolveIngestTokenErrors(t *testing.T) {
 	}
 	noDoor.Steps = steps
 	f2 := newApplierFixture(noDoor)
-	if _, err := f2.ap.ResolveIngestToken(ctx, "sess-1"); !errors.Is(err, ErrStepNotFound) {
-		t.Fatalf("no door staged: err = %v, want ErrStepNotFound", err)
+	tok, err := f2.ap.ResolveIngestToken(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("no door staged must auto-stage, got err = %v", err)
+	}
+	if tok == nil || tok.Token == "" {
+		t.Fatalf("auto-staged door must mint a token, got %+v", tok)
+	}
+	if idx := findStepIndexByOp(f2.state.manifest, "issue_ingest_door"); idx < 0 {
+		t.Fatalf("auto-staged issue_ingest_door step was not persisted")
 	}
 }
 
