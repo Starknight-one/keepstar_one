@@ -694,22 +694,42 @@ func (ap *ManifestApplier) applyAdoptPresets(ctx context.Context, m *domain.Onbo
 	if len(names) == 0 {
 		return nil, "", fmt.Errorf("adopt_presets: presets[] is required")
 	}
-	res, err := ap.cfg.Gateway.AdoptPresets(ctx, m.Tenant.Slug, names)
-	if err != nil {
-		return nil, "", err
+	// Adopt name-by-name and never halt the whole environment over a
+	// cosmetic miss: the model sometimes invents preset names (live smoke:
+	// "lead_cards"). Unknown/failed names are recorded as skipped — system
+	// default presets still render — and the apply chain continues to the
+	// steps that make the workspace live (surface URLs).
+	adopted := make([]string, 0, len(names))
+	skipped := make([]string, 0)
+	invalidated := false
+	for _, name := range names {
+		res, err := ap.cfg.Gateway.AdoptPresets(ctx, m.Tenant.Slug, []string{name})
+		if err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		adopted = append(adopted, res.Adopted...)
+		invalidated = invalidated || res.Invalidated
+	}
+	if len(skipped) > 0 {
+		ap.log.Warn("adopt_presets: some presets skipped", "tenant", m.Tenant.Slug, "skipped", skipped)
 	}
 	// §6.2 R-validator: unresolved required bindings FAIL the step loudly
 	// rather than rendering broken UI. The seam is injected because the
 	// extended preview (bindingReport) is a surfaces-workstream deliverable.
-	if ap.cfg.VerifyBindings != nil {
-		if err := ap.cfg.VerifyBindings(ctx, m.Tenant.Slug, names); err != nil {
+	if len(adopted) > 0 && ap.cfg.VerifyBindings != nil {
+		if err := ap.cfg.VerifyBindings(ctx, m.Tenant.Slug, adopted); err != nil {
 			return nil, "", fmt.Errorf("binding verification: %w", err)
 		}
-	} else {
+	} else if ap.cfg.VerifyBindings == nil {
 		ap.log.Warn("adopt_presets: binding verification unavailable — step applied WITHOUT §6.2 validation",
-			"tenant", m.Tenant.Slug, "presets", names)
+			"tenant", m.Tenant.Slug, "presets", adopted)
 	}
-	return map[string]any{"adopted": res.Adopted, "invalidated": res.Invalidated}, domain.ManifestStepApplied, nil
+	out := map[string]any{"adopted": adopted, "invalidated": invalidated}
+	if len(skipped) > 0 {
+		out["skipped"] = skipped
+	}
+	return out, domain.ManifestStepApplied, nil
 }
 
 func (ap *ManifestApplier) applyIssueIngestDoor(ctx context.Context, sessionID string, m *domain.OnboardingManifest, st *domain.ManifestStep) (map[string]any, string, error) {
