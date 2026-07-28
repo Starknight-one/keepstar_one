@@ -82,6 +82,17 @@ func (e *QueryExecutor) SpecForTenant(ctx context.Context, t domain.Tenant, cfg 
 // against the SpecForTenant schema by the registry choke point.
 func (e *QueryExecutor) Execute(ctx context.Context, octx domain.OperationContext, input map[string]any) (*domain.OperationResult, error) {
 	if cfgString(octx.Config, "source") == "entity" {
+		// Entity reads are staff-scoped (spec §6.6 / R14): the shared
+		// `query` template must stay visitor-visible for catalog search,
+		// so the gate for the entity branch lives here — a storefront
+		// visitor must never read leads/bookings.
+		if !octx.Role.AtLeast(domain.RoleStaff) {
+			return &domain.OperationResult{
+				Kind:    "query",
+				Outcome: domain.OutcomeDenied,
+				Summary: fmt.Sprintf("denied: this operation reads business records and requires role %s", domain.RoleStaff),
+			}, nil
+		}
 		return e.executeEntity(ctx, octx, input)
 	}
 	return e.executeCatalog(ctx, octx, input)
