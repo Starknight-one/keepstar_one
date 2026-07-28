@@ -1,0 +1,50 @@
+[
+  {
+    "listing_id": "RLT-101",
+    "title": "Garden duplex with private patio",
+    "price": 331000,
+    "description": "Ground-floor duplex opening onto a private stone patio and a shared garden.",
+    "image_url": "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=800&q=80",
+    "beds": 2,
+    "baths": 2,
+    "area_m2": 95,
+    "neighborhood": "Garden District",
+    "property_type": "duplex"
+  },
+  {
+    "listing_id": "RLT-102",
+    "title": "Minimalist studio in the arts quarter",
+    "price": 176000,
+    "description": "White-on-white studio above the gallery row — a perfect pied-a-terre.",
+    "image_url": "https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?w=800&q=80",
+    "beds": 1,
+    "baths": 1,
+    "area_m2": 39,
+    "neighborhood": "Arts Quarter",
+    "property_type": "apartment"
+  },
+  {
+    "listing_id": "RLT-103",
+    "title": "Lakefront cabin with a private dock",
+    "price": 540000,
+    "description": "Timber cabin on the north shore with its own dock and a wood-burning stove.",
+    "image_url": "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=800&q=80",
+    "beds": 3,
+    "baths": 2,
+    "area_m2": 118,
+    "neighborhood": "North Shore",
+    "property_type": "house"
+  },
+  {
+    "listing_id": "RLT-104",
+    "title": "Corner 2-bedroom with bay windows",
+    "price": 298000,
+    "description": "Corner unit with original bay windows and an updated kitchen.",
+    "image_url": "https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=800&q=80",
+    "beds": 2,
+    "baths": 1,
+    "area_m2": 77,
+    "neighborhood": "Bayview",
+    "property_type": "apartment"
+  }
+]

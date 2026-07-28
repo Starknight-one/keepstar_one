@@ -1,0 +1,9 @@
+listing_id,title,price,description,image_url,beds,baths,area_m2,neighborhood,property_type
+RLT-001,Sunny 2-bedroom apartment on Maple Street,285000,Bright two-bedroom apartment with a renovated kitchen and a south-facing balcony.,https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800&q=80,2,1,74,Maple District,apartment
+RLT-002,Modern 2-bedroom loft with river view,342000,Open-plan loft over the river walk — floor-to-ceiling windows and in-unit laundry.,https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800&q=80,2,2,88,Riverside,apartment
+RLT-003,Cozy 1-bedroom studio near the park,198000,Compact studio with smart storage one block from Greenfield Park.,https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800&q=80,1,1,46,Greenfield,apartment
+RLT-004,Family house with a garden in Oakwood,455000,Detached three-bedroom house with a landscaped garden and a double garage.,https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=800&q=80,3,2,152,Oakwood,house
+RLT-005,Renovated 3-bedroom townhouse,389000,Three floors of light — restored brick townhouse with a rooftop terrace.,https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=800&q=80,3,2,131,Old Town,townhouse
+RLT-006,Penthouse with panoramic terrace,610000,Top-floor penthouse with a wraparound terrace and skyline views.,https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=800&q=80,3,3,164,Skyline Quarter,apartment
+RLT-007,Suburban villa with a pool,725000,Five-bedroom villa on a quiet cul-de-sac — heated pool and mature trees.,https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800&q=80,5,4,286,Willow Hills,house
+RLT-008,Compact 2-bedroom close to the metro,255000,Two-bedroom flat four minutes from Central Station — ideal first purchase or rental.,https://images.unsplash.com/photo-1493809842364-78817add7ffb?w=800&q=80,2,1,68,Central,apartment
