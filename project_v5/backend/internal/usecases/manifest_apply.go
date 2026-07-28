@@ -234,6 +234,19 @@ func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID st
 		return nil, ErrNoManifest
 	}
 	idx := locateStep(m, stepID)
+	if idx < 0 && (stepID == opRegisterUser || strings.HasPrefix(stepID, opRegisterUser+"-")) {
+		// The registration form exists on screen, so the intent is proven —
+		// but the model may not have staged a register_user step (dice).
+		// Owner's law: a user action must never depend on the model having
+		// called a tool. Stage the step deterministically and continue.
+		m.Steps = append(m.Steps, domain.ManifestStep{
+			ID:     fmt.Sprintf("%s-%d", opRegisterUser, len(m.Steps)+1),
+			Op:     opRegisterUser,
+			Status: domain.ManifestStepProposed,
+			Params: map[string]any{"role": defaultRegisterRole},
+		})
+		idx = len(m.Steps) - 1
+	}
 	if idx < 0 {
 		return nil, ErrStepNotFound
 	}
