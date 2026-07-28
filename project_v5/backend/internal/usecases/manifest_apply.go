@@ -393,8 +393,20 @@ func (ap *ManifestApplier) ResolveIngestToken(ctx context.Context, sessionID str
 	}
 	idx := findStepIndexByOp(m, opIssueIngestDoor)
 	if idx < 0 {
-		// The plan has no uploader — nothing to arm; the agent must stage one.
-		return nil, fmt.Errorf("%w: no issue_ingest_door step staged", ErrStepNotFound)
+		// The uploader is on screen and a file just arrived — the intent is
+		// proven. Same law as register_user: never bounce a user action
+		// because the model didn't stage the step. Stage it, PERSIST it
+		// (the apply path reloads from state), and continue.
+		m.Steps = append(m.Steps, domain.ManifestStep{
+			ID:     fmt.Sprintf("%s-%d", opIssueIngestDoor, len(m.Steps)+1),
+			Op:     opIssueIngestDoor,
+			Status: domain.ManifestStepProposed,
+			Params: map[string]any{"formats": []any{"csv", "json"}},
+		})
+		idx = len(m.Steps) - 1
+		if err := ap.persist(ctx, sessionID, m, opIssueIngestDoor, m.Steps[idx].ID); err != nil {
+			return nil, err
+		}
 	}
 	if tok := ap.liveIngestToken(ctx, &m.Steps[idx], m.Tenant.Slug); tok != nil {
 		return tok, nil
