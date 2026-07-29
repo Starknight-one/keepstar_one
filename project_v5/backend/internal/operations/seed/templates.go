@@ -1,7 +1,8 @@
 // Package seed holds the boot-seed operation templates for
 // public.v5_operations (RUNTIME_SPEC.md §3.1): the 6 executor templates,
-// compose_turn, and the 12 onboarding meta-operation templates (the §4.3
-// eleven plus about_keepstar, owner ruling 2026-07-28). Definitions
+// compose_turn, and the 13 onboarding meta-operation templates (the §4.3
+// eleven, about_keepstar per the owner ruling 2026-07-28, and seed_demo_data
+// per V2_SPEC.md L6/R3). Definitions
 // only — executors implement ports.Executor separately and plug in via
 // RegisterExecutor (R8). The operations boot-seeder upserts these rows on
 // name and embeds Description via ports.EmbeddingPort (nil embedder →
@@ -28,7 +29,7 @@ package seed
 import "keepstar_v5/internal/domain"
 
 // Templates returns the boot-seed rows in deterministic order:
-// 6 executor templates, compose_turn, 12 meta templates.
+// 6 executor templates, compose_turn, 13 meta templates.
 func Templates() []domain.OperationTemplate {
 	return []domain.OperationTemplate{
 		queryTemplate(),
@@ -48,6 +49,7 @@ func Templates() []domain.OperationTemplate {
 		adoptPresetsTemplate(),
 		issueIngestDoorTemplate(),
 		registerUserTemplate(),
+		seedDemoDataTemplate(),
 		issueSurfaceURLsTemplate(),
 		applyManifestTemplate(),
 	}
@@ -491,8 +493,9 @@ func composeTurnTemplate() domain.OperationTemplate {
 }
 
 // ---------------------------------------------------------------------------
-// The 12 onboarding meta-operation templates (§4.3 + about_keepstar: kind
-// meta, modes {onboarding}, min_role visitor — the onboarding cookie + form
+// The 13 onboarding meta-operation templates (§4.3 + about_keepstar +
+// seed_demo_data: kind meta,
+// modes {onboarding}, min_role visitor — the onboarding cookie + form
 // gate does the work, R14). about_keepstar and search_library are immediate;
 // apply_manifest is control; the rest stage ManifestSteps — nothing mutates
 // the world at stage time.
@@ -875,6 +878,41 @@ func registerUserTemplate() domain.OperationTemplate {
 			},
 		},
 		Effects: domain.OperationEffects{Reads: []string{}, Writes: []string{"admin.admin_users"}, Emits: []domain.EmitDecl{}},
+	})
+}
+
+func seedDemoDataTemplate() domain.OperationTemplate {
+	return metaTemplate(domain.OperationTemplate{
+		Name:  "seed_demo_data",
+		Title: "Seed realistic demo data",
+		Description: "Stage seeding the workspace with a realistic starter " +
+			"pack for this business class: catalog items imported through the " +
+			"same door an upload uses, plus a handful of records in the " +
+			"business's own entities. Takes no parameters — the pack is chosen " +
+			"from the tenant's vertical and mapped onto the entities and value " +
+			"sets this plan defines. Every seeded row is flagged as demo data " +
+			"so it can be cleared once real data arrives. Applied after the " +
+			"data model and before the URLs are issued; re-running it does not " +
+			"duplicate anything.",
+		Card: map[string]any{
+			"input_summary":  "Nothing — the pack follows the business class",
+			"does":           "Imports a realistic starter catalog and writes a few flagged demo records",
+			"output_summary": "Both surfaces alive with believable data on their first render",
+			"why":            "An empty storefront and an empty CRM cannot be shown, checked or demonstrated — and the business sees exactly what it is getting",
+		},
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"staged": map[string]any{"type": "boolean"},
+				"stepId": map[string]any{"type": "string", domain.SchemaKeyUnit: string(domain.UnitIDRef)},
+			},
+		},
+		Effects: domain.OperationEffects{
+			Reads:  []string{"v5_entity_definitions", "v5_value_sets"},
+			Writes: []string{"catalog.master_products", "catalog.listings", "v5_entity_records", "v5_events"},
+			Emits:  []domain.EmitDecl{},
+		},
 	})
 }
 
