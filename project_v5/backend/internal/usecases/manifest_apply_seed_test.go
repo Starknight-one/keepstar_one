@@ -236,6 +236,14 @@ func realtorSeedManifest() *domain.OnboardingManifest {
 	}
 }
 
+// realtorSeedManifestWithDoor is the same plan plus the uploader door — the
+// shape the upload-first path (a visitor dropping their own CSV) runs on.
+func realtorSeedManifestWithDoor() *domain.OnboardingManifest {
+	m := realtorSeedManifest()
+	m.Steps = append(m.Steps, step("s-door", "issue_ingest_door", map[string]any{"formats": []any{"csv", "json"}}))
+	return m
+}
+
 // --- tests ---
 
 // The whole law in one walk: a fresh manifest with entities defined seeds
@@ -277,6 +285,10 @@ func TestSeedDemoDataSeedsBothPlanes(t *testing.T) {
 	}
 	if st.Result["pack"] != pack.Name {
 		t.Errorf("step result pack = %v, want %q", st.Result["pack"], pack.Name)
+	}
+	// R7 whole: the projection rebuild is what the storefront actually reads.
+	if st.Result["projectionRows"] != 17 || st.Result["invalidated"] != true {
+		t.Errorf("step result drops the honest import status: %v", st.Result)
 	}
 
 	// Records: leads AND contacts, in the entities the conversation defined.
@@ -461,6 +473,166 @@ func TestSeedDemoDataFailsLoudOnImportTimeout(t *testing.T) {
 	}
 	if !strings.Contains(st.Error, "still processing") {
 		t.Errorf("step error %q should say the import never finished", st.Error)
+	}
+}
+
+// Real data beats demo data. The business already imported its own catalog
+// (the ingest door completed), so the pack must NOT be poured on top of it:
+// there is no purge, admin's ingest only adds, and nothing in v5 reads the
+// demo flag — fake stock would stay in the storefront, the search and the
+// CRM forever.
+func TestSeedDemoDataSkippedWhenRealDataAlreadyArrived(t *testing.T) {
+	m := realtorSeedManifestWithDoor()
+	door := stepByID(t, m, "s-door")
+	door.Status = domain.ManifestStepApplied
+	door.Result = map[string]any{"token": "used-1", "processed": 240, "projectionRows": 240}
+	f := newSeedFixture(m)
+
+	applied, err := f.ap.Apply(context.Background(), "sess-seed", "")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	st := stepByID(t, applied, "s-seed")
+	if st.Status != domain.ManifestStepSkipped {
+		t.Fatalf("seed step status = %s (%s), want skipped", st.Status, st.Error)
+	}
+	if len(f.gateway.imports) != 0 || len(f.entities.records) != 0 {
+		t.Fatalf("demo data was seeded over real data: %d imports, %d records",
+			len(f.gateway.imports), len(f.entities.records))
+	}
+	notes, _ := st.Result["notes"].([]string)
+	if len(notes) != 1 || !strings.Contains(notes[0], "240") {
+		t.Errorf("result notes = %v, want an honest reason naming the real rows", st.Result["notes"])
+	}
+	// A skipped seed is DONE, not pending: the visitor still gets the URLs.
+	if urls := stepByID(t, applied, "s-urls"); urls.Status != domain.ManifestStepApplied {
+		t.Errorf("issue_surface_urls = %s — a skipped seed must not gate the handover", urls.Status)
+	}
+}
+
+// The upload-first path (owner 2026-07-28: the upload IS the approval).
+// ResolveIngestToken auto-applies the whole staged manifest, so without a
+// guard the visitor's own CSV would trigger a demo catalog into their tenant
+// seconds before their real rows land.
+func TestUploadFirstNeverSeedsDemoData(t *testing.T) {
+	f := newSeedFixture(realtorSeedManifestWithDoor())
+	ctx := context.Background()
+
+	tok, err := f.ap.ResolveIngestToken(ctx, "sess-seed")
+	if err != nil {
+		t.Fatalf("ResolveIngestToken: %v", err)
+	}
+	if tok.Token == "" {
+		t.Fatal("no ingest token minted — the upload has no door")
+	}
+	if len(f.gateway.imports) != 0 {
+		t.Fatalf("the auto-apply imported %d demo tables into a tenant that is uploading its own data",
+			len(f.gateway.imports))
+	}
+	if len(f.entities.records) != 0 {
+		t.Errorf("the auto-apply wrote %d demo records", len(f.entities.records))
+	}
+
+	m, _ := f.state.GetOnboarding(ctx, "sess-seed")
+	st := stepByID(t, m, "s-seed")
+	if st.Status != domain.ManifestStepSkipped {
+		t.Fatalf("seed step = %s, want skipped (persisted before the auto-apply reloads the manifest)", st.Status)
+	}
+	if notes, _ := st.Result["notes"].([]any); len(notes) == 0 {
+		t.Errorf("skipped seed step carries no reason: %v", st.Result)
+	}
+
+	// The real import lands afterwards: still no demo data, and re-applying
+	// does not resurrect it.
+	if err := f.ap.RecordUploadJob(ctx, "sess-seed", "job-real", "listings.csv"); err != nil {
+		t.Fatalf("record upload job: %v", err)
+	}
+	if _, err := f.ap.Apply(ctx, "sess-seed", ""); err != nil {
+		t.Fatalf("re-apply: %v", err)
+	}
+	if len(f.gateway.imports) != 0 || len(f.entities.records) != 0 {
+		t.Errorf("a later apply seeded demo data anyway: %d imports, %d records",
+			len(f.gateway.imports), len(f.entities.records))
+	}
+}
+
+// A seed step that has not run yet is stood down the moment admin accepts a
+// real upload for the session — the door mutation is where v5 learns it.
+func TestAcceptedUploadStandsDownAPendingSeedStep(t *testing.T) {
+	m := realtorSeedManifestWithDoor()
+	for i := range m.Steps {
+		m.Steps[i].Status = domain.ManifestStepAccepted
+	}
+	m.Tenant = domain.ManifestTenant{ID: "t-1", Slug: "blue-harbor-realty", Vertical: "real estate agency"}
+	f := newSeedFixture(m)
+	ctx := context.Background()
+
+	if err := f.ap.RecordUploadJob(ctx, "sess-seed", "job-real", "listings.csv"); err != nil {
+		t.Fatalf("record upload job: %v", err)
+	}
+	stored, _ := f.state.GetOnboarding(ctx, "sess-seed")
+	if st := stepByID(t, stored, "s-seed"); st.Status != domain.ManifestStepSkipped {
+		t.Fatalf("seed step = %s after a real upload was accepted, want skipped", st.Status)
+	}
+}
+
+// The 0-row guard: admin can answer "completed" having written nothing (a
+// mapping that matched no column, a projection rebuild that wrote nothing).
+// Reporting that as seeded data hands the owner an empty storefront to demo.
+func TestSeedDemoDataFailsLoudOnZeroProcessedImport(t *testing.T) {
+	f := newSeedFixture(realtorSeedManifest())
+	f.gateway.statusQueue = []ports.AdminImportStatus{
+		{Status: "completed", Processed: 0, ProjectionRows: 0},
+	}
+
+	m, err := f.ap.Apply(context.Background(), "sess-seed", "")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	st := stepByID(t, m, "s-seed")
+	if st.Status != domain.ManifestStepFailed {
+		t.Fatalf("step status = %s, want failed on an import that landed nothing", st.Status)
+	}
+	if !strings.Contains(st.Error, "0 of 17 rows") {
+		t.Errorf("step error %q does not say how many rows were lost", st.Error)
+	}
+	if len(f.entities.records) != 0 {
+		t.Errorf("records were seeded although the catalog import landed nothing")
+	}
+	if urls := stepByID(t, m, "s-urls"); urls.Status == domain.ManifestStepApplied {
+		t.Error("surface URLs were issued over an empty storefront")
+	}
+}
+
+// R7's contract is the WHOLE status, not just the processed count: a partial
+// import with row errors and an empty projection is the difference between a
+// storefront the owner can demo and one that renders two thirds of nothing.
+func TestSeedDemoDataRecordsTheHonestImportStatus(t *testing.T) {
+	f := newSeedFixture(realtorSeedManifest())
+	f.gateway.statusQueue = []ports.AdminImportStatus{
+		{Status: "completed", Processed: 11, ProjectionRows: 0, Invalidated: false,
+			Errors: []string{"row 4: image_url unreachable"}},
+	}
+
+	m, err := f.ap.Apply(context.Background(), "sess-seed", "")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	st := stepByID(t, m, "s-seed")
+	if st.Status != domain.ManifestStepApplied {
+		t.Fatalf("step status = %s (%s)", st.Status, st.Error)
+	}
+	if st.Result["listings"] != 11 || st.Result["projectionRows"] != 0 {
+		t.Errorf("step result hides the import outcome: %v", st.Result)
+	}
+	if _, ok := st.Result["errors"]; !ok {
+		t.Errorf("admin's row errors were dropped: %v", st.Result)
+	}
+	notes, _ := st.Result["notes"].([]string)
+	joined := strings.Join(notes, " | ")
+	if !strings.Contains(joined, "11 of the pack's 17") || !strings.Contains(joined, "projection") {
+		t.Errorf("notes = %q, want the shortfall AND the empty projection said out loud", joined)
 	}
 }
 

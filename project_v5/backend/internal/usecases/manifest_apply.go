@@ -420,6 +420,19 @@ func (ap *ManifestApplier) ResolveIngestToken(ctx context.Context, sessionID str
 	// Door never ran (manifest still proposed) → the upload is the approval:
 	// apply now, which mints the door token.
 	if m.Steps[idx].Status == domain.ManifestStepProposed {
+		// A file is being uploaded RIGHT NOW: the apply below would otherwise
+		// run seed_demo_data and pour a whole demo catalog into the tenant
+		// seconds before the visitor's real rows land — with no purge to undo
+		// it. Mark the seed step skipped first and PERSIST it: applyLocked
+		// reloads the manifest from state, so an in-memory flag would vanish.
+		if seedIdx := findStepIndexByOp(m, opSeedDemoData); seedIdx >= 0 &&
+			markSeedSkipped(m, seedSkippedRealUploadNote) {
+			ap.log.Info("seed_demo_data marked skipped — the upload is the real data",
+				"session", sessionID)
+			if err := ap.persist(ctx, sessionID, m, opSeedDemoData, m.Steps[seedIdx].ID); err != nil {
+				return nil, err
+			}
+		}
 		if m, err = ap.applyLocked(ctx, sessionID, ""); err != nil {
 			return nil, err
 		}
@@ -487,6 +500,12 @@ func (ap *ManifestApplier) liveIngestToken(ctx context.Context, st *domain.Manif
 // step and persists. skipIfApplied short-circuits idempotent completions.
 // Serialized per session (it is only ever called from the public
 // RecordUploadJob / CompleteIngestStep / RecordIngestFailure entry points).
+//
+// All three callers mean the same thing for the demo pack — REAL data is on
+// this session (accepted, imported, or failed with a re-upload coming) — so
+// a seed_demo_data step that has not run yet is marked skipped here rather
+// than seeding fake stock into a catalog the business is filling itself
+// (manifest_apply_seed.go).
 func (ap *ManifestApplier) mutateIngestStep(ctx context.Context, sessionID string, fn func(*domain.ManifestStep), skipIfApplied bool) error {
 	defer ap.lockSession(sessionID)()
 	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
@@ -511,8 +530,15 @@ func (ap *ManifestApplier) mutateIngestStep(ctx context.Context, sessionID strin
 		return nil
 	}
 	fn(st)
+	if markSeedSkipped(m, seedSkippedRealUploadNote) {
+		ap.log.Info("seed_demo_data marked skipped — a real upload arrived first", "session", sessionID)
+	}
 	return ap.persist(ctx, sessionID, m, st.Op, st.ID)
 }
+
+// seedSkippedRealUploadNote is what a seed step says when the visitor's own
+// data made it unnecessary.
+const seedSkippedRealUploadNote = "the business uploaded its own data — demo data not seeded"
 
 // --- step executors ---
 

@@ -33,9 +33,21 @@ import (
 // when real data arrives". The purge is NOT built yet; the flag is what
 // makes it buildable.
 //
+// Because the purge does not exist, the step REFUSES to seed a workspace
+// whose real data already arrived or is arriving (seedNotNeededReason): the
+// upload path auto-applies the manifest (ResolveIngestToken), so without the
+// guard a visitor's own listings CSV would trigger 17 fake Rio apartments
+// into their catalog seconds before their real rows land — permanently,
+// since admin's ingest only adds and nothing reads the demo flag yet. Every
+// door that means "real data is on this session" (upload accepted, import
+// completed, import failed → re-upload coming) marks a not-yet-run seed step
+// skipped: markSeedSkipped, called from the ingest-step mutations and from
+// ResolveIngestToken before it auto-applies.
+//
 // The step applies AFTER define_entity / define_value_set (orderedStepIndices
 // puts it in the late group) and BEFORE issue_surface_urls, which refuses
-// until every other step has applied.
+// until every other step has applied (skipped counts as done, so a guarded
+// seed never blocks the handover).
 
 // Import polling. Vars, not consts: the timeout test shrinks them so the
 // fail-loud path is covered without a 90s test.
@@ -52,6 +64,18 @@ func (ap *ManifestApplier) applySeedDemoData(ctx context.Context, m *domain.Onbo
 	if err := requireTenant(m); err != nil {
 		return nil, "", err
 	}
+	// Real data beats demo data: never mix fake stock into a catalog the
+	// business already filled (there is no purge to undo it).
+	if reason := seedNotNeededReason(m); reason != "" {
+		ap.log.Info("seed_demo_data skipped — real data on this session",
+			"tenant", m.Tenant.Slug, "reason", reason)
+		return map[string]any{
+			"pack":     "none",
+			"listings": 0,
+			"records":  0,
+			"notes":    []string{reason},
+		}, domain.ManifestStepSkipped, nil
+	}
 	pack, ok := seed.PackForVertical(m.Tenant.Vertical)
 	if !ok {
 		ap.log.Warn("seed_demo_data: no demo pack for this business class — nothing seeded",
@@ -64,7 +88,7 @@ func (ap *ManifestApplier) applySeedDemoData(ctx context.Context, m *domain.Onbo
 		}, domain.ManifestStepApplied, nil
 	}
 
-	listings, err := ap.importDemoListings(ctx, m.Tenant.Slug, pack)
+	imported, err := ap.importDemoListings(ctx, m.Tenant.Slug, pack)
 	if err != nil {
 		return nil, "", err
 	}
@@ -74,11 +98,30 @@ func (ap *ManifestApplier) applySeedDemoData(ctx context.Context, m *domain.Onbo
 	}
 
 	ap.log.Info("seed_demo_data applied",
-		"tenant", m.Tenant.Slug, "pack", pack.Name, "listings", listings, "records", records)
+		"tenant", m.Tenant.Slug, "pack", pack.Name,
+		"listings", imported.Processed, "projectionRows", imported.ProjectionRows,
+		"records", records)
+	// R7's honest contract, whole: what admin processed, what the projection
+	// rebuild actually wrote and what it complained about — the same fields
+	// the real upload path records (CompleteIngestStep). "17 processed" with
+	// 0 projection rows is a storefront that renders nothing; the step must
+	// not hide that behind a listings count.
 	out := map[string]any{
-		"pack":     pack.Name,
-		"listings": listings,
-		"records":  records,
+		"pack":           pack.Name,
+		"listings":       imported.Processed,
+		"projectionRows": imported.ProjectionRows,
+		"invalidated":    imported.Invalidated,
+		"records":        records,
+	}
+	if len(imported.Errors) > 0 {
+		out["errors"] = imported.Errors
+		notes = append(notes, fmt.Sprintf("admin reported %d row error(s) on the demo import", len(imported.Errors)))
+	}
+	if imported.Processed < len(pack.Listings) {
+		notes = append(notes, fmt.Sprintf("admin imported %d of the pack's %d listings", imported.Processed, len(pack.Listings)))
+	}
+	if imported.ProjectionRows == 0 {
+		notes = append(notes, "the search projection was not rebuilt for the demo listings — the storefront may render empty")
 	}
 	if len(notes) > 0 {
 		out["notes"] = notes
@@ -86,40 +129,111 @@ func (ap *ManifestApplier) applySeedDemoData(ctx context.Context, m *domain.Onbo
 	return out, domain.ManifestStepApplied, nil
 }
 
+// seedNotNeededReason answers "does this workspace still need demo data?" —
+// "" means yes, any other string is the human reason it must NOT be seeded,
+// recorded on the step. The signal is the session's own ingest door: a
+// completed real import (the step is applied), or an upload admin already
+// accepted (jobId stamped by RecordUploadJob) whose rows are landing now.
+func seedNotNeededReason(m *domain.OnboardingManifest) string {
+	for i := range m.Steps {
+		st := &m.Steps[i]
+		if st.Op != opIssueIngestDoor {
+			continue
+		}
+		if st.Status == domain.ManifestStepApplied {
+			if n := intFromResult(st.Result, "processed"); n > 0 {
+				return fmt.Sprintf("this workspace already holds real uploaded data (%d rows) — demo data not seeded", n)
+			}
+			return "this workspace already holds real uploaded data — demo data not seeded"
+		}
+		if job, _ := st.Result["jobId"].(string); job != "" {
+			return fmt.Sprintf("a real data upload is already importing (job %s) — demo data not seeded", job)
+		}
+	}
+	return ""
+}
+
+// markSeedSkipped stops a not-yet-run seed_demo_data step from ever firing
+// and records WHY on the step. Called from the paths that learn real data is
+// on this session BEFORE the applier could reach the seed — an already
+// applied or skipped step is left alone (nothing left to prevent), a FAILED
+// one is marked skipped too, so a demo-data hiccup stops gating the surface
+// URLs the visitor actually came for. Returns whether anything changed.
+func markSeedSkipped(m *domain.OnboardingManifest, reason string) bool {
+	changed := false
+	for i := range m.Steps {
+		st := &m.Steps[i]
+		if st.Op != opSeedDemoData {
+			continue
+		}
+		if st.Status == domain.ManifestStepApplied || st.Status == domain.ManifestStepSkipped {
+			continue
+		}
+		st.Status = domain.ManifestStepSkipped
+		st.Error = ""
+		st.Result = map[string]any{
+			"pack":     "none",
+			"listings": 0,
+			"records":  0,
+			"notes":    []string{reason},
+		}
+		changed = true
+	}
+	return changed
+}
+
+// intFromResult reads a number off a step result. Step results round-trip
+// through JSONB, so an int written here comes back as a float64.
+func intFromResult(result map[string]any, key string) int {
+	switch v := result[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
 // importDemoListings pushes the pack's catalog rows through the admin import
 // — the same route the visitor's own upload takes — and waits for the honest
-// terminal status. Returns the number of rows admin actually processed.
-func (ap *ManifestApplier) importDemoListings(ctx context.Context, tenantSlug string, pack seed.DemoPack) (int, error) {
+// terminal status (R7), which it returns whole.
+func (ap *ManifestApplier) importDemoListings(ctx context.Context, tenantSlug string, pack seed.DemoPack) (*ports.AdminImportStatus, error) {
 	if ap.cfg.Gateway == nil {
-		return 0, errors.New("seed_demo_data: admin gateway not wired")
+		return nil, errors.New("seed_demo_data: admin gateway not wired")
 	}
 	table, err := pack.ListingsCSV()
 	if err != nil {
-		return 0, fmt.Errorf("seed_demo_data: render %s pack: %w", pack.Name, err)
+		return nil, fmt.Errorf("seed_demo_data: render %s pack: %w", pack.Name, err)
 	}
 	job, err := ap.cfg.Gateway.StartImport(ctx, tenantSlug, pack.FileName, bytes.NewReader(table))
 	if err != nil {
-		return 0, fmt.Errorf("seed_demo_data: start import: %w", err)
+		return nil, fmt.Errorf("seed_demo_data: start import: %w", err)
 	}
 	status, err := ap.awaitImport(ctx, tenantSlug, job.JobID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if status.Status == "failed" {
-		return 0, fmt.Errorf("seed_demo_data: import failed: %s", strings.Join(status.Errors, "; "))
+		return nil, fmt.Errorf("seed_demo_data: import failed: %s", strings.Join(status.Errors, "; "))
 	}
 	if status.Processed == 0 {
 		// A completed import that landed nothing leaves the storefront dead —
 		// exactly the state L6 exists to prevent. Fail loud; the retry
 		// re-imports the same stable SKUs.
-		return 0, fmt.Errorf("seed_demo_data: import completed with 0 of %d rows processed (job %s)",
+		return nil, fmt.Errorf("seed_demo_data: import completed with 0 of %d rows processed (job %s)",
 			len(pack.Listings), job.JobID)
 	}
 	if status.Processed < len(pack.Listings) {
 		ap.log.Warn("seed_demo_data: import processed fewer rows than the pack holds",
 			"tenant", tenantSlug, "processed", status.Processed, "pack", len(pack.Listings))
 	}
-	return status.Processed, nil
+	if status.ProjectionRows == 0 {
+		ap.log.Warn("seed_demo_data: import wrote no projection rows — the storefront may render empty",
+			"tenant", tenantSlug, "job", job.JobID, "processed", status.Processed)
+	}
+	return status, nil
 }
 
 // awaitImport polls the admin job until it reaches a terminal status. A
