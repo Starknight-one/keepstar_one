@@ -218,11 +218,17 @@ var SystemPresetDefaultReplicate = map[string]bool{
 	"manifest_summary":          true,
 }
 
-// SystemPresetNames lists the system preset library, sorted — the exact set
-// a tenant can adopt (the map ListSystem advertises to the admin canvas and
-// adopt_presets copies from). Handed to the onboarding meta-ops so an
-// invented preset name is rejected at STAGE time, inside the turn, instead
-// of being silently skipped at apply time.
+// SystemPresetNames lists the EMBEDDED system preset seeds, sorted. Handed
+// to the onboarding meta-ops so an invented preset name (live smoke:
+// "lead_cards") is stripped from adopt_presets at STAGE time and named back
+// to the model, instead of being silently skipped at apply time.
+//
+// Not a complete inventory of adoptable names, deliberately: ListSystem also
+// advertises the component public names (SystemComponentPublicNames), and
+// admin is the authority the apply actually asks (Gateway.AdoptPresets). A
+// name outside these seeds is therefore dropped at stage time even if admin
+// would have honoured it — acceptable while the seeds ARE the library, and
+// the reason the drop is a warn + summary note rather than a silent edit.
 func SystemPresetNames() []string {
 	out := make([]string, 0, len(SystemPresetSeeds))
 	for name := range SystemPresetSeeds {

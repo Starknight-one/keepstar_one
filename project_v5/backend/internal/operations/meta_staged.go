@@ -33,12 +33,15 @@ type stagedOpConfig struct {
 	summarize func(params map[string]any) string
 	// onStage optionally mutates the manifest beyond the step append.
 	onStage func(m *domain.OnboardingManifest, params map[string]any)
-	// validate optionally rejects the staging BEFORE anything is written,
-	// returning the LLM-facing reason (empty = valid). Staging is the cheap
-	// place to fail: the model is still in the turn and can re-stage with
-	// corrected params, instead of the apply chain quietly dropping work
-	// hours later (V2_SPEC L11).
-	validate func(deps MetaExecutorDeps, params map[string]any) string
+	// sanitize optionally REPAIRS the staged params before anything is
+	// written. It returns (note, problem): a non-empty problem rejects the
+	// staging outright and nothing is persisted; a non-empty note rides on
+	// the OK summary, so a repair is never silent — the model reads it on
+	// its next turn and can re-stage. Staging is the cheap place to catch a
+	// bad argument (V2_SPEC L11), but it is NOT a place to dead-end the
+	// flow: Agent1 has no in-turn re-prompt, so "reject everything" means
+	// the plan simply loses that step.
+	sanitize func(deps MetaExecutorDeps, params map[string]any) (note, problem string)
 	// scrub lists param keys deleted before the step persists — R6
 	// belt-and-braces on top of the registry dropping undeclared input keys
 	// (an LLM-staged step must never smuggle credentials into state).
@@ -108,7 +111,7 @@ func NewStagedMetaExecutors(deps MetaExecutorDeps) []*StagedMetaExecutor {
 		{
 			name:     "adopt_presets",
 			stepKey:  func(p map[string]any) string { return strings.Join(sortedStrings(cfgStringSlice(p, "presets")), ",") },
-			validate: validateAdoptPresets,
+			sanitize: sanitizeAdoptPresets,
 			summarize: func(p map[string]any) string {
 				names := cfgStringSlice(p, "presets")
 				return fmt.Sprintf("%d presets: %s", len(names), strings.Join(names, ", "))
@@ -170,14 +173,19 @@ func (e *StagedMetaExecutor) Execute(ctx context.Context, octx domain.OperationC
 		delete(params, k)
 	}
 
-	if e.cfg.validate != nil {
-		if problem := e.cfg.validate(e.deps, params); problem != "" {
+	var note string
+	if e.cfg.sanitize != nil {
+		n, problem := e.cfg.sanitize(e.deps, params)
+		if problem != "" {
 			// Nothing is written: the manifest must never carry a step the
 			// apply cannot honour.
 			return failure(e.tmpl.Name, e.tmpl.Kind, domain.OutcomeInvalid, "invalid: "+problem), nil
 		}
+		note = n
 	}
 
+	// matchStep keys on the SANITIZED params, so a re-stage of the same
+	// repaired set still replaces its predecessor instead of duplicating it.
 	st := e.matchStep(m, params)
 	if st != nil && st.Status == domain.ManifestStepApplied {
 		// Applied steps are immutable — the world already reflects them.
@@ -214,11 +222,15 @@ func (e *StagedMetaExecutor) Execute(ctx context.Context, octx domain.OperationC
 		return nil, err
 	}
 
+	summary := fmt.Sprintf("staged: %s %s", e.tmpl.Name, e.cfg.summarize(params))
+	if note != "" {
+		summary += " — " + note
+	}
 	return &domain.OperationResult{
 		Kind:     e.tmpl.Kind,
 		Outcome:  domain.OutcomeOK,
 		Count:    1,
-		Summary:  fmt.Sprintf("staged: %s %s", e.tmpl.Name, e.cfg.summarize(params)),
+		Summary:  summary,
 		Output:   map[string]any{"staged": true, "stepId": st.ID},
 		Metadata: map[string]any{"stepId": st.ID, "op": e.tmpl.Name},
 	}, nil
@@ -243,48 +255,73 @@ func (e *StagedMetaExecutor) matchStep(m *domain.OnboardingManifest, params map[
 	return nil
 }
 
-// ─── stage-time validators ───────────────────────────────────────────────
+// ─── stage-time sanitizers ───────────────────────────────────────────────
 
-// validateAdoptPresets resolves every requested name against the system
-// preset library BEFORE the step is staged. The model invents names (live
-// smoke: "lead_cards") and apply-time only skips them (f84e0a0) — the
-// workspace then goes live missing the very surfaces the conversation
-// promised, with nobody left in the loop to notice. Failing here hands the
-// model the invalid names AND the candidates while it is still composing,
-// so it re-stages correctly within the turn.
+// sanitizeAdoptPresets resolves every requested name against the system
+// preset library BEFORE the step is staged, DROPS the names that do not
+// exist and stages the remainder. The model invents names (live smoke:
+// "lead_cards").
 //
-// The apply-time skip stays as belt-and-braces: a library that drifts
-// between stage and apply must still not halt the chain.
-func validateAdoptPresets(deps MetaExecutorDeps, params map[string]any) string {
+// Why strip rather than reject: there is no in-turn re-prompt. Agent1 calls
+// the model once (pipeline_execute.go), runs the emitted tool batch and
+// returns — a tool result reaches the model only on a LATER user turn, and
+// the auto-apply triggers (registration submit, file upload) fire before
+// that. An all-or-nothing rejection therefore does not buy a corrected
+// re-stage; it leaves the manifest with NO adopt_presets step at all and the
+// tenant applies with nothing adopted. Stripping keeps every real preset,
+// and the dropped names ride on the OK summary so the miss is visible to the
+// model (and in the log) instead of silent.
+//
+// Nothing valid left IS rejected: an empty presets[] is a step the apply
+// cannot honour.
+//
+// This is the same law the applier already encodes one file over
+// (manifest_apply.go applyAdoptPresets: "never halt the whole environment
+// over a cosmetic miss"), moved one stage earlier — and the apply-time skip
+// stays as belt-and-braces for a library that drifts between stage and
+// apply.
+func sanitizeAdoptPresets(deps MetaExecutorDeps, params map[string]any) (note, problem string) {
 	names := cfgStringSlice(params, "presets")
 	if len(names) == 0 {
-		return "adopt_presets needs presets[] — at least one preset name"
+		return "", "adopt_presets needs presets[] — at least one preset name"
 	}
 	if deps.PresetLibrary == nil {
-		return "" // not wired: apply-time skip-unknown is the only guard
+		return "", "" // not wired: apply-time skip-unknown is the only guard
 	}
 	library := deps.PresetLibrary()
 	if len(library) == 0 {
 		// An empty library means the seeds could not be read, not that every
-		// name is wrong — rejecting the staging would dead-end the flow.
+		// name is wrong — dropping them all would dead-end the flow.
 		deps.logger().Warn("adopt_presets: preset library is empty — stage-time validation skipped")
-		return ""
+		return "", ""
 	}
 	known := make(map[string]bool, len(library))
 	for _, n := range library {
 		known[n] = true
 	}
+	valid := make([]any, 0, len(names))
 	var unknown []string
 	for _, n := range names {
-		if !known[n] {
-			unknown = append(unknown, n)
+		if known[n] {
+			valid = append(valid, n)
+			continue
 		}
+		unknown = append(unknown, n)
 	}
 	if len(unknown) == 0 {
-		return ""
+		return "", ""
 	}
-	return fmt.Sprintf("unknown preset %s: %s — the library has: %s. Re-stage adopt_presets using only these names",
-		pluralPreset(len(unknown)), strings.Join(unknown, ", "), strings.Join(library, ", "))
+	if len(valid) == 0 {
+		return "", fmt.Sprintf("no such preset %s: %s — the library has: %s. Re-stage adopt_presets using only these names",
+			pluralPreset(len(unknown)), strings.Join(unknown, ", "), strings.Join(library, ", "))
+	}
+	// []any, not []string: params go to JSONB and come back as []any, and the
+	// step's natural key must read the same before and after a round-trip.
+	params["presets"] = valid
+	deps.logger().Warn("adopt_presets: unknown preset names dropped at stage time",
+		"dropped", unknown, "staged", valid)
+	return fmt.Sprintf("dropped unknown %s %s (the library has: %s) — re-stage adopt_presets if you meant something in it",
+		pluralPreset(len(unknown)), strings.Join(unknown, ", "), strings.Join(library, ", ")), ""
 }
 
 func pluralPreset(n int) string {
