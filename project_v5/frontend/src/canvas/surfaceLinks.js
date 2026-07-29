@@ -22,6 +22,9 @@
 export const SURFACE_STOREFRONT = 'storefront'
 export const SURFACE_CRM = 'crm'
 
+// Stable tab order — Storefront first, then CRM (the flow's own order).
+const SURFACE_ORDER = [SURFACE_STOREFRONT, SURFACE_CRM]
+
 const CANONICAL_LABEL = {
   [SURFACE_STOREFRONT]: 'Storefront',
   [SURFACE_CRM]: 'CRM',
@@ -78,8 +81,36 @@ export function collectSurfaceLinks({ manifest, messages } = {}) {
   const bySurface = new Map()
   for (const link of surfaceLinksFromBlocks(messages)) bySurface.set(link.surface, link)
   for (const link of surfaceLinksFromManifest(manifest)) bySurface.set(link.surface, link)
-  // Stable order — Storefront first, then CRM (the flow's own order).
-  return [SURFACE_STOREFRONT, SURFACE_CRM].filter((s) => bySurface.has(s)).map((s) => bySurface.get(s))
+  return ordered(bySurface)
+}
+
+// mergeSurfaceLinks — an ISSUED surface is a fact about the session, not
+// about the current render, so a tab that has appeared never disappears:
+// `known` carries forward and a fresh sighting only ever re-points its own
+// surface. WHY this matters concretely: after a refresh the resume manifest
+// is the sole carrier of the URLs (the per-turn `manifest` field is the
+// counts-only summary and the resumed transcript carries no document
+// blocks), so any source going quiet mid-session must not take the tab —
+// and the user's selected pane — down with it.
+//
+// Returns `known` unchanged when nothing moved, so the surface list keeps a
+// stable identity across renders (mounted iframes must not remount).
+export function mergeSurfaceLinks(known, found) {
+  const bySurface = new Map()
+  for (const link of known || []) bySurface.set(link.surface, link)
+  let changed = false
+  for (const link of found || []) {
+    const prev = bySurface.get(link.surface)
+    if (prev && prev.url === link.url && prev.label === link.label) continue
+    bySurface.set(link.surface, link)
+    changed = true
+  }
+  if (!changed) return known || []
+  return ordered(bySurface)
+}
+
+function ordered(bySurface) {
+  return SURFACE_ORDER.filter((s) => bySurface.has(s)).map((s) => bySurface.get(s))
 }
 
 function push(out, url, label) {

@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import CanvasStage from './CanvasStage'
 import ChatDock from './ChatDock'
-import { collectSurfaceLinks } from './surfaceLinks'
+import { collectSurfaceLinks, mergeSurfaceLinks } from './surfaceLinks'
 
 // CanvasChatView — the builder layout (V2_SPEC §2 step 3): the canvas IS
 // the stage, the chat floats over it and docks at the bottom (mock-demo
@@ -62,13 +62,23 @@ export function thinkingLabel(messages, isLoading) {
   return status || DEFAULT_THINKING_LABEL
 }
 
-export default function CanvasChatView({ messages, header, inputForm, isLoading, manifest }) {
+export default function CanvasChatView({ messages, header, inputForm, isLoading, surfaceManifest }) {
   const { canvasBlocks, chatItems } = splitTurnStream(messages)
   const label = thinkingLabel(messages, isLoading)
-  // Walking every rendered document is not free — only redo it when the
-  // stream or the manifest actually moved (a keystroke in the composer
-  // re-renders this whole view).
-  const surfaces = useMemo(() => collectSurfaceLinks({ manifest, messages }), [manifest, messages])
+  // The tabs a session has grown so far. Walking every rendered document is
+  // not free — only redo it when the stream or the manifest actually moved
+  // (a keystroke in the composer re-renders this whole view) — and merge the
+  // sighting into what we already know, so a source falling silent can never
+  // retract an issued surface (mergeSurfaceLinks). The merge is idempotent,
+  // which is what makes carrying it in a ref safe under a re-run render.
+  const known = useRef([])
+  const surfaces = useMemo(() => {
+    known.current = mergeSurfaceLinks(
+      known.current,
+      collectSurfaceLinks({ manifest: surfaceManifest, messages }),
+    )
+    return known.current
+  }, [surfaceManifest, messages])
 
   return (
     <div className="kw-canvas">

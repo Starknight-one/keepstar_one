@@ -3,6 +3,7 @@ import { render, fireEvent, screen } from '@testing-library/react'
 import ChatShell from '../src/shells/ChatShell'
 import {
   collectSurfaceLinks,
+  mergeSurfaceLinks,
   surfaceKindOf,
   surfaceLinksFromBlocks,
   surfaceLinksFromManifest,
@@ -143,6 +144,31 @@ describe('collectSurfaceLinks', () => {
   })
 })
 
+// An issued surface is a fact about the SESSION. Sources come and go —
+// the block scrolls out of the projected transcript, the per-turn manifest
+// field is counts-only — and a tab must survive all of that.
+describe('mergeSurfaceLinks', () => {
+  const known = [
+    { surface: 'storefront', url: STOREFRONT_URL, label: 'Storefront' },
+    { surface: 'crm', url: CRM_URL, label: 'CRM' },
+  ]
+
+  it('keeps known surfaces when the current render sees none', () => {
+    expect(mergeSurfaceLinks(known, [])).toBe(known) // same identity: no churn
+  })
+
+  it('re-points a surface whose URL was re-issued, keeping the other', () => {
+    const reissued = 'https://v5.example/crm/blue-harbor-realty?k=tok-2'
+    const merged = mergeSurfaceLinks(known, [{ surface: 'crm', url: reissued, label: 'CRM' }])
+    expect(merged.map((l) => l.url)).toEqual([STOREFRONT_URL, reissued])
+  })
+
+  it('adds a newly issued surface in the flow order', () => {
+    const merged = mergeSurfaceLinks([known[1]], [known[0]])
+    expect(merged.map((l) => l.surface)).toEqual(['storefront', 'crm'])
+  })
+})
+
 // ── the shell wiring ──────────────────────────────────────────────────
 
 function sseResponse(wire) {
@@ -237,5 +263,46 @@ describe('canvas tabs', () => {
     })
     expect(screen.getByRole('tab', { name: 'Storefront' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: 'CRM' })).toBeTruthy()
+  })
+
+  // The shell is refresh-safe by design, so "resume, then take a turn" is
+  // an ordinary path, not an edge case. On that turn the wire carries the
+  // counts-only ManifestStatusSummary and the resumed transcript carries no
+  // document blocks — neither source can re-prove the URLs. The tabs (and
+  // the pane the user is looking at) must still be there.
+  it('keeps the resumed tabs — and the selected pane — through a turn', async () => {
+    const reply = [{ blockId: 'b-reply', kind: 'text', text: 'Done — both surfaces are updated.' }]
+    fetch.mockResolvedValue(
+      sseResponse(
+        turnWire(reply, {
+          blocks: reply,
+          latencyMs: 5,
+          // What an onboarding turn actually answers with: counts, no URLs.
+          manifest: { staged: 5, applied: 5, total: 5 },
+        }),
+      ),
+    )
+
+    renderCanvasShell({
+      initialMessages: [
+        { role: 'user', text: 'I run a realtor agency' },
+        { role: 'bot', text: 'Your surfaces are live.' },
+      ],
+      initialManifest: appliedManifest({ storefrontUrl: STOREFRONT_URL, crmUrl: CRM_URL }),
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'CRM' }))
+    expect(document.querySelector('.kw-canvas-frame').getAttribute('src')).toBe(CRM_URL)
+
+    fireEvent.change(screen.getByPlaceholderText('Describe your business…'), {
+      target: { value: 'rename the storefront' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Done — both surfaces are updated.')
+
+    expect(screen.getByRole('tab', { name: 'Storefront' })).toBeTruthy()
+    const crmTab = screen.getByRole('tab', { name: 'CRM' })
+    expect(crmTab.getAttribute('aria-selected')).toBe('true')
+    expect(document.querySelector('.kw-canvas-frame').getAttribute('src')).toBe(CRM_URL)
   })
 })

@@ -31,14 +31,16 @@ export default function ChatShell({
   credentials, // 'include' for onboarding (ks_onboard cookie in dev cross-origin setups)
   layout, // 'canvas' → full-stage canvas with the chat docked over it (V2)
   quickActions, // [{label, send, when?}] — one-tap turns; `when` gates visibility (quickActions.js)
-  initialManifest, // manifest from session resume — seeds chip visibility before the first turn
+  initialManifest, // full manifest from session resume — seeds chip visibility AND the canvas surface tabs
 }) {
   const [messages, setMessages] = useState(() => initialMessages || [])
   const [isLoading, setIsLoading] = useState(false)
   const [draft, setDraft] = useState('')
-  // Latest known manifest state — seeded from resume, refreshed from the
-  // pipeline response's manifest field each turn (kept when a response
-  // carries none, so a staged plan survives plain chat turns).
+  // Latest known manifest state, for the contextual chips — seeded from
+  // resume, refreshed from the pipeline response's manifest field each turn
+  // (kept when a response carries none, so a staged plan survives plain chat
+  // turns). Either SHAPE lands here: the resume payload's full manifest or
+  // the per-turn counts-only summary; quickActions.js reads both.
   const [manifest, setManifest] = useState(() => initialManifest || null)
 
   // Monotonic turn counter — ties streamed block frames to the bot
@@ -72,9 +74,12 @@ export default function ChatShell({
         return
       }
       const turnId = ++turnSeq.current
-      // 'Designing…' — the runtime designs a view for the question; the
-      // canvas layout renders this line as the thinking indicator.
-      setMessages((m) => [...m, { role: 'user', text: query }, { role: 'status', text: 'Designing…' }])
+      // On the canvas the runtime is designing a view for the question and
+      // this line IS the thinking indicator on the stage; the single-column
+      // shells (CRM, R13) keep plain 'Thinking…' — a lead lookup is not a
+      // design act.
+      const opening = layout === 'canvas' ? 'Designing…' : 'Thinking…'
+      setMessages((m) => [...m, { role: 'user', text: query }, { role: 'status', text: opening }])
       setIsLoading(true)
       try {
         const resp = await pipelineSmartRequest({
@@ -103,7 +108,7 @@ export default function ChatShell({
         setIsLoading(false)
       }
     },
-    [apiBaseUrl, tenantSlug, sessionId, credentials, applyThemeFromTurn],
+    [apiBaseUrl, tenantSlug, sessionId, credentials, layout, applyThemeFromTurn],
   )
 
   const submit = (e) => {
@@ -175,12 +180,18 @@ export default function ChatShell({
     return (
       <div className={'kw-chatpage kw-chatpage--canvas' + (variant ? ` kw-chatpage--${variant}` : '')}>
         <RenderContext.Provider value={renderCtx}>
+          {/* surfaceManifest is deliberately NOT the volatile `manifest`
+              state: only the resume payload's full manifest (with `steps`)
+              can carry the issued surface URLs — the per-turn field is the
+              counts-only summary (handler_pipeline.go), so feeding it here
+              would erase the Storefront/CRM tabs on the first turn after a
+              refresh. This prop is the session's stable surface source. */}
           <CanvasChatView
             messages={messages}
             header={header}
             inputForm={inputForm}
             isLoading={isLoading}
-            manifest={manifest}
+            surfaceManifest={initialManifest || null}
           />
         </RenderContext.Provider>
       </div>
