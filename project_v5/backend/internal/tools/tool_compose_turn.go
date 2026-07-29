@@ -12,6 +12,7 @@ import (
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine"
+	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/streaming"
 )
@@ -357,7 +358,7 @@ func (t *ComposeTurnTool) assembleRenderBlock(ctx context.Context, toolCtx domai
 	// LLM-emitted op touching the same props.
 	armUploadNodes(merged, ingestToken)
 
-	data, count := resolveReplicate(state.Current.Data, spec.replicate)
+	data, count := resolveReplicate(state.Current.Data, spec.replicate, spec.preset)
 	engine.ExpandReplicates(merged, count)
 
 	// Freestyle blocks may reference tenant components; load them on demand
@@ -382,6 +383,10 @@ func (t *ComposeTurnTool) assembleRenderBlock(ctx context.Context, toolCtx domai
 	}
 	engine.ResolveAndInline(merged)
 	engine.BindData(merged, data)
+
+	// After BindData — the address only exists in `content` once the record
+	// is bound.
+	linkBoundURLs(merged)
 
 	// Default like/cart actions are catalog actions: fed PRODUCT maps only,
 	// exactly like visual_assembly — entity-plane blocks (leads, synthetic
@@ -478,51 +483,131 @@ func parseComposeBlocks(input map[string]interface{}) ([]composeBlock, string) {
 //     of THAT source and bind only its rows, so a scoped list preset
 //     replicates over exactly its own data.
 //
-// Absent/empty/unknown → no fan-out (count 0), full data — a single
-// instance binds record 0, same as visual_assembly without replicate.
-func resolveReplicate(d domain.StateData, raw any) ([]map[string]any, int) {
+// Absent/empty/unknown → the preset's AUTHORED source when it declares one
+// (presets.SystemPresetReplicateSource) and that source is live in the data
+// zone; otherwise no fan-out (count 0), full data — a single instance binds
+// record 0, same as visual_assembly without replicate.
+//
+// The authored-source fallback is the fix for the surface-links handover
+// (tail #3): a preset built for a synthetic set has exactly one sensible
+// source, and letting a mis-spelled argument collapse its rows put an empty
+// card in front of the business user.
+func resolveReplicate(d domain.StateData, raw any, preset string) ([]map[string]any, int) {
 	clamp := func(n int) int {
 		if n < 0 {
 			return 0
 		}
 		return n
 	}
+	// authored resolves the preset's own source; nil when the preset declares
+	// none or its set is not in the data zone yet.
+	authored := func() ([]map[string]any, int, bool) {
+		src, ok := presets.SystemPresetReplicateSource[preset]
+		if !ok {
+			return nil, 0, false
+		}
+		return entitySetRows(d, src)
+	}
+	fallback := func() ([]map[string]any, int) {
+		if rows, n, ok := authored(); ok {
+			return rows, n
+		}
+		return dataToBindData(d), 0
+	}
+
 	switch v := raw.(type) {
 	case nil:
-		return dataToBindData(d), 0
+		return fallback()
 	case int:
+		if rows, n, ok := authored(); ok {
+			return rows, n
+		}
 		return dataToBindData(d), clamp(v)
 	case int64:
+		if rows, n, ok := authored(); ok {
+			return rows, n
+		}
 		return dataToBindData(d), clamp(int(v))
 	case float64:
+		if rows, n, ok := authored(); ok {
+			return rows, n
+		}
 		return dataToBindData(d), clamp(int(v))
 	case string:
 		s := strings.TrimSpace(v)
 		if s == "" {
-			return dataToBindData(d), 0
+			return fallback()
 		}
 		if n, err := strconv.Atoi(s); err == nil {
+			if rows, cnt, ok := authored(); ok {
+				return rows, cnt
+			}
 			return dataToBindData(d), clamp(n)
 		}
 		if s == "products" {
 			rows := productsToBindData(d.Products)
 			return rows, len(rows)
 		}
-		for i := range d.Entities {
-			set := &d.Entities[i]
-			if set.Slug != s {
-				continue
-			}
-			rows := make([]map[string]any, 0, len(set.Records))
-			for _, rec := range set.Records {
-				rows = append(rows, engine.EntityToMap(rec, set))
-			}
-			return rows, len(rows)
+		if rows, n, ok := entitySetRows(d, s); ok {
+			return rows, n
+		}
+		if rows, n, ok := authored(); ok {
+			slog.Warn("compose_turn: unknown replicate source — falling back to the preset's authored source",
+				"replicate", s, "preset", preset)
+			return rows, n
 		}
 		slog.Warn("compose_turn: unknown replicate source — no fan-out", "replicate", s)
 		return dataToBindData(d), 0
 	}
-	return dataToBindData(d), 0
+	return fallback()
+}
+
+// entitySetRows flattens one entity set of the data zone into bind rows.
+// ok is false when the zone carries no set under that slug.
+func entitySetRows(d domain.StateData, slug string) ([]map[string]any, int, bool) {
+	for i := range d.Entities {
+		set := &d.Entities[i]
+		if set.Slug != slug {
+			continue
+		}
+		rows := make([]map[string]any, 0, len(set.Records))
+		for _, rec := range set.Records {
+			rows = append(rows, engine.EntityToMap(rec, set))
+		}
+		return rows, len(rows), true
+	}
+	return nil, 0, false
+}
+
+// linkBoundURLs makes a bound address tappable: a node authored as
+// wrapper "link" (domain.WrapperLink) carries its URL in `content` after
+// BindData, and the widget's link wrapper reads the href from
+// action.params.url — nothing in the engine can bridge the two, because
+// binding never writes action params. This deterministic pass does, right
+// after BindData, for every link node that has no action of its own.
+//
+// Sibling of armUploadNodes: the server owns what the model cannot express
+// per record.
+func linkBoundURLs(doc *engine.Document) {
+	if doc == nil {
+		return
+	}
+	engine.WalkNodes(doc, func(n engine.Node, _ int) {
+		if w, _ := n["wrapper"].(string); w != string(domain.WrapperLink) {
+			return
+		}
+		if _, exists := n["action"]; exists {
+			return // authored intent wins
+		}
+		url, _ := n["content"].(string)
+		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+			return
+		}
+		n["action"] = map[string]any{
+			"kind":   string(domain.UserActionExternalLink),
+			"params": map[string]any{"url": url},
+		}
+	})
 }
 
 // ingestTokenFor reads the session's minted issue_ingest_door token from

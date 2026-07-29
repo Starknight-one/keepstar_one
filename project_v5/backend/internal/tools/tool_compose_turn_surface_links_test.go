@@ -217,3 +217,121 @@ func TestComposeTurnZeroInputGateBoundaries(t *testing.T) {
 		}
 	})
 }
+
+// TestSurfaceLinksRendersRealURLs — handoff tail #3. The surfaceLink set is
+// in the data zone, yet the card reached the user with no addresses on it.
+// The cause is the `replicate` argument: only the exact source name fans the
+// row template out, and the model is free to omit it, pass a count, or
+// mistype it — in every one of those cases the replicate frame collapses (or
+// binds catalog products) and the handover shows a headline over nothing.
+//
+// A preset authored against a synthetic set declares its own source, so the
+// URLs land however the model spelled the argument. Same law as everything
+// else on this path: the artifact must not depend on the model.
+func TestSurfaceLinksRendersRealURLs(t *testing.T) {
+	cases := []struct {
+		name      string
+		replicate any
+		products  []domain.Product
+	}{
+		{"source named exactly", "surfaceLink", nil},
+		{"replicate omitted", nil, nil},
+		{"replicate omitted with a seeded catalog", nil, []domain.Product{{ID: "p1", Name: "Flat 12B"}}},
+		{"replicate given as a count", "2", []domain.Product{{ID: "p1", Name: "Flat 12B"}, {ID: "p2", Name: "Flat 14A"}}},
+		{"source mistyped", "surfaceLinks", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := newMinStatePort(tc.products)
+			state.state.Current.Data.Entities = []domain.EntitySet{surfaceLinkSet()}
+			tool := composeTool(state, map[string]*domain.Preset{
+				"surface_links": seedPresetFor(t, "surface_links"),
+			})
+			ctx, sink := collectorCtx()
+
+			block := map[string]interface{}{"kind": "render", "preset": "surface_links"}
+			if tc.replicate != nil {
+				block["replicate"] = tc.replicate
+			}
+			res, err := tool.Execute(ctx,
+				domain.ToolContext{SessionID: "sess-1", TenantSlug: "acme-realty"},
+				map[string]interface{}{"blocks": []interface{}{block}})
+			if err != nil {
+				t.Fatalf("Execute error: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("ToolResult IsError: %s", res.Content)
+			}
+
+			doc := sink.Blocks()[0].Document
+			if got := boundValues(doc, "label"); len(got) != 2 || got[0] != "Storefront" || got[1] != "CRM" {
+				t.Errorf("labels = %v, want [Storefront CRM]", got)
+			}
+			urls := boundValues(doc, "url")
+			if len(urls) != 2 || urls[0] != testStorefrontURL || urls[1] != testCRMURL {
+				t.Fatalf("urls = %v, want [%s %s]", urls, testStorefrontURL, testCRMURL)
+			}
+			// Visible is not enough: the handover is an address the user has
+			// to open, so each URL node is a link the widget can dispatch.
+			for i, node := range nodesWithBinding(doc, "url") {
+				if w, _ := node["wrapper"].(string); w != string(domain.WrapperLink) {
+					t.Errorf("url node %d wrapper = %q, want link", i, w)
+				}
+				act, _ := node["action"].(map[string]interface{})
+				if act == nil {
+					t.Fatalf("url node %d has no action — the address is not tappable", i)
+				}
+				if kind, _ := act["kind"].(string); kind != string(domain.UserActionExternalLink) {
+					t.Errorf("url node %d action kind = %q, want external_link", i, kind)
+				}
+				params, _ := act["params"].(map[string]interface{})
+				if got, _ := params["url"].(string); got != urls[i] {
+					t.Errorf("url node %d action url = %q, want %q (the bound address)", i, got, urls[i])
+				}
+			}
+		})
+	}
+}
+
+// A preset with a declared source but an EMPTY data zone must not invent
+// rows — the card collapses to its headline, exactly as before.
+func TestSurfaceLinksWithoutTheSetStaysEmpty(t *testing.T) {
+	state := newMinStatePort([]domain.Product{{ID: "p1", Name: "Flat 12B"}})
+	tool := composeTool(state, map[string]*domain.Preset{
+		"surface_links": seedPresetFor(t, "surface_links"),
+	})
+	ctx, sink := collectorCtx()
+	if _, err := tool.Execute(ctx, domain.ToolContext{SessionID: "sess-1", TenantSlug: "acme"},
+		map[string]interface{}{"blocks": []interface{}{
+			map[string]interface{}{"kind": "render", "preset": "surface_links"},
+		}}); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if got := boundValues(sink.Blocks()[0].Document, "url"); len(got) != 0 {
+		t.Errorf("urls = %v, want none — nothing was issued yet", got)
+	}
+}
+
+// nodesWithBinding returns every node carrying the given fieldBinding, in
+// document order.
+func nodesWithBinding(doc map[string]interface{}, binding string) []map[string]interface{} {
+	var out []map[string]interface{}
+	var walk func(any)
+	walk = func(n any) {
+		switch v := n.(type) {
+		case map[string]interface{}:
+			if fb, _ := v["fieldBinding"].(string); fb == binding {
+				out = append(out, v)
+			}
+			for _, child := range v {
+				walk(child)
+			}
+		case []interface{}:
+			for _, item := range v {
+				walk(item)
+			}
+		}
+	}
+	walk(doc)
+	return out
+}

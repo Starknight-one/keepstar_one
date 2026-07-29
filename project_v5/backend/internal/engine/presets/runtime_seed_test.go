@@ -530,3 +530,42 @@ func TestManifestSummaryBindsSyntheticSet(t *testing.T) {
 		t.Errorf("row 0 detail = %v, want bound detail", got["detail"])
 	}
 }
+
+// TestReplicateSourceTableMatchesSeeds — governance over
+// SystemPresetReplicateSource: the renderer falls back to these sources
+// when the model's `replicate` argument does not name a live one, so an
+// entry pointing at a preset that does not replicate (or does not exist)
+// would silently do nothing. Every entry must name a real seed that
+// carries a replicate frame.
+func TestReplicateSourceTableMatchesSeeds(t *testing.T) {
+	for name, source := range SystemPresetReplicateSource {
+		if _, ok := SystemPresetSeeds[name]; !ok {
+			t.Errorf("replicate source declared for unknown preset %q", name)
+			continue
+		}
+		if !SystemPresetDefaultReplicate[name] {
+			t.Errorf("preset %q declares source %q but does not replicate", name, source)
+		}
+		if source == "" {
+			t.Errorf("preset %q declares an empty replicate source", name)
+		}
+	}
+}
+
+// TestSurfaceLinksURLIsALink — the handover addresses must be openable, not
+// just readable: the URL atom is authored as wrapper "link" so the
+// deterministic pass in compose_turn can hang an external_link action off
+// the bound address (binding itself never writes action params).
+func TestSurfaceLinksURLIsALink(t *testing.T) {
+	doc := parseSeed(t, "surface_links")
+	node := engine.FindNodeByID(doc, "sl-url")
+	if node == nil {
+		t.Fatal("sl-url node missing from the seed")
+	}
+	if got, _ := node["wrapper"].(string); got != "link" {
+		t.Errorf("sl-url wrapper = %q, want link", got)
+	}
+	if got, _ := node["fieldBinding"].(string); got != "url" {
+		t.Errorf("sl-url fieldBinding = %q, want url", got)
+	}
+}

@@ -138,8 +138,9 @@ var SuccessPlaqueJSON []byte
 
 // surface_links replicates over the SYNTHETIC `surfaceLink` EntitySet
 // (meta_apply_manifest.go, written once issue_surface_urls applies):
-// {label, url, surface}. URLs render as visible text — BindData never
-// touches action params, so a clickable external_link cannot be seeded.
+// {label, url, surface}. The URL atom is wrapper "link": BindData writes
+// the address into `content`, and the deterministic link pass in
+// compose_turn turns it into the external_link action the widget opens.
 //
 //go:embed seed/surface_links.json
 var SurfaceLinksJSON []byte
@@ -212,6 +213,22 @@ var SystemPresetDefaultReplicate = map[string]bool{
 	"success_plaque":            false,
 	"surface_links":             true,
 	"manifest_summary":          true,
+}
+
+// SystemPresetReplicateSource names the data source a preset's replicate
+// frame is AUTHORED against — for the onboarding presets, the synthetic
+// EntitySet slug the runtime writes for them (R23). The renderer falls back
+// to it whenever the model's `replicate` argument does not name a live
+// source: omitted, mistyped, or given as a bare count, all of which
+// otherwise collapse the row template and ship a headline over nothing
+// (live tail #3, the surface-links handover). Same law as the rest of this
+// path — the artifact must not depend on the model spelling an argument
+// right. Catalog presets have no entry: their source is the query result,
+// and their count semantics are unchanged.
+var SystemPresetReplicateSource = map[string]string{
+	"operation_card":   "opCard",
+	"surface_links":    "surfaceLink",
+	"manifest_summary": "manifestStep",
 }
 
 // SystemPresetCategory maps each system preset name to its family in

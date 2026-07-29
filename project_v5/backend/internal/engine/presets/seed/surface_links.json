@@ -66,6 +66,7 @@
                   "type": "text",
                   "id": "sl-url",
                   "fieldBinding": "url",
+                  "wrapper": "link",
                   "textStyle": {"fontSize": "sm", "color": "#5BA4D9"}
                 }
               ]
