@@ -51,7 +51,13 @@ type MetaExecutorDeps struct {
 	Store      ports.OperationStorePort
 	Embedder   ports.EmbeddingPort
 	Applier    ManifestApplier
-	Log        *slog.Logger
+	// PresetLibrary lists the adoptable preset names — the same system
+	// library adopt_presets copies from (presets.SystemPresetNames). Injected
+	// rather than read off the embedded seeds so this package stays free of
+	// the engine, and so a wiring without it degrades to the apply-time
+	// skip-unknown belt instead of rejecting every staging.
+	PresetLibrary func() []string
+	Log           *slog.Logger
 }
 
 func (d MetaExecutorDeps) logger() *slog.Logger {

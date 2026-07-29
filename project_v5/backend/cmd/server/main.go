@@ -210,12 +210,13 @@ func main() {
 	// a block renders on whatever the data zone already holds.
 	composeTurnTool.SetManifestGate(manifestApplier)
 	operations.RegisterMetaExecutors(registry, operations.MetaExecutorDeps{
-		Onboarding: statePort,
-		State:      statePort,
-		Store:      operationStore,
-		Embedder:   embeddingPort,
-		Applier:    manifestApplier,
-		Log:        log,
+		Onboarding:    statePort,
+		State:         statePort,
+		Store:         operationStore,
+		Embedder:      embeddingPort,
+		Applier:       manifestApplier,
+		PresetLibrary: presets.SystemPresetNames,
+		Log:           log,
 	})
 
 	// Boot seed (§3.1): wrap rows from the registered executors + the 18

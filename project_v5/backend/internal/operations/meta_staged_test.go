@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"keepstar_v5/internal/domain"
+	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/ports"
 )
 
@@ -240,5 +241,137 @@ func TestRegisterMetaExecutorsVisibility(t *testing.T) {
 	if got := reg.DefinitionsFor(context.Background(), "acme",
 		domain.ModeStorefront, domain.AgentData, domain.RoleVisitor); len(got) != 0 {
 		t.Errorf("meta ops leaked into the storefront form: %+v", got)
+	}
+}
+
+// Stage-time validation of adopt_presets (handoff tail #4). The model
+// invents preset names; apply-time only SKIPS them (f84e0a0), so the
+// workspace goes live missing surfaces the conversation promised and no one
+// is left in the loop. Staging is the cheap place to fail (V2_SPEC L11):
+// the invalid outcome names the offenders AND the candidates while the
+// model is still composing the turn, and NOTHING is written.
+func TestStagedAdoptPresetsValidatesNames(t *testing.T) {
+	library := []string{"booking_form", "lead_table", "surface_links"}
+
+	cases := []struct {
+		name        string
+		library     func() []string
+		presets     []any
+		wantOutcome domain.OpOutcome
+		wantStaged  bool
+		// wantInSummary are substrings the LLM needs to self-correct.
+		wantInSummary []string
+	}{
+		{
+			name:        "every name in the library stages",
+			library:     func() []string { return library },
+			presets:     []any{"lead_table", "booking_form"},
+			wantOutcome: domain.OutcomeOK,
+			wantStaged:  true,
+		},
+		{
+			name:          "one invented name rejects the whole staging",
+			library:       func() []string { return library },
+			presets:       []any{"lead_table", "lead_cards"},
+			wantOutcome:   domain.OutcomeInvalid,
+			wantStaged:    false,
+			wantInSummary: []string{"lead_cards", "booking_form", "lead_table", "surface_links"},
+		},
+		{
+			name:          "the valid siblings are not named as offenders",
+			library:       func() []string { return library },
+			presets:       []any{"deal_grid", "pipeline_board"},
+			wantOutcome:   domain.OutcomeInvalid,
+			wantStaged:    false,
+			wantInSummary: []string{"deal_grid", "pipeline_board"},
+		},
+		{
+			// A library that cannot be read is an infrastructure problem, not
+			// proof that every requested name is wrong — dead-ending the flow
+			// there would be worse than the apply-time skip.
+			name:        "empty library falls through to the apply-time belt",
+			library:     func() []string { return nil },
+			presets:     []any{"lead_cards"},
+			wantOutcome: domain.OutcomeOK,
+			wantStaged:  true,
+		},
+		{
+			name:        "unwired library falls through to the apply-time belt",
+			library:     nil,
+			presets:     []any{"lead_cards"},
+			wantOutcome: domain.OutcomeOK,
+			wantStaged:  true,
+		},
+		{
+			name:        "no presets at all is invalid",
+			library:     func() []string { return library },
+			presets:     []any{},
+			wantOutcome: domain.OutcomeInvalid,
+			wantStaged:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ob := &fakeOnboardingState{}
+			deps := metaDeps(ob, newOpsStatePort())
+			deps.PresetLibrary = tc.library
+			ex := stagedExecutor(deps, "adopt_presets")
+
+			res, err := ex.Execute(context.Background(), onboardingOctx(),
+				map[string]any{"presets": tc.presets})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if res.Outcome != tc.wantOutcome {
+				t.Fatalf("outcome = %s, want %s (%s)", res.Outcome, tc.wantOutcome, res.Summary)
+			}
+			for _, want := range tc.wantInSummary {
+				if !strings.Contains(res.Summary, want) {
+					t.Errorf("summary %q does not carry %q — the model cannot self-correct", res.Summary, want)
+				}
+			}
+			staged := ob.manifest != nil && len(ob.manifest.Steps) > 0
+			if staged != tc.wantStaged {
+				t.Fatalf("staged = %v, want %v (manifest %+v)", staged, tc.wantStaged, ob.manifest)
+			}
+			if !tc.wantStaged && len(ob.infos) != 0 {
+				t.Errorf("a rejected staging still wrote %d delta(s)", len(ob.infos))
+			}
+		})
+	}
+}
+
+// The invalid summary must carry the LIVE library, not a copy that can
+// drift: a name the seeds advertise has to pass, and one they do not has to
+// fail, against presets.SystemPresetNames as wired in main.go.
+func TestStagedAdoptPresetsUsesTheRealLibrary(t *testing.T) {
+	ob := &fakeOnboardingState{}
+	deps := metaDeps(ob, newOpsStatePort())
+	deps.PresetLibrary = presets.SystemPresetNames
+	ex := stagedExecutor(deps, "adopt_presets")
+
+	res, err := ex.Execute(context.Background(), onboardingOctx(),
+		map[string]any{"presets": []any{"lead_table", "surface_links"}})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Outcome != domain.OutcomeOK {
+		t.Fatalf("real library rejected its own presets: %s", res.Summary)
+	}
+
+	ob2 := &fakeOnboardingState{}
+	deps2 := metaDeps(ob2, newOpsStatePort())
+	deps2.PresetLibrary = presets.SystemPresetNames
+	res2, err := stagedExecutor(deps2, "adopt_presets").Execute(context.Background(), onboardingOctx(),
+		map[string]any{"presets": []any{"lead_cards"}})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res2.Outcome != domain.OutcomeInvalid {
+		t.Fatalf("outcome = %s, want invalid for the invented name", res2.Outcome)
+	}
+	if !strings.Contains(res2.Summary, "lead_table") {
+		t.Errorf("summary does not advertise the real library: %q", res2.Summary)
 	}
 }

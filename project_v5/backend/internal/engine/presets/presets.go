@@ -7,7 +7,10 @@
 // TestProductCardSeedRoundTrip.
 package presets
 
-import _ "embed"
+import (
+	_ "embed"
+	"sort"
+)
 
 // ProductCardJSON is the v9-style scene-graph preset for a product card.
 // The 2026-06-15 redesign rebuilt it on the renderer's capability layer: a
@@ -213,6 +216,20 @@ var SystemPresetDefaultReplicate = map[string]bool{
 	"success_plaque":            false,
 	"surface_links":             true,
 	"manifest_summary":          true,
+}
+
+// SystemPresetNames lists the system preset library, sorted — the exact set
+// a tenant can adopt (the map ListSystem advertises to the admin canvas and
+// adopt_presets copies from). Handed to the onboarding meta-ops so an
+// invented preset name is rejected at STAGE time, inside the turn, instead
+// of being silently skipped at apply time.
+func SystemPresetNames() []string {
+	out := make([]string, 0, len(SystemPresetSeeds))
+	for name := range SystemPresetSeeds {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // SystemPresetReplicateSource names the data source a preset's replicate
