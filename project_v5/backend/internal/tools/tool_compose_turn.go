@@ -271,6 +271,14 @@ func (t *ComposeTurnTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 						return nil, fmt.Errorf("get state after %s: %w", op, serr)
 					}
 					state = fresh
+					// The manifest snapshot behind ingestToken is stale for the
+					// same reason. Today the applier's readiness gate means this
+					// apply can only run the zero-input step, so no door is
+					// minted here — this keeps the two pre-apply reads refreshed
+					// together rather than relying on that, since a later
+					// uploader_card block in the same turn would otherwise ship
+					// disarmed (R25) with nothing surfaced.
+					ingestToken = t.ingestTokenFor(ctx, toolCtx.SessionID)
 				}
 			}
 			templateMap, err := t.assembleRenderBlock(ctx, toolCtx, state, spec, ingestToken)
@@ -358,7 +366,7 @@ func (t *ComposeTurnTool) assembleRenderBlock(ctx context.Context, toolCtx domai
 	// LLM-emitted op touching the same props.
 	armUploadNodes(merged, ingestToken)
 
-	data, count := resolveReplicate(state.Current.Data, spec.replicate, spec.preset)
+	data, count, syntheticSource := resolveReplicate(state.Current.Data, spec.replicate, spec.preset)
 	engine.ExpandReplicates(merged, count)
 
 	// Freestyle blocks may reference tenant components; load them on demand
@@ -385,8 +393,11 @@ func (t *ComposeTurnTool) assembleRenderBlock(ctx context.Context, toolCtx domai
 	engine.BindData(merged, data)
 
 	// After BindData — the address only exists in `content` once the record
-	// is bound.
-	linkBoundURLs(merged)
+	// is bound. Synthetic sets only: those addresses are minted by the
+	// applier, tenant records are visitor-writable (see linkBoundURLs).
+	if syntheticSource {
+		linkBoundURLs(merged)
+	}
 
 	// Default like/cart actions are catalog actions: fed PRODUCT maps only,
 	// exactly like visual_assembly — entity-plane blocks (leads, synthetic
@@ -492,29 +503,32 @@ func parseComposeBlocks(input map[string]interface{}) ([]composeBlock, string) {
 // (tail #3): a preset built for a synthetic set has exactly one sensible
 // source, and letting a mis-spelled argument collapse its rows put an empty
 // card in front of the business user.
-func resolveReplicate(d domain.StateData, raw any, preset string) ([]map[string]any, int) {
-	source, count, hasCount := parseReplicateArg(raw)
+//
+// synthetic reports that the rows came from a runtime-written EntitySet —
+// the only data linkBoundURLs is allowed to make tappable.
+func resolveReplicate(d domain.StateData, raw any, preset string) (rows []map[string]any, count int, synthetic bool) {
+	source, n, hasCount := parseReplicateArg(raw)
 
 	// 1. The model named a source that is live in the data zone — it wins.
 	if source == "products" {
 		rows := productsToBindData(d.Products)
-		return rows, len(rows)
+		return rows, len(rows), false
 	}
 	if source != "" {
-		if rows, n, ok := entitySetRows(d, source); ok {
-			return rows, n
+		if rows, n, syn, ok := entitySetRows(d, source); ok {
+			return rows, n, syn
 		}
 	}
 
 	// 2. The preset's AUTHORED source: the model omitted it, mistyped it, or
 	//    sent a count for a preset that has exactly one sensible source.
 	if src, ok := presets.SystemPresetReplicateSource[preset]; ok {
-		if rows, n, ok := entitySetRows(d, src); ok {
+		if rows, n, syn, ok := entitySetRows(d, src); ok {
 			if source != "" {
 				slog.Warn("compose_turn: unknown replicate source — using the preset's authored source",
 					"replicate", source, "preset", preset, "source", src)
 			}
-			return rows, n
+			return rows, n, syn
 		}
 	}
 	if source != "" {
@@ -523,9 +537,9 @@ func resolveReplicate(d domain.StateData, raw any, preset string) ([]map[string]
 
 	// 3. Count semantics over the full data zone (visual_assembly parity).
 	if hasCount {
-		return dataToBindData(d), count
+		return dataToBindData(d), n, false
 	}
-	return dataToBindData(d), 0
+	return dataToBindData(d), 0, false
 }
 
 // parseReplicateArg splits a block's raw `replicate` value into the source
@@ -560,20 +574,22 @@ func parseReplicateArg(raw any) (source string, count int, hasCount bool) {
 }
 
 // entitySetRows flattens one entity set of the data zone into bind rows.
-// ok is false when the zone carries no set under that slug.
-func entitySetRows(d domain.StateData, slug string) ([]map[string]any, int, bool) {
+// ok is false when the zone carries no set under that slug; synthetic
+// reports whether the set was written by the runtime itself (R23) rather
+// than read from tenant records.
+func entitySetRows(d domain.StateData, slug string) (rows []map[string]any, count int, synthetic, ok bool) {
 	for i := range d.Entities {
 		set := &d.Entities[i]
 		if set.Slug != slug {
 			continue
 		}
-		rows := make([]map[string]any, 0, len(set.Records))
+		rows = make([]map[string]any, 0, len(set.Records))
 		for _, rec := range set.Records {
 			rows = append(rows, engine.EntityToMap(rec, set))
 		}
-		return rows, len(rows), true
+		return rows, len(rows), set.Synthetic, true
 	}
-	return nil, 0, false
+	return nil, 0, false, false
 }
 
 // linkBoundURLs makes a bound address tappable: a node authored as
@@ -585,6 +601,13 @@ func entitySetRows(d domain.StateData, slug string) ([]map[string]any, int, bool
 //
 // Sibling of armUploadNodes: the server owns what the model cannot express
 // per record.
+//
+// SYNTHETIC SOURCES ONLY (see the call site). The addresses this exists for
+// are minted by the applier — storefront and CRM. Tenant records are not:
+// a public storefront form can write any string into a lead field, and
+// stamping a dispatching external_link on that would turn the CRM operator's
+// card into a one-click window.open to whatever a visitor typed. Bound
+// tenant data keeps rendering href="#", exactly as before this pass existed.
 func linkBoundURLs(doc *engine.Document) {
 	if doc == nil {
 		return

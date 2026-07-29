@@ -3,16 +3,26 @@ package tools
 // The surface-links handover through compose_turn — the last beat of the
 // onboarding flow (V2_SPEC L11: the critical path hardens first).
 //
-// Two contracts live here:
+// Two contracts live here, and both are COMPOSE_TURN's half of the tail:
 //  1. Rendering a preset whose data source is a ZERO-INPUT manifest step's
-//     synthetic EntitySet STAGES AND APPLIES that step server-side (owner's
-//     law, handoff 2026-07-28 #1 — the same law already encoded for form
-//     submit and file upload).
+//     synthetic EntitySet calls the gate before assembly and RE-READS the
+//     session state afterwards, so the block binds what the apply wrote
+//     (owner's law, handoff 2026-07-28 #1 — the same law already encoded
+//     for form submit and file upload).
 //  2. The rendered block carries the real URLs regardless of how the model
 //     spelled its `replicate` argument.
+//
+// What is NOT proven here: that the applier behind the gate can reach the
+// data zone at all. tools cannot import usecases (usecases imports tools),
+// so the gate below is a stand-in. That seam — real *usecases.ManifestApplier
+// + real operations.NewSyntheticSetPublisher + this real tool — is driven end
+// to end in internal/usecases/manifest_apply_handover_test.go. Keep the two
+// files in step: a stand-in that writes what production cannot write is how
+// the empty-handover bug survived a green suite once already.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -60,9 +70,17 @@ func surfaceLinkSet() domain.EntitySet {
 	}
 }
 
-// fakeManifestGate stands in for *usecases.ManifestApplier: it records the
-// ops it was asked to ensure and — like the real applier — lands the step's
-// synthetic EntitySet in the session's data zone.
+// fakeManifestGate stands in for the whole production seam behind the gate —
+// *usecases.ManifestApplier PLUS the injected synthetic-set publisher: it
+// records the ops it was asked to ensure and lands the step's EntitySet in
+// the session's data zone, which is what that pair does together (the applier
+// alone holds only an OnboardingStatePort and cannot).
+//
+// So the write below is the STIMULUS for the assertions here, never the
+// evidence: what these tests check is that compose_turn calls the gate once
+// for a tabled preset and re-reads state after it. Whether the real applier
+// performs that write is a different contract, asserted against the real
+// parts in internal/usecases/manifest_apply_handover_test.go.
 type fakeManifestGate struct {
 	state   *minStatePort
 	calls   []string
@@ -334,4 +352,103 @@ func nodesWithBinding(doc map[string]interface{}, binding string) []map[string]i
 	}
 	walk(doc)
 	return out
+}
+
+// ─── scope of the link pass ──────────────────────────────────────────────
+
+// tenantLinkPresetJSON binds a link-wrapped node to an ordinary record
+// field — the shape any list preset over tenant data can take (a lead's
+// "website", a listing's "source").
+const tenantLinkPresetJSON = `{
+  "version": "2.10",
+  "children": [{
+    "type": "frame", "id": "rows",
+    "layout": {"direction": "column", "gap": "sm"},
+    "children": [{
+      "type": "frame", "id": "row", "replicate": true,
+      "layout": {"direction": "row", "gap": "sm"},
+      "children": [
+        {"type": "text", "id": "site", "fieldBinding": "website", "wrapper": "link"}
+      ]
+    }]
+  }]
+}`
+
+// leadSet is a TENANT set: its records come from the entity plane, and a
+// public storefront form is one of the things that writes them.
+func leadSet(synthetic bool, website string) domain.EntitySet {
+	return domain.EntitySet{
+		Slug:      "lead",
+		Name:      "Leads",
+		Synthetic: synthetic,
+		Fields:    []domain.FieldDef{{Key: "website", Label: "Website", Type: domain.FieldText}},
+		Records: []domain.EntityRecord{
+			{ID: "l1", EntitySlug: "lead", Data: map[string]any{"website": website}},
+		},
+	}
+}
+
+// The link pass exists for the addresses the APPLIER mints (storefront,
+// CRM). Tenant records are visitor-writable: a public booking form can put
+// any address into a lead field, and stamping a dispatching external_link on
+// it would give the CRM operator a one-click window.open to whatever a
+// stranger typed. So the pass is gated on the bound source being synthetic —
+// bound tenant data keeps rendering href="#", the behaviour before the pass
+// existed.
+//
+// The two cases differ ONLY in EntitySet.Synthetic, so the test cannot pass
+// for any other reason (same preset, same records, same replicate argument).
+func TestLinkActionsOnlyForSyntheticSources(t *testing.T) {
+	const attacker = "https://evil.example/steal?s=1"
+
+	run := func(t *testing.T, synthetic bool) map[string]interface{} {
+		t.Helper()
+		state := newMinStatePort(nil)
+		state.state.Current.Data.Entities = []domain.EntitySet{leadSet(synthetic, attacker)}
+		tool := composeTool(state, map[string]*domain.Preset{
+			"lead_links": {
+				ID: "pr-lead-links", TenantID: "t-1", Name: "lead_links",
+				Status: domain.PresetStatusPublished, DocumentJSON: json.RawMessage(tenantLinkPresetJSON),
+			},
+		})
+		ctx, sink := collectorCtx()
+		if _, err := tool.Execute(ctx, domain.ToolContext{SessionID: "sess-1", TenantSlug: "acme"},
+			map[string]interface{}{"blocks": []interface{}{
+				map[string]interface{}{"kind": "render", "preset": "lead_links", "replicate": "lead"},
+			}}); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		return sink.Blocks()[0].Document
+	}
+
+	t.Run("tenant record is rendered but not dispatchable", func(t *testing.T) {
+		doc := run(t, false)
+		if got := boundValues(doc, "website"); len(got) != 1 || got[0] != attacker {
+			t.Fatalf("website = %v — the value must still render, only the action is withheld", got)
+		}
+		nodes := nodesWithBinding(doc, "website")
+		if len(nodes) != 1 {
+			t.Fatalf("nodes = %d, want 1", len(nodes))
+		}
+		if act, exists := nodes[0]["action"]; exists {
+			t.Errorf("visitor-supplied URL carries a dispatching action %v — one click "+
+				"opens whatever a stranger wrote into the lead", act)
+		}
+	})
+
+	t.Run("runtime-minted record is dispatchable", func(t *testing.T) {
+		doc := run(t, true)
+		nodes := nodesWithBinding(doc, "website")
+		if len(nodes) != 1 {
+			t.Fatalf("nodes = %d, want 1", len(nodes))
+		}
+		act, _ := nodes[0]["action"].(map[string]interface{})
+		if act == nil {
+			t.Fatal("synthetic address is not tappable — the gate is too tight and the " +
+				"handover card regresses")
+		}
+		if kind, _ := act["kind"].(string); kind != string(domain.UserActionExternalLink) {
+			t.Errorf("action kind = %q, want external_link", kind)
+		}
+	})
 }
