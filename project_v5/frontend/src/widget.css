@@ -1046,54 +1046,142 @@
   line-height: 1.5;
 }
 
-/* ── Split layout: canvas left / chat right (the original widget shape) ── */
-.kw-chatpage--split {
+/* ── Canvas layout (V2_SPEC §2 step 3): the canvas is the full stage,
+   the chat floats over it and docks at the bottom (mock-demo
+   birthDesktop). Light surfaces, brand blue + orange, never purple. ── */
+.kw-chatpage--canvas {
   padding: 0;
   align-items: stretch;
 }
-.kw-split {
-  display: flex;
-  flex-direction: row;
+.kw-canvas {
+  position: relative;
   width: 100%;
   height: 100vh;
   height: 100dvh;
+  overflow: hidden;
+  background: radial-gradient(125% 125% at 50% 0%, #f8fbfe 0%, #f1f6fa 58%, #ebf1f7 100%);
 }
-.kw-split-canvas {
+.kw-canvas-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.kw-canvas-topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 22px 10px;
+}
+.kw-chatpage--canvas .kw-chatpage-header {
+  padding: 0;
+  border-bottom: none;
+}
+.kw-canvas-pane {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
-  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+}
+.kw-canvas-blocks {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  background: var(--kw-bg, #fafafa);
+  padding: 8px 28px 46vh; /* the tail must scroll clear of the dock */
 }
-.kw-split-canvas .kw-empty-state {
+.kw-canvas-pane .kw-empty-state {
   margin: auto;
+  margin-bottom: 42vh;
   color: var(--kw-text-muted);
   font-size: var(--kw-fs-base);
 }
-.kw-split-chat {
-  width: 400px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid rgba(0, 0, 0, 0.08);
+.kw-canvas .kw-inline-block {
   background: #ffffff;
+  border-color: rgba(91, 164, 217, 0.18);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px -18px rgba(20, 45, 70, 0.35);
 }
-.kw-split-history {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
+
+/* ── The floating chat dock ── */
+.kw-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 3.5%;
+  transform: translateX(-50%);
+  width: min(680px, 62%);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  z-index: 2;
 }
-.kw-chatpage-inputwrap {
-  padding: 0 16px 16px;
+/* History collapses UPWARD above the bar: bounded height keeps the
+   canvas visible — the recent turns show, the rest is behind a scroll. */
+.kw-dock-history {
+  max-height: 34vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 2px;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 26px);
 }
-.kw-chatpage--split .kw-chatpage-header {
-  padding: 16px 16px 8px;
+.kw-dock-msg {
+  flex-shrink: 0;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px -16px rgba(20, 45, 70, 0.5);
+}
+.kw-dock-msg.kw-msg-bot {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(91, 164, 217, 0.16);
+  border-radius: 16px 16px 16px 6px;
+}
+.kw-dock-msg.kw-msg-user {
+  background: rgba(91, 164, 217, 0.94);
+  border-radius: 16px 16px 6px 16px;
+}
+.kw-dock-msg.kw-msg-status {
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.kw-dock .kw-chatpage-inputwrap {
+  padding: 0;
+}
+/* The composer as a rounded bar with an orange send (birthDesktop). */
+.kw-dock .kw-chatpage-input {
+  align-items: center;
+  gap: 10px;
+  padding: 9px 9px 9px 20px;
+  border-top: none;
+  border: 1px solid rgba(91, 164, 217, 0.3);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 20px 55px -24px rgba(20, 45, 70, 0.55);
+}
+.kw-dock .kw-chatpage-input input {
+  border: none;
+  background: transparent;
+  padding: 6px 0;
+  font-size: var(--kw-fs-md);
+}
+.kw-dock .kw-chatpage-input button {
+  background: var(--kw-orange);
+  border-radius: 999px;
+  padding: 10px 20px;
+}
+.kw-dock .kw-quick-actions {
+  padding: 0 0 2px;
+}
+.kw-dock .kw-quick-chip {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
 }
 .kw-quick-actions {
   display: flex;
@@ -1117,13 +1205,14 @@
   color: #ffffff;
 }
 @media (max-width: 900px) {
-  .kw-split {
-    flex-direction: column;
+  .kw-dock {
+    width: 94%;
+    bottom: 2%;
   }
-  .kw-split-chat {
-    width: 100%;
-    height: 45%;
-    border-left: none;
-    border-top: 1px solid rgba(0, 0, 0, 0.08);
+  .kw-dock-history {
+    max-height: 30vh;
+  }
+  .kw-canvas-blocks {
+    padding: 8px 14px 46vh;
   }
 }

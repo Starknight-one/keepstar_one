@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import BlocksMessageList from '../chat/BlocksMessageList'
-import SplitMessageView from '../chat/SplitMessageView'
+import CanvasChatView from '../canvas/CanvasChatView'
 import RenderContext from '../renderer/RenderContext'
 import { pipelineSmartRequest } from '../api/client'
 import { appendStreamBlock, finalizeTurn, replaceBlockInMessages } from '../chat/turnBlocks'
@@ -29,7 +29,7 @@ export default function ChatShell({
   initialMessages,
   placeholder,
   credentials, // 'include' for onboarding (ks_onboard cookie in dev cross-origin setups)
-  layout, // 'split' → canvas left / chat right (the original widget shape)
+  layout, // 'canvas' → full-stage canvas with the chat docked over it (V2)
   quickActions, // [{label, send, when?}] — one-tap turns; `when` gates visibility (quickActions.js)
   initialManifest, // manifest from session resume — seeds chip visibility before the first turn
 }) {
@@ -166,13 +166,14 @@ export default function ChatShell({
     </div>
   )
 
-  // Split layout (canvas left / chat right — the original widget shape)
-  // is the default for onboarding; single-column stays for CRM (R13).
-  if (layout === 'split') {
+  // Canvas layout (V2_SPEC §2 step 3: canvas as the full stage, chat
+  // docked over it) is the default for onboarding; single-column stays
+  // for CRM (R13).
+  if (layout === 'canvas') {
     return (
-      <div className={'kw-chatpage kw-chatpage--split' + (variant ? ` kw-chatpage--${variant}` : '')}>
+      <div className={'kw-chatpage kw-chatpage--canvas' + (variant ? ` kw-chatpage--${variant}` : '')}>
         <RenderContext.Provider value={renderCtx}>
-          <SplitMessageView messages={messages} header={header} inputForm={inputForm} />
+          <CanvasChatView messages={messages} header={header} inputForm={inputForm} />
         </RenderContext.Provider>
       </div>
     )
