@@ -7,13 +7,14 @@ import (
 )
 
 // The seed set IS the §3.1 boot-seed table: 6 executor templates +
-// compose_turn + 12 onboarding meta templates (the §4.3 eleven plus
-// about_keepstar, owner ruling 2026-07-28), with the mode/agent/
-// min_role/auto_enabled attributes the rulings pin (R8/R14/R16/R18).
+// compose_turn + 13 onboarding meta templates (the §4.3 eleven, plus
+// about_keepstar per the owner ruling 2026-07-28 and seed_demo_data per
+// V2_SPEC.md L6/R3), with the mode/agent/min_role/auto_enabled attributes
+// the rulings pin (R8/R14/R16/R18).
 func TestTemplatesMatchSpecTable(t *testing.T) {
 	ts := Templates()
-	if len(ts) != 19 {
-		t.Fatalf("expected 19 seed templates (6 executors + compose_turn + 12 meta), got %d", len(ts))
+	if len(ts) != 20 {
+		t.Fatalf("expected 20 seed templates (6 executors + compose_turn + 13 meta), got %d", len(ts))
 	}
 
 	byName := map[string]domain.OperationTemplate{}
@@ -63,13 +64,14 @@ func TestTemplatesMatchSpecTable(t *testing.T) {
 	}
 	assertModes(t, ct, domain.ModeOnboarding, domain.ModeCRM)
 
-	// The 12 meta templates: kind meta, onboarding-only, visitor (the
+	// The 13 meta templates: kind meta, onboarding-only, visitor (the
 	// onboarding cookie + form gate does the work, R14), auto_enabled.
 	meta := []string{
 		"about_keepstar",
 		"search_library", "create_tenant", "define_entity", "define_value_set",
 		"define_automation", "enable_operations", "adopt_presets",
-		"issue_ingest_door", "register_user", "issue_surface_urls", "apply_manifest",
+		"issue_ingest_door", "register_user", "seed_demo_data",
+		"issue_surface_urls", "apply_manifest",
 	}
 	for _, name := range meta {
 		tpl, ok := byName[name]

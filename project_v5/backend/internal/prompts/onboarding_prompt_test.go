@@ -24,14 +24,15 @@ func TestOnboardingAgent1PromptIsVerticalFree(t *testing.T) {
 	}
 }
 
-// The prompt must teach the full meta-op vocabulary (all 12 wire names) and
+// The prompt must teach the full meta-op vocabulary (all 13 wire names) and
 // the R4 turn cap — the sequencing depends on both.
 func TestOnboardingAgent1PromptCoversMetaOps(t *testing.T) {
 	for _, op := range []string{
 		"about_keepstar",
 		"search_library", "create_tenant", "define_entity", "define_value_set",
 		"define_automation", "enable_operations", "adopt_presets",
-		"issue_ingest_door", "register_user", "issue_surface_urls", "apply_manifest",
+		"issue_ingest_door", "register_user", "seed_demo_data",
+		"issue_surface_urls", "apply_manifest",
 	} {
 		if !strings.Contains(OnboardingAgent1SystemPrompt, op) {
 			t.Errorf("Agent1 onboarding prompt never names %q", op)

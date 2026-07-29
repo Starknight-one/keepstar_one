@@ -10,9 +10,10 @@ import (
 	"keepstar_v5/internal/ports"
 )
 
-// The 9 STAGED meta-operations (RUNTIME_SPEC.md §4.3): create_tenant,
-// define_entity, define_value_set, define_automation, enable_operations,
-// adopt_presets, issue_ingest_door, register_user, issue_surface_urls.
+// The 10 STAGED meta-operations (RUNTIME_SPEC.md §4.3 + seed_demo_data,
+// V2_SPEC.md L6/R3): create_tenant, define_entity, define_value_set,
+// define_automation, enable_operations, adopt_presets, issue_ingest_door,
+// register_user, seed_demo_data, issue_surface_urls.
 //
 // Execute appends (or re-proposes) a ManifestStep{status: proposed} in the
 // onboarding zone and returns "staged: <op> <summary>" — nothing mutates
@@ -58,7 +59,7 @@ type StagedMetaExecutor struct {
 
 var _ ports.Executor = (*StagedMetaExecutor)(nil)
 
-// NewStagedMetaExecutors builds the 9 staged executors in §4.3 order.
+// NewStagedMetaExecutors builds the 10 staged executors in applier order.
 func NewStagedMetaExecutors(deps MetaExecutorDeps) []*StagedMetaExecutor {
 	configs := []stagedOpConfig{
 		{
@@ -132,6 +133,12 @@ func NewStagedMetaExecutors(deps MetaExecutorDeps) []*StagedMetaExecutor {
 					role = "owner"
 				}
 				return role + " account — completes via the secure registration form, never through chat"
+			},
+		},
+		{
+			name: "seed_demo_data",
+			summarize: func(map[string]any) string {
+				return "realistic starter data — applied after the data model, before the URLs"
 			},
 		},
 		{
