@@ -493,73 +493,70 @@ func parseComposeBlocks(input map[string]interface{}) ([]composeBlock, string) {
 // source, and letting a mis-spelled argument collapse its rows put an empty
 // card in front of the business user.
 func resolveReplicate(d domain.StateData, raw any, preset string) ([]map[string]any, int) {
+	source, count, hasCount := parseReplicateArg(raw)
+
+	// 1. The model named a source that is live in the data zone — it wins.
+	if source == "products" {
+		rows := productsToBindData(d.Products)
+		return rows, len(rows)
+	}
+	if source != "" {
+		if rows, n, ok := entitySetRows(d, source); ok {
+			return rows, n
+		}
+	}
+
+	// 2. The preset's AUTHORED source: the model omitted it, mistyped it, or
+	//    sent a count for a preset that has exactly one sensible source.
+	if src, ok := presets.SystemPresetReplicateSource[preset]; ok {
+		if rows, n, ok := entitySetRows(d, src); ok {
+			if source != "" {
+				slog.Warn("compose_turn: unknown replicate source — using the preset's authored source",
+					"replicate", source, "preset", preset, "source", src)
+			}
+			return rows, n
+		}
+	}
+	if source != "" {
+		slog.Warn("compose_turn: unknown replicate source — no fan-out", "replicate", source)
+	}
+
+	// 3. Count semantics over the full data zone (visual_assembly parity).
+	if hasCount {
+		return dataToBindData(d), count
+	}
+	return dataToBindData(d), 0
+}
+
+// parseReplicateArg splits a block's raw `replicate` value into the source
+// name it asked for and/or the clone count it asked for. Exactly one of the
+// two is ever set: the seeded schema types the field as a string, so a count
+// arrives spelled ("3") as often as raw.
+func parseReplicateArg(raw any) (source string, count int, hasCount bool) {
 	clamp := func(n int) int {
 		if n < 0 {
 			return 0
 		}
 		return n
 	}
-	// authored resolves the preset's own source; nil when the preset declares
-	// none or its set is not in the data zone yet.
-	authored := func() ([]map[string]any, int, bool) {
-		src, ok := presets.SystemPresetReplicateSource[preset]
-		if !ok {
-			return nil, 0, false
-		}
-		return entitySetRows(d, src)
-	}
-	fallback := func() ([]map[string]any, int) {
-		if rows, n, ok := authored(); ok {
-			return rows, n
-		}
-		return dataToBindData(d), 0
-	}
-
 	switch v := raw.(type) {
-	case nil:
-		return fallback()
 	case int:
-		if rows, n, ok := authored(); ok {
-			return rows, n
-		}
-		return dataToBindData(d), clamp(v)
+		return "", clamp(v), true
 	case int64:
-		if rows, n, ok := authored(); ok {
-			return rows, n
-		}
-		return dataToBindData(d), clamp(int(v))
+		return "", clamp(int(v)), true
 	case float64:
-		if rows, n, ok := authored(); ok {
-			return rows, n
-		}
-		return dataToBindData(d), clamp(int(v))
+		return "", clamp(int(v)), true
 	case string:
 		s := strings.TrimSpace(v)
 		if s == "" {
-			return fallback()
+			return "", 0, false
 		}
 		if n, err := strconv.Atoi(s); err == nil {
-			if rows, cnt, ok := authored(); ok {
-				return rows, cnt
-			}
-			return dataToBindData(d), clamp(n)
+			return "", clamp(n), true
 		}
-		if s == "products" {
-			rows := productsToBindData(d.Products)
-			return rows, len(rows)
-		}
-		if rows, n, ok := entitySetRows(d, s); ok {
-			return rows, n
-		}
-		if rows, n, ok := authored(); ok {
-			slog.Warn("compose_turn: unknown replicate source — falling back to the preset's authored source",
-				"replicate", s, "preset", preset)
-			return rows, n
-		}
-		slog.Warn("compose_turn: unknown replicate source — no fan-out", "replicate", s)
-		return dataToBindData(d), 0
+		return s, 0, false
 	}
-	return fallback()
+	return "", 0, false
 }
 
 // entitySetRows flattens one entity set of the data zone into bind rows.
