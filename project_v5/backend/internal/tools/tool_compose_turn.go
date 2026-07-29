@@ -47,6 +47,31 @@ type ComposeTurnTool struct {
 	state      ports.StatePort
 	presets    ports.PresetPort
 	components ports.ComponentPort
+	manifest   ManifestStepGate
+}
+
+// ManifestStepGate is the slice of the onboarding ManifestApplier this tool
+// needs to honour the owner's law that a user-visible artifact must never
+// depend on the model having called a tool (handoff 2026-07-28, law #1).
+// Declared here rather than imported: tools cannot import usecases (the
+// usecases tests import tools, which would cycle the test binary);
+// *usecases.ManifestApplier satisfies it.
+type ManifestStepGate interface {
+	// EnsureZeroInputStep stages the zero-input step when it is missing and
+	// runs the applier. Reports whether it did any work — true means session
+	// state changed and must be re-read.
+	EnsureZeroInputStep(ctx context.Context, sessionID, op string) (bool, error)
+}
+
+// zeroInputStepForPreset maps a preset whose data source is the synthetic
+// EntitySet of a ZERO-INPUT manifest step onto that step's op. Rendering
+// such a preset IS the intent — the same proof as a submitted form or an
+// uploaded file — so the server stages and applies the step deterministically
+// instead of showing an empty card and hoping the model calls apply_manifest.
+// A small table, deliberately: every entry needs a synthetic set that only
+// its step can produce.
+var zeroInputStepForPreset = map[string]string{
+	"surface_links": "issue_surface_urls",
 }
 
 // NewComposeTurnTool constructs the tool with the three ports it needs.
@@ -57,6 +82,13 @@ func NewComposeTurnTool(state ports.StatePort, presets ports.PresetPort, compone
 		components: components,
 	}
 }
+
+// SetManifestGate closes the boot wiring cycle (applier → registry →
+// compose_turn): the tool is registered before the ManifestApplier exists,
+// same deferred-wiring pattern as PresetOperationBinder.SetResolver. Unset
+// (storefront-only wirings) disables the zero-input auto-apply pass — the
+// render then binds whatever the data zone already holds.
+func (t *ComposeTurnTool) SetManifestGate(g ManifestStepGate) { t.manifest = g }
 
 // Compile-time check that ComposeTurnTool satisfies Tool.
 var _ Tool = (*ComposeTurnTool)(nil)
@@ -171,6 +203,10 @@ func (t *ComposeTurnTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 		emitted                          int
 		textCount, docCount, screenCount int
 		failures                         []string
+		// ensured guards the zero-input pass against repeating inside one
+		// call — a turn may render the same preset twice, and a gate that
+		// errored must not be retried seven more times.
+		ensured map[string]bool
 	)
 	emit := func(b domain.TurnBlock) {
 		if collector != nil {
@@ -213,6 +249,29 @@ func (t *ComposeTurnTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 			textCount++
 
 		case "render":
+			// A zero-input step whose block is about to render gets staged +
+			// applied HERE, before assembly, so the block goes on the wire
+			// carrying real data instead of an empty shell.
+			if op, ok := zeroInputStepForPreset[spec.preset]; ok && t.manifest != nil && !ensured[op] {
+				if ensured == nil {
+					ensured = map[string]bool{}
+				}
+				ensured[op] = true
+				changed, gerr := t.manifest.EnsureZeroInputStep(ctx, toolCtx.SessionID, op)
+				if gerr != nil {
+					slog.Warn("compose_turn: zero-input step auto-apply failed — block renders on existing data",
+						"preset", spec.preset, "op", op, "session_id", toolCtx.SessionID, "err", gerr)
+				} else if changed {
+					// The apply wrote the step's synthetic EntitySet into the
+					// data zone; the snapshot read at the top of Execute
+					// predates it.
+					fresh, serr := t.state.GetState(ctx, toolCtx.SessionID)
+					if serr != nil {
+						return nil, fmt.Errorf("get state after %s: %w", op, serr)
+					}
+					state = fresh
+				}
+			}
 			templateMap, err := t.assembleRenderBlock(ctx, toolCtx, state, spec, ingestToken)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("block %d (%s): %v", i+1, spec.preset, err))

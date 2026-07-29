@@ -183,7 +183,8 @@ func main() {
 	// Turn protocol (§4.7, R9 as owner-overridden): compose_turn is the
 	// visual-plane operation of the onboarding + CRM forms. Registered under
 	// its §3.1 seed row BEFORE SeedTemplates, like every other executor.
-	registry.RegisterExecutor(domain.KindVisual, operations.WrapComposeTurn(tools.NewComposeTurnTool(statePort, presetPort, componentPort)))
+	composeTurnTool := tools.NewComposeTurnTool(statePort, presetPort, componentPort)
+	registry.RegisterExecutor(domain.KindVisual, operations.WrapComposeTurn(composeTurnTool))
 
 	// Onboarding plane (M3, §4.3): the deterministic ManifestApplier + the 11
 	// meta executors. The StateAdapter satisfies OnboardingStatePort (manifest
@@ -203,6 +204,11 @@ func main() {
 		SurfaceBaseURL: cfg.PublicBaseURL,
 		Log:            log,
 	})
+	// Closes the compose_turn wiring cycle (applier → registry →
+	// compose_turn): rendering a preset whose data is a zero-input step's
+	// synthetic set stages + applies that step server-side. Until set, such
+	// a block renders on whatever the data zone already holds.
+	composeTurnTool.SetManifestGate(manifestApplier)
 	operations.RegisterMetaExecutors(registry, operations.MetaExecutorDeps{
 		Onboarding: statePort,
 		State:      statePort,

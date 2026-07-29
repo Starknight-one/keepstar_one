@@ -925,3 +925,100 @@ func TestConcurrentUploadAndSubmitApplyOnce(t *testing.T) {
 		t.Fatalf("ingest mints = %d, want 1 (the single apply mints the door once)", f.tokens.ingestMints)
 	}
 }
+
+// EnsureZeroInputStep is the render-side face of the owner's law (handoff
+// 2026-07-28, law #1): the model rendered the block whose data only
+// issue_surface_urls can produce, but never staged it and never applied.
+// The server must stage it, run the manifest and end with live URLs — the
+// business user's handover cannot hinge on a tool call the model skipped.
+func TestEnsureZeroInputStepStagesAndApplies(t *testing.T) {
+	ctx := context.Background()
+
+	// A realtor plan WITHOUT the surface-URL step, everything else ready to
+	// apply (the two trigger steps completed out of band below).
+	noURLs := realtorManifest()
+	steps := noURLs.Steps[:0]
+	for _, s := range noURLs.Steps {
+		if s.Op != "issue_surface_urls" {
+			steps = append(steps, s)
+		}
+	}
+	noURLs.Steps = steps
+	f := newApplierFixture(noURLs)
+	if _, err := f.ap.Apply(ctx, "sess-1", ""); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := f.ap.ExecuteStep(ctx, "sess-1", "s-reg", map[string]any{
+		"email": "owner@acme.test", "password": "pw",
+	}); err != nil {
+		t.Fatalf("ExecuteStep: %v", err)
+	}
+	if err := f.ap.CompleteIngestStep(ctx, "sess-1", &ports.AdminImportStatus{
+		Status: "completed", Processed: 10, ProjectionRows: 10, Invalidated: true,
+	}); err != nil {
+		t.Fatalf("CompleteIngestStep: %v", err)
+	}
+	if idx := findStepIndexByOp(f.state.manifest, "issue_surface_urls"); idx >= 0 {
+		t.Fatalf("precondition: the step must NOT be staged yet")
+	}
+
+	changed, err := f.ap.EnsureZeroInputStep(ctx, "sess-1", "issue_surface_urls")
+	if err != nil {
+		t.Fatalf("EnsureZeroInputStep: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false — the caller would bind stale state and render an empty card")
+	}
+
+	idx := findStepIndexByOp(f.state.manifest, "issue_surface_urls")
+	if idx < 0 {
+		t.Fatal("auto-staged issue_surface_urls step was not persisted")
+	}
+	st := f.state.manifest.Steps[idx]
+	if st.Status != domain.ManifestStepApplied {
+		t.Fatalf("step status = %q, want applied; result %v, err %q", st.Status, st.Result, st.Error)
+	}
+	if sf, _ := st.Result["storefrontUrl"].(string); sf != "https://v5.example.test/s/acme-realty" {
+		t.Errorf("storefront url = %q", sf)
+	}
+	if crm, _ := st.Result["crmUrl"].(string); !strings.HasPrefix(crm, "https://v5.example.test/crm/acme-realty?k=surface-token-") {
+		t.Errorf("crm url = %q", crm)
+	}
+
+	// Second render of the same block must be a no-op: applied is terminal,
+	// so no second surface token and no apply churn (loop guard).
+	changed, err = f.ap.EnsureZeroInputStep(ctx, "sess-1", "issue_surface_urls")
+	if err != nil {
+		t.Fatalf("second EnsureZeroInputStep: %v", err)
+	}
+	if changed {
+		t.Error("changed = true on an already-applied step — the render loop would re-apply every turn")
+	}
+	if f.tokens.surfaceMints != 1 {
+		t.Errorf("surface token mints = %d, want 1", f.tokens.surfaceMints)
+	}
+}
+
+// The guard rails: only zero-input ops may be auto-staged (anything else
+// would need business values the server cannot invent), and a session with
+// no plan at all is left alone rather than given an orphan step.
+func TestEnsureZeroInputStepGuards(t *testing.T) {
+	ctx := context.Background()
+
+	f := newApplierFixture(realtorManifest())
+	if _, err := f.ap.EnsureZeroInputStep(ctx, "sess-1", "create_tenant"); err == nil {
+		t.Fatal("create_tenant needs name+vertical — auto-staging it must fail loud")
+	}
+
+	empty := newApplierFixture(nil)
+	changed, err := empty.ap.EnsureZeroInputStep(ctx, "sess-1", "issue_surface_urls")
+	if err != nil {
+		t.Fatalf("session without a manifest must be a no-op, got err = %v", err)
+	}
+	if changed {
+		t.Error("changed = true on a session with no manifest")
+	}
+	if empty.state.manifest != nil {
+		t.Error("an orphan step was persisted into a session that has no plan")
+	}
+}

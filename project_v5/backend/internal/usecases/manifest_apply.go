@@ -324,6 +324,72 @@ func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID st
 	return &cp, nil
 }
 
+// zeroInputSteps are the manifest ops whose §3.1 input schema carries NO
+// properties — the server can stage them from nothing, deterministically,
+// without inventing a single business value. Only these are auto-stageable
+// by EnsureZeroInputStep.
+var zeroInputSteps = map[string]bool{
+	opIssueSurfaceURLs: true,
+}
+
+// EnsureZeroInputStep makes a ZERO-INPUT manifest step real for the session:
+// stages it when the model never did, then runs the applier. It is the third
+// face of the owner's law (2026-07-28) already encoded for form submit and
+// file upload — a user-visible artifact must never depend on the model
+// having called a tool. The trigger here is RENDERING: compose_turn showing
+// the block whose data comes from that step's synthetic EntitySet is the
+// same proof of intent as a submitted form.
+//
+// Returns whether it did any work: false means the step was already applied
+// (or the session has no plan at all) and the caller's state is untouched;
+// true means the manifest ran and the caller should re-read state before
+// binding. Errors are infrastructure failures only — a step that FAILS or
+// waits is recorded on the manifest, exactly like every other apply.
+//
+// Loop safety: the applied/skipped short-circuit means a step that reached
+// its terminal state is never re-run, and the whole call is serialized per
+// session on the same sessionLocks as Apply.
+func (ap *ManifestApplier) EnsureZeroInputStep(ctx context.Context, sessionID, op string) (bool, error) {
+	if !zeroInputSteps[op] {
+		return false, fmt.Errorf("%q is not a zero-input manifest step", op)
+	}
+	defer ap.lockSession(sessionID)()
+	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if m == nil || len(m.Steps) == 0 {
+		// No plan at all: there is nothing this step could run after, and
+		// staging it alone would only fail on the missing tenant. The render
+		// stays empty and honest.
+		ap.log.Warn("ensure zero-input step: session has no manifest — nothing applied",
+			"session", sessionID, "op", op)
+		return false, nil
+	}
+	if idx := findStepIndexByOp(m, op); idx >= 0 {
+		if m.Steps[idx].Status == domain.ManifestStepApplied || m.Steps[idx].Status == domain.ManifestStepSkipped {
+			return false, nil
+		}
+	} else {
+		staged := domain.ManifestStep{
+			ID:     fmt.Sprintf("%s-%d", op, len(m.Steps)+1),
+			Op:     op,
+			Status: domain.ManifestStepProposed,
+			Params: map[string]any{},
+		}
+		m.Steps = append(m.Steps, staged)
+		// PERSIST before applyLocked — it reloads the manifest from state and
+		// an in-memory-only step would vanish (the register_user bug, 07136e7).
+		if err := ap.persist(ctx, sessionID, m, op, staged.ID); err != nil {
+			return false, err
+		}
+	}
+	if _, err := ap.applyLocked(ctx, sessionID, ""); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // RecordUploadJob stamps the accepted upload job onto the issue_ingest_door
 // step so the poll endpoint (and the next agent turn) can find it.
 func (ap *ManifestApplier) RecordUploadJob(ctx context.Context, sessionID, jobID, fileName string) error {
