@@ -202,7 +202,12 @@ func main() {
 		Themes:         themePort,
 		Registry:       registry,
 		SurfaceBaseURL: cfg.PublicBaseURL,
-		Log:            log,
+		// Apply paths that do NOT run through the apply_manifest executor
+		// (the render-side auto-apply below) still have to land the manifest's
+		// synthetic EntitySets in the data zone — that, not the step Result,
+		// is what compose_turn binds.
+		PublishSyntheticSets: operations.NewSyntheticSetPublisher(statePort, log),
+		Log:                  log,
 	})
 	// Closes the compose_turn wiring cycle (applier → registry →
 	// compose_turn): rendering a preset whose data is a zero-input step's

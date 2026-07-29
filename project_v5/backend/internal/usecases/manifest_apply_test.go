@@ -1022,3 +1022,92 @@ func TestEnsureZeroInputStepGuards(t *testing.T) {
 		t.Error("an orphan step was persisted into a session that has no plan")
 	}
 }
+
+// The readiness gate. Unlike the other two faces of the owner's law — form
+// submit and file upload, both USER actions — this trigger is a MODEL choice:
+// agent2 deciding to compose a surface_links block. So it must be incapable
+// of provisioning anything on its own. EnsureZeroInputStep runs the applier,
+// and the applier runs the WHOLE manifest, so the guard is a precondition:
+// every other step must already be terminal (applied or skipped). While one
+// is not, the render is left to come out empty and honest.
+//
+// Each case below is a way the model can fire the trigger against a plan that
+// is not ready, and none of them may touch admin.
+func TestEnsureZeroInputStepRefusesAnUnreadyPlan(t *testing.T) {
+	ctx := context.Background()
+
+	// A surface_links block emitted before the user approved anything: the
+	// whole plan is still `proposed`. Applying here would create the tenant.
+	t.Run("nothing approved yet", func(t *testing.T) {
+		f := newApplierFixture(realtorManifest())
+		changed, err := f.ap.EnsureZeroInputStep(ctx, "sess-1", "issue_surface_urls")
+		if err != nil {
+			t.Fatalf("EnsureZeroInputStep: %v", err)
+		}
+		if changed {
+			t.Error("changed = true on an unapproved plan")
+		}
+		if f.gateway.createCalls != 0 {
+			t.Errorf("createTenant calls = %d — a tenant was provisioned in admin off a "+
+				"model's render choice, with no user action", f.gateway.createCalls)
+		}
+		if idx := findStepIndexByOp(f.state.manifest, "issue_surface_urls"); idx >= 0 &&
+			f.state.manifest.Steps[idx].Status != domain.ManifestStepProposed {
+			t.Errorf("issue_surface_urls ran against an unapproved plan: %+v", f.state.manifest.Steps[idx])
+		}
+	})
+
+	// The two steps that REST mid-flow: register_user waits for the form,
+	// issue_ingest_door waits for the upload. A surface_links render while
+	// either is outstanding must not re-run the apply chain (and could not
+	// issue anything anyway — applyIssueSurfaceURLs refuses a pending plan).
+	t.Run("a step is still resting at accepted", func(t *testing.T) {
+		f := newApplierFixture(realtorManifest())
+		if _, err := f.ap.Apply(ctx, "sess-1", ""); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		before := f.gateway.adoptCalls
+		changed, err := f.ap.EnsureZeroInputStep(ctx, "sess-1", "issue_surface_urls")
+		if err != nil {
+			t.Fatalf("EnsureZeroInputStep: %v", err)
+		}
+		if changed {
+			t.Error("changed = true while register_user is still waiting for the form")
+		}
+		if f.gateway.adoptCalls != before {
+			t.Errorf("adopt calls %d → %d — the render re-ran the whole apply chain",
+				before, f.gateway.adoptCalls)
+		}
+		if f.tokens.surfaceMints != 0 {
+			t.Errorf("surface token mints = %d, want 0 — nothing to hand over yet", f.tokens.surfaceMints)
+		}
+	})
+
+	// A step that FAILED (admin timeout on create_tenant, say) is the worst
+	// case: without the gate every subsequent composed turn retries it
+	// unattended, and the tenant-ID idempotency guard only holds if admin
+	// never created the tenant it errored on.
+	t.Run("a failed step is not retried on every render", func(t *testing.T) {
+		f := newApplierFixture(realtorManifest())
+		f.gateway.createErr = errors.New("admin timeout")
+		if _, err := f.ap.Apply(ctx, "sess-1", ""); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if f.gateway.createCalls != 1 {
+			t.Fatalf("precondition: createTenant calls = %d, want 1", f.gateway.createCalls)
+		}
+		for i := 0; i < 3; i++ {
+			changed, err := f.ap.EnsureZeroInputStep(ctx, "sess-1", "issue_surface_urls")
+			if err != nil {
+				t.Fatalf("EnsureZeroInputStep %d: %v", i, err)
+			}
+			if changed {
+				t.Fatalf("changed = true on render %d over a failed plan", i)
+			}
+		}
+		if f.gateway.createCalls != 1 {
+			t.Errorf("createTenant calls = %d, want 1 — the failed step was retried "+
+				"unattended, once per composed turn", f.gateway.createCalls)
+		}
+	})
+}

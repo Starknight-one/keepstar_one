@@ -84,7 +84,17 @@ type ManifestApplierConfig struct {
 	// VerifyBindings, when set, fails the adopt_presets step on unresolved
 	// required bindings (§6.2 R-validator).
 	VerifyBindings func(ctx context.Context, tenantSlug string, presets []string) error
-	Log            *slog.Logger
+	// PublishSyntheticSets republishes the manifest's synthetic EntitySets
+	// (manifestStep, surfaceLink — R23) into the session's DATA zone. The
+	// manifest zone this applier writes is NOT the zone the renderer binds:
+	// compose_turn binds state.Current.Data, and the only writer of those sets
+	// used to be the apply_manifest executor. A step applied by any other
+	// entry point (EnsureZeroInputStep) therefore minted URLs into a step
+	// Result nothing could read. Injected — the set builders live in the
+	// operations package, which must not import this one
+	// (operations.NewSyntheticSetPublisher).
+	PublishSyntheticSets func(ctx context.Context, sessionID string, m *domain.OnboardingManifest) error
+	Log                  *slog.Logger
 }
 
 // ManifestApplier applies staged onboarding manifests. Construct with
@@ -333,18 +343,29 @@ var zeroInputSteps = map[string]bool{
 }
 
 // EnsureZeroInputStep makes a ZERO-INPUT manifest step real for the session:
-// stages it when the model never did, then runs the applier. It is the third
-// face of the owner's law (2026-07-28) already encoded for form submit and
-// file upload — a user-visible artifact must never depend on the model
-// having called a tool. The trigger here is RENDERING: compose_turn showing
-// the block whose data comes from that step's synthetic EntitySet is the
-// same proof of intent as a submitted form.
+// stages it when the model never did, then runs the applier and republishes
+// the synthetic EntitySets the render binds. It is the third face of the
+// owner's law (2026-07-28) already encoded for form submit and file upload —
+// a user-visible artifact must never depend on the model having called a
+// tool. The trigger here is RENDERING: compose_turn showing the block whose
+// data comes from that step's synthetic EntitySet is the same proof of
+// intent as a submitted form.
 //
-// Returns whether it did any work: false means the step was already applied
-// (or the session has no plan at all) and the caller's state is untouched;
-// true means the manifest ran and the caller should re-read state before
-// binding. Errors are infrastructure failures only — a step that FAILS or
-// waits is recorded on the manifest, exactly like every other apply.
+// NARROW BY CONSTRUCTION: unlike the form-submit and upload triggers (USER
+// actions), the trigger here is a MODEL choice, so this must never be able
+// to provision anything on its own. It runs ONLY when every other step has
+// already reached a terminal state (applied/skipped) — which is also exactly
+// the gate applyIssueSurfaceURLs itself enforces, so an earlier run could not
+// have produced URLs anyway. With that precondition the applyLocked call
+// below can only execute the zero-input step: create_tenant, adopt_presets
+// and friends are already applied, a `failed` or still-`accepted` step means
+// the manifest is NOT ready and we return without touching anything.
+//
+// Returns whether it did any work: false means the step was already applied,
+// the manifest is not ready, or the session has no plan at all — the caller's
+// state is untouched; true means the step ran and the caller should re-read
+// state before binding. Errors are infrastructure failures only — a step that
+// FAILS is recorded on the manifest, exactly like every other apply.
 //
 // Loop safety: the applied/skipped short-circuit means a step that reached
 // its terminal state is never re-run, and the whole call is serialized per
@@ -370,7 +391,17 @@ func (ap *ManifestApplier) EnsureZeroInputStep(ctx context.Context, sessionID, o
 		if m.Steps[idx].Status == domain.ManifestStepApplied || m.Steps[idx].Status == domain.ManifestStepSkipped {
 			return false, nil
 		}
-	} else {
+	}
+	if pending := pendingStepOps(m, op); len(pending) > 0 {
+		// The plan is not assembled yet. Applying here would run the REST of
+		// the manifest (provisioning a tenant off a model's render choice) and
+		// still not issue anything — issue_surface_urls refuses while any step
+		// is pending. Leave the world alone; the render stays empty and honest.
+		ap.log.Info("ensure zero-input step: manifest not ready — nothing applied",
+			"session", sessionID, "op", op, "pending", strings.Join(pending, ", "))
+		return false, nil
+	}
+	if findStepIndexByOp(m, op) < 0 {
 		staged := domain.ManifestStep{
 			ID:     fmt.Sprintf("%s-%d", op, len(m.Steps)+1),
 			Op:     op,
@@ -384,10 +415,43 @@ func (ap *ManifestApplier) EnsureZeroInputStep(ctx context.Context, sessionID, o
 			return false, err
 		}
 	}
-	if _, err := ap.applyLocked(ctx, sessionID, ""); err != nil {
+	applied, err := ap.applyLocked(ctx, sessionID, "")
+	if err != nil {
 		return false, err
 	}
+	// The step's Result is not what the renderer binds — the synthetic
+	// EntitySet in the DATA zone is. Without this the URLs exist only inside
+	// the manifest and the handover card ships with zero rows.
+	if ap.cfg.PublishSyntheticSets == nil {
+		ap.log.Warn("ensure zero-input step: synthetic-set publisher not wired — the applied step's data cannot reach the render",
+			"session", sessionID, "op", op)
+	} else if perr := ap.cfg.PublishSyntheticSets(ctx, sessionID, applied); perr != nil {
+		ap.log.Warn("ensure zero-input step: synthetic set write failed — the block renders on existing data",
+			"session", sessionID, "op", op, "err", perr)
+	}
 	return true, nil
+}
+
+// pendingStepOps lists the ops of every step that has NOT reached a terminal
+// state (applied or skipped), ignoring the named op. Empty means the plan is
+// fully assembled.
+//
+// ONE predicate, two callers on purpose: applyIssueSurfaceURLs refuses to
+// issue while anything is pending, and EnsureZeroInputStep refuses to apply
+// at all in the same condition. If those two ever disagreed, the render-side
+// trigger would provision the workspace and then hand back nothing.
+func pendingStepOps(m *domain.OnboardingManifest, exceptOp string) []string {
+	var pending []string
+	for i := range m.Steps {
+		st := &m.Steps[i]
+		if st.Op == exceptOp {
+			continue
+		}
+		if st.Status != domain.ManifestStepApplied && st.Status != domain.ManifestStepSkipped {
+			pending = append(pending, st.Op)
+		}
+	}
+	return pending
 }
 
 // RecordUploadJob stamps the accepted upload job onto the issue_ingest_door
@@ -844,17 +908,7 @@ func (ap *ManifestApplier) applyIssueSurfaceURLs(ctx context.Context, m *domain.
 	// Refuses until every OTHER step has applied (§4.3) — including the two
 	// trigger-completed steps. Waiting is a resting state, not a failure:
 	// the run does not halt (this step is always last).
-	var pending []string
-	for i := range m.Steps {
-		s := &m.Steps[i]
-		if s.Op == opIssueSurfaceURLs {
-			continue
-		}
-		if s.Status != domain.ManifestStepApplied && s.Status != domain.ManifestStepSkipped {
-			pending = append(pending, s.Op)
-		}
-	}
-	if len(pending) > 0 {
+	if pending := pendingStepOps(m, opIssueSurfaceURLs); len(pending) > 0 {
 		res := map[string]any{"waiting": "pending steps: " + strings.Join(pending, ", ")}
 		return res, domain.ManifestStepAccepted, nil
 	}
