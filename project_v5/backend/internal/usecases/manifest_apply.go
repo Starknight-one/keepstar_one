@@ -33,6 +33,10 @@ import (
 //   - register_user        → rests at accepted; completed by ExecuteStep via
 //     the step-submit endpoint (R6 — credentials NEVER enter this struct's
 //     persisted state)
+//   - seed_demo_data       → the business-class demo pack: catalog rows via
+//     the AdminGateway import (the door uploads use), records via EntityPort
+//     (V2_SPEC.md L6/R3; manifest_apply_seed.go). Ordered after the data
+//     model, before issue_surface_urls.
 //   - issue_surface_urls   → refuses (waits) until every other step applied,
 //     then mints the CRM surface token and resolves both URLs
 //
@@ -51,6 +55,7 @@ const (
 	opAdoptPresets      = "adopt_presets"
 	opIssueIngestDoor   = "issue_ingest_door"
 	opRegisterUser      = "register_user"
+	opSeedDemoData      = "seed_demo_data"
 	opIssueSurfaceURLs  = "issue_surface_urls"
 	applierActor        = "manifest_applier"
 	defaultRegisterRole = "owner"
@@ -538,6 +543,8 @@ func (ap *ManifestApplier) runStep(ctx context.Context, sessionID string, m *dom
 			role = defaultRegisterRole
 		}
 		return map[string]any{"role": role}, domain.ManifestStepAccepted, nil
+	case opSeedDemoData:
+		return ap.applySeedDemoData(ctx, m, st)
 	case opIssueSurfaceURLs:
 		return ap.applyIssueSurfaceURLs(ctx, m, st)
 	default:
@@ -842,15 +849,18 @@ func (ap *ManifestApplier) persist(ctx context.Context, sessionID string, m *dom
 	return nil
 }
 
-// orderedStepIndices: stage order with create_tenant forced first and
-// issue_surface_urls forced last (R22 + §4.3 "runs last"). Stable within
-// each group.
+// orderedStepIndices: stage order with create_tenant forced first,
+// seed_demo_data forced late (it seeds INTO the entities and value sets the
+// other steps define — V2_SPEC.md L6) and issue_surface_urls forced last
+// (R22 + §4.3 "runs last"). Stable within each group.
 func orderedStepIndices(m *domain.OnboardingManifest) []int {
-	var first, mid, last []int
+	var first, mid, late, last []int
 	for i := range m.Steps {
 		switch m.Steps[i].Op {
 		case opCreateTenant:
 			first = append(first, i)
+		case opSeedDemoData:
+			late = append(late, i)
 		case opIssueSurfaceURLs:
 			last = append(last, i)
 		default:
@@ -860,6 +870,7 @@ func orderedStepIndices(m *domain.OnboardingManifest) []int {
 	out := make([]int, 0, len(m.Steps))
 	out = append(out, first...)
 	out = append(out, mid...)
+	out = append(out, late...)
 	return append(out, last...)
 }
 
