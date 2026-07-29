@@ -16,7 +16,13 @@ package seed
 //
 // Everything a pack writes carries the demo flag (DemoFlagKey) — L6's
 // "purged when real data arrives". The purge itself is not built yet; the
-// flag is what makes it possible.
+// flag is what makes it possible. When it IS built it must delete the
+// TENANT's listings (catalog.products rows) and the flagged entity records —
+// never catalog.master_products: masters are cross-tenant (admin matches
+// incoming rows on LOWER(sku) with no tenant scope and the first seeder owns
+// the row), so deleting one would rip the product out from under every other
+// tenant that ever matched it. The same global namespace is why every demo
+// SKU carries DemoSKUPrefix.
 
 import (
 	"bytes"
@@ -42,6 +48,16 @@ const (
 	// DemoSource is written into the tenant's source-ish field so demo
 	// records are distinguishable in the CRM at a glance.
 	DemoSource = "demo"
+	// DemoSKUPrefix namespaces every seeded catalog SKU. admin's
+	// catalog.master_products.sku is a GLOBAL, tenant-agnostic unique key —
+	// ingest matches LOWER(mp.sku) = LOWER(incoming.sku) across all tenants
+	// and a matched master is reused as-is. A demo row published under a
+	// plain unit code ("VM-0803", "LP-0201" — exactly the shape real realty
+	// and parts CSVs use) would therefore capture the next tenant that
+	// uploads that SKU for real: their listing would render our photo, our
+	// description and our tier2 attributes. The prefix keeps demo masters in
+	// a namespace nobody types by accident.
+	DemoSKUPrefix = "KS-DEMO-"
 )
 
 // DemoPack is one business class's seed pack.
@@ -119,11 +135,21 @@ type DemoContact struct {
 // realty pack"). The vertical is the tenant's own free-form words, so the
 // match is on meaning-bearing substrings. Unknown business class → no pack:
 // seeding a florist with apartments is worse than seeding nothing.
+//
+// The vertical is whatever the visitor said, in whatever language the
+// conversation ran in — an English-only hint list leaves a Brazilian or
+// Russian realtor with two empty tabs, so the words they actually use are
+// listed too.
 func PackForVertical(vertical string) (DemoPack, bool) {
 	v := strings.ToLower(vertical)
 	for _, hint := range []string{
 		"real estate", "real-estate", "realty", "realtor", "property",
-		"properties", "housing", "brokerage", "apartment", "lettings",
+		"properties", "housing", "brokerage", "apartment", "letting",
+		"estate agen", // UK: estate agency / estate agent
+		// pt / es
+		"imobili", "inmobili", "imóve", "imove", "corretor",
+		// ru
+		"недвиж", "риэлт", "риелт",
 	} {
 		if strings.Contains(v, hint) {
 			return RealtyDemoPack(), true
@@ -135,11 +161,17 @@ func PackForVertical(vertical string) (DemoPack, bool) {
 // listingCSVHeaders is the import table's header row. sku / name /
 // description / price / image_url are the columns admin's mapper claims;
 // everything else passes through as typed tier2 attributes (camelCase
-// keys — complex_ref → complexRef), which is how the grouping, the facets
-// and the demo flag reach the storefront.
+// keys — building_group → buildingGroup), which is how the grouping, the
+// facets and the demo flag reach the storefront.
+//
+// The group key is deliberately NOT called anything id-shaped: when admin
+// runs its LLM column mapper, an "…_ref"/"…_id" column carrying slug-like
+// values ("vista-marina") is a candidate for the sku slot, and ApplyMapping
+// lets the later column win — all three units of one complex would collapse
+// onto a single master with processed still reporting the full row count.
 var listingCSVHeaders = []string{
 	"sku", "name", "description", "price", "image_url",
-	"complex", "complex_ref", "unit", "deal_type", "property_type",
+	"complex", "building_group", "unit", "deal_type", "property_type",
 	"bedrooms", "bathrooms", "area_m2", "floor", "district", "city",
 	"year_built", "parking", "furnished", DemoFlagKey,
 }
@@ -360,9 +392,14 @@ func (p DemoPack) ContactRecordData(def *domain.EntityDefinition, contact DemoCo
 }
 
 // mapStatus translates a pack status into the tenant's vocabulary: exact
-// value, then label, then POSITION in the pipeline (a pack "contacted" lands
-// on the tenant's second stage whatever they called it). No value set →
-// the pack's own status.
+// value, then label, then the stage's WORD CLASS, then the pipeline
+// position. No value set → the pack's own status.
+//
+// Everything after the exact/label match runs against the tenant's
+// non-losing stages only: no pack lead is lost (the closed one reads
+// "Signed for the Urca colonial three-bedroom"), so a pipeline that ends in
+// {…, won, lost} must not swallow it into "Lost" — which is exactly what
+// raw position does on the very common {new, working, won, lost} set.
 func (p DemoPack) mapStatus(vs *domain.ValueSet, want string) string {
 	if vs == nil || len(vs.Values) == 0 {
 		return want
@@ -384,16 +421,75 @@ func (p DemoPack) mapStatus(vs *domain.ValueSet, want string) string {
 			return v.Value
 		}
 	}
+
+	open := openStages(vs.Values)
+	for _, syn := range statusSynonyms[want] {
+		for _, v := range open {
+			if strings.Contains(strings.ToLower(v.Value), syn) ||
+				strings.Contains(strings.ToLower(v.Label), syn) {
+				return v.Value
+			}
+		}
+	}
+	// The pack's terminal stage belongs at the END of the tenant's pipeline,
+	// not at its own index (a 6-stage pipeline would land it mid-funnel).
+	if len(p.LeadStatuses) > 0 && p.LeadStatuses[len(p.LeadStatuses)-1].Value == want {
+		return open[len(open)-1].Value
+	}
 	for i, e := range p.LeadStatuses {
 		if e.Value != want {
 			continue
 		}
-		if i >= len(vs.Values) {
-			i = len(vs.Values) - 1
+		if i >= len(open) {
+			i = len(open) - 1
 		}
-		return vs.Values[i].Value
+		return open[i].Value
 	}
-	return vs.Values[0].Value
+	return open[0].Value
+}
+
+// statusSynonyms are the words businesses actually use for each stage of the
+// packs' pipeline — checked as substrings against the tenant's own value set
+// before falling back to position.
+var statusSynonyms = map[string][]string{
+	"new":            {"new", "novo", "fresh", "incoming", "inbox", "open"},
+	"contacted":      {"contact", "contato", "called", "reached", "working", "qualif", "follow"},
+	"showing_booked": {"showing", "viewing", "visit", "book", "schedul", "appointment", "meeting", "tour"},
+	"closed":         {"closed", "won", "sold", "signed", "deal", "complete", "success"},
+}
+
+// lossWords mark a stage that means the lead did NOT convert — in the same
+// languages PackForVertical accepts, because a tenant who described itself in
+// Portuguese names its pipeline in Portuguese too.
+var lossWords = []string{
+	"lost", "lose", "cancel", "reject", "declin", "fail", "dead",
+	"abandon", "spam", "junk", "unqualified", "not interested",
+	"perdid", "rejeitad", "rechaz", "descartad", "recusad", // pt / es
+	"потер", "отказ", "проигр", "неудач", // ru
+}
+
+// openStages drops the tenant's losing stages; if a pipeline is nothing but
+// losing stages (it never is in practice) the full set is returned so the
+// mapping still has somewhere to land.
+func openStages(values []domain.ValueSetEntry) []domain.ValueSetEntry {
+	out := make([]domain.ValueSetEntry, 0, len(values))
+	for _, v := range values {
+		text := strings.ToLower(v.Value + " " + v.Label)
+		lost := false
+		for _, w := range lossWords {
+			if strings.Contains(text, w) {
+				lost = true
+				break
+			}
+		}
+		if !lost {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return values
+	}
+	return out
 }
 
 // PickEntity chooses the definition a pack plane writes into: the first

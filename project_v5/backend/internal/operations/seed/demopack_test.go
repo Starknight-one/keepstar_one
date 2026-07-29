@@ -61,12 +61,24 @@ func TestRealtyPackShape(t *testing.T) {
 
 	// Stable + unique SKUs are the import's idempotency (R22): a re-import
 	// matches masters on SKU, so duplicates would collapse two units into one.
+	//
+	// And every SKU must be NAMESPACED: admin matches incoming rows on
+	// LOWER(sku) across the whole master table with no tenant scope, and a
+	// matched master is reused untouched. A demo row published as "VM-0803"
+	// would therefore be adopted by the next tenant who uploads that unit
+	// code for real — their listing would render our photo, our description
+	// and our demo tier2 attributes.
 	seen := map[string]bool{}
+	images, descriptions := map[string]string{}, map[string]string{}
 	for _, l := range p.Listings {
 		if l.SKU == "" || seen[l.SKU] {
 			t.Errorf("listing %q has an empty or duplicate SKU %q", l.Name, l.SKU)
 		}
 		seen[l.SKU] = true
+		if !strings.HasPrefix(l.SKU, DemoSKUPrefix) {
+			t.Errorf("listing SKU %q is not namespaced with %q — it would capture a real tenant's row in admin's global master SKU space",
+				l.SKU, DemoSKUPrefix)
+		}
 		if l.Name == "" || l.Description == "" || l.ImageURL == "" {
 			t.Errorf("listing %q is not presentable: name/description/image required", l.SKU)
 		}
@@ -76,6 +88,17 @@ func TestRealtyPackShape(t *testing.T) {
 		if l.DealType != "sale" && l.DealType != "rent" {
 			t.Errorf("listing %q has deal type %q, want sale|rent", l.SKU, l.DealType)
 		}
+		// R3 is "touch what you're getting": the whole pack lands on ONE
+		// storefront grid, so a repeated photo or a copy-pasted description
+		// reads as filler in the exact screen the pack exists for.
+		if other, dup := images[l.ImageURL]; dup {
+			t.Errorf("listing %q reuses the photo of %q", l.SKU, other)
+		}
+		images[l.ImageURL] = l.SKU
+		if other, dup := descriptions[l.Description]; dup {
+			t.Errorf("listing %q repeats the description of %q", l.SKU, other)
+		}
+		descriptions[l.Description] = l.SKU
 	}
 }
 
@@ -156,9 +179,23 @@ func TestListingsCSVIsTheImportTable(t *testing.T) {
 	for i, h := range rows[0] {
 		col[h] = i
 	}
-	for _, want := range []string{"sku", "name", "price", "image_url", "complex_ref", DemoFlagKey} {
+	for _, want := range []string{"sku", "name", "price", "image_url", "building_group", DemoFlagKey} {
 		if _, ok := col[want]; !ok {
 			t.Fatalf("CSV header misses %q — the import would drop it", want)
+		}
+	}
+	// Admin maps columns with an LLM when a key is configured, and a second
+	// id-shaped column carrying slug-like values is a candidate for the sku
+	// slot (the later column wins in ApplyMapping) — three units of one
+	// complex would then collapse onto a single master while processed still
+	// reports every row. The pack owns its headers: none of them may read as
+	// an identifier except sku itself.
+	for h := range col {
+		if h == "sku" {
+			continue
+		}
+		if strings.HasSuffix(h, "_ref") || strings.HasSuffix(h, "_id") || h == "id" || h == "code" {
+			t.Errorf("CSV header %q reads as an identifier — an LLM column mapper may map it onto sku", h)
 		}
 	}
 	for _, row := range rows[1:] {
@@ -187,9 +224,94 @@ func TestPackForVertical(t *testing.T) {
 			t.Errorf("vertical %q should get the realty pack", vertical)
 		}
 	}
+	// The vertical is the visitor's own words in the conversation's own
+	// language. An English-only hint list leaves a Brazilian or Russian
+	// realtor with two empty tabs and nothing for L4 to demonstrate on —
+	// and the only trace would be a warn log.
+	for _, vertical := range []string{
+		"agência imobiliária", "corretor de imóveis", "inmobiliaria en Madrid",
+		"агентство недвижимости", "риэлторское агентство",
+	} {
+		if _, ok := PackForVertical(vertical); !ok {
+			t.Errorf("vertical %q should get the realty pack", vertical)
+		}
+	}
 	// L6 ships packs PER business class: no pack is better than the wrong one.
-	if _, ok := PackForVertical("flower shop"); ok {
-		t.Error("a flower shop must not be seeded with the realty pack")
+	for _, vertical := range []string{"flower shop", "цветочный магазин", "padaria"} {
+		if _, ok := PackForVertical(vertical); ok {
+			t.Errorf("%q must not be seeded with the realty pack", vertical)
+		}
+	}
+}
+
+// The pack's closing stage means the deal was WON ("Signed for the Urca
+// colonial three-bedroom. Keep in touch for referrals."). Mapping it by raw
+// position drops that lead into whatever sits at the same index of the
+// tenant's pipeline — "Lost" on the very common {new, working, won, lost}
+// set, in the one CRM screen the owner demos.
+func TestClosedLeadNeverMapsOntoALosingStage(t *testing.T) {
+	p := RealtyDemoPack()
+	closed := p.Leads[len(p.Leads)-1]
+	if closed.Status != "closed" {
+		t.Fatalf("fixture drift: last lead carries status %q, expected the pack's terminal stage", closed.Status)
+	}
+	def := &domain.EntityDefinition{
+		Slug:        "lead",
+		Fields:      []domain.FieldDef{{Key: "stage", Label: "Stage", Type: domain.FieldEnum, ValueSetRef: "vs"}},
+		StatusField: "stage",
+	}
+
+	cases := []struct {
+		name   string
+		values []domain.ValueSetEntry
+		want   string
+	}{
+		{
+			name: "four stages ending in won/lost",
+			values: []domain.ValueSetEntry{
+				{Value: "new", Label: "New"}, {Value: "working", Label: "Working"},
+				{Value: "won", Label: "Won"}, {Value: "lost", Label: "Lost"},
+			},
+			want: "won",
+		},
+		{
+			name: "six stages: the terminal stage is not at the pack's index",
+			values: []domain.ValueSetEntry{
+				{Value: "new", Label: "New"}, {Value: "contacted", Label: "Contacted"},
+				{Value: "viewing", Label: "Viewing"}, {Value: "offer", Label: "Offer"},
+				{Value: "won", Label: "Won"}, {Value: "lost", Label: "Lost"},
+			},
+			want: "won",
+		},
+		{
+			name: "portuguese pipeline, no shared words",
+			values: []domain.ValueSetEntry{
+				{Value: "novo", Label: "Novo"}, {Value: "em_contato", Label: "Em contato"},
+				{Value: "visita", Label: "Visita"}, {Value: "fechado", Label: "Fechado"},
+				{Value: "perdido", Label: "Perdido"},
+			},
+			want: "fechado",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vs := &domain.ValueSet{Slug: "vs", Values: tc.values}
+			got, _ := p.LeadRecordData(def, vs, closed, time.Now())["stage"].(string)
+			if got != tc.want {
+				t.Errorf("closed lead mapped onto %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// The middle of the funnel still maps by class, not by luck.
+	vs := &domain.ValueSet{Slug: "vs", Values: []domain.ValueSetEntry{
+		{Value: "new", Label: "New"}, {Value: "contacted", Label: "Contacted"},
+		{Value: "viewing", Label: "Viewing"}, {Value: "offer", Label: "Offer"},
+		{Value: "won", Label: "Won"}, {Value: "lost", Label: "Lost"},
+	}}
+	booked := DemoLead{Key: "x", Status: "showing_booked"}
+	if got, _ := p.LeadRecordData(def, vs, booked, time.Now())["stage"].(string); got != "viewing" {
+		t.Errorf("a booked showing mapped onto %q, want the tenant's viewing stage", got)
 	}
 }
 
