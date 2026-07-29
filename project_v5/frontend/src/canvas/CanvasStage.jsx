@@ -62,7 +62,7 @@ export default function CanvasStage({ blocks, header, thinkingLabel, surfaces = 
         </div>
       </div>
 
-      <div className="kw-canvas-pane" ref={paneRef} hidden={!onBuilder}>
+      <div className="kw-canvas-pane" role="tabpanel" aria-label="Builder" ref={paneRef} hidden={!onBuilder}>
         {empty ? (
           <div className="kw-empty-state">Your workspace will be assembled here.</div>
         ) : (
@@ -87,6 +87,8 @@ export default function CanvasStage({ blocks, header, thinkingLabel, surfaces = 
           <div
             className="kw-canvas-pane kw-canvas-pane--surface"
             key={s.surface}
+            role="tabpanel"
+            aria-label={s.label}
             hidden={tab !== s.surface}
           >
             <div className="kw-canvas-surfacebar">

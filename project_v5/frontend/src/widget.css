@@ -1137,9 +1137,12 @@
 .kw-canvas-pane[hidden] {
   display: none;
 }
+/* The embedded surface ends ABOVE the chat dock — the builder chat stays
+   reachable while the user looks at their live page, without the dock
+   sitting on top of it. */
 .kw-canvas-pane--surface {
   overflow: hidden;
-  padding: 0 18px 18px;
+  padding: 0 18px 104px;
   gap: 8px;
 }
 .kw-canvas-surfacebar {
