@@ -169,7 +169,7 @@ export default function OnboardingShell({ apiBaseUrl, shadowRoot }) {
         }
         placeholder="Describe your business…"
         credentials="include"
-        layout="split"
+        layout="canvas"
         initialManifest={session.manifest}
         quickActions={[
           // Contextual (owner 2026-07-28): chips appear only when relevant —
