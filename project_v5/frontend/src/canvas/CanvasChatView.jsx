@@ -1,5 +1,7 @@
+import { useMemo } from 'react'
 import CanvasStage from './CanvasStage'
 import ChatDock from './ChatDock'
+import { collectSurfaceLinks } from './surfaceLinks'
 
 // CanvasChatView — the builder layout (V2_SPEC §2 step 3): the canvas IS
 // the stage, the chat floats over it and docks at the bottom (mock-demo
@@ -60,13 +62,22 @@ export function thinkingLabel(messages, isLoading) {
   return status || DEFAULT_THINKING_LABEL
 }
 
-export default function CanvasChatView({ messages, header, inputForm, isLoading }) {
+export default function CanvasChatView({ messages, header, inputForm, isLoading, manifest }) {
   const { canvasBlocks, chatItems } = splitTurnStream(messages)
   const label = thinkingLabel(messages, isLoading)
+  // Walking every rendered document is not free — only redo it when the
+  // stream or the manifest actually moved (a keystroke in the composer
+  // re-renders this whole view).
+  const surfaces = useMemo(() => collectSurfaceLinks({ manifest, messages }), [manifest, messages])
 
   return (
     <div className="kw-canvas">
-      <CanvasStage blocks={canvasBlocks} header={header} thinkingLabel={label} />
+      <CanvasStage
+        blocks={canvasBlocks}
+        header={header}
+        thinkingLabel={label}
+        surfaces={surfaces}
+      />
       <ChatDock items={chatItems.filter((it) => it.role !== 'status')}>{inputForm}</ChatDock>
     </div>
   )

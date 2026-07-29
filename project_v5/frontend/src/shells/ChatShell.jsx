@@ -180,6 +180,7 @@ export default function ChatShell({
             header={header}
             inputForm={inputForm}
             isLoading={isLoading}
+            manifest={manifest}
           />
         </RenderContext.Provider>
       </div>
