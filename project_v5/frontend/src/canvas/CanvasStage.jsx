@@ -37,11 +37,14 @@ export default function CanvasStage({ blocks, header, thinkingLabel, surfaces = 
     if (next !== BUILDER_TAB) setOpened((o) => (o.includes(next) ? o : [...o, next]))
   }
 
-  // Follow the newest block — assembly grows downward.
+  // Follow the newest block — assembly grows downward. `tab` is a dep on
+  // purpose: while a surface tab is selected the Builder pane is
+  // display:none (scrollHeight 0, and toggling it back resets scrollTop),
+  // so the position has to be restored on the way back.
   useEffect(() => {
     const el = paneRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [blocks.length, thinkingLabel])
+  }, [blocks.length, thinkingLabel, tab])
 
   const onBuilder = tab === BUILDER_TAB
   const empty = blocks.length === 0 && !thinkingLabel
@@ -63,8 +66,11 @@ export default function CanvasStage({ blocks, header, thinkingLabel, surfaces = 
       </div>
 
       <div className="kw-canvas-pane" role="tabpanel" aria-label="Builder" ref={paneRef} hidden={!onBuilder}>
+        {/* Empty stage: a prompt to act, never a promise about the future
+            (L1 — the spec bans "your storefront will appear shortly" copy,
+            §2 step 4). */}
         {empty ? (
-          <div className="kw-empty-state">Your workspace will be assembled here.</div>
+          <div className="kw-empty-state">Start in the chat below.</div>
         ) : (
           <div className="kw-canvas-blocks">
             {blocks.map(({ block, key }) => (

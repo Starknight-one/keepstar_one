@@ -11,11 +11,14 @@ import { useEffect, useRef } from 'react'
 export default function ChatDock({ items, children }) {
   const historyRef = useRef(null)
 
-  // Follow the newest line — the history grows upward from the bar.
+  // Follow the newest line — the history grows upward from the bar. The dep
+  // is the LENGTH, not the array: `items` is rebuilt on every render, so
+  // depending on it would yank a user who scrolled up back to the bottom on
+  // every keystroke in the composer.
   useEffect(() => {
     const el = historyRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [items])
+  }, [items.length])
 
   return (
     <div className="kw-dock">

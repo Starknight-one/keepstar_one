@@ -931,6 +931,13 @@
   max-width: 100%;
 }
 
+/* The composer wrapper (chips + input) — emitted by BOTH layouts. The
+   canvas dock zeroes this padding for itself further down; the
+   single-column shells (onboarding fallback, CRM R13) keep it. */
+.kw-chatpage-inputwrap {
+  padding: 0 16px 16px;
+}
+
 .kw-chatpage-input {
   display: flex;
   gap: var(--kw-gap-sm);

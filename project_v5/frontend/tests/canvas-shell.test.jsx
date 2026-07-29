@@ -194,7 +194,7 @@ describe('ChatShell canvas layout', () => {
 
   it('shows the empty stage message before anything has been assembled', () => {
     renderCanvasShell({ initialMessages: [{ role: 'bot', text: 'Tell me about your business.' }] })
-    expect(screen.getByText('Your workspace will be assembled here.')).toBeTruthy()
+    expect(screen.getByText('Start in the chat below.')).toBeTruthy()
     // The greeting still lives in the dock.
     expect(document.querySelector('.kw-dock-history').textContent).toContain(
       'Tell me about your business.',
@@ -202,12 +202,15 @@ describe('ChatShell canvas layout', () => {
   })
 
   // We test on prod: the corner stamp is how anyone can tell WHICH build
-  // they are looking at, so it must come from the one constant that
-  // VERSIONS.md documents — never a second hardcoded string.
+  // they are looking at. So it must (a) READ like a version — an empty or
+  // malformed VERSION would render a blank corner and still satisfy a bare
+  // equality check — and (b) come from the one shared constant rather than
+  // a second string hardcoded in the stage.
   it('stamps the live version in the canvas corner from the single source', () => {
+    expect(VERSION).toMatch(/^v\d+\.\d+/)
     renderCanvasShell()
     const stamp = document.querySelector('.kw-canvas .kw-canvas-version')
     expect(stamp).not.toBeNull()
-    expect(stamp.textContent).toBe(VERSION)
+    expect(stamp.textContent.trim()).toBe(VERSION)
   })
 })
