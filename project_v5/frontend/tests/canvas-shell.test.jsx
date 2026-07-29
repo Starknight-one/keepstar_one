@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, fireEvent, screen } from '@testing-library/react'
 import ChatShell from '../src/shells/ChatShell'
-import { splitTurnStream } from '../src/canvas/CanvasChatView'
+import { splitTurnStream, thinkingLabel } from '../src/canvas/CanvasChatView'
 
 // The V2 builder layout (V2_SPEC §2 step 3): the canvas is the full
 // stage and the chat floats over it as a bottom dock. WHY these
@@ -93,6 +93,55 @@ describe('splitTurnStream', () => {
   })
 })
 
+// The indicator is a PLACEHOLDER, never an answer (L1): it must vanish
+// the moment the turn can show something real on the canvas.
+describe('thinkingLabel', () => {
+  const IN_FLIGHT = [
+    { role: 'user', text: 'I run a realtor agency' },
+    { role: 'status', text: 'Designing…' },
+  ]
+
+  it('is off when nothing is in flight', () => {
+    expect(thinkingLabel(IN_FLIGHT, false)).toBeNull()
+  })
+
+  it('reports the live pipeline phase while the turn runs', () => {
+    expect(thinkingLabel(IN_FLIGHT, true)).toBe('Designing…')
+    const composing = [
+      { role: 'user', text: 'I run a realtor agency' },
+      { role: 'status', text: 'Composing a response…' },
+    ]
+    expect(thinkingLabel(composing, true)).toBe('Composing a response…')
+  })
+
+  it('hands off as soon as the turn streams its first document block', () => {
+    const withDoc = [
+      { role: 'user', text: 'I run a realtor agency' },
+      { role: 'bot', turnId: 1, blocks: [TEXT_BLOCK, DOC_BLOCK] },
+      { role: 'status', text: 'Composing a response…' },
+    ]
+    expect(thinkingLabel(withDoc, true)).toBeNull()
+  })
+
+  it('stays up while the turn has only produced chat text', () => {
+    const textOnly = [
+      { role: 'user', text: 'I run a realtor agency' },
+      { role: 'bot', turnId: 1, blocks: [TEXT_BLOCK] },
+      { role: 'status', text: 'Composing a response…' },
+    ]
+    expect(thinkingLabel(textOnly, true)).toBe('Composing a response…')
+  })
+
+  it('ignores documents from earlier turns', () => {
+    const secondTurn = [
+      { role: 'bot', turnId: 1, blocks: [DOC_BLOCK] },
+      { role: 'user', text: 'now add a CRM' },
+      { role: 'status', text: 'Designing…' },
+    ]
+    expect(thinkingLabel(secondTurn, true)).toBe('Designing…')
+  })
+})
+
 describe('ChatShell canvas layout', () => {
   it('renders documents on the stage and chat lines in the floating dock', async () => {
     const blocks = [TEXT_BLOCK, DOC_BLOCK]
@@ -121,6 +170,25 @@ describe('ChatShell canvas layout', () => {
     const canvas = document.querySelector('.kw-canvas')
     expect(canvas.querySelector('.kw-canvas-stage')).not.toBeNull()
     expect(canvas.querySelector('.kw-dock')).not.toBeNull()
+  })
+
+  it('holds the thinking indicator on the canvas while a turn is in flight', async () => {
+    let release
+    fetch.mockReturnValue(new Promise((resolve) => (release = resolve)))
+
+    renderCanvasShell()
+    fireEvent.change(screen.getByPlaceholderText('Describe your business…'), {
+      target: { value: 'I run a realtor agency' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    // The in-flight state lives where the content will land, not as a
+    // second chat bubble.
+    await screen.findByText('Designing…')
+    expect(document.querySelector('.kw-canvas-pane .kw-think')).not.toBeNull()
+    expect(document.querySelector('.kw-dock-history').textContent).not.toContain('Designing…')
+
+    release(sseResponse(turnWire([], { blocks: [], latencyMs: 1 })))
   })
 
   it('shows the empty stage message before anything has been assembled', () => {

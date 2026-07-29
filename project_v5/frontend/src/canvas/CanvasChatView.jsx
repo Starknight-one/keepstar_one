@@ -9,8 +9,11 @@ import ChatDock from './ChatDock'
 // One message stream, two destinations — unchanged from the split
 // layout so every existing behavior (registration form, uploader card,
 // operation invokes, resume) keeps working: document blocks materialize
-// on the canvas, text blocks and user/status/error lines live in the
-// dock.
+// on the canvas, text blocks and user/error lines live in the dock.
+// Status lines are NOT dock bubbles here — they are the canvas thinking
+// indicator, so the in-flight state sits where the content will land.
+
+export const DEFAULT_THINKING_LABEL = 'Designing…'
 
 // splitTurnStream — pure message-stream → {canvas documents, dock lines}
 // projection. Kept pure and exported so the routing is unit-testable
@@ -34,13 +37,37 @@ export function splitTurnStream(messages) {
   return { canvasBlocks, chatItems }
 }
 
-export default function CanvasChatView({ messages, header, inputForm }) {
+// thinkingLabel — what the canvas indicator says right now, or null when
+// it must be off. WHY the block check: the indicator is a placeholder for
+// content that has not arrived; the moment the turn streams its first
+// document the canvas shows the real thing and the indicator hands off
+// (L1 — narration never stands in for something renderable). The label
+// itself is the live stage phase when the pipeline reported one, so the
+// text is honest rather than decorative.
+export function thinkingLabel(messages, isLoading) {
+  if (!isLoading) return null
+  const list = Array.isArray(messages) ? messages : []
+  let status = null
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (!m) continue
+    if (m.role === 'status' && status === null && m.text) status = m.text
+    if (m.role === 'user') break
+    if (m.role === 'bot' && Array.isArray(m.blocks) && m.blocks.some((b) => b.kind !== 'text')) {
+      return null
+    }
+  }
+  return status || DEFAULT_THINKING_LABEL
+}
+
+export default function CanvasChatView({ messages, header, inputForm, isLoading }) {
   const { canvasBlocks, chatItems } = splitTurnStream(messages)
+  const label = thinkingLabel(messages, isLoading)
 
   return (
     <div className="kw-canvas">
-      <CanvasStage blocks={canvasBlocks} header={header} />
-      <ChatDock items={chatItems}>{inputForm}</ChatDock>
+      <CanvasStage blocks={canvasBlocks} header={header} thinkingLabel={label} />
+      <ChatDock items={chatItems.filter((it) => it.role !== 'status')}>{inputForm}</ChatDock>
     </div>
   )
 }

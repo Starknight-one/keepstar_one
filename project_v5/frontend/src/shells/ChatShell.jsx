@@ -72,7 +72,9 @@ export default function ChatShell({
         return
       }
       const turnId = ++turnSeq.current
-      setMessages((m) => [...m, { role: 'user', text: query }, { role: 'status', text: 'Thinking…' }])
+      // 'Designing…' — the runtime designs a view for the question; the
+      // canvas layout renders this line as the thinking indicator.
+      setMessages((m) => [...m, { role: 'user', text: query }, { role: 'status', text: 'Designing…' }])
       setIsLoading(true)
       try {
         const resp = await pipelineSmartRequest({
@@ -173,7 +175,12 @@ export default function ChatShell({
     return (
       <div className={'kw-chatpage kw-chatpage--canvas' + (variant ? ` kw-chatpage--${variant}` : '')}>
         <RenderContext.Provider value={renderCtx}>
-          <CanvasChatView messages={messages} header={header} inputForm={inputForm} />
+          <CanvasChatView
+            messages={messages}
+            header={header}
+            inputForm={inputForm}
+            isLoading={isLoading}
+          />
         </RenderContext.Provider>
       </div>
     )
