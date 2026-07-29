@@ -3,7 +3,10 @@
 > Append-only. One entry per shipped version. The builder footer shows the
 > live version string; this file is its history.
 
-## v2.0 — wave 1 (2026-07-29)
+## v2.0 — wave 1 (2026-07-29) — **REVERTED same night (owner call)**
+
+Code rolled back to `1a8e0c6` (the 2026-07-28 live-proven state). `V2_SPEC.md`
+kept as canon. Wave-1 branches (`v2/*`) retained locally, unmerged.
 
 - Spec: `V2_SPEC.md` (LOCKED 2026-07-29). Wave 1 shipped B1 + B2/B3 + B4:
   critical-path fixes (auto-issue surface URLs on render, surface_links

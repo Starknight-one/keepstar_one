@@ -21,7 +21,7 @@ import (
 //     (meta_search_library.go; manifest libraryContext + synthetic opCard
 //     EntitySet) and about_keepstar (meta_about.go; the canonical about-doc
 //     content returned in the result — owner ruling 2026-07-28).
-//   - 10 staged ops (meta_staged.go) — Execute appends a
+//   - 9 staged ops (meta_staged.go) — Execute appends a
 //     ManifestStep{status: proposed} to the onboarding zone and returns
 //     "staged: <op> <summary>". NOTHING mutates the world at stage time;
 //     the deterministic ManifestApplier runs the steps at APPLY time,
@@ -41,7 +41,7 @@ type ManifestApplier interface {
 	Apply(ctx context.Context, sessionID, upTo string) (*domain.OnboardingManifest, error)
 }
 
-// MetaExecutorDeps wires the 13 meta executors. Embedder may be nil
+// MetaExecutorDeps wires the 12 meta executors. Embedder may be nil
 // (search_library degrades to FTS, mirroring catalog_search); Applier may be
 // nil ONLY in partial wirings — apply_manifest then fails loud with an
 // error outcome, never silently.
@@ -51,13 +51,7 @@ type MetaExecutorDeps struct {
 	Store      ports.OperationStorePort
 	Embedder   ports.EmbeddingPort
 	Applier    ManifestApplier
-	// PresetLibrary lists the adoptable preset names — the same system
-	// library adopt_presets copies from (presets.SystemPresetNames). Injected
-	// rather than read off the embedded seeds so this package stays free of
-	// the engine, and so a wiring without it degrades to the apply-time
-	// skip-unknown belt instead of rejecting every staging.
-	PresetLibrary func() []string
-	Log           *slog.Logger
+	Log        *slog.Logger
 }
 
 func (d MetaExecutorDeps) logger() *slog.Logger {
@@ -67,7 +61,7 @@ func (d MetaExecutorDeps) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// RegisterMetaExecutors plugs the 13 onboarding meta executors into the
+// RegisterMetaExecutors plugs the 12 onboarding meta executors into the
 // registry under their §3.1 template wire names (boot wiring, main.go —
 // same pattern as RegisterEntityExecutors). Their seed rows ride the same
 // SeedTemplates pass as everything else.

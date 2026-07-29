@@ -3,8 +3,6 @@ package operations
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"strconv"
 	"strings"
 
 	"keepstar_v5/internal/domain"
@@ -113,39 +111,6 @@ func (e *ApplyManifestExecutor) Execute(ctx context.Context, octx domain.Operati
 	}
 	return result, nil
 }
-
-// NewSyntheticSetPublisher builds the seam the ManifestApplier uses to write
-// the manifest's synthetic EntitySets into the session DATA zone from apply
-// paths that do NOT run through this executor — today the render-side
-// auto-apply (usecases.ManifestApplier.EnsureZeroInputStep, owner's law #1).
-//
-// It exists because the two halves live in different packages on purpose:
-// the applier owns the manifest zone and knows nothing about EntitySets, the
-// set builders (manifestStepSet / surfaceLinkSet) live here next to the
-// digest that shaped them, and operations must not import usecases. Without
-// it, a step applied outside apply_manifest mints its URLs into a step
-// Result the renderer cannot bind — the handover card ships empty.
-//
-// Same best-effort contract as Execute's inline write: the apply already
-// committed, so a zone-write failure costs the next render, not the tenant.
-func NewSyntheticSetPublisher(state ports.StatePort, log *slog.Logger) func(context.Context, string, *domain.OnboardingManifest) error {
-	deps := MetaExecutorDeps{State: state, Log: log}
-	return func(ctx context.Context, sessionID string, m *domain.OnboardingManifest) error {
-		if m == nil || len(m.Steps) == 0 {
-			return nil
-		}
-		sets := []domain.EntitySet{manifestStepSet(m)}
-		if links := surfaceLinkSet(m); links != nil {
-			sets = append(sets, *links)
-		}
-		octx := domain.OperationContext{SessionID: sessionID, ActorID: applierActorID}
-		return writeSyntheticSets(ctx, deps, octx, "apply_manifest", sets...)
-	}
-}
-
-// applierActorID labels data-zone deltas written by the deterministic
-// applier rather than by an LLM tool call (mirrors usecases' applierActor).
-const applierActorID = "manifest_applier"
 
 // manifestDigest is the flattened per-run outcome.
 type manifestDigest struct {
@@ -260,49 +225,6 @@ func manifestStepDetail(st *domain.ManifestStep) string {
 	}
 	if u, _ := st.Result["storefrontUrl"].(string); u != "" {
 		return u
-	}
-	if st.Op == "seed_demo_data" {
-		return seedStepDetail(st)
-	}
-	return ""
-}
-
-// seedStepDetail keeps the seed step honest in the summary card: a step that
-// seeded NOTHING (no pack for this business class, or real data already in
-// the workspace) otherwise renders as a bare "Done" with no detail, and the
-// user is told their workspace is ready while both tabs are empty.
-func seedStepDetail(st *domain.ManifestStep) string {
-	if notes, ok := st.Result["notes"].([]string); ok && len(notes) > 0 {
-		return strings.Join(notes, "; ")
-	}
-	// Step results round-trip through JSONB — []string comes back as []any.
-	if raw, ok := st.Result["notes"].([]any); ok && len(raw) > 0 {
-		parts := make([]string, 0, len(raw))
-		for _, n := range raw {
-			if s, ok := n.(string); ok && s != "" {
-				parts = append(parts, s)
-			}
-		}
-		if len(parts) > 0 {
-			return strings.Join(parts, "; ")
-		}
-	}
-	listings, records := numberDetail(st.Result["listings"]), numberDetail(st.Result["records"])
-	if listings == "" && records == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s listings, %s demo records", listings, records)
-}
-
-// numberDetail renders a step-result count ("" when the key was absent).
-func numberDetail(v any) string {
-	switch n := v.(type) {
-	case int:
-		return strconv.Itoa(n)
-	case int64:
-		return strconv.FormatInt(n, 10)
-	case float64:
-		return strconv.Itoa(int(n))
 	}
 	return ""
 }

@@ -74,22 +74,6 @@ async function send(text) {
 }
 
 describe('ChatShell blocks turn', () => {
-  // The single-column shells (CRM, R13) answer questions about data — the
-  // runtime is not "designing" a lead lookup. That copy belongs to the
-  // canvas layout, where the status line IS the stage's thinking indicator.
-  it('says Thinking… in the single-column layout, not Designing…', async () => {
-    let release
-    fetch.mockReturnValue(new Promise((resolve) => (release = resolve)))
-
-    renderShell()
-    await send('show me my new leads')
-
-    await screen.findByText('Thinking…')
-    expect(screen.queryByText('Designing…')).toBeNull()
-
-    release(sseResponse(turnWire([], { blocks: [], latencyMs: 1 })))
-  })
-
   it('renders interleaved text + inline document blocks in arrival order', async () => {
     const blocks = [TEXT_BLOCK, DOC_BLOCK, TAIL_BLOCK]
     fetch.mockResolvedValue(sseResponse(turnWire(blocks, { blocks, latencyMs: 10 })))

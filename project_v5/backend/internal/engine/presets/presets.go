@@ -7,10 +7,7 @@
 // TestProductCardSeedRoundTrip.
 package presets
 
-import (
-	_ "embed"
-	"sort"
-)
+import _ "embed"
 
 // ProductCardJSON is the v9-style scene-graph preset for a product card.
 // The 2026-06-15 redesign rebuilt it on the renderer's capability layer: a
@@ -141,9 +138,8 @@ var SuccessPlaqueJSON []byte
 
 // surface_links replicates over the SYNTHETIC `surfaceLink` EntitySet
 // (meta_apply_manifest.go, written once issue_surface_urls applies):
-// {label, url, surface}. The URL atom is wrapper "link": BindData writes
-// the address into `content`, and the deterministic link pass in
-// compose_turn turns it into the external_link action the widget opens.
+// {label, url, surface}. URLs render as visible text — BindData never
+// touches action params, so a clickable external_link cannot be seeded.
 //
 //go:embed seed/surface_links.json
 var SurfaceLinksJSON []byte
@@ -216,42 +212,6 @@ var SystemPresetDefaultReplicate = map[string]bool{
 	"success_plaque":            false,
 	"surface_links":             true,
 	"manifest_summary":          true,
-}
-
-// SystemPresetNames lists the EMBEDDED system preset seeds, sorted. Handed
-// to the onboarding meta-ops so an invented preset name (live smoke:
-// "lead_cards") is stripped from adopt_presets at STAGE time and named back
-// to the model, instead of being silently skipped at apply time.
-//
-// Not a complete inventory of adoptable names, deliberately: ListSystem also
-// advertises the component public names (SystemComponentPublicNames), and
-// admin is the authority the apply actually asks (Gateway.AdoptPresets). A
-// name outside these seeds is therefore dropped at stage time even if admin
-// would have honoured it — acceptable while the seeds ARE the library, and
-// the reason the drop is a warn + summary note rather than a silent edit.
-func SystemPresetNames() []string {
-	out := make([]string, 0, len(SystemPresetSeeds))
-	for name := range SystemPresetSeeds {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// SystemPresetReplicateSource names the data source a preset's replicate
-// frame is AUTHORED against — for the onboarding presets, the synthetic
-// EntitySet slug the runtime writes for them (R23). The renderer falls back
-// to it whenever the model's `replicate` argument does not name a live
-// source: omitted, mistyped, or given as a bare count, all of which
-// otherwise collapse the row template and ship a headline over nothing
-// (live tail #3, the surface-links handover). Same law as the rest of this
-// path — the artifact must not depend on the model spelling an argument
-// right. Catalog presets have no entry: their source is the query result,
-// and their count semantics are unchanged.
-var SystemPresetReplicateSource = map[string]string{
-	"operation_card":   "opCard",
-	"surface_links":    "surfaceLink",
-	"manifest_summary": "manifestStep",
 }
 
 // SystemPresetCategory maps each system preset name to its family in

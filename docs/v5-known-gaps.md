@@ -175,13 +175,6 @@ Follow-ups opened by this fix (deferred):
 - **B2 — agent2 has no result-set digest** — only a 1-line count via `<microcontext>`; give it
   categories/price-range of the current results (crib agent1's digest shape).
 
-## V2 builder canvas — open against the laws (2026-07-29, branch `v2/b2-canvas-shell`)
-
-| Law | Gap | Failure the owner sees | Closes in |
-|---|---|---|---|
-| **L3 — targeted region swap, not a full re-render** | `CanvasStage` only ever APPENDS blocks. Every edit turn emits fresh `blockId`s (`tools/tool_compose_turn.go` `newBlockID()`), so a re-rendered storefront lands as a NEW card below the previous one: no region swap, no "what changed" highlight, and the stale copy stays on the stage forever. Inherited from the v1 split layout, but far more conspicuous now that the canvas IS the full stage. | V2_SPEC §9 step 4 (three edits via chat) leaves four stacked copies of the storefront, and the follow-the-newest scroll jumps to the bottom of the pile. | V2 wave 2 — stable per-region ids on the wire + a stage that swaps a region in place (the `matter.tsx` port that B2 deliberately did not do). |
-| **L1 — render, don't narrate** | The `surface_links` preset is the only source that can grow a tab in the SAME turn the URLs are issued (the per-turn `manifest` field is counts-only). Handoff tail #3 reports it "renders without the actual URLs (binding gap)" from the 2026-07-28 live run. The engine-level test `TestSurfaceLinksBindsSyntheticSet` asserts the binding through the real pipeline and is green, so the live gap is either elsewhere (set not in state / model picked another preset) or already closed — unproven either way. | If the gap is real, the tabs appear only after a page reload (the resume manifest carries the URLs), never in the moment. | One live `/onboard` run to first surface URLs — the only thing that settles it. |
-
 ## Locked-in design principles
 
 | Principle | What it means | Where it manifests |

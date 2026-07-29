@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"keepstar_v5/internal/domain"
-	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/ports"
 )
 
@@ -215,7 +214,7 @@ func TestEnableOperationsKeysOnInstanceSet(t *testing.T) {
 	}
 }
 
-// RegisterMetaExecutors exposes all 13 meta-ops to the onboarding form's
+// RegisterMetaExecutors exposes all 12 meta-ops to the onboarding form's
 // data agent — and to nothing else (mode gate lives on the seed rows).
 func TestRegisterMetaExecutorsVisibility(t *testing.T) {
 	reg := NewRegistry(RegistryConfig{Tenants: &fakeTenants{}, Log: testLogger()})
@@ -228,7 +227,6 @@ func TestRegisterMetaExecutorsVisibility(t *testing.T) {
 		"adopt_presets", "apply_manifest", "create_tenant", "define_automation",
 		"define_entity", "define_value_set", "enable_operations",
 		"issue_ingest_door", "issue_surface_urls", "register_user", "search_library",
-		"seed_demo_data",
 	}
 	if len(defs) != len(want) {
 		t.Fatalf("onboarding defs = %d, want %d", len(defs), len(want))
@@ -242,197 +240,5 @@ func TestRegisterMetaExecutorsVisibility(t *testing.T) {
 	if got := reg.DefinitionsFor(context.Background(), "acme",
 		domain.ModeStorefront, domain.AgentData, domain.RoleVisitor); len(got) != 0 {
 		t.Errorf("meta ops leaked into the storefront form: %+v", got)
-	}
-}
-
-// Stage-time repair of adopt_presets (handoff tail #4). The model invents
-// preset names (live smoke: "lead_cards"). Apply-time only SKIPS them
-// (f84e0a0), so the workspace goes live missing surfaces the conversation
-// promised and nobody is left in the loop — hence catching it at STAGE time
-// (V2_SPEC L11).
-//
-// But catching it must not mean dropping the whole step. Agent1 has no
-// in-turn re-prompt (pipeline_execute.go calls the model once, runs the
-// emitted batch, returns), and the auto-apply triggers — registration submit,
-// upload completion — fire before the model gets another turn. So an
-// all-or-nothing rejection does NOT buy a corrected re-stage: it leaves the
-// manifest with no adopt_presets step at all and the tenant applies with zero
-// presets, which is strictly worse than the apply-time skip it replaced.
-//
-// The contract these cases pin: keep every real name, drop the invented ones
-// from the PERSISTED params (the apply must never carry a hallucination
-// forward), and put the offenders in the OK summary so the miss is visible
-// rather than silent. Reject only when nothing real is left.
-func TestStagedAdoptPresetsRepairsNames(t *testing.T) {
-	library := []string{"booking_form", "lead_table", "surface_links"}
-
-	cases := []struct {
-		name        string
-		library     func() []string
-		presets     []any
-		wantOutcome domain.OpOutcome
-		wantStaged  bool
-		// wantPresets is the presets[] the STEP must persist (nil = don't check).
-		wantPresets []string
-		// wantInSummary are substrings the LLM needs to self-correct.
-		wantInSummary []string
-	}{
-		{
-			name:        "every name in the library stages untouched",
-			library:     func() []string { return library },
-			presets:     []any{"lead_table", "booking_form"},
-			wantOutcome: domain.OutcomeOK,
-			wantStaged:  true,
-			wantPresets: []string{"lead_table", "booking_form"},
-		},
-		{
-			name:        "one invented name is dropped, the real siblings still stage",
-			library:     func() []string { return library },
-			presets:     []any{"lead_table", "lead_cards"},
-			wantOutcome: domain.OutcomeOK,
-			wantStaged:  true,
-			wantPresets: []string{"lead_table"},
-			// The offender AND the candidates: the model reads this on its
-			// next turn and can re-stage what it actually meant.
-			wantInSummary: []string{"lead_cards", "booking_form", "lead_table", "surface_links"},
-		},
-		{
-			// Nothing real left — the apply cannot honour an empty presets[],
-			// so this one IS a rejection.
-			name:          "every name invented rejects the staging",
-			library:       func() []string { return library },
-			presets:       []any{"deal_grid", "pipeline_board"},
-			wantOutcome:   domain.OutcomeInvalid,
-			wantStaged:    false,
-			wantInSummary: []string{"deal_grid", "pipeline_board", "lead_table"},
-		},
-		{
-			// A library that cannot be read is an infrastructure problem, not
-			// proof that every requested name is wrong — dropping them all
-			// there would dead-end the flow.
-			name:        "empty library falls through to the apply-time belt",
-			library:     func() []string { return nil },
-			presets:     []any{"lead_cards"},
-			wantOutcome: domain.OutcomeOK,
-			wantStaged:  true,
-			wantPresets: []string{"lead_cards"},
-		},
-		{
-			name:        "unwired library falls through to the apply-time belt",
-			library:     nil,
-			presets:     []any{"lead_cards"},
-			wantOutcome: domain.OutcomeOK,
-			wantStaged:  true,
-			wantPresets: []string{"lead_cards"},
-		},
-		{
-			name:        "no presets at all is invalid",
-			library:     func() []string { return library },
-			presets:     []any{},
-			wantOutcome: domain.OutcomeInvalid,
-			wantStaged:  false,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ob := &fakeOnboardingState{}
-			deps := metaDeps(ob, newOpsStatePort())
-			deps.PresetLibrary = tc.library
-			ex := stagedExecutor(deps, "adopt_presets")
-
-			res, err := ex.Execute(context.Background(), onboardingOctx(),
-				map[string]any{"presets": tc.presets})
-			if err != nil {
-				t.Fatalf("Execute: %v", err)
-			}
-			if res.Outcome != tc.wantOutcome {
-				t.Fatalf("outcome = %s, want %s (%s)", res.Outcome, tc.wantOutcome, res.Summary)
-			}
-			for _, want := range tc.wantInSummary {
-				if !strings.Contains(res.Summary, want) {
-					t.Errorf("summary %q does not carry %q — the model cannot self-correct", res.Summary, want)
-				}
-			}
-			staged := ob.manifest != nil && len(ob.manifest.Steps) > 0
-			if staged != tc.wantStaged {
-				t.Fatalf("staged = %v, want %v (manifest %+v)", staged, tc.wantStaged, ob.manifest)
-			}
-			if !tc.wantStaged && len(ob.infos) != 0 {
-				t.Errorf("a rejected staging still wrote %d delta(s)", len(ob.infos))
-			}
-			if tc.wantPresets == nil {
-				return
-			}
-			got := cfgStringSlice(ob.manifest.Steps[0].Params, "presets")
-			if strings.Join(got, ",") != strings.Join(tc.wantPresets, ",") {
-				t.Errorf("staged presets = %v, want %v — the apply must not carry an "+
-					"invented name forward", got, tc.wantPresets)
-			}
-		})
-	}
-}
-
-// A repaired staging must still be REPLACEABLE. The step's natural key is
-// built from the sanitized presets[], and those go through JSONB, so a
-// re-stage of the same repaired set has to match its own predecessor instead
-// of appending a second adopt_presets step (two steps = the apply adopts
-// twice and the digest lies about the plan).
-func TestStagedAdoptPresetsRepairedStepIsReStageable(t *testing.T) {
-	ob := &fakeOnboardingState{}
-	deps := metaDeps(ob, newOpsStatePort())
-	deps.PresetLibrary = func() []string { return []string{"booking_form", "lead_table"} }
-	ex := stagedExecutor(deps, "adopt_presets")
-
-	for i := 0; i < 2; i++ {
-		res, err := ex.Execute(context.Background(), onboardingOctx(),
-			map[string]any{"presets": []any{"lead_table", "lead_cards"}})
-		if err != nil {
-			t.Fatalf("stage %d: %v", i+1, err)
-		}
-		if res.Outcome != domain.OutcomeOK {
-			t.Fatalf("stage %d outcome = %s (%s)", i+1, res.Outcome, res.Summary)
-		}
-	}
-	if n := len(ob.manifest.Steps); n != 1 {
-		t.Fatalf("adopt_presets steps = %d, want 1 — the repaired key does not "+
-			"survive a round-trip, so re-staging duplicates the step", n)
-	}
-}
-
-// The summary must carry the LIVE library, not a copy that can drift: a name
-// the seeds advertise has to stage, and one they do not has to be dropped and
-// named, against presets.SystemPresetNames as wired in main.go.
-func TestStagedAdoptPresetsUsesTheRealLibrary(t *testing.T) {
-	ob := &fakeOnboardingState{}
-	deps := metaDeps(ob, newOpsStatePort())
-	deps.PresetLibrary = presets.SystemPresetNames
-	ex := stagedExecutor(deps, "adopt_presets")
-
-	res, err := ex.Execute(context.Background(), onboardingOctx(),
-		map[string]any{"presets": []any{"lead_table", "surface_links"}})
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if res.Outcome != domain.OutcomeOK {
-		t.Fatalf("real library rejected its own presets: %s", res.Summary)
-	}
-	if got := cfgStringSlice(ob.manifest.Steps[0].Params, "presets"); len(got) != 2 {
-		t.Fatalf("real library dropped its own presets: %v", got)
-	}
-
-	ob2 := &fakeOnboardingState{}
-	deps2 := metaDeps(ob2, newOpsStatePort())
-	deps2.PresetLibrary = presets.SystemPresetNames
-	res2, err := stagedExecutor(deps2, "adopt_presets").Execute(context.Background(), onboardingOctx(),
-		map[string]any{"presets": []any{"lead_cards"}})
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if res2.Outcome != domain.OutcomeInvalid {
-		t.Fatalf("outcome = %s, want invalid — nothing real was left", res2.Outcome)
-	}
-	if !strings.Contains(res2.Summary, "lead_table") {
-		t.Errorf("summary does not advertise the real library: %q", res2.Summary)
 	}
 }

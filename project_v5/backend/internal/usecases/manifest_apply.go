@@ -33,10 +33,6 @@ import (
 //   - register_user        → rests at accepted; completed by ExecuteStep via
 //     the step-submit endpoint (R6 — credentials NEVER enter this struct's
 //     persisted state)
-//   - seed_demo_data       → the business-class demo pack: catalog rows via
-//     the AdminGateway import (the door uploads use), records via EntityPort
-//     (V2_SPEC.md L6/R3; manifest_apply_seed.go). Ordered after the data
-//     model, before issue_surface_urls.
 //   - issue_surface_urls   → refuses (waits) until every other step applied,
 //     then mints the CRM surface token and resolves both URLs
 //
@@ -55,7 +51,6 @@ const (
 	opAdoptPresets      = "adopt_presets"
 	opIssueIngestDoor   = "issue_ingest_door"
 	opRegisterUser      = "register_user"
-	opSeedDemoData      = "seed_demo_data"
 	opIssueSurfaceURLs  = "issue_surface_urls"
 	applierActor        = "manifest_applier"
 	defaultRegisterRole = "owner"
@@ -89,17 +84,7 @@ type ManifestApplierConfig struct {
 	// VerifyBindings, when set, fails the adopt_presets step on unresolved
 	// required bindings (§6.2 R-validator).
 	VerifyBindings func(ctx context.Context, tenantSlug string, presets []string) error
-	// PublishSyntheticSets republishes the manifest's synthetic EntitySets
-	// (manifestStep, surfaceLink — R23) into the session's DATA zone. The
-	// manifest zone this applier writes is NOT the zone the renderer binds:
-	// compose_turn binds state.Current.Data, and the only writer of those sets
-	// used to be the apply_manifest executor. A step applied by any other
-	// entry point (EnsureZeroInputStep) therefore minted URLs into a step
-	// Result nothing could read. Injected — the set builders live in the
-	// operations package, which must not import this one
-	// (operations.NewSyntheticSetPublisher).
-	PublishSyntheticSets func(ctx context.Context, sessionID string, m *domain.OnboardingManifest) error
-	Log                  *slog.Logger
+	Log            *slog.Logger
 }
 
 // ManifestApplier applies staged onboarding manifests. Construct with
@@ -339,126 +324,6 @@ func (ap *ManifestApplier) ExecuteStep(ctx context.Context, sessionID, stepID st
 	return &cp, nil
 }
 
-// zeroInputSteps are the manifest ops whose §3.1 input schema carries NO
-// properties — the server can stage them from nothing, deterministically,
-// without inventing a single business value. Only these are auto-stageable
-// by EnsureZeroInputStep.
-var zeroInputSteps = map[string]bool{
-	opIssueSurfaceURLs: true,
-}
-
-// EnsureZeroInputStep makes a ZERO-INPUT manifest step real for the session:
-// stages it when the model never did, then runs the applier and republishes
-// the synthetic EntitySets the render binds. It is the third face of the
-// owner's law (2026-07-28) already encoded for form submit and file upload —
-// a user-visible artifact must never depend on the model having called a
-// tool. The trigger here is RENDERING: compose_turn showing the block whose
-// data comes from that step's synthetic EntitySet is the same proof of
-// intent as a submitted form.
-//
-// NARROW BY CONSTRUCTION: unlike the form-submit and upload triggers (USER
-// actions), the trigger here is a MODEL choice, so this must never be able
-// to provision anything on its own. It runs ONLY when every other step has
-// already reached a terminal state (applied/skipped) — which is also exactly
-// the gate applyIssueSurfaceURLs itself enforces, so an earlier run could not
-// have produced URLs anyway. With that precondition the applyLocked call
-// below can only execute the zero-input step: create_tenant, adopt_presets
-// and friends are already applied, a `failed` or still-`accepted` step means
-// the manifest is NOT ready and we return without touching anything.
-//
-// Returns whether it did any work: false means the step was already applied,
-// the manifest is not ready, or the session has no plan at all — the caller's
-// state is untouched; true means the step ran and the caller should re-read
-// state before binding. Errors are infrastructure failures only — a step that
-// FAILS is recorded on the manifest, exactly like every other apply.
-//
-// Loop safety: the applied/skipped short-circuit means a step that reached
-// its terminal state is never re-run, and the whole call is serialized per
-// session on the same sessionLocks as Apply.
-func (ap *ManifestApplier) EnsureZeroInputStep(ctx context.Context, sessionID, op string) (bool, error) {
-	if !zeroInputSteps[op] {
-		return false, fmt.Errorf("%q is not a zero-input manifest step", op)
-	}
-	defer ap.lockSession(sessionID)()
-	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
-	if err != nil {
-		return false, err
-	}
-	if m == nil || len(m.Steps) == 0 {
-		// No plan at all: there is nothing this step could run after, and
-		// staging it alone would only fail on the missing tenant. The render
-		// stays empty and honest.
-		ap.log.Warn("ensure zero-input step: session has no manifest — nothing applied",
-			"session", sessionID, "op", op)
-		return false, nil
-	}
-	if idx := findStepIndexByOp(m, op); idx >= 0 {
-		if m.Steps[idx].Status == domain.ManifestStepApplied || m.Steps[idx].Status == domain.ManifestStepSkipped {
-			return false, nil
-		}
-	}
-	if pending := pendingStepOps(m, op); len(pending) > 0 {
-		// The plan is not assembled yet. Applying here would run the REST of
-		// the manifest (provisioning a tenant off a model's render choice) and
-		// still not issue anything — issue_surface_urls refuses while any step
-		// is pending. Leave the world alone; the render stays empty and honest.
-		ap.log.Info("ensure zero-input step: manifest not ready — nothing applied",
-			"session", sessionID, "op", op, "pending", strings.Join(pending, ", "))
-		return false, nil
-	}
-	if findStepIndexByOp(m, op) < 0 {
-		staged := domain.ManifestStep{
-			ID:     fmt.Sprintf("%s-%d", op, len(m.Steps)+1),
-			Op:     op,
-			Status: domain.ManifestStepProposed,
-			Params: map[string]any{},
-		}
-		m.Steps = append(m.Steps, staged)
-		// PERSIST before applyLocked — it reloads the manifest from state and
-		// an in-memory-only step would vanish (the register_user bug, 07136e7).
-		if err := ap.persist(ctx, sessionID, m, op, staged.ID); err != nil {
-			return false, err
-		}
-	}
-	applied, err := ap.applyLocked(ctx, sessionID, "")
-	if err != nil {
-		return false, err
-	}
-	// The step's Result is not what the renderer binds — the synthetic
-	// EntitySet in the DATA zone is. Without this the URLs exist only inside
-	// the manifest and the handover card ships with zero rows.
-	if ap.cfg.PublishSyntheticSets == nil {
-		ap.log.Warn("ensure zero-input step: synthetic-set publisher not wired — the applied step's data cannot reach the render",
-			"session", sessionID, "op", op)
-	} else if perr := ap.cfg.PublishSyntheticSets(ctx, sessionID, applied); perr != nil {
-		ap.log.Warn("ensure zero-input step: synthetic set write failed — the block renders on existing data",
-			"session", sessionID, "op", op, "err", perr)
-	}
-	return true, nil
-}
-
-// pendingStepOps lists the ops of every step that has NOT reached a terminal
-// state (applied or skipped), ignoring the named op. Empty means the plan is
-// fully assembled.
-//
-// ONE predicate, two callers on purpose: applyIssueSurfaceURLs refuses to
-// issue while anything is pending, and EnsureZeroInputStep refuses to apply
-// at all in the same condition. If those two ever disagreed, the render-side
-// trigger would provision the workspace and then hand back nothing.
-func pendingStepOps(m *domain.OnboardingManifest, exceptOp string) []string {
-	var pending []string
-	for i := range m.Steps {
-		st := &m.Steps[i]
-		if st.Op == exceptOp {
-			continue
-		}
-		if st.Status != domain.ManifestStepApplied && st.Status != domain.ManifestStepSkipped {
-			pending = append(pending, st.Op)
-		}
-	}
-	return pending
-}
-
 // RecordUploadJob stamps the accepted upload job onto the issue_ingest_door
 // step so the poll endpoint (and the next agent turn) can find it.
 func (ap *ManifestApplier) RecordUploadJob(ctx context.Context, sessionID, jobID, fileName string) error {
@@ -550,19 +415,6 @@ func (ap *ManifestApplier) ResolveIngestToken(ctx context.Context, sessionID str
 	// Door never ran (manifest still proposed) → the upload is the approval:
 	// apply now, which mints the door token.
 	if m.Steps[idx].Status == domain.ManifestStepProposed {
-		// A file is being uploaded RIGHT NOW: the apply below would otherwise
-		// run seed_demo_data and pour a whole demo catalog into the tenant
-		// seconds before the visitor's real rows land — with no purge to undo
-		// it. Mark the seed step skipped first and PERSIST it: applyLocked
-		// reloads the manifest from state, so an in-memory flag would vanish.
-		if seedIdx := findStepIndexByOp(m, opSeedDemoData); seedIdx >= 0 &&
-			markSeedSkipped(m, seedSkippedRealUploadNote) {
-			ap.log.Info("seed_demo_data marked skipped — the upload is the real data",
-				"session", sessionID)
-			if err := ap.persist(ctx, sessionID, m, opSeedDemoData, m.Steps[seedIdx].ID); err != nil {
-				return nil, err
-			}
-		}
 		if m, err = ap.applyLocked(ctx, sessionID, ""); err != nil {
 			return nil, err
 		}
@@ -630,12 +482,6 @@ func (ap *ManifestApplier) liveIngestToken(ctx context.Context, st *domain.Manif
 // step and persists. skipIfApplied short-circuits idempotent completions.
 // Serialized per session (it is only ever called from the public
 // RecordUploadJob / CompleteIngestStep / RecordIngestFailure entry points).
-//
-// All three callers mean the same thing for the demo pack — REAL data is on
-// this session (accepted, imported, or failed with a re-upload coming) — so
-// a seed_demo_data step that has not run yet is marked skipped here rather
-// than seeding fake stock into a catalog the business is filling itself
-// (manifest_apply_seed.go).
 func (ap *ManifestApplier) mutateIngestStep(ctx context.Context, sessionID string, fn func(*domain.ManifestStep), skipIfApplied bool) error {
 	defer ap.lockSession(sessionID)()
 	m, err := ap.cfg.State.GetOnboarding(ctx, sessionID)
@@ -660,15 +506,8 @@ func (ap *ManifestApplier) mutateIngestStep(ctx context.Context, sessionID strin
 		return nil
 	}
 	fn(st)
-	if markSeedSkipped(m, seedSkippedRealUploadNote) {
-		ap.log.Info("seed_demo_data marked skipped — a real upload arrived first", "session", sessionID)
-	}
 	return ap.persist(ctx, sessionID, m, st.Op, st.ID)
 }
-
-// seedSkippedRealUploadNote is what a seed step says when the visitor's own
-// data made it unnecessary.
-const seedSkippedRealUploadNote = "the business uploaded its own data — demo data not seeded"
 
 // --- step executors ---
 
@@ -699,8 +538,6 @@ func (ap *ManifestApplier) runStep(ctx context.Context, sessionID string, m *dom
 			role = defaultRegisterRole
 		}
 		return map[string]any{"role": role}, domain.ManifestStepAccepted, nil
-	case opSeedDemoData:
-		return ap.applySeedDemoData(ctx, m, st)
 	case opIssueSurfaceURLs:
 		return ap.applyIssueSurfaceURLs(ctx, m, st)
 	default:
@@ -941,7 +778,17 @@ func (ap *ManifestApplier) applyIssueSurfaceURLs(ctx context.Context, m *domain.
 	// Refuses until every OTHER step has applied (§4.3) — including the two
 	// trigger-completed steps. Waiting is a resting state, not a failure:
 	// the run does not halt (this step is always last).
-	if pending := pendingStepOps(m, opIssueSurfaceURLs); len(pending) > 0 {
+	var pending []string
+	for i := range m.Steps {
+		s := &m.Steps[i]
+		if s.Op == opIssueSurfaceURLs {
+			continue
+		}
+		if s.Status != domain.ManifestStepApplied && s.Status != domain.ManifestStepSkipped {
+			pending = append(pending, s.Op)
+		}
+	}
+	if len(pending) > 0 {
 		res := map[string]any{"waiting": "pending steps: " + strings.Join(pending, ", ")}
 		return res, domain.ManifestStepAccepted, nil
 	}
@@ -995,18 +842,15 @@ func (ap *ManifestApplier) persist(ctx context.Context, sessionID string, m *dom
 	return nil
 }
 
-// orderedStepIndices: stage order with create_tenant forced first,
-// seed_demo_data forced late (it seeds INTO the entities and value sets the
-// other steps define — V2_SPEC.md L6) and issue_surface_urls forced last
-// (R22 + §4.3 "runs last"). Stable within each group.
+// orderedStepIndices: stage order with create_tenant forced first and
+// issue_surface_urls forced last (R22 + §4.3 "runs last"). Stable within
+// each group.
 func orderedStepIndices(m *domain.OnboardingManifest) []int {
-	var first, mid, late, last []int
+	var first, mid, last []int
 	for i := range m.Steps {
 		switch m.Steps[i].Op {
 		case opCreateTenant:
 			first = append(first, i)
-		case opSeedDemoData:
-			late = append(late, i)
 		case opIssueSurfaceURLs:
 			last = append(last, i)
 		default:
@@ -1016,7 +860,6 @@ func orderedStepIndices(m *domain.OnboardingManifest) []int {
 	out := make([]int, 0, len(m.Steps))
 	out = append(out, first...)
 	out = append(out, mid...)
-	out = append(out, late...)
 	return append(out, last...)
 }
 

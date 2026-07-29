@@ -12,7 +12,6 @@ import (
 
 	"keepstar_v5/internal/domain"
 	"keepstar_v5/internal/engine"
-	"keepstar_v5/internal/engine/presets"
 	"keepstar_v5/internal/ports"
 	"keepstar_v5/internal/streaming"
 )
@@ -48,31 +47,6 @@ type ComposeTurnTool struct {
 	state      ports.StatePort
 	presets    ports.PresetPort
 	components ports.ComponentPort
-	manifest   ManifestStepGate
-}
-
-// ManifestStepGate is the slice of the onboarding ManifestApplier this tool
-// needs to honour the owner's law that a user-visible artifact must never
-// depend on the model having called a tool (handoff 2026-07-28, law #1).
-// Declared here rather than imported: tools cannot import usecases (the
-// usecases tests import tools, which would cycle the test binary);
-// *usecases.ManifestApplier satisfies it.
-type ManifestStepGate interface {
-	// EnsureZeroInputStep stages the zero-input step when it is missing and
-	// runs the applier. Reports whether it did any work — true means session
-	// state changed and must be re-read.
-	EnsureZeroInputStep(ctx context.Context, sessionID, op string) (bool, error)
-}
-
-// zeroInputStepForPreset maps a preset whose data source is the synthetic
-// EntitySet of a ZERO-INPUT manifest step onto that step's op. Rendering
-// such a preset IS the intent — the same proof as a submitted form or an
-// uploaded file — so the server stages and applies the step deterministically
-// instead of showing an empty card and hoping the model calls apply_manifest.
-// A small table, deliberately: every entry needs a synthetic set that only
-// its step can produce.
-var zeroInputStepForPreset = map[string]string{
-	"surface_links": "issue_surface_urls",
 }
 
 // NewComposeTurnTool constructs the tool with the three ports it needs.
@@ -83,13 +57,6 @@ func NewComposeTurnTool(state ports.StatePort, presets ports.PresetPort, compone
 		components: components,
 	}
 }
-
-// SetManifestGate closes the boot wiring cycle (applier → registry →
-// compose_turn): the tool is registered before the ManifestApplier exists,
-// same deferred-wiring pattern as PresetOperationBinder.SetResolver. Unset
-// (storefront-only wirings) disables the zero-input auto-apply pass — the
-// render then binds whatever the data zone already holds.
-func (t *ComposeTurnTool) SetManifestGate(g ManifestStepGate) { t.manifest = g }
 
 // Compile-time check that ComposeTurnTool satisfies Tool.
 var _ Tool = (*ComposeTurnTool)(nil)
@@ -204,10 +171,6 @@ func (t *ComposeTurnTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 		emitted                          int
 		textCount, docCount, screenCount int
 		failures                         []string
-		// ensured guards the zero-input pass against repeating inside one
-		// call — a turn may render the same preset twice, and a gate that
-		// errored must not be retried seven more times.
-		ensured map[string]bool
 	)
 	emit := func(b domain.TurnBlock) {
 		if collector != nil {
@@ -250,37 +213,6 @@ func (t *ComposeTurnTool) Execute(ctx context.Context, toolCtx domain.ToolContex
 			textCount++
 
 		case "render":
-			// A zero-input step whose block is about to render gets staged +
-			// applied HERE, before assembly, so the block goes on the wire
-			// carrying real data instead of an empty shell.
-			if op, ok := zeroInputStepForPreset[spec.preset]; ok && t.manifest != nil && !ensured[op] {
-				if ensured == nil {
-					ensured = map[string]bool{}
-				}
-				ensured[op] = true
-				changed, gerr := t.manifest.EnsureZeroInputStep(ctx, toolCtx.SessionID, op)
-				if gerr != nil {
-					slog.Warn("compose_turn: zero-input step auto-apply failed — block renders on existing data",
-						"preset", spec.preset, "op", op, "session_id", toolCtx.SessionID, "err", gerr)
-				} else if changed {
-					// The apply wrote the step's synthetic EntitySet into the
-					// data zone; the snapshot read at the top of Execute
-					// predates it.
-					fresh, serr := t.state.GetState(ctx, toolCtx.SessionID)
-					if serr != nil {
-						return nil, fmt.Errorf("get state after %s: %w", op, serr)
-					}
-					state = fresh
-					// The manifest snapshot behind ingestToken is stale for the
-					// same reason. Today the applier's readiness gate means this
-					// apply can only run the zero-input step, so no door is
-					// minted here — this keeps the two pre-apply reads refreshed
-					// together rather than relying on that, since a later
-					// uploader_card block in the same turn would otherwise ship
-					// disarmed (R25) with nothing surfaced.
-					ingestToken = t.ingestTokenFor(ctx, toolCtx.SessionID)
-				}
-			}
 			templateMap, err := t.assembleRenderBlock(ctx, toolCtx, state, spec, ingestToken)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("block %d (%s): %v", i+1, spec.preset, err))
@@ -366,7 +298,7 @@ func (t *ComposeTurnTool) assembleRenderBlock(ctx context.Context, toolCtx domai
 	// LLM-emitted op touching the same props.
 	armUploadNodes(merged, ingestToken)
 
-	data, count, syntheticSource := resolveReplicate(state.Current.Data, spec.replicate, spec.preset)
+	data, count := resolveReplicate(state.Current.Data, spec.replicate)
 	engine.ExpandReplicates(merged, count)
 
 	// Freestyle blocks may reference tenant components; load them on demand
@@ -391,13 +323,6 @@ func (t *ComposeTurnTool) assembleRenderBlock(ctx context.Context, toolCtx domai
 	}
 	engine.ResolveAndInline(merged)
 	engine.BindData(merged, data)
-
-	// After BindData — the address only exists in `content` once the record
-	// is bound. Synthetic sets only: those addresses are minted by the
-	// applier, tenant records are visitor-writable (see linkBoundURLs).
-	if syntheticSource {
-		linkBoundURLs(merged)
-	}
 
 	// Default like/cart actions are catalog actions: fed PRODUCT maps only,
 	// exactly like visual_assembly — entity-plane blocks (leads, synthetic
@@ -494,59 +419,9 @@ func parseComposeBlocks(input map[string]interface{}) ([]composeBlock, string) {
 //     of THAT source and bind only its rows, so a scoped list preset
 //     replicates over exactly its own data.
 //
-// Absent/empty/unknown → the preset's AUTHORED source when it declares one
-// (presets.SystemPresetReplicateSource) and that source is live in the data
-// zone; otherwise no fan-out (count 0), full data — a single instance binds
-// record 0, same as visual_assembly without replicate.
-//
-// The authored-source fallback is the fix for the surface-links handover
-// (tail #3): a preset built for a synthetic set has exactly one sensible
-// source, and letting a mis-spelled argument collapse its rows put an empty
-// card in front of the business user.
-//
-// synthetic reports that the rows came from a runtime-written EntitySet —
-// the only data linkBoundURLs is allowed to make tappable.
-func resolveReplicate(d domain.StateData, raw any, preset string) (rows []map[string]any, count int, synthetic bool) {
-	source, n, hasCount := parseReplicateArg(raw)
-
-	// 1. The model named a source that is live in the data zone — it wins.
-	if source == "products" {
-		rows := productsToBindData(d.Products)
-		return rows, len(rows), false
-	}
-	if source != "" {
-		if rows, n, syn, ok := entitySetRows(d, source); ok {
-			return rows, n, syn
-		}
-	}
-
-	// 2. The preset's AUTHORED source: the model omitted it, mistyped it, or
-	//    sent a count for a preset that has exactly one sensible source.
-	if src, ok := presets.SystemPresetReplicateSource[preset]; ok {
-		if rows, n, syn, ok := entitySetRows(d, src); ok {
-			if source != "" {
-				slog.Warn("compose_turn: unknown replicate source — using the preset's authored source",
-					"replicate", source, "preset", preset, "source", src)
-			}
-			return rows, n, syn
-		}
-	}
-	if source != "" {
-		slog.Warn("compose_turn: unknown replicate source — no fan-out", "replicate", source)
-	}
-
-	// 3. Count semantics over the full data zone (visual_assembly parity).
-	if hasCount {
-		return dataToBindData(d), n, false
-	}
-	return dataToBindData(d), 0, false
-}
-
-// parseReplicateArg splits a block's raw `replicate` value into the source
-// name it asked for and/or the clone count it asked for. Exactly one of the
-// two is ever set: the seeded schema types the field as a string, so a count
-// arrives spelled ("3") as often as raw.
-func parseReplicateArg(raw any) (source string, count int, hasCount bool) {
+// Absent/empty/unknown → no fan-out (count 0), full data — a single
+// instance binds record 0, same as visual_assembly without replicate.
+func resolveReplicate(d domain.StateData, raw any) ([]map[string]any, int) {
 	clamp := func(n int) int {
 		if n < 0 {
 			return 0
@@ -554,80 +429,41 @@ func parseReplicateArg(raw any) (source string, count int, hasCount bool) {
 		return n
 	}
 	switch v := raw.(type) {
+	case nil:
+		return dataToBindData(d), 0
 	case int:
-		return "", clamp(v), true
+		return dataToBindData(d), clamp(v)
 	case int64:
-		return "", clamp(int(v)), true
+		return dataToBindData(d), clamp(int(v))
 	case float64:
-		return "", clamp(int(v)), true
+		return dataToBindData(d), clamp(int(v))
 	case string:
 		s := strings.TrimSpace(v)
 		if s == "" {
-			return "", 0, false
+			return dataToBindData(d), 0
 		}
 		if n, err := strconv.Atoi(s); err == nil {
-			return "", clamp(n), true
+			return dataToBindData(d), clamp(n)
 		}
-		return s, 0, false
+		if s == "products" {
+			rows := productsToBindData(d.Products)
+			return rows, len(rows)
+		}
+		for i := range d.Entities {
+			set := &d.Entities[i]
+			if set.Slug != s {
+				continue
+			}
+			rows := make([]map[string]any, 0, len(set.Records))
+			for _, rec := range set.Records {
+				rows = append(rows, engine.EntityToMap(rec, set))
+			}
+			return rows, len(rows)
+		}
+		slog.Warn("compose_turn: unknown replicate source — no fan-out", "replicate", s)
+		return dataToBindData(d), 0
 	}
-	return "", 0, false
-}
-
-// entitySetRows flattens one entity set of the data zone into bind rows.
-// ok is false when the zone carries no set under that slug; synthetic
-// reports whether the set was written by the runtime itself (R23) rather
-// than read from tenant records.
-func entitySetRows(d domain.StateData, slug string) (rows []map[string]any, count int, synthetic, ok bool) {
-	for i := range d.Entities {
-		set := &d.Entities[i]
-		if set.Slug != slug {
-			continue
-		}
-		rows = make([]map[string]any, 0, len(set.Records))
-		for _, rec := range set.Records {
-			rows = append(rows, engine.EntityToMap(rec, set))
-		}
-		return rows, len(rows), set.Synthetic, true
-	}
-	return nil, 0, false, false
-}
-
-// linkBoundURLs makes a bound address tappable: a node authored as
-// wrapper "link" (domain.WrapperLink) carries its URL in `content` after
-// BindData, and the widget's link wrapper reads the href from
-// action.params.url — nothing in the engine can bridge the two, because
-// binding never writes action params. This deterministic pass does, right
-// after BindData, for every link node that has no action of its own.
-//
-// Sibling of armUploadNodes: the server owns what the model cannot express
-// per record.
-//
-// SYNTHETIC SOURCES ONLY (see the call site). The addresses this exists for
-// are minted by the applier — storefront and CRM. Tenant records are not:
-// a public storefront form can write any string into a lead field, and
-// stamping a dispatching external_link on that would turn the CRM operator's
-// card into a one-click window.open to whatever a visitor typed. Bound
-// tenant data keeps rendering href="#", exactly as before this pass existed.
-func linkBoundURLs(doc *engine.Document) {
-	if doc == nil {
-		return
-	}
-	engine.WalkNodes(doc, func(n engine.Node, _ int) {
-		if w, _ := n["wrapper"].(string); w != string(domain.WrapperLink) {
-			return
-		}
-		if _, exists := n["action"]; exists {
-			return // authored intent wins
-		}
-		url, _ := n["content"].(string)
-		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-			return
-		}
-		n["action"] = map[string]any{
-			"kind":   string(domain.UserActionExternalLink),
-			"params": map[string]any{"url": url},
-		}
-	})
+	return dataToBindData(d), 0
 }
 
 // ingestTokenFor reads the session's minted issue_ingest_door token from
