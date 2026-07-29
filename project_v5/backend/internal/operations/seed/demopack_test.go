@@ -298,3 +298,29 @@ func TestPickEntity(t *testing.T) {
 		t.Errorf("nothing lead-like should match, got %v", got)
 	}
 }
+
+// A date-typed "when" field takes a date, a datetime field takes the clock:
+// the pack adapts to the type the conversation chose.
+func TestLeadWhenFieldRespectsTheFieldType(t *testing.T) {
+	p := RealtyDemoPack()
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	lead := p.Leads[0]
+
+	dateOnly := &domain.EntityDefinition{Slug: "lead", Fields: []domain.FieldDef{
+		{Key: "visitDate", Label: "Visit date", Type: domain.FieldDate},
+	}}
+	if got, _ := p.LeadRecordData(dateOnly, nil, lead, now)["visitDate"].(string); len(got) != len("2006-01-02") {
+		t.Errorf("date field got %q, want a plain date", got)
+	}
+	withClock := &domain.EntityDefinition{Slug: "lead", Fields: []domain.FieldDef{
+		{Key: "visitAt", Label: "Visit at", Type: domain.FieldDatetime},
+	}}
+	got, _ := p.LeadRecordData(withClock, nil, lead, now)["visitAt"].(string)
+	parsed, err := time.Parse(time.RFC3339, got)
+	if err != nil {
+		t.Fatalf("datetime field got %q: %v", got, err)
+	}
+	if parsed.Hour() != lead.Hour {
+		t.Errorf("datetime field lost the hour: %q, want hour %d", got, lead.Hour)
+	}
+}

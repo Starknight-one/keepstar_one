@@ -255,6 +255,16 @@ func resolveField(def *domain.EntityDefinition, role fieldRole) string {
 	return ""
 }
 
+// fieldTypeOf returns a definition field's type ("" when absent).
+func fieldTypeOf(def *domain.EntityDefinition, key string) domain.FieldType {
+	for _, f := range def.Fields {
+		if f.Key == key {
+			return f.Type
+		}
+	}
+	return ""
+}
+
 // roleFieldTypeOK keeps a hint match from writing text into a number or a
 // status field.
 func roleFieldTypeOK(role fieldRole, t domain.FieldType) bool {
@@ -316,9 +326,14 @@ func (p DemoPack) LeadRecordData(def *domain.EntityDefinition, vs *domain.ValueS
 	put(data, resolveField(def, roleNote), lead.Message)
 	put(data, resolveField(def, roleSource), DemoSource)
 	if key := resolveField(def, roleWhen); key != "" {
-		when := now.AddDate(0, 0, lead.DaysAhead).Truncate(time.Hour)
-		when = time.Date(when.Year(), when.Month(), when.Day(), lead.Hour, 0, 0, 0, when.Location())
-		data[key] = when.Format(time.RFC3339)
+		day := now.AddDate(0, 0, lead.DaysAhead)
+		when := time.Date(day.Year(), day.Month(), day.Day(), lead.Hour, 0, 0, 0, day.Location())
+		// A date-typed field takes a date; only datetime takes the clock.
+		if fieldTypeOf(def, key) == domain.FieldDate {
+			data[key] = when.Format("2006-01-02")
+		} else {
+			data[key] = when.Format(time.RFC3339)
+		}
 	}
 	if field, _ := StatusFieldOf(def); field != "" {
 		data[field] = p.mapStatus(vs, lead.Status)
