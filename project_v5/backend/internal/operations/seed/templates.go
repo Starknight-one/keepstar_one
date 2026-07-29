@@ -909,9 +909,18 @@ func seedDemoDataTemplate() domain.OperationTemplate {
 			},
 		},
 		Effects: domain.OperationEffects{
-			Reads:  []string{"v5_entity_definitions", "v5_value_sets"},
-			Writes: []string{"catalog.master_products", "catalog.listings", "v5_entity_records", "v5_events"},
-			Emits:  []domain.EmitDecl{},
+			Reads: []string{"v5_entity_definitions", "v5_value_sets"},
+			// The catalog half lands through admin's import: master rows, the
+			// tenant's listings and the search projection admin rebuilds
+			// (v5 reads catalog.products / tenant_search_projection). The
+			// record half writes records and their outbox events.
+			Writes: []string{
+				"catalog.master_products", "catalog.products",
+				"catalog.tenant_search_projection", "v5_entity_records", "v5_events",
+			},
+			// Every seeded record emits record.created, same as create_record;
+			// the entity slugs are whatever this tenant's plan defined.
+			Emits: []domain.EmitDecl{{EventType: domain.EventRecordCreated, EntitySlug: ""}},
 		},
 	})
 }

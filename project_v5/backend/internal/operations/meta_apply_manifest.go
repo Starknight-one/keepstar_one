@@ -3,6 +3,7 @@ package operations
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"keepstar_v5/internal/domain"
@@ -225,6 +226,49 @@ func manifestStepDetail(st *domain.ManifestStep) string {
 	}
 	if u, _ := st.Result["storefrontUrl"].(string); u != "" {
 		return u
+	}
+	if st.Op == "seed_demo_data" {
+		return seedStepDetail(st)
+	}
+	return ""
+}
+
+// seedStepDetail keeps the seed step honest in the summary card: a step that
+// seeded NOTHING (no pack for this business class, or real data already in
+// the workspace) otherwise renders as a bare "Done" with no detail, and the
+// user is told their workspace is ready while both tabs are empty.
+func seedStepDetail(st *domain.ManifestStep) string {
+	if notes, ok := st.Result["notes"].([]string); ok && len(notes) > 0 {
+		return strings.Join(notes, "; ")
+	}
+	// Step results round-trip through JSONB — []string comes back as []any.
+	if raw, ok := st.Result["notes"].([]any); ok && len(raw) > 0 {
+		parts := make([]string, 0, len(raw))
+		for _, n := range raw {
+			if s, ok := n.(string); ok && s != "" {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "; ")
+		}
+	}
+	listings, records := numberDetail(st.Result["listings"]), numberDetail(st.Result["records"])
+	if listings == "" && records == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s listings, %s demo records", listings, records)
+}
+
+// numberDetail renders a step-result count ("" when the key was absent).
+func numberDetail(v any) string {
+	switch n := v.(type) {
+	case int:
+		return strconv.Itoa(n)
+	case int64:
+		return strconv.FormatInt(n, 10)
+	case float64:
+		return strconv.Itoa(int(n))
 	}
 	return ""
 }
