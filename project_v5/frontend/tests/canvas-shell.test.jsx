@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, fireEvent, screen } from '@testing-library/react'
 import ChatShell from '../src/shells/ChatShell'
 import { splitTurnStream, thinkingLabel } from '../src/canvas/CanvasChatView'
+import { VERSION } from '../src/canvas/version'
 
 // The V2 builder layout (V2_SPEC §2 step 3): the canvas is the full
 // stage and the chat floats over it as a bottom dock. WHY these
@@ -198,5 +199,15 @@ describe('ChatShell canvas layout', () => {
     expect(document.querySelector('.kw-dock-history').textContent).toContain(
       'Tell me about your business.',
     )
+  })
+
+  // We test on prod: the corner stamp is how anyone can tell WHICH build
+  // they are looking at, so it must come from the one constant that
+  // VERSIONS.md documents — never a second hardcoded string.
+  it('stamps the live version in the canvas corner from the single source', () => {
+    renderCanvasShell()
+    const stamp = document.querySelector('.kw-canvas .kw-canvas-version')
+    expect(stamp).not.toBeNull()
+    expect(stamp.textContent).toBe(VERSION)
   })
 })

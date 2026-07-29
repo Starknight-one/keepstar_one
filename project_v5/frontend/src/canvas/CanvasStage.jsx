@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import InlineBlock from '../chat/InlineBlock'
 import ThinkingIndicator from './ThinkingIndicator'
 import { useStaggerDelays } from './stagger'
+import { VERSION } from './version'
 
 // CanvasStage — the full-page stage the builder assembles onto
 // (V2_SPEC §2 step 3 + L1 "render, don't narrate"). Document blocks
@@ -102,6 +103,9 @@ export default function CanvasStage({ blocks, header, thinkingLabel, surfaces = 
             <iframe className="kw-canvas-frame" src={s.url} title={s.label} />
           </div>
         ))}
+
+      {/* What is live right now (V2_SPEC §1) — history in VERSIONS.md. */}
+      <div className="kw-canvas-version">{VERSION}</div>
     </div>
   )
 }

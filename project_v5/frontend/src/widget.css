@@ -1273,6 +1273,18 @@
   }
 }
 
+/* Version stamp in the canvas corner (V2_SPEC §1). */
+.kw-canvas-version {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  font-size: var(--kw-fs-xs);
+  letter-spacing: 0.04em;
+  color: var(--kw-text-muted);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 /* ── The floating chat dock ── */
 .kw-dock {
   position: absolute;
